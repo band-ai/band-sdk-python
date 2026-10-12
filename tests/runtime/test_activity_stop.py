@@ -10,9 +10,11 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
@@ -47,12 +49,15 @@ async def activity_context(
     async with rest_client_over(peer.respond) as rest:
         link = BandLink(agent_id=AGENT_ID, api_key="test-key")
         link.rest = rest
+        runtime = AgentRuntime(
+            link=link, agent_id=AGENT_ID, on_execute=handler, on_control=observer
+        )
         ctx = ExecutionContext(
             ROOM_ID,
             link,
             handler,
             agent_id=AGENT_ID,
-            on_platform_stop=observer,
+            on_platform_stop=runtime._on_platform_stop,
             config=SessionConfig(
                 enable_context_hydration=False, enable_working_state=enabled
             ),
@@ -216,3 +221,36 @@ async def test_disabled_working_state_keeps_its_existing_contract() -> None:
         await ctx._process_event(make_message_event(msg_id="trigger"))
         assert handler.completed == ["trigger"]
         assert peer.activity_reports == []
+
+
+@pytest.mark.parametrize("play_after_stop", [False, True])
+async def test_fresh_activity_stop_after_play_cancels_the_same_turn(
+    play_after_stop: bool,
+) -> None:
+    peer = ActivityPeer()
+    handler = BlockingHandler(block=1)
+    observer = AsyncMock()
+    async with activity_context(peer, handler, observer, enabled=False) as ctx:
+        turn = asyncio.create_task(
+            ctx._process_event(make_message_event(msg_id="trigger"))
+        )
+        try:
+            await handler.started.wait()
+            await ctx.resume_room()
+            peer.stopped = True
+            assert await ctx._report_working_state(True)
+            if play_after_stop:
+                await ctx.resume_room()
+            await asyncio.sleep(0)
+            assert handler.cancelled.is_set()
+            await turn
+            if play_after_stop:
+                observer.assert_not_awaited()
+            else:
+                observer.assert_awaited_once_with(ROOM_ID, ControlMode.STOP)
+            assert peer.marked("processing") == ["trigger"]
+            assert peer.requested("processed") == []
+            assert peer.requested("failed") == []
+        finally:
+            turn.cancel()
+            await asyncio.gather(turn, return_exceptions=True)

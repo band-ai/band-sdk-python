@@ -750,7 +750,19 @@ class ExecutionContext:
             and scope.control_revision == self._control_revision
         )
 
-    def observe_platform_stop(self, scope: TurnScope) -> None:
+    def owns_stop_observation(self, scope: TurnScope) -> bool:
+        return (
+            self.current_scope is scope
+            and scope.stop_revision == self._control_revision
+        )
+
+    def observe_platform_stop(
+        self, scope: TurnScope, *, control_revision: int | None = None
+    ) -> None:
+        if not scope.stop_observed:
+            scope.stop_revision = (
+                scope.control_revision if control_revision is None else control_revision
+            )
         scope.stop_observed = True
         if self.current_scope is not scope:
             return
@@ -758,7 +770,7 @@ class ExecutionContext:
         self._cancel_cycle(kind)
         if (
             not self._closing
-            and self.owns_scope(scope)
+            and self.owns_stop_observation(scope)
             and scope.observer_task is None
             and self._on_platform_stop is not None
         ):
@@ -766,7 +778,7 @@ class ExecutionContext:
             self._retain_detached_cycle_task(scope.observer_task)
 
     async def _notify_platform_stop(self, scope: TurnScope) -> None:
-        if self.owns_scope(scope) and self._on_platform_stop is not None:
+        if self.owns_stop_observation(scope) and self._on_platform_stop is not None:
             await self._on_platform_stop(self, scope)
 
     async def _begin_scope(self) -> bool:
@@ -1759,11 +1771,13 @@ class ExecutionContext:
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
         scope = self.current_scope
+        revision = self._control_revision
 
         def on_stopped() -> None:
             if (
                 scope is not None
-                and self.owns_scope(scope)
+                and self.current_scope is scope
+                and revision == self._control_revision
                 and not scope.stop_observed
                 and not self._closing
             ):
@@ -1771,7 +1785,7 @@ class ExecutionContext:
                     "Activity report observed stopped execution for room %s",
                     self.room_id,
                 )
-                self.observe_platform_stop(scope)
+                self.observe_platform_stop(scope, control_revision=revision)
 
         return await self.link.report_activity(
             self.room_id,

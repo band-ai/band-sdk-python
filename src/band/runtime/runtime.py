@@ -433,7 +433,7 @@ class AgentRuntime:
         return execution
 
     async def _on_platform_stop(self, ctx: ExecutionContext, scope: TurnScope) -> None:
-        if ctx.owns_scope(scope) and self._on_control is not None:
+        if ctx.owns_stop_observation(scope) and self._on_control is not None:
             await self._on_control(ctx.room_id, ControlMode.STOP)
 
     async def _destroy_execution(
