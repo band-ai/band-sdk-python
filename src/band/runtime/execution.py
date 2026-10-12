@@ -44,7 +44,11 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
-from band.core.exceptions import InputNotAccepted, RoomExecutionStoppedError
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+    RoomExecutionStoppedError,
+)
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TURN_FAILURE_PROVIDER,
@@ -391,6 +395,8 @@ class ExecutionContext:
         # Received STOP suppresses local triggers. Base-interval probes discover
         # a missed PLAY; platform claims remain authoritative.
         self._stopped: bool = False
+        # The first stop's graceful result; a retry only settles retained work.
+        self._stop_graceful = True
 
         # Optional seam for clearing user-visible activity state ("reasoning…")
         # when a cycle is interrupted/stopped. Filled by the activity-signal
@@ -558,11 +564,15 @@ class ExecutionContext:
         Returns:
             True if stopped gracefully (processing completed or was idle),
             False if had to cancel mid-processing after timeout.
+
+        Raises:
+            CleanupIncompleteError: Cancelled work outlived the settlement
+                budget. It stays retained, and a later ``stop()`` settles it.
         """
         self._closing = True
         if self._process_loop_task is None:
-            await self._stop_retained_tasks()
-            return True
+            await self._stop_retained_tasks(self._settlement_deadline())
+            return self._stop_graceful
 
         logger.info("Stopping ExecutionContext for room: %s", self.room_id)
 
@@ -577,6 +587,7 @@ class ExecutionContext:
                     "cancelling mid-execution",
                     self.room_id,
                 )
+        self._stop_graceful = graceful
 
         # Cancel any in-flight cycle child task BEFORE cancelling the loop so it
         # is not orphaned (the loop's await on it is not auto-cancelled when the
@@ -586,27 +597,30 @@ class ExecutionContext:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()
 
-        # Signal stop and cancel the task
+        # One settlement budget bounds the loop and every cancelled cycle so a
+        # non-cooperative handler cannot make stop() hang.
+        deadline = self._settlement_deadline()
         self._is_running = False
         self._process_loop_task.cancel()
-        try:
-            await self._process_loop_task
-        except asyncio.CancelledError:
-            pass
+        await self._drain_cancelled_cycle_task(
+            self._process_loop_task, deadline=deadline
+        )
         self._process_loop_task = None
-
-        # Drain cancellation cleanup for a bounded time so a non-cooperative
-        # handler cannot make stop() hang after the room loop has exited.
         if cycle_task is not None:
-            await self._drain_cancelled_cycle_task(cycle_task)
+            await self._drain_cancelled_cycle_task(cycle_task, deadline=deadline)
         self._active_cycle_task = None
-        await self._stop_retained_tasks()
-
-        # Defensively clear any lingering working-state keep-alive so a removed
-        # room can't leak its refresh task. Idempotent: a no-op if not active
-        # (the per-cycle finally normally clears it already).
-        await self._working_reporter.stop()
+        try:
+            await self._stop_retained_tasks(deadline)
+        finally:
+            # Defensively clear any lingering working-state keep-alive so a
+            # removed room can't leak its refresh task. Idempotent: a no-op if
+            # not active (the per-cycle finally normally clears it already).
+            await self._working_reporter.stop()
         return graceful
+
+    @staticmethod
+    def _settlement_deadline() -> float:
+        return asyncio.get_running_loop().time() + CYCLE_CANCEL_GRACE_SECONDS
 
     async def _wait_for_idle(self, timeout: float) -> bool:
         """
@@ -778,12 +792,18 @@ class ExecutionContext:
         self.current_scope = TurnScope(self._control_revision)
         return True
 
-    async def _stop_retained_tasks(self) -> None:
+    async def _stop_retained_tasks(self, deadline: float) -> None:
         tasks = tuple(self._detached_cycle_tasks)
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
         for task in tasks:
-            await self._drain_cancelled_cycle_task(task)
+            await self._drain_cancelled_cycle_task(task, deadline=deadline)
+        if unfinished := sum(not task.done() for task in self._detached_cycle_tasks):
+            raise CleanupIncompleteError(
+                f"ExecutionContext {self.room_id}: {unfinished} cancelled "
+                "task(s) still running"
+            )
 
     async def _clear_activity(self) -> None:
         """Invoke the optional activity-clear seam after an aborted cycle."""
@@ -1811,13 +1831,17 @@ class ExecutionContext:
                 error,
             )
 
-    async def _drain_cancelled_cycle_task(self, task: asyncio.Task[None]) -> None:
+    async def _drain_cancelled_cycle_task(
+        self, task: asyncio.Task[None], *, deadline: float | None = None
+    ) -> None:
         """Bound cancellation cleanup so a cycle cannot wedge its room loop."""
         if task.done():
             return
 
         try:
-            async with asyncio_timeout(CYCLE_CANCEL_GRACE_SECONDS):
+            if deadline is None:
+                deadline = self._settlement_deadline()
+            async with asyncio.timeout_at(deadline):
                 await asyncio.shield(task)
         except asyncio.CancelledError:
             parent = asyncio.current_task()

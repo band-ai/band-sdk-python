@@ -20,7 +20,7 @@ import pytest
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode, DeliveryStatus
-from band.core.exceptions import RoomExecutionStoppedError
+from band.core.exceptions import CleanupIncompleteError, RoomExecutionStoppedError
 from band.platform.link import BandLink
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import BacklogProcessResult, ExecutionContext, ResyncOutcome
@@ -1611,3 +1611,30 @@ async def test_late_rest_refusal_preserves_a_pending_explicit_interrupt(
 
         assert ctx.claims.is_completed(ctx.room_id, "interrupted")
         mock_link.mark_processed.assert_awaited_once_with(ctx.room_id, "interrupted")
+
+
+async def test_cancellation_resistant_cycle_keeps_stop_pending_until_settled(
+    mock_link, monkeypatch
+) -> None:
+    monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await finish.wait()
+            raise
+
+    ctx = ExecutionContext("room-123", mock_link, handler)
+    await ctx.start()
+    await ctx.on_event(make_message_event(msg_id="stubborn"))
+    await started.wait()
+    with pytest.raises(CleanupIncompleteError):
+        await ctx.stop(timeout=0.01)
+    with pytest.raises(CleanupIncompleteError):
+        await ctx.stop(timeout=60)
+    finish.set()
+    assert await ctx.stop(timeout=60) is False
+    assert not ctx.is_running
