@@ -17,6 +17,7 @@ from langchain_core.tools import StructuredTool
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
+from band.core.turn import Turn
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.custom_tools import (
@@ -163,54 +164,48 @@ def agent_tools_to_langchain(
     return platform_tools
 
 
-def custom_tool_defs_to_langchain(tools: list[CustomToolDef]) -> list[StructuredTool]:
-    """Convert band ``CustomToolDef`` tuples to LangChain ``StructuredTool``s.
+def custom_tool_def_to_langchain(
+    tool_def: CustomToolDef, *, turn: Turn | None
+) -> StructuredTool:
+    """Convert a band ``CustomToolDef`` to a LangChain ``StructuredTool``.
 
     Lets the LangGraph adapter accept the SDK's portable custom-tool form —
     ``(InputModel, handler)`` — the same shape every other adapter takes, rather
-    than only ready-made LangChain tools. Each tuple becomes a StructuredTool whose
-    schema is the ``InputModel`` and whose body validates + runs the handler via
-    ``execute_custom_tool`` (which handles sync and async handlers alike).
+    than only ready-made LangChain tools. The StructuredTool's schema is the
+    ``InputModel`` and its body validates + runs the handler via
+    ``execute_custom_tool`` (which handles sync and async handlers alike),
+    recording the handler's declared effect on ``turn``: the turn of the room the
+    tool is built for, or ``None`` for a tool not bound to a room.
     """
-    langchain_tools: list[StructuredTool] = []
-    for input_model, handler in tools:
-        name = get_custom_tool_name(input_model)
-        description = input_model.__doc__ or f"Execute {name}"
+    input_model, _ = tool_def
+    name = get_custom_tool_name(input_model)
+    description = input_model.__doc__ or f"Execute {name}"
 
-        async def execute_custom(
-            *,
-            _tool: CustomToolDef = (input_model, handler),
-            _name: str = name,
-            **kwargs: Any,
-        ) -> Any:
-            try:
-                return await execute_custom_tool(_tool, kwargs)
-            except ValueError as e:
-                # Bad-argument / validation errors feed back to the LLM to retry.
-                return str(e)
-            except Exception:
-                # Keep the message generic; the full traceback (paths, secrets)
-                # only lives in the agent log — see agent_tools_to_langchain.
-                logger.exception("Error executing custom tool %s", _name)
-                return f"Error executing {_name}: see agent logs."
+    async def execute_custom(**kwargs: Any) -> Any:
+        try:
+            return await execute_custom_tool(tool_def, kwargs, turn=turn)
+        except ValueError as e:
+            # Bad-argument / validation errors feed back to the LLM to retry.
+            return str(e)
+        except Exception:
+            # Keep the message generic; the full traceback (paths, secrets)
+            # only lives in the agent log — see agent_tools_to_langchain.
+            logger.exception("Error executing custom tool %s", name)
+            return f"Error executing {name}: see agent logs."
 
-        def on_validation_error(error: Any, *, _name: str = name) -> str:
-            # Schema validation runs before the coroutine; feed bad args back to the
-            # LLM (to retry) via the shared formatter, so the wording matches the
-            # band-tool path (agent_tools_to_langchain) exactly.
-            return format_tool_validation_error(_name, error)
+    def on_validation_error(error: Any) -> str:
+        # Schema validation runs before the coroutine; feed bad args back to the
+        # LLM (to retry) via the shared formatter, so the wording matches the
+        # band-tool path (agent_tools_to_langchain) exactly.
+        return format_tool_validation_error(name, error)
 
-        execute_custom.__name__ = f"{name}_wrapper"
-        execute_custom.__doc__ = description
+    execute_custom.__name__ = f"{name}_wrapper"
+    execute_custom.__doc__ = description
 
-        langchain_tools.append(
-            StructuredTool.from_function(
-                coroutine=execute_custom,
-                name=name,
-                description=description,
-                args_schema=input_model,
-                handle_validation_error=on_validation_error,
-            )
-        )
-
-    return langchain_tools
+    return StructuredTool.from_function(
+        coroutine=execute_custom,
+        name=name,
+        description=description,
+        args_schema=input_model,
+        handle_validation_error=on_validation_error,
+    )

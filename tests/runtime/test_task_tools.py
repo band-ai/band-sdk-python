@@ -21,9 +21,14 @@ import pytest
 from band_rest.types import Task
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
+from band.core.task_types import (
+    TaskAssignmentStatus,
+    TaskLifecycleState,
+    TaskListState,
+)
 from band.runtime.tools import AgentTools
 from band.testing import FakeAgentTools
+from tests.identifiers import INVALID_IDS, TASK_PATHS
 from tests.runtime.helpers import rest_client_over
 
 
@@ -463,3 +468,49 @@ async def test_a_board_number_supersedes_its_own_task(
     )
 
     assert json.loads(requests[0].content)["supersedes_id"] == BOARD_NUMBER
+
+
+@pytest.mark.parametrize(
+    "name,extra",
+    [
+        ("band_get_task", {}),
+        ("band_update_task", {"comment": "progress"}),
+        ("band_get_task_history", {}),
+    ],
+)
+@pytest.mark.parametrize("id", INVALID_IDS)
+@pytest.mark.asyncio
+async def test_invalid_task_reference_never_sends_http(
+    sent_requests: tuple[AgentTools, list[httpx.Request]],
+    name: str,
+    extra: dict[str, object],
+    id: str,
+) -> None:
+    tools, requests = sent_requests
+    outcome = await tools.execute_tool_call_structured(name, {"id": id, **extra})
+    assert not outcome.ok
+    assert "id:" in outcome.error_message
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    "name,extra",
+    [
+        ("band_get_task", {}),
+        ("band_update_task", {"comment": "progress"}),
+        ("band_get_task_history", {}),
+    ],
+)
+@pytest.mark.parametrize("id,expected_path", TASK_PATHS)
+@pytest.mark.asyncio
+async def test_validated_task_reference_addresses_item(
+    sent_requests: tuple[AgentTools, list[httpx.Request]],
+    name: str,
+    extra: dict[str, object],
+    id: str,
+    expected_path: str,
+) -> None:
+    tools, requests = sent_requests
+    outcome = await tools.execute_tool_call_structured(name, {"id": id, **extra})
+    assert outcome.ok, outcome.error_message
+    assert [addressed_task(request) for request in requests] == [expected_path]

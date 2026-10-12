@@ -26,9 +26,6 @@ brew install docker/tap/sbx        # or see docs.docker.com/ai/sandboxes
 sbx login                          # sign in to Docker (interactive)
 sbx policy init balanced           # default-deny + common dev/GitHub/model APIs
 
-# Provision a sandbox against a workspace dir (its contents are what Copilot can see):
-sbx create --name copilot-band copilot /path/to/workspace
-
 # Store the GitHub token on the host — proxy-injected, never exposed in the VM:
 gh auth token | sbx secret set -g github
 ```
@@ -36,11 +33,16 @@ gh auth token | sbx secret set -g github
 You also need a configured Band agent named `copilot_acp_agent` (see the SDK's
 `Agent.from_config` / `agent_config.yaml`).
 
+Create the sandbox with the Band MCP kit below, or configure a reachable external
+Band MCP server. SDK 5 requires Band tools for replies and explicit declines;
+native assistant text is optional thought telemetry. Set `BAND_MCP_SSE_URL` to
+the server's address inside the sandbox. The client rejects a missing setting.
+
 ## Run
 
 ```bash
-cd examples/acp/copilot_sandbox
-cp .env.example .env               # set SBX_SANDBOX (+ SBX_WORKSPACE if not cwd)
+cp examples/acp/copilot_sandbox/.env.example examples/acp/copilot_sandbox/.env
+# Set SBX_SANDBOX, SBX_WORKSPACE and BAND_MCP_SSE_URL in that file.
 uv run examples/acp/copilot_sandbox/client.py
 ```
 
@@ -49,9 +51,8 @@ inside the sandbox.
 
 ## Band tools with the kit
 
-The default run is **conversation relay only** (`inject_band_tools=False`). To give
-Copilot Band tools without exposing a host service, create the sandbox with the
-included Docker sandbox kit:
+To give Copilot Band tools without exposing a host service, create the sandbox
+with the included Docker sandbox kit:
 
 ```bash
 sbx kit validate examples/acp/copilot_sandbox/band-mcp-kit
@@ -78,6 +79,9 @@ The kit installs `band-mcp`, starts it on `127.0.0.1:3000` inside the sandbox, a
 uses Docker's custom-secret flow for `BAND_AGENT_KEY`. It targets
 `https://app.band.ai`; for a different Band deployment, update the kit and the
 `sbx secret set-custom --host` value.
+
+`BAND_AGENT_KEY` must be the same agent key as `copilot_acp_agent` in
+`agent_config.yaml`, so tool replies and the host runtime use one Band identity.
 
 ## Band tools with an external MCP server
 

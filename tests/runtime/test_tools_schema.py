@@ -7,12 +7,15 @@ import json
 from datetime import UTC, datetime
 from typing import get_type_hints
 
+import pytest
 from pydantic import BaseModel
 
 from band.runtime.tools import (
+    GetMemoryInput,
     get_tool_docstring_with_args,
     platform_tool,
     serialize_tool_result,
+    validate_tool_arguments,
 )
 
 
@@ -120,3 +123,17 @@ class TestPlatformTool:
             return _Result(id=identifier)
 
         assert band_example.__doc__ == get_tool_docstring_with_args("band_example")
+
+
+@pytest.mark.parametrize("value", ["", " ", ".", "#"])
+def test_path_id_feedback_identifies_tool_and_field(value: str) -> None:
+    with pytest.raises(
+        ValueError, match="Invalid arguments for band_get_memory: memory_id:"
+    ):
+        validate_tool_arguments("band_get_memory", GetMemoryInput, {"memory_id": value})
+
+
+def test_path_id_normalization_preserves_text() -> None:
+    assert validate_tool_arguments(
+        "band_get_memory", GetMemoryInput, {"memory_id": "ABC_123-x"}
+    ) == {"memory_id": "ABC_123-x"}

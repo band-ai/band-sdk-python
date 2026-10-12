@@ -295,8 +295,11 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
             super().__init__(history_converter=None)
             self.count = 0
 
-        async def on_message(self, *args: Any, **kwargs: Any) -> None:
+        async def on_message(
+            self, msg: Any, tools: Any, *args: Any, **kwargs: Any
+        ) -> None:
             self.count += 1
+            await tools.no_reply()
 
         async def on_cleanup(self, room_id: str) -> None:
             return None

@@ -44,6 +44,8 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        McpHttpServerConfig,
+        McpServerConfig,
         PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
@@ -79,13 +81,17 @@ from band.converters.claude_sdk import (
     ClaudeSDKSessionState,
 )
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.defaultmodels import ANTHROPIC_MODEL
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin
 from band.core.types import (
     ApprovalMode,
@@ -101,10 +107,14 @@ from band.integrations.claude_sdk.dedup_tools import (
     DedupingAgentTools,
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
-from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
-from band.integrations.mcp.backends import (
-    BandMCPBackend,
-    create_band_mcp_backend,
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeSessionManager,
+    ClaudeSessionManagerStoppedError,
+)
+from band.integrations.mcp import (
+    BandMCPBackendSettings,
+    BandMCPTransport,
+    SharedBandMCPBackend,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -118,17 +128,17 @@ from band.runtime.decisions import (
 from band.runtime.formatters import format_tokens, strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
+    BAND_MCP_SERVER_NAME,
     BASE_TOOL_NAMES,
-    CHAT_ID_FIELD_NAME,
     MAX_INLINE_IMAGE_BYTES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
-    is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
-    missing_reply_error,
+    turn_effect,
 )
+from band.workspaces import RoomWorkspaces, WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -143,14 +153,6 @@ BAND_TASK_TOOLS: list[str] = mcp_tool_names(TASK_TOOL_NAMES)
 BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
-
-# Default model used when the caller does not specify one. Letting the npm
-# `claude` CLI auto-select its default fails under API-key auth: the CLI sends
-# the legacy `thinking.type.enabled` request shape, which current models reject
-# ("thinking.type.enabled is not supported for this model. Use
-# thinking.type.adaptive"), so the run returns an error result with no output.
-# Pinning a known-good model avoids that path; callers can override via `model=`.
-DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # claude_agent_sdk's stdio transport defaults max_buffer_size to 1 MiB and
 # fatally drops the whole CLI connection (not just the one tool call) if a
@@ -323,7 +325,8 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     Attributes:
         model: Full model ID or family alias (``"sonnet"``, ``"opus"``,
-            ``"haiku"``, ``"inherit"``). ``None`` pins ``DEFAULT_MODEL``.
+            ``"haiku"``, ``"inherit"``). ``None`` pins
+            ``band.core.defaultmodels.ANTHROPIC_MODEL``.
         fallback_model: Model the CLI uses when ``model`` is unavailable.
         custom_section: Extra instructions appended to the system prompt.
         max_thinking_tokens: Extended-thinking budget; ``None`` disables it.
@@ -331,7 +334,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
         permission_mode: Claude Code permission mode, forwarded to the CLI
             (see :class:`ClaudePermissionMode`). ``DONT_ASK`` cannot be
             combined with ``approvals``.
-        cwd: Existing working directory for Claude Code sessions.
+        cwd: Explicit shared working directory; omit for isolated room workspaces.
         setting_sources: Host settings the CLI loads (skills, subagents,
             settings under ``~/.claude`` and ``./.claude``). Empty by default
             so the agent's capabilities are defined by the adapter, not by
@@ -349,6 +352,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     model: str | None = None
     fallback_model: str | None = None
+    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
     custom_section: str | None = None
     max_thinking_tokens: PositiveInt | None = None
     effort: EffortLevel | None = None
@@ -359,6 +363,20 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     send_message_dedup_ttl_seconds: NonNegativeFloat = DEFAULT_DEDUP_TTL_SECONDS
     cli: ClaudeCLIOptions = Field(default_factory=ClaudeCLIOptions)
     approvals: ClaudeApprovalOptions | None = None
+
+    @field_validator("retention")
+    @classmethod
+    def _require_safe_retention(
+        cls, retention: RoomRetentionConfig
+    ) -> RoomRetentionConfig:
+        return require_disabled_retention(
+            retention,
+            reason=(
+                "Claude idle retention is unavailable: native idle and background-task "
+                "inventories do not account for asynchronous managed hooks; disconnect "
+                "can cancel that work."
+            ),
+        )
 
     @model_validator(mode="after")
     def _check_approvals_can_decide(self) -> Self:
@@ -555,14 +573,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         *,
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
         **features: Unpack[FeatureKwargs],
-    ):
+    ) -> None:
         """
         Initialize the Claude SDK adapter.
 
         Args:
             config: Session settings (model, permissions, CLI launch,
                 approvals, timeouts); see :class:`ClaudeSDKAdapterConfig`.
+            workspace_for_room: Optional room-to-absolute-directory resolver;
+                mutually exclusive with config.cwd.
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -578,11 +599,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             **features,
         )
         self.config = config or ClaudeSDKAdapterConfig()
+        if self.config.cwd is not None and workspace_for_room is not None:
+            raise ValueError("set either cwd or workspace_for_room, not both")
+        self._workspaces = (
+            RoomWorkspaces(workspace_for_room) if self.config.cwd is None else None
+        )
 
-        # Session manager and MCP server (created after start)
+        # Created in on_started.
         self._session_manager: ClaudeSessionManager | None = None
-        self._mcp_server = None
-        self._mcp_backend: BandMCPBackend | None = None
+
+        self._mcp = SharedBandMCPBackend(self._mcp_settings)
 
         # Per-room tools: the adapter's own sends use them directly, while the
         # MCP server's tool calls go through _mcp_room_tools (see _bind_mcp_tools).
@@ -597,8 +623,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
-        # Only custom tools that declared an effect let a turn with no Band
-        # terminal tool call still count as answered — see is_terminal_success.
+        # A declined custom tool settles the turn only by its declared effect
+        # (see _declined_the_reply).
         self._custom_effects = custom_tool_effects(self._custom_tools)
 
         # Approval flow state
@@ -617,8 +643,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # (ToolResultBlock only carries the id). Room-scoped rather than
         # turn-local: a resumed session can replay a result whose tool_use
         # streamed in an earlier, truncated turn, and that result must still
-        # resolve to its name to count as terminal work. Entries are popped
-        # as results arrive and the room's map is dropped in on_cleanup.
+        # be narrated under its name. Entries are popped as results arrive
+        # and the room's map is dropped in on_cleanup.
         self._pending_tool_names: dict[str, dict[str, str]] = {}
 
         # A turn runs as a detached task so a manual approval mid-turn can
@@ -647,10 +673,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
+        if self._session_manager is not None:
+            await self.cleanup_all()
 
-        # Create MCP server with self (provides tool access via _mcp_room_tools)
-        self._mcp_backend = await self._create_mcp_backend()
-        self._mcp_server = self._mcp_backend.server
+        await self._mcp.reopen()
+        mcp_backend = await self._mcp.ensure()
 
         # Generate system prompt with agent info
         system_prompt = generate_claude_sdk_agent_prompt(
@@ -660,17 +687,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             features=self.features,
         )
 
-        # Build SDK options. When the caller doesn't pin a model, default to a
-        # known-good one rather than the npm `claude` binary's auto-selection,
-        # which fails under API-key auth (see DEFAULT_MODEL). fallback_model
-        # stays None unless explicitly set.
-        resolved_model = self.config.model or DEFAULT_MODEL
+        # Always pin a model: the `claude` CLI's own pick sends the legacy
+        # `thinking.type.enabled` shape under API-key auth, which current
+        # models reject, so the run errors with no output.
+        resolved_model = self.config.model or ANTHROPIC_MODEL
         sdk_options = ClaudeAgentOptions(
             model=resolved_model,
             fallback_model=self.config.fallback_model,
             system_prompt=system_prompt,
-            mcp_servers={"band": self._mcp_server},
-            allowed_tools=[*self._mcp_backend.allowed_tools, TOOL_SEARCH],
+            allowed_tools=[*mcp_backend.allowed_tools, TOOL_SEARCH],
             # Same values as the SDK's PermissionMode (pinned by tests/adapters/claude_sdk/test_config.py).
             permission_mode=cast("PermissionMode", self.config.permission_mode),
             effort=self.config.effort,
@@ -718,6 +743,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
+            mcp_servers_factory=self._room_mcp_servers,
+            workspaces=self._workspaces,
         )
 
         logger.info(
@@ -730,25 +757,49 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             self._approval_label,
         )
 
-    async def _create_mcp_backend(self) -> BandMCPBackend:
-        """Create shared MCP backend that uses stored room tools."""
-        tool_definitions = list(
-            iter_tool_definitions(capabilities=self.features.capabilities)
-        )
-        backend = await create_band_mcp_backend(
-            kind="sdk",
-            tool_definitions=tool_definitions,
+    def _mcp_settings(self) -> BandMCPBackendSettings:
+        return BandMCPBackendSettings(
+            tool_definitions=list(
+                iter_tool_definitions(capabilities=self.features.capabilities)
+            ),
             get_tools=self._mcp_room_tools.get,
             additional_tools=self._custom_tools,
+            room_bound=True,
         )
 
-        logger.info(
-            "Band MCP SDK server created with %s tools (%s custom)",
-            len(backend.allowed_tools),
-            len(self._custom_tools),
-        )
+    def _room_mcp_servers(self, room_id: str) -> dict[str, McpServerConfig]:
+        """A room session's MCP servers: the Band endpoint bound to that room."""
+        if (backend := self._mcp.current) is None:
+            raise RuntimeError("Band MCP backend is not started")
+        return {
+            BAND_MCP_SERVER_NAME: McpHttpServerConfig(
+                type="http",
+                url=backend.endpoint(BandMCPTransport.HTTP, room_id),
+            )
+        }
 
-        return backend
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        if self.config.approvals is None:
+            return False
+        command = self._extract_command(msg.content)
+        if command is None:
+            return False
+        cmd, args = command
+        sender = {"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}
+        if cmd in _APPROVAL_CMDS:
+            await self._handle_approval_command(
+                tools=tools, room_id=msg.room_id, command=cmd, args=args, sender=sender
+            )
+        elif cmd == ClaudeSDKCommand.STATUS:
+            await self._handle_status_command(
+                tools=tools, room_id=msg.room_id, sender=sender
+            )
+        else:
+            return False
+        tools.turn.settle()
+        return True
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
@@ -767,7 +818,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         - Store tools for MCP server access
         - Get or create ClaudeSDKClient for this room
-        - Include chat_id in the message so Claude can pass it to tools
         - Stream response and log events (tools execute via MCP)
         """
         logger.debug("Handling message %s in room %s", msg.id, room_id)
@@ -777,48 +827,19 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        self._room_tools[room_id] = tools
-        await self._bind_mcp_tools(room_id, tools)
-
-        # Approval flow: track notify target and intercept local commands
+        running_turn = self._turn_tasks.get(room_id)
+        if running_turn is not None and not running_turn.done():
+            raise InputNotAccepted("The room already has an active Claude turn")
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
                 "id": msg.sender_id,
                 "name": msg.sender_name or msg.sender_type,
             }
-            command = self._extract_command(msg.content)
-            if command is not None:
-                cmd, args = command
-                sender = self._room_last_sender[room_id]
-                if cmd in _APPROVAL_CMDS:
-                    await self._handle_approval_command(
-                        tools=tools,
-                        room_id=room_id,
-                        command=cmd,
-                        args=args,
-                        sender=sender,
-                    )
-                    return
-                elif cmd == ClaudeSDKCommand.STATUS:
-                    await self._handle_status_command(
-                        tools=tools,
-                        room_id=room_id,
-                        sender=sender,
-                    )
-                    return
 
-        # A prior turn's background task (see _run_turn) may still be running
-        # this room's ClaudeSDKClient -- most commonly while it's parked on a
-        # manual approval. A second concurrent client.query() on the same
-        # session is unsafe, so refuse rather than race it (mirrors
-        # OpencodeAdapter's own "still processing" guard).
-        running_turn = self._turn_tasks.get(room_id)
-        if running_turn is not None and not running_turn.done():
-            await tools.send_message(
-                "Still processing the previous request in this room.",
-                mentions=[msg.sender_id] if msg.sender_id else None,
-            )
-            return
+        # The running turn's approvals and MCP calls keep their original tools.
+        self._room_tools[room_id] = tools
+        await self._bind_mcp_tools(room_id, tools)
+        await self._mcp.ensure()
 
         # The manager only resumes when it has to create the client: on
         # bootstrap, or after a retired client (see _retire_client).
@@ -826,43 +847,20 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             history.session_id if is_session_bootstrap else None
         ) or self._session_ids.get(room_id)
 
-        # Get or create Claude SDK client for this room (optionally resuming)
         try:
-            client = await self._session_manager.get_or_create_session(
-                room_id, resume_session_id=stored_session_id
+            client = await self._open_session(
+                manager=self._session_manager,
+                room_id=room_id,
+                resume_session_id=stored_session_id,
             )
-        except Exception as resume_exc:
-            if stored_session_id:
-                logger.warning(
-                    "Room %s: Session resume failed (session_id=%s): %s. "
-                    "Creating new session",
-                    room_id,
-                    stored_session_id,
-                    resume_exc,
-                )
-                try:
-                    client = await self._session_manager.get_or_create_session(
-                        room_id, resume_session_id=None
-                    )
-                except Exception:
-                    logger.exception(
-                        "Room %s: Fresh session creation also failed", room_id
-                    )
-                    await tools.send_failure(
-                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    raise
-            else:
-                logger.exception("Room %s: Session creation failed", room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
-
-        # Add chat_id context (Claude needs this for tool calls) -- the label
-        # must read "chat_id" (the model-facing name everywhere else), not
-        # the Python-side room_id it's built from.
-        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
+        except ClaudeSessionManagerStoppedError:
+            raise
+        except Exception:
+            logger.exception("Room %s: Session creation failed", room_id)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
 
         # Initialize history for this room on first message
         if is_session_bootstrap:
@@ -898,17 +896,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Inject participants message if changed
         if participants_msg:
-            messages_to_send.append(f"{room_context}[System]: {participants_msg}")
+            messages_to_send.append(f"[System]: {participants_msg}")
             logger.info("Room %s: Participants updated", room_id)
 
         # Inject contacts message if present
         if contacts_msg:
-            messages_to_send.append(f"{room_context}[System]: {contacts_msg}")
+            messages_to_send.append(f"[System]: {contacts_msg}")
             logger.info("Room %s: Contacts broadcast received", room_id)
 
-        # Add current message with room_id context
-        user_message = f"{room_context}{msg.format_for_llm()}"
-        messages_to_send.append(user_message)
+        messages_to_send.append(msg.format_for_llm())
 
         # Send combined message to Claude
         full_message = "\n\n".join(messages_to_send)
@@ -949,6 +945,29 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         finally:
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
+
+    @staticmethod
+    async def _open_session(
+        manager: ClaudeSessionManager, room_id: str, resume_session_id: str | None
+    ) -> ClaudeSDKClient:
+        """The room's client, starting a fresh session when the resume fails."""
+        try:
+            return await manager.get_or_create_session(
+                room_id, resume_session_id=resume_session_id
+            )
+        except ClaudeSessionManagerStoppedError:
+            raise
+        except Exception as resume_exc:
+            if not resume_session_id:
+                raise
+            logger.warning(
+                "Room %s: Session resume failed (session_id=%s): %s. "
+                "Creating new session",
+                room_id,
+                resume_session_id,
+                resume_exc,
+            )
+        return await manager.get_or_create_session(room_id, resume_session_id=None)
 
     async def _run_turn(
         self,
@@ -1142,7 +1161,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         so the next client resumes the conversation.
         """
         if self._session_manager:
-            await self._session_manager.cleanup_session(room_id)
+            await self._session_manager.cleanup_session(
+                room_id, release_workspace=False
+            )
 
     async def _invalidate_session(self, room_id: str) -> None:
         """Evict the cached session and client so the next message for this
@@ -1161,15 +1182,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # The room's pending-call map (see __init__) — persists across turns
         # so a result replayed by a resumed session still resolves its name.
         pending_tool_names = self._pending_tool_names.setdefault(room_id, {})
-        replied_this_turn = False
         async for sdk_message in client.receive_response():
             match sdk_message:
                 case AssistantMessage():
-                    replied_this_turn |= await self._on_assistant_message(
+                    await self._on_assistant_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 case UserMessage():
-                    replied_this_turn |= await self._on_user_message(
+                    await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 # The CLI announces every mode change in a status message; only
@@ -1189,28 +1209,23 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         self.config.permission_mode,
                     )
                 case ResultMessage():
-                    await self._on_turn_complete(
-                        sdk_message,
-                        room_id,
-                        tools,
-                        replied_this_turn=replied_this_turn,
-                    )
+                    await self._on_turn_complete(sdk_message, room_id, tools)
                     return
         # ``receive_response`` is documented to terminate only after its
         # ResultMessage. Reaching EOF first means the CLI transport died.
-        if replied_this_turn:
-            # The reply already reached the room — failing the turn would
-            # make the runtime redeliver the message and answer the user
-            # twice. Drop the dead session and treat the turn as done.
+        if tools.turn.complete:
+            # The turn already answered or did its work. Failing it would mark
+            # the message FAILED, which a later process or context runs again,
+            # repeating that work. Drop the dead session; the turn is done.
             logger.warning(
-                "Room %s: CLI stream ended without a result after the "
-                "reply was delivered — invalidating session",
+                "Room %s: CLI stream ended without a result after the turn "
+                "completed — invalidating session",
                 room_id,
             )
             await self._invalidate_session(room_id)
             return
-        # Nothing was delivered: use the normal dead-client path so the
-        # runtime marks this turn failed and the cached client is not reused.
+        # The turn is incomplete: use the normal dead-client path so the
+        # runtime marks it failed and the cached client is not reused.
         raise CLIConnectionError(self._stream_ended_without_result_error())
 
     async def _on_assistant_message(
@@ -1219,14 +1234,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
+    ) -> None:
         """Narrate one assistant message's blocks.
 
-        Returns True when a carried tool result was terminal work — results
-        normally arrive in user envelopes (see _on_user_message);
+        Tool results normally arrive in user envelopes (see _on_user_message);
         assistant-carried ones are accepted defensively.
         """
-        replied_this_turn = False
         for block in message.content:
             match block:
                 case TextBlock() if block.text:
@@ -1234,10 +1247,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 case ThinkingBlock() if block.thinking:
                     await self._narrate_thinking(block, room_id, tools)
                 case _:
-                    replied_this_turn |= await self._dispatch_tool_block(
+                    await self._dispatch_tool_block(
                         block, pending_tool_names, room_id, tools
                     )
-        return replied_this_turn
 
     async def _on_user_message(
         self,
@@ -1245,21 +1257,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
+    ) -> None:
         """Handle the tool_use/tool_result blocks the protocol delivers in
         user-type envelopes.
 
-        Returns True when any result was terminal work. ``content`` may also
-        be a plain prompt string, which carries neither.
+        ``content`` may also be a plain prompt string, which carries neither.
         """
         if not isinstance(message.content, list):
-            return False
-        replied_this_turn = False
+            return
         for block in message.content:
-            replied_this_turn |= await self._dispatch_tool_block(
-                block, pending_tool_names, room_id, tools
-            )
-        return replied_this_turn
+            await self._dispatch_tool_block(block, pending_tool_names, room_id, tools)
 
     async def _dispatch_tool_block(
         self,
@@ -1267,20 +1274,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
+    ) -> None:
         """Handle one ToolUseBlock/ToolResultBlock entry, shared by assistant-
-        and user-envelope message handling; any other block type is a no-op.
-        Returns True when the block was terminal work (a tool result)."""
+        and user-envelope message handling; any other block type is a no-op."""
         match block:
             case ToolUseBlock():
                 await self._on_tool_use(block, pending_tool_names, room_id, tools)
-                return False
             case ToolResultBlock():
-                return await self._on_tool_result(
-                    block, pending_tool_names, room_id, tools
-                )
-            case _:
-                return False
+                await self._on_tool_result(block, pending_tool_names, room_id, tools)
 
     async def _send_narration_event(
         self,
@@ -1337,10 +1338,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         room_id: str,
         tools: AgentToolsProtocol,
     ) -> None:
-        """Register a pending call (for the terminal-work check at turn end)
-        and narrate it. Shared by both envelopes a call can arrive in — the
-        protocol's assistant messages, and user messages when the call is
-        carried by a subagent/nested tool_use block."""
+        """Register a pending call (to name its result) and narrate it.
+
+        Shared by both envelopes a call can arrive in: the protocol's assistant
+        messages, and user messages carrying a subagent's nested tool_use block.
+        """
         # Bare name for the cross-adapter tool_call record (the SDK
         # namespaces our tools mcp__band__*; see _semantic_tool_name).
         tool_name = self._semantic_tool_name(block.name)
@@ -1379,10 +1381,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         sdk_message: ResultMessage,
         room_id: str,
         tools: AgentToolsProtocol,
-        *,
-        replied_this_turn: bool,
     ) -> None:
-        """Close out the turn: persist session id, emit usage, surface failure."""
+        """Close out the turn: persist session id, emit usage, surface failure.
+
+        A turn released early for an approval is judged here, at its real end;
+        any other turn is judged by ``run_judged_turn`` once ``on_message`` returns.
+        """
         logger.info(
             "Room %s: Complete - %sms, $%.4f",
             room_id,
@@ -1405,16 +1409,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 else None
             )
             detail = self._result_error_detail(sdk_message)
+            logger.warning("Room %s: %s", room_id, detail)
             await tools.send_failure(
                 AgentFailure(_PROVIDER, detail, code, sdk_message.errors)
             )
             raise TurnResultAlreadyReported(detail)
-        elif not replied_this_turn and not self._declined_the_reply(
-            sdk_message.permission_denials, notified
-        ):
-            detail = missing_reply_error("Claude SDK")
-            await tools.send_failure(AgentFailure(_PROVIDER, detail))
-            raise TurnResultAlreadyReported(detail)
+        if self._declined_the_reply(sdk_message.permission_denials, notified):
+            tools.turn.settle()
+        await judge_detached_turn(tools, room_id=room_id)
 
     def _declined_the_reply(
         self, permission_denials: list[Any] | None, notified: set[str] | None
@@ -1428,8 +1430,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         thing the CLI can't tell us — which of those denials actually reached
         the room as a decline notice (see _record_notified_decline). A denial
         only explains the silence when it was both notified and the declined
-        tool is what would have delivered the reply (is_terminal_success) —
-        a declined side tool like Bash still leaves the turn's question
+        tool's call would have done the turn's work (``turn_effect(...).did_work``)
+        — a declined side tool like Bash still leaves the turn's question
         unanswered.
         """
         if not notified:
@@ -1446,9 +1448,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # tool is namespaced (see _semantic_tool_name) — strip it before
             # comparing, same as every other tool-name check in this adapter.
             tool_name = self._semantic_tool_name(raw_tool_name)
-            if is_terminal_success(
-                tool_name, succeeded=True, custom_effects=self._custom_effects
-            ):
+            if turn_effect(tool_name, custom_effects=self._custom_effects).did_work:
                 return True
         return False
 
@@ -1488,17 +1488,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         pending_tool_names: dict[str, str],
         room_id: str,
         tools: AgentToolsProtocol,
-    ) -> bool:
-        """Narrate one tool result and report whether it was terminal work.
+    ) -> None:
+        """Narrate one tool result under its call's name.
 
         Shared by both envelopes a result can arrive in: user-type messages
         (the protocol shape) and assistant messages (accepted defensively).
-        Returns True when the finished call counts as the turn's productive
-        work (see is_terminal_success) — i.e. the agent already answered.
         """
         result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
         await self._narrate_tool_result(block, result_tool_name, room_id, tools)
-        return self._tool_result_is_terminal(block, result_tool_name)
 
     async def _narrate_tool_result(
         self,
@@ -1531,24 +1528,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             message_type="tool_result",
         )
 
-    def _tool_result_is_terminal(
-        self, block: ToolResultBlock, result_tool_name: str | None
-    ) -> bool:
-        """Whether this finished call counts as the turn's productive work."""
-        return is_terminal_success(
-            result_tool_name,
-            succeeded=not block.is_error,
-            custom_effects=self._custom_effects,
-        )
-
     @staticmethod
     def _stream_ended_without_result_error() -> str:
         """Room-visible detail when the CLI stream ends without a ResultMessage.
 
         Distinct from ``_result_error_detail`` (a completed turn whose
-        ResultMessage reports failure) and ``missing_reply_error`` (a completed
-        turn that never called a reply tool): this turn never reached a
-        terminal message at all, e.g. the CLI subprocess exited or its stdout
+        ResultMessage reports failure): this turn never reached a terminal
+        message at all, e.g. the CLI subprocess exited or its stdout
         closed mid-turn.
         """
         return (
@@ -1610,10 +1596,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             await self._cancel_turn(room_id)
         if self._session_manager:
             await self._session_manager.stop()
-        if self._mcp_backend:
-            await self._mcp_backend.stop()
-            self._mcp_backend = None
-            self._mcp_server = None
+        await self._mcp.close(final=True)
         self._room_tools.clear()
         self._mcp_room_tools.clear()
         self._session_context.clear()
@@ -1632,7 +1615,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     def _semantic_tool_name(sdk_tool_name: str) -> str:
         """The bare tool name for platform/user-facing records.
 
-        claude_sdk exposes band + custom tools through an in-process MCP server, so
+        claude_sdk exposes band + custom tools through its Band MCP server, so
         the Claude Agent SDK namespaces them as ``mcp__band__<tool>``. The platform
         ``tool_call`` event and the approval UX are cross-adapter, semantic records
         where every other adapter uses the bare name, so strip our own server's
@@ -1721,7 +1704,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         whether a missing-reply guard still applies.
         """
         try:
-            await tools.send_message(message, mentions=mentions)
+            await tools.send_notice(message, mentions=mentions)
             return True
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
@@ -1803,7 +1786,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         mention = [requester["id"]] if requester else None
         if tools:
             try:
-                await tools.send_message(
+                await tools.send_notice(
                     APPROVAL_REQUESTED_TEMPLATE.format(summary=summary, token=token),
                     mentions=mention,
                 )
@@ -1819,7 +1802,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # The request has been posted (or there was nowhere to post it) --
         # either way, on_message must return now so Band's room loop can
-        # dispatch the reply that will resolve this wait.
+        # dispatch the reply that will resolve this wait. The turn is then
+        # judged at its real end (see _on_turn_complete).
+        if tools:
+            tools.turn.detach()
         self._release_turn(room_id)
 
         try:
@@ -1932,7 +1918,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # --- /approvals: list pending ---
         if command == ClaudeSDKCommand.APPROVALS:
             if not (open_entries := pending.unclaimed()):
-                await tools.send_message("No pending approvals.", mentions=mention)
+                await tools.send_notice("No pending approvals.", mentions=mention)
                 return
             lines = ["Pending approvals:"]
             now = datetime.now(UTC)
@@ -1941,12 +1927,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 lines.append(
                     f"- `{entry.token}`: {entry.payload.summary} ({age_s}s ago)"
                 )
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await tools.send_notice("\n".join(lines), mentions=mention)
             return
 
         # --- /approve [token] | /decline [token] ---
         if not is_authorized_sender(self._approvals.authorized_senders, sender["id"]):
-            await tools.send_message(
+            await tools.send_notice(
                 APPROVAL_UNAUTHORIZED_MESSAGE,
                 mentions=mention,
             )
@@ -1957,12 +1943,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if not token:
             match open_tokens:
                 case []:
-                    await tools.send_message("No pending approvals.", mentions=mention)
+                    await tools.send_notice("No pending approvals.", mentions=mention)
                     return
                 case [only]:
                     token = only
                 case _:
-                    await tools.send_message(
+                    await tools.send_notice(
                         "Multiple pending approvals — please specify a token: "
                         + format_tokens(open_tokens),
                         mentions=mention,
@@ -1970,7 +1956,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                     return
 
         if (selected := pending.get(token)) is None:
-            await tools.send_message(
+            await tools.send_notice(
                 APPROVAL_UNKNOWN_TOKEN_TEMPLATE.format(
                     token=token, available=format_tokens(open_tokens) or "none"
                 ),
@@ -1979,7 +1965,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             return
 
         if pending.try_claim(token) is None:
-            await tools.send_message(
+            await tools.send_notice(
                 f"Approval `{token}` is no longer pending.", mentions=mention
             )
             return
@@ -2015,7 +2001,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             f"- active_sessions: {session_count}",
             f"- session_id: `{session_id}`",
         ]
-        await tools.send_message("\n".join(lines), mentions=[sender["id"]])
+        await tools.send_notice("\n".join(lines), mentions=[sender["id"]])
 
     # ------------------------------------------------------------------
     # Approval helpers

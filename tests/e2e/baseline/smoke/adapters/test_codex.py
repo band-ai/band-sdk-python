@@ -13,6 +13,9 @@ Run with:
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
@@ -21,17 +24,76 @@ from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.smoke.samples.approvals import (
+    DIALECTS,
+    AgentSetup,
+    Outcome,
+    marker_command,
+    written_lines,
+)
+from tests.e2e.baseline.smoke.samples.codexpeer import (
+    NATIVE_DEADLINE_S,
+    ShellPeer,
+    closing_reply,
+    native_client,
+    required_approval,
+    shell_peer,
+    start_shell_turn,
+)
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     REPLY_PROMPT,
     reasoning_joke_instruction,
     unique_marker,
 )
+from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager, running_agent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 PLACEHOLDER_THOUGHTS = ("(reasoning)", "(plan)")
+
+
+@lane(Lane.BACKENDS)
+@requires(Dep.CODEX_CLI)
+@pytest.mark.parametrize(
+    "outcome", [Outcome.APPROVE, Outcome.DECLINE], ids=["approve", "decline"]
+)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_codex_shell_approval_is_required(
+    baseline_settings: BaselineSettings,
+    tmp_path: Path,
+    outcome: Outcome,
+) -> None:
+    """A non-escalated write must ask before its effect, even when declined."""
+    workdir = tmp_path.resolve()
+    marker, done = unique_marker("write"), unique_marker("closed")
+    target = workdir / "approval.txt"
+    adapter = DIALECTS[Adapter.CODEX].build(
+        baseline_settings,
+        AgentSetup(workdir, NATIVE_DEADLINE_S),
+    )
+    assert isinstance(adapter, CodexAdapter)
+    peer = ShellPeer(marker_command(marker, target), workdir, done)
+    async with (
+        shell_peer(peer) as url,
+        native_client(adapter.config, workdir / "home", workdir, url) as client,
+    ):
+        async with asyncio.timeout(NATIVE_DEADLINE_S):
+            await start_shell_turn(client, adapter.config, workdir)
+            approval = await required_approval(client)
+            assert not target.exists(), "Shell write occurred before approval"
+            assert approval.id is not None
+            decision = "accept" if outcome is Outcome.APPROVE else "decline"
+            await client.respond(approval.id, {"decision": decision})
+            reply, extra_approvals = await closing_reply(client)
+    assert peer.calls == 1
+    assert extra_approvals == 0, "One command requested more than one approval"
+    assert reply == done
+    if outcome is Outcome.APPROVE:
+        assert written_lines(target) == [marker]
+    else:
+        assert not target.exists(), "Declined shell write was executed"
 
 
 @lane(Lane.BACKENDS)  # bespoke config exposes no framework; pin scheduling to backends

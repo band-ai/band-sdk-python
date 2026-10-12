@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Literal, Self, cast
+from typing import ClassVar, Literal, Self, cast
 
 from acp.schema import (
     AcceptElicitationResponse,
@@ -80,6 +80,7 @@ class OmpACPCollectingClient(ACPCollectingClient):
             chunk.tool.name,
             chunk.tool.arguments,
             self._own_tool_names,
+            kind=getattr(update, "kind", None),
         )
         if name == chunk.tool.name and args == chunk.tool.arguments:
             return chunk
@@ -102,7 +103,7 @@ class OmpACPAdapterConfig(ACPClientAdapterConfig):
             ``"yolo"`` gives the agent full access to its host.
         command: The ``omp acp`` launch command; approval flags other than
             ``approval_mode`` are rejected.
-        model: OMP's provider-qualified model (e.g. ``openai/gpt-5.4-mini``),
+        model: OMP's provider-qualified model (e.g. ``openai/gpt-6-luna``),
             passed as OMP's ``--model`` launch flag rather than selected from
             the session's catalog.
         api_key: Passed in the env var of ``model``'s provider; needs ``model``.
@@ -110,6 +111,11 @@ class OmpACPAdapterConfig(ACPClientAdapterConfig):
         use_unstable_protocol: Always on: OMP asks for tool approval through
             unstable elicitation forms.
     """
+
+    retention_unavailable_reason: ClassVar[str] = (
+        "OMP ACP pending-work and prompt-idle signals omit suppressed or acknowledged "
+        "background jobs that shutdown cancels"
+    )
 
     approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
     command: tuple[str, ...] = DEFAULT_OMP_ACP_COMMAND

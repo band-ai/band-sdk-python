@@ -57,7 +57,7 @@ class TestDetection:
 
 class TestRehydrationDisabled:
     async def test_bootstrap_run_input_omits_rehydrated_history(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         raw = format_history_for_llm(
             [
@@ -69,7 +69,10 @@ class TestRehydrationDisabled:
             exclude_id=sample_platform_message.id,
         )
         adapter, agent = await make_started_adapter(
-            RunOutput(content="ack"), add_history_to_context=True, db=object()
+            RunOutput(content="ack"),
+            add_history_to_context=True,
+            db=object(),
+            replies_through=tools,
         )
 
         await adapter.on_event(
@@ -78,6 +81,7 @@ class TestRehydrationDisabled:
                 raw,
                 is_session_bootstrap=True,
                 participants_msg="Alice and Bob are here",
+                tools=tools,
             )
         )
 
@@ -89,7 +93,7 @@ class TestRehydrationDisabled:
         ]
 
     async def test_second_turn_does_not_carry_over_band_transcript(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         turn = RunOutput(
             content="a1",
@@ -99,14 +103,18 @@ class TestRehydrationDisabled:
             ],
         )
         adapter, agent = await make_started_adapter(
-            turn, add_history_to_context=True, db=object()
+            turn, add_history_to_context=True, db=object(), replies_through=tools
         )
 
         await adapter.on_event(
-            make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
+            make_agent_input(
+                sample_platform_message, [], is_session_bootstrap=True, tools=tools
+            )
         )
         await adapter.on_event(
-            make_agent_input(sample_platform_message, [], is_session_bootstrap=False)
+            make_agent_input(
+                sample_platform_message, [], is_session_bootstrap=False, tools=tools
+            )
         )
 
         # The follow-up turn sends only the current message: Agno supplies prior
@@ -117,7 +125,7 @@ class TestRehydrationDisabled:
 
 class TestStorePreserved:
     async def test_transcript_is_still_stored_when_guard_on(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         turn = RunOutput(
             content="a1",
@@ -127,12 +135,14 @@ class TestStorePreserved:
             ],
         )
         adapter, _ = await make_started_adapter(
-            turn, add_history_to_context=True, db=object()
+            turn, add_history_to_context=True, db=object(), replies_through=tools
         )
 
         room_id = sample_platform_message.room_id
         await adapter.on_event(
-            make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
+            make_agent_input(
+                sample_platform_message, [], is_session_bootstrap=True, tools=tools
+            )
         )
 
         # "Store the history, just don't rehydrate it": _persist_turn still records

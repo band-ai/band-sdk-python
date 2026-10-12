@@ -39,7 +39,7 @@ async def main() -> None:
         StrandsAdapterConfig(
             custom_section="You are a helpful assistant. Be concise and friendly."
         ),
-        llm=OpenAIModel(model_id="gpt-5.4-mini"),
+        llm=OpenAIModel(model_id="gpt-6-luna"),
     )
 
     logger.info("Starting Strands agent...")

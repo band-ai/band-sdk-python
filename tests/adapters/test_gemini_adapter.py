@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,8 +15,25 @@ from google.genai.errors import ServerError
 from pydantic import BaseModel, Field, ValidationError
 
 from band.adapters.gemini import GeminiAdapter, GeminiAdapterConfig
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+)
 from band.core.types import Emit, PlatformMessage, ToolEventKey
+from band.runtime.tools import BandTool
+from band.testing import (
+    FakeAgentTools,
+    reported_failures,
+)
+from tests.adapters.genaikit import (
+    ModelFailureCases,
+    PlatformSchemaFakeTools,
+    text_reply,
+    tool_call,
+)
+from tests.framework_conformance.turnprobes import (
+    CUSTOM_TOOL_DECLARATIONS,
+    turn_input,
+)
 
 
 @pytest.fixture
@@ -70,6 +89,24 @@ def _response_with_function_call(
         )
     ]
     return response
+
+
+@pytest.fixture
+def scripted_adapter() -> Callable[..., Awaitable[GeminiAdapter]]:
+    """Build a started adapter whose client returns ``responses`` in order."""
+
+    async def build(
+        *responses: types.GenerateContentResponse, **features: Any
+    ) -> GeminiAdapter:
+        adapter = GeminiAdapter(**features)
+        await adapter.on_started("TestBot", "Test bot")
+        adapter.client = MagicMock()
+        adapter.client.aio.models.generate_content = AsyncMock(
+            side_effect=list(responses)
+        )
+        return adapter
+
+    return build
 
 
 class TestConfig:
@@ -336,6 +373,22 @@ class TestErrorReporting:
         assert failure.detail == "backend overloaded"
 
 
+class TestModelFailuresReturnedAsData(ModelFailureCases):
+    PROVIDER = "gemini"
+
+    @pytest.mark.asyncio
+    async def test_reply_cut_off_at_max_tokens_completes(self, scripted_adapter):
+        adapter = await scripted_adapter(
+            tool_call(BandTool.SEND_MESSAGE, {"content": "Hi", "mentions": ["Alice"]}),
+            text_reply("Anything else", finish=types.FinishReason.MAX_TOKENS),
+        )
+        tools = PlatformSchemaFakeTools()
+
+        await adapter.on_event(turn_input(tools))
+
+        assert reported_failures(tools) == []
+
+
 class TestRetries:
     @pytest.mark.asyncio
     async def test_retries_transient_server_errors(self):
@@ -431,6 +484,46 @@ class TestCustomTools:
         assert function_response is not None
         assert function_response.response == {"output": "hello"}
         mock_tools.execute_tool_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("declare", "complete"), CUSTOM_TOOL_DECLARATIONS)
+    async def test_custom_tool_records_its_effect_on_the_room_turn(
+        self, sample_message, declare: Callable[..., Any], complete: bool
+    ):
+        class FileInput(BaseModel):
+            """File the report."""
+
+            note: str
+
+        @declare
+        async def file_report(inp: FileInput) -> str:
+            return "filed"
+
+        tools = FakeAgentTools(room_id="room-123")
+        adapter = GeminiAdapter(additional_tools=[(FileInput, file_report)])
+        await adapter.on_started("TestBot", "Test bot")
+
+        with patch.object(
+            adapter,
+            "_call_gemini",
+            AsyncMock(
+                side_effect=[
+                    _response_with_function_call("file", {"note": "go"}, "call_1"),
+                    _response_with_text(""),
+                ]
+            ),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert tools.turn.complete is complete
 
 
 class TestReadRoomFileImagePassthrough:

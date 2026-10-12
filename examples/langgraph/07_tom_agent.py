@@ -44,7 +44,7 @@ async def main() -> None:
     # Create adapter with Tom's character prompt
     adapter = LangGraphAdapter(
         LangGraphAdapterConfig(custom_section=generate_tom_prompt("Tom")),
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-6-luna")),
         checkpointer=InMemorySaver(),
     )
 

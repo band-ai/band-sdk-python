@@ -123,7 +123,7 @@ class TestIterToolDefinitionsSurfaceFilter:
 
         Regression guard for C1: existing callers (``claude_sdk``,
         ``opencode``, ``acp`` client adapter) pipe the result straight
-        into ``create_band_mcp_backend`` without re-filtering, so the
+        into ``BandMCPBackendSettings`` without re-filtering, so the
         default must not leak human tools into agent-shaped backends.
         """
         defs = iter_tool_definitions()

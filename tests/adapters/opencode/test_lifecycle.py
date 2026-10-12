@@ -7,7 +7,10 @@ from contextlib import suppress
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from band.adapters.opencode import OpencodeAdapter
+from band.core.exceptions import InputNotAccepted
 from band.core.types import (
     Emit,
     TurnUsage,
@@ -15,19 +18,19 @@ from band.core.types import (
 from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, events_of_type
+from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
-    FakeMCPBackend,
     FakeOpencodeClient,
     event_message_updated,
     event_session_idle,
     event_text_part,
-    make_fake_mcp_backend_factory,
     make_platform_message,
     run_single_turn,
     tools_protocol,
     wait_for,
 )
 from tests.adapters.usage_events import recorded_usage_payloads
+from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 async def test_watch_task_drains_the_turn_that_started_it() -> None:
@@ -68,7 +71,8 @@ async def test_watch_task_drains_the_turn_that_started_it() -> None:
         await orig_prompt(*args, **kwargs)
 
     with patch.object(fake_client, "prompt_async", racing_prompt):
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -122,7 +126,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     )
     assert next_turn.usage_by_message == {}
 
-    await adapter._emit_turn_usage(first_turn)
+    await adapter._emit_turn_usage(room_state.room_id, first_turn)
 
     usage_payloads = recorded_usage_payloads(tools)
     assert usage_payloads == [
@@ -218,7 +222,8 @@ async def test_cleanup_is_idempotent(make_adapter, tools) -> None:
     adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -238,7 +243,7 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
 ) -> None:
     stop_started = asyncio.Event()
     stop_release = asyncio.Event()
-    fake_backend = FakeMCPBackend(
+    fake_backend = FakeBandMCPBackend(
         stop_started=stop_started,
         stop_release=stop_release,
     )
@@ -266,12 +271,10 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
     )
     tools = FakeAgentTools()
 
-    with patch(
-        "band.adapters.opencode.adapter.create_band_mcp_backend",
-        make_fake_mcp_backend_factory(fake_backend),
-    ):
+    with backends_created_by(fake_backend):
         await adapter.on_started("OpenCode Agent", "A coding agent")
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(room_id="room-1"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -284,7 +287,8 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
         cleanup_task = asyncio.create_task(adapter.on_cleanup("room-1"))
         await wait_for(stop_started.is_set)
 
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(room_id="room-2", content="next room"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -306,7 +310,7 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
 
 
 async def test_concurrent_message_rejected(make_adapter, tools) -> None:
-    """Sending a second message while a turn is active returns an error."""
+    """An active turn definitively rejects another ordinary provider request."""
     # First prompt never completes (no session.idle event)
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
@@ -318,7 +322,8 @@ async def test_concurrent_message_rejected(make_adapter, tools) -> None:
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_task = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="first"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -332,19 +337,19 @@ async def test_concurrent_message_rejected(make_adapter, tools) -> None:
     await wait_for(lambda: len(fake_client.prompt_calls) > 0)
 
     # Send second message while first is active
-    await adapter.on_message(
-        make_platform_message(content="second"),
-        tools_protocol(tools),
-        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=False,
-        room_id="room-1",
-    )
+    with pytest.raises(InputNotAccepted):
+        await deliver_message(
+            adapter,
+            make_platform_message(content="second"),
+            tools_protocol(tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
 
-    # Second message should get rejected with "still processing" error
-    error_events = events_of_type(tools, "error")
-    assert any("still processing" in e["content"].lower() for e in error_events)
+    assert events_of_type(tools, "error") == []
     assert len(fake_client.prompt_calls) == 1
 
     # Clean up: cancel the first task
@@ -387,7 +392,8 @@ async def test_two_rooms_active_concurrently(tools) -> None:
 
     async def run_room(room_number: int, room_tools: FakeAgentTools) -> None:
         room_id = f"room-{room_number}"
-        await adapter.on_message(
+        await deliver_message(
+            adapter,
             make_platform_message(room_id=room_id, content=f"hello room {room_number}"),
             tools_protocol(room_tools),
             OpencodeSessionState(),
@@ -475,7 +481,8 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     interrupted = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="long task"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -495,7 +502,8 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
     assert tools.messages_sent == [], "posted the reply the user interrupted"
 
     # The room takes the next message instead of answering "still processing".
-    await adapter.on_message(
+    await deliver_message(
+        adapter,
         make_platform_message(content="next"),
         tools_protocol(tools),
         OpencodeSessionState(),
@@ -505,7 +513,7 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
         room_id="room-1",
     )
 
-    assert [m["content"] for m in tools.messages_sent] == ["after the interrupt"]
+    assert tools.chat == ["after the interrupt"]
 
     await adapter.on_cleanup("room-1")
 
@@ -536,7 +544,8 @@ async def test_double_stop_while_abandon_awaits_abort_still_clears_turn_state(
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     interrupted = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(content="long task"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -609,7 +618,8 @@ async def test_teardown_does_not_disconnect_a_successor_registration(tools) -> N
     await outgoing.disconnect_started.wait()
 
     successor = asyncio.create_task(
-        adapter.on_message(
+        deliver_message(
+            adapter,
             make_platform_message(room_id="room-2", content="next room"),
             tools_protocol(tools),
             OpencodeSessionState(),
@@ -640,23 +650,28 @@ async def test_shutdown_rechecks_for_room_arriving_after_cleanup_decision(
         prompt_event_sequences=[[event_session_idle("sess-1")]]
     )
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+    backend = FakeBandMCPBackend()
 
-    await adapter.on_started("OpenCode Agent", "A coding agent")
-    await adapter.on_message(
-        make_platform_message(room_id="room-1"),
-        tools_protocol(tools),
-        OpencodeSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
+    with backends_created_by(backend):
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await deliver_message(
+            adapter,
+            make_platform_message(room_id="room-1"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
 
-    await adapter._get_or_create_room_state("room-2")
-    await adapter._shutdown_client()
+        await adapter._get_or_create_room_state("room-2")
+        await adapter._shutdown_client()
 
-    assert not fake_client.closed
-    assert fake_client.disconnected_mcp_servers == []
+        assert not fake_client.closed
+        assert fake_client.disconnected_mcp_servers == []
 
-    await adapter.on_cleanup("room-1")
-    await adapter.on_cleanup("room-2")
+        await adapter.on_cleanup("room-1")
+        await adapter.on_cleanup("room-2")
+
+    assert backend.stop_calls == 1

@@ -263,7 +263,6 @@ async def main() -> None:
             ),
             include_base_instructions=True,
             emit_turn_task_markers=codex_turn_markers,
-            fallback_send_agent_text=True,
             experimental_api=True,
         ),
         emit=Emit.TASK_EVENTS,

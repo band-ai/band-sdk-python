@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from band.core.types import ContactRequestSentStatus
 from band.core.validation import at_least_one_of
+from band.runtime.tools.inputs.identifiers import ResourceId
 
 
 class ListMyContactsInput(BaseModel):
@@ -68,7 +69,7 @@ class ListSentContactRequestsInput(BaseModel):
 class ApproveContactRequestInput(BaseModel):
     """Approve a received contact request."""
 
-    request_id: str = Field(
+    request_id: ResourceId = Field(
         ..., description="The contact request ID to approve (required)."
     )
 
@@ -76,7 +77,7 @@ class ApproveContactRequestInput(BaseModel):
 class RejectContactRequestInput(BaseModel):
     """Reject a received contact request."""
 
-    request_id: str = Field(
+    request_id: ResourceId = Field(
         ..., description="The contact request ID to reject (required)."
     )
 
@@ -84,7 +85,7 @@ class RejectContactRequestInput(BaseModel):
 class CancelContactRequestInput(BaseModel):
     """Cancel a sent contact request."""
 
-    request_id: str = Field(
+    request_id: ResourceId = Field(
         ..., description="The contact request ID to cancel (required)."
     )
 

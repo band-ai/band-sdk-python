@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from band.testing import reported_failures
+from band.core.protocols import TurnResultAlreadyReported
+from band.testing import MISSING_REPLY_FAILURE, failure_reports, reported_failures
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
     make_started_adapter,
     requires_copilot_sdk,
+    run_event,
     run_message,
 )
 
@@ -62,16 +64,18 @@ class TestTurnFailure:
         assert client.sessions[-1].prompts  # and the turn ran
 
     @pytest.mark.asyncio
-    async def test_empty_final_text_raises_no_reply(self):
-        """An empty final assistant message is a failed turn, not a silent no-op."""
+    async def test_blank_final_text_is_a_missing_reply(self):
+        """A blank final assistant message relays nothing, so the shared
+        verdict reports the turn instead of letting it pass silently."""
         client = FakeCopilotClient(reply_content="   ")
         adapter = await make_started_adapter(client)
         tools = ToolSchemaFakeTools()
 
-        with pytest.raises(RuntimeError, match="no reply"):
-            await run_message(adapter, tools)
+        with pytest.raises(TurnResultAlreadyReported):
+            await run_event(adapter, tools)
 
         assert not tools.messages_sent
+        assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
 
     @pytest.mark.asyncio
     async def test_session_creation_failure_is_reported(self):

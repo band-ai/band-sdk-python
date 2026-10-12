@@ -91,6 +91,10 @@ class Events(ContentAssertions, list[ChatMessage]):
             and not is_usage_event(message.metadata)
         )
 
+    def excluding(self, *event_ids: str) -> Events:
+        """Keep events other than the known, intended room posts."""
+        return Events(event for event in self if event.id not in event_ids)
+
     def present(self) -> bool:
         """True if any event of this type was captured."""
         return len(self) > 0
@@ -105,6 +109,15 @@ class Events(ContentAssertions, list[ChatMessage]):
             f"a {self.MESSAGE_TYPE.value} event" if self.MESSAGE_TYPE else "an event"
         )
         assert_nonempty(len(self), label=label)
+
+    def assert_none(self) -> None:
+        """Assert no event of this type was emitted (e.g. no error on a clean turn)."""
+        if self:
+            label = self.MESSAGE_TYPE.value if self.MESSAGE_TYPE else "matching"
+            observed = [event.content for event in self]
+            raise AssertionError(
+                f"expected no {label} event, but found {len(self)}: {observed}"
+            )
 
 
 class Thoughts(Events):

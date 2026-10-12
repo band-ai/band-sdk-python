@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_check
 from band_sdk_core import AgentFailure
 
 from band.core.content import has_visible_content
+from band.core.exceptions import ProviderRunError
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
         TaskLifecycleState,
         TaskListState,
     )
+    from band.core.turn import Turn
     from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
@@ -53,6 +55,18 @@ GENERIC_PROVIDER_FAILURE_MESSAGE = (
 )
 
 
+def generic_provider_failure(provider: str, error: BaseException) -> AgentFailure:
+    """The room-safe failure for a caught provider error: the generic message,
+    plus the coarse code when the provider returned the failure as data."""
+    code = error.code if isinstance(error, ProviderRunError) else None
+    return AgentFailure(provider, GENERIC_PROVIDER_FAILURE_MESSAGE, code)
+
+
+# ``AgentFailure.provider`` for a turn failure the runtime reports on the
+# adapter's behalf.
+TURN_FAILURE_PROVIDER = "band-runtime"
+
+
 class FailureMetadataKey(StrEnum):
     """Room metadata key used by the shared failure event contract."""
 
@@ -62,7 +76,8 @@ class FailureMetadataKey(StrEnum):
 class TurnResultAlreadyReported(Exception):
     """A terminal turn failure that a nested handler already reported via
     ``send_failure``. An adapter's outer ``except`` re-raises this without
-    reporting the same failure a second time."""
+    reporting the same failure a second time. The runtime reports the turn
+    anyway when that ``send_failure`` did not post."""
 
 
 def to_failure_event(failure: AgentFailure) -> tuple[str, dict[str, Any]]:
@@ -150,10 +165,19 @@ class AgentToolsProtocol(Protocol):
     Implementations: AgentTools (default), FakeAgentTools (testing)
     """
 
+    turn: Turn
+    """This turn's ledger; every tool call records its effect here."""
+
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> Any:
-        """Send a message to the chat room."""
+        """Send a message to the chat room. It counts as the turn's reply."""
+        ...
+
+    async def send_notice(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> Any:
+        """Post the adapter's own message; it never counts as the turn's reply."""
         ...
 
     async def send_event(
@@ -471,7 +495,8 @@ class Preprocessor(Protocol):
     Converts platform events to AgentInput.
 
     Most users use DefaultPreprocessor.
-    Power users can implement custom preprocessing.
+    Power users can implement custom preprocessing. Stateful context must stay
+    owed until ``AgentInput.commit_context`` is called to support rejected input.
 
     Note: PlatformEvent is a tagged union type:
         PlatformEvent = MessageEvent | RoomAddedEvent | RoomRemovedEvent | ...

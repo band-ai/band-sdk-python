@@ -71,6 +71,7 @@ def test_detection_finds_the_tests_that_only_the_crewai_venv_can_run() -> None:
         Path("tests/adapters/test_crewai_flow_phase3.py"),
         Path("tests/integrations/test_crewai_flow_real_sdk.py"),
         Path("tests/integrations/test_crewai_real_tools.py"),
+        Path("tests/integrations/test_crewai_completion.py"),
         Path("tests/test_capability_gating_e2e.py"),
         Path("tests/framework_conformance/test_files_image_passthrough_matrix.py"),
     }

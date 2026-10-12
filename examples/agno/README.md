@@ -85,7 +85,7 @@ from band.adapters import AgnoAdapter
 
 # You own the Agno agent — model, instructions, tools.
 agno_agent = AgnoAgent(
-    model=Claude(id="claude-sonnet-4-6"),
+    model=Claude(id="claude-sonnet-5-5"),
     instructions="You are a helpful assistant. Be concise and friendly.",
 )
 
@@ -105,7 +105,7 @@ from agno.models.openai import OpenAIChat
 from band.adapters import AgnoAdapter
 
 agno_agent = AgnoAgent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-6-luna"),
     instructions="You are a helpful assistant. Be concise and friendly.",
 )
 adapter = AgnoAdapter(agent=agno_agent)

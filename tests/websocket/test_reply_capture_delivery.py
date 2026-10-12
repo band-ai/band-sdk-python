@@ -112,8 +112,9 @@ async def test_wait_for_processed_resolves_on_processed() -> None:
 
 
 async def test_wait_for_processed_waits_through_failed_then_succeeds() -> None:
-    """FAILED is transient (the platform retries), so the barrier must not give
-    up on it — it resolves only once PROCESSED arrives."""
+    """FAILED is not terminal (a new agent context can run the message again),
+    so the barrier must not give up on it — it resolves only once PROCESSED
+    arrives."""
     capture = ReplyCapture("room-1", deadline_s=2)
     waiter = asyncio.create_task(capture.wait_for_processed(MSG, AGENT))
     await asyncio.sleep(0)

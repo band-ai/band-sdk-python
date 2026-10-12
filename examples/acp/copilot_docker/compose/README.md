@@ -85,8 +85,9 @@ and calls Band tools via band-mcp.
   approved through ACP). Drop the flag to gate built-in shell/file tools; note
   enterprise policy can disable allow-all flags at startup.
 - **Room routing.** band-mcp's chat/message tools take a `chat_id` argument per
-  call (scoped within that one identity) — the same argument name the SDK's
-  in-process `inject_band_tools` path advertises.
+  call (scoped within that one identity), so the adapter states the room's
+  `chat_id` in each session's first prompt. The SDK's `inject_band_tools` path
+  binds each session to its room's endpoint instead, so its tools take none.
 - **Platform base URL.** band-mcp (`BAND_BASE_URL`) defaults to `https://app.band.ai`;
   the compose file points it at `BAND_REST_URL` (default `https://app.band.ai`).
 

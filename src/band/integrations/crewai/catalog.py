@@ -118,6 +118,7 @@ class ToolSpec:
         args = self.arguments(kwargs)
         if self.reports:
             await call.reporter.report_call(call.tools, self.name, args)
+            args = validate_tool_arguments(self.name, self.args_schema, args)
         result = await self.body(call, **args)
         # Serialize once, before reporting: report_result's json.dumps has no
         # default=str, so a body that returns a raw Pydantic/Fern model
@@ -469,7 +470,12 @@ async def _read_room_file(call: Invocation, *, file_id: str = "") -> Any:
     await call.reporter.report_call(
         call.tools, BandTool.READ_ROOM_FILE, {"file_id": file_id}
     )
-    result = await call.tools.read_room_file(file_id)
+    args = validate_tool_arguments(
+        BandTool.READ_ROOM_FILE,
+        platform_args_schema(BandTool.READ_ROOM_FILE),
+        {"file_id": file_id},
+    )
+    result = await call.tools.read_room_file(args["file_id"])
     if is_mcp_content_result(result):
         reported: Any = image_block_placeholder(len(result["content"]))
         sentinel = vision_sentinel(result)

@@ -183,6 +183,13 @@ class TestA2AAdapterStartup:
                 "http://localhost:10000"
             )
 
+    def test_turns_are_not_judged(self) -> None:
+        """The remote agent owns its replies; judging its turns would report
+        a remote that answers nothing as this agent's missing reply."""
+        adapter = A2AAdapter(A2AAdapterConfig(remote_url="http://localhost:10000"))
+
+        assert not adapter.judges_turns
+
     @pytest.mark.asyncio
     async def test_owned_http_client_has_a_generous_bounded_read_timeout(self) -> None:
         """A real remote turn (a live LLM call, a tool loop) routinely leaves

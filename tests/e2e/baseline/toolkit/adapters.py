@@ -53,6 +53,7 @@ from typing import Any
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.custom_tools import CustomToolDef
+from band.workspaces import WorkspaceResolver
 from tests.baseline.adapter import NON_AGENT_ADAPTERS, Adapter, discovered_agent_ids
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.deps import (
@@ -282,6 +283,7 @@ def build_adapter(
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
+    workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
     """Construct the adapter registered under ``adapter_id``.
 
@@ -294,7 +296,10 @@ def build_adapter(
         raise ValueError(
             f"unknown adapter {adapter_id!r}; registered: {sorted(_REGISTRY)}"
         )
-    return spec.build(settings, prompt=prompt, features=features, tools=tools)
+    kwargs = (
+        {} if workspace_for_room is None else {"workspace_for_room": workspace_for_room}
+    )
+    return spec.build(settings, prompt=prompt, features=features, tools=tools, **kwargs)
 
 
 # Import the builders for their ``@adapter`` registration side-effect. Deferred to

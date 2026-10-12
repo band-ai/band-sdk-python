@@ -13,13 +13,17 @@ from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
+# Short enough to abandon the held turn quickly, long enough for the next
+# turn's real loopback round trips to the Band MCP server on a slow runner.
+TURN_TIMEOUT_S = 2.0
+
 
 async def test_a_stuck_turn_is_interrupted_and_reported_as_a_timeout(
     claude_room: OpenRoom,
 ) -> None:
     """The interrupted turn's own result is drained, so the next turn on the
     same CLI process reads its own answer."""
-    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=0.05))
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
     room.claude.script([Hold()], [room.model_reply("Back again.")])
 
     with pytest.raises(TurnResultAlreadyReported):
@@ -27,7 +31,7 @@ async def test_a_stuck_turn_is_interrupted_and_reported_as_a_timeout(
     await room.send("and now?")
 
     assert [f["code"] for f in room.reported_failures] == ["timeout"]
-    assert room.failures == ["Claude turn timed out after 0.05s"]
+    assert room.failures == [f"Claude turn timed out after {TURN_TIMEOUT_S}s"]
     assert room.chat == ["Back again."]
     assert len(room.claude.sessions) == 1
 
@@ -36,7 +40,7 @@ async def test_a_turn_that_ignores_the_interrupt_is_closed_and_resumed(
     claude_room: OpenRoom, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("band.adapters.claude_sdk._TIMEOUT_DRAIN_SECONDS", 0.05)
-    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=0.05))
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
     room.claude.ignore_interrupt = True
     room.claude.script([Hold()], [room.model_reply("Fresh start.")])
 

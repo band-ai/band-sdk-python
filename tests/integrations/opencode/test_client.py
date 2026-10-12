@@ -51,11 +51,6 @@ class FakeOpencodeServer:
                     methods=["POST"],
                 ),
                 Route(
-                    "/question/{request_id}/reject",
-                    self._reject_question,
-                    methods=["POST"],
-                ),
-                Route(
                     "/session/{session_id}/abort", self._abort_session, methods=["POST"]
                 ),
                 Route("/mcp", self._register_mcp, methods=["POST"]),
@@ -96,10 +91,6 @@ class FakeOpencodeServer:
         return Response(status_code=200)
 
     async def _reply_question(self, request: Request) -> Response:
-        await self._record(request)
-        return Response(status_code=200)
-
-    async def _reject_question(self, request: Request) -> Response:
         await self._record(request)
         return Response(status_code=200)
 
@@ -313,17 +304,6 @@ async def test_reply_question_posts_answers(fake_server: FakeOpencodeServer) -> 
         request = fake_server.requests[-1]
         assert request["path"] == "/question/req-1/reply"
         assert request["body"] == {"answers": [["blue"], ["yes"]]}
-    finally:
-        await client.close()
-
-
-async def test_reject_question_posts_to_reject_path(
-    fake_server: FakeOpencodeServer,
-) -> None:
-    client = make_client(fake_server)
-    try:
-        await client.reject_question("req-1")
-        assert fake_server.requests[-1]["path"] == "/question/req-1/reject"
     finally:
         await client.close()
 

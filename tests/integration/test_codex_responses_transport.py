@@ -44,10 +44,12 @@ from pathlib import Path
 
 import pytest
 
+from band.core.defaultmodels import OPENAI_MODEL
+
 logger = logging.getLogger(__name__)
 
-# Model to exercise. Override via CODEX_MODEL; default matches the entrypoint.
-CODEX_MODEL = os.environ.get("CODEX_MODEL", "gpt-5.5")
+# Model to exercise. Override via CODEX_MODEL.
+CODEX_MODEL = os.environ.get("CODEX_MODEL", OPENAI_MODEL)
 
 # A trivial prompt — we only care which transport Codex chooses, not the answer.
 PROMPT = "Reply with the single word: pong"

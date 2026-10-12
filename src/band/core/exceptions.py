@@ -54,6 +54,39 @@ class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
 
 
+class InputNotAccepted(BandError):
+    """This attempt provably started no provider execution.
+
+    Transport failures, timeouts and uncertain acceptance do not qualify.
+    The host retains the input without reporting a failed turn.
+    """
+
+
+class ProviderRunError(BandError):
+    """A provider or framework returned a failed run as data instead of raising.
+    Actionable by the adapter: raise it inside the turn so the turn is reported
+    failed.
+
+    ``code`` is coarse and safe to post; ``detail`` is provider text, which can
+    echo the prompt, so it belongs only in logs.
+    """
+
+    def __init__(self, code: str, detail: str | None = None) -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+
+
+class RoomExecutionStoppedError(BandError):
+    """The platform refused a claim, acknowledgement, or post while stopped.
+
+    The refusal describes that request, not the room's current execution state.
+    """
+
+    def __init__(self, room_id: str) -> None:
+        super().__init__(f"Room {room_id}: platform execution was stopped")
+        self.room_id = room_id
+
+
 def _levenshtein(a: str, b: str) -> int:
     """Iterative Levenshtein distance. Pure Python, no dependencies."""
     if a == b:

@@ -282,3 +282,21 @@ async def test_a_failed_prompt_withdraws_the_ask_unless_a_reply_claimed_it() -> 
         "accept"
     )
     assert not registry
+
+
+async def test_a_turn_cancelled_as_its_ask_resolves_still_unwinds(
+    open_room: Callable[..., Room],
+) -> None:
+    """Room cleanup resolves an open ask, then cancels the turn parked on it
+    in the same tick. The turn must still end cancelled: an answer that
+    swallows the cancel lets it carry on into a connection already closing,
+    and the shutdown awaiting it never returns."""
+    room = open_room()
+    await room.ask("parked", room_id="room-1")
+    asker = room.askers.pop("parked")
+
+    room.tear_down("room-1")
+    asker.cancel()
+    await asyncio.wait([asker])
+
+    assert asker.cancelled()

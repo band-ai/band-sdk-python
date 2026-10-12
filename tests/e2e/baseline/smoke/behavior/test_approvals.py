@@ -26,6 +26,7 @@ Run with:
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -34,6 +35,8 @@ from typing import Any
 
 import pytest
 
+import band.adapters.opencode
+from band.client.streaming import DeliveryStatus
 from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
@@ -53,9 +56,10 @@ from tests.e2e.baseline.smoke.samples.approvals import (
     repeat_request,
     written_lines,
 )
-from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
+from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     running_provisioned_agent,
@@ -81,6 +85,7 @@ BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=2)
 # Two requests and the closing reply; or a request, a refusal and the closing reply.
 THREE_BARRIERS = slow_turn_budget(TURN_BUDGET_S, barriers=3)
 # Short enough to expire promptly, long enough that the request is captured first.
+QUEUED_WORK_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=5)
 EXPIRING_WAIT_S = 10.0
 # Outlasts every barrier of the longest flow (and stays under Cursor's default turn
 # timeout, which it must).
@@ -108,9 +113,15 @@ async def approval_room(
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
-    with tempfile.TemporaryDirectory(
-        prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
-    ) as workdir:
+    # OpenCode's turn-phase records are content-free INFO lines; a failing
+    # cell's captured log then shows where its turn stopped. Scoped to that
+    # package: other adapters log tool input at INFO.
+    with (
+        sdk_logs_at(band.adapters.opencode, logging.INFO),
+        tempfile.TemporaryDirectory(
+            prefix="band-e2e-approval-", dir=dialect.workdir_root(cell.settings)
+        ) as workdir,
+    ):
         # Resolved: a symlinked temp root (macOS /var) reads as an outside dir.
         root = Path(workdir).resolve()
         setup = AgentSetup(root, wait_timeout_s, approvers)
@@ -228,6 +239,70 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
         landed = {t: m for t, m in markers.items() if t.exists()}
         assert len(landed) == 1, f"expected exactly one command to run, got {landed}"
         [(target, marker)] = landed.items()
+        assert written_lines(target) == [marker]
+
+
+@per_adapter(Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.OPENCODE)
+@pytest.mark.timeout(extra=QUEUED_WORK_BUDGET.extra_s)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_pending_work_preserves_order_without_hiding_an_approval(
+    cell: AdapterCell,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """A's approval remains reachable while B and D wait for their own turns."""
+    marker = unique_marker("approved")
+    done, first, second = (
+        unique_marker(name) for name in ("closed", "first", "second")
+    )
+    async with approval_room(
+        cell,
+        user_ops,
+        reply_capture,
+        label="pending-work",
+        budget=QUEUED_WORK_BUDGET,
+        wait_timeout_s=QUEUED_WORK_BUDGET.deadline_s * 2,
+    ) as (room, workdir):
+        target = workdir / "approval.txt"
+        start = await room.say(command_request(marker, target, done=done))
+        [request] = await room.requests(1, since=start)
+        first_start, first_id = await room.post(liveness_probe(first))
+        await room.capture.wait_for_delivery(
+            first_id,
+            room.agent.id,
+            until={DeliveryStatus.PROCESSING},
+            deadline_s=QUEUED_WORK_BUDGET.deadline_s,
+        )
+        second_start, second_id = await room.post(liveness_probe(second))
+        await room.decide(Outcome.APPROVE, request)
+        await room.closed(
+            room.dialect.notice(Outcome.APPROVE, request),
+            since=start,
+            closing_reply=done,
+            allowed_followup_commands=readback_commands(target),
+        )
+        await room.shown(first, since=first_start)
+        first_replies = await room.capture.wait_for_reply(
+            first_id,
+            room.agent.id,
+            since=first_start,
+            deadline_s=QUEUED_WORK_BUDGET.deadline_s,
+        )
+        first_replies.assert_contains_any([first])
+        await room.shown(second, since=second_start)
+        second_replies = await room.capture.wait_for_reply(
+            second_id,
+            room.agent.id,
+            since=second_start,
+            deadline_s=QUEUED_WORK_BUDGET.deadline_s,
+        )
+        second_replies.assert_contains_any([second])
+        said = room.said_since(start)
+        first_position = next(i for i, content in enumerate(said) if first in content)
+        second_position = next(i for i, content in enumerate(said) if second in content)
+        assert first_position < second_position, (
+            "newer ordinary work overtook pending work"
+        )
         assert written_lines(target) == [marker]
 
 
@@ -378,11 +453,11 @@ async def test_a_host_config_policy_settles_tool_use_with_nobody_asked(
 
         # The tool was really attempted, so a missing file is the policy's doing.
         tool_calls = await room.capture.tool_calls(sender_id=room.agent.id)
-        tool_calls.assert_fired(policy.tool)
+        policy.assert_attempted(tool_calls, marker, target)
         said = room.said_since(start)
         assert room.dialect.find_requests(room.capture.messages.since(start)) == []
         assert policy.decisions(said) == policy.announced
         if policy.runs:
-            assert target.read_text().strip() == marker
+            assert written_lines(target) == [marker]
         else:
             assert not target.exists(), f"{policy.name} still wrote the file"

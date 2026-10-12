@@ -1,7 +1,8 @@
 services:
-  # Self-hosted Letta server.
+  # Self-hosted Letta server. 0.16.8 is the last release; later tags are the
+  # Letta Code CLI.
   letta-server:
-    image: letta/letta:latest
+    image: letta/letta:0.16.8
     restart: unless-stopped
     command:
       - /bin/sh

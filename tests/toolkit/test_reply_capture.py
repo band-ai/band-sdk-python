@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 import pytest
 
@@ -180,3 +181,18 @@ async def test_wait_for_reply_times_out_on_a_silent_turn() -> None:
         TimeoutError, match="processed message m-trigger.*captured no reply"
     ):
         await capture.wait_for_reply(trigger, AGENT, deadline_s=0.2)
+
+
+async def test_chosen_handoff_boundary_retains_a_peers_earlier_activity() -> None:
+    capture = ReplyCapture(ROOM)
+    handoff = _reply(AGENT, "FYI", mid="handoff")
+    peer_reply = _reply(PEER, "unwanted acknowledgement", mid="peer-reply")
+    peer_reply.inserted_at = "2026-01-01T00:00:03Z"
+    capture._on_message(handoff)
+    capture._on_message(peer_reply)
+    capture._on_message_updated(_processed("trigger", AGENT))
+
+    replies = await capture.wait_for_reply("trigger", AGENT)
+
+    assert capture.turn_boundary(replies[0]) == datetime(2026, 1, 1, tzinfo=UTC)
+    assert capture.turn_boundary() == datetime(2026, 1, 1, 0, 0, 3, tzinfo=UTC)

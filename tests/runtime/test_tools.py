@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -14,6 +15,8 @@ from band_rest import (
     GetAgentChatContextResponse,
     GetAgentChatContextResponseMetadata,
 )
+from band_rest.errors import ForbiddenError
+from band_rest.types import Error, ErrorError
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ValidationError
 
@@ -25,7 +28,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.config.settings import RuntimeSettings
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, RoomExecutionStoppedError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
@@ -46,16 +49,19 @@ from band.runtime.tools import (
     SendMessageInput,
     SendRoomFileInput,
     StoreMemoryInput,
+    TurnEffect,
     append_mention_handles_hint,
     available_mention_handles,
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
     is_mcp_content_result,
     matches_identifier,
-    settles_turn_reply,
+    turn_effect,
 )
 from tests.conftest import make_participant_mock
 from tests.content import BLANK_CONTENT_CASES
+from tests.identifiers import INVALID_IDS, UUID_ID
+from tests.runtime.helpers import memory_client
 
 
 class TestIsMcpContentResult:
@@ -1506,6 +1512,54 @@ class TestAgentToolsSendEvent:
         assert result is None
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
+    async def test_stopped_scope_cancels_posts_without_latching_room(
+        self, mock_rest_client
+    ):
+        ctx = ExecutionContext(
+            "room-123", MagicMock(rest=mock_rest_client), AsyncMock()
+        )
+        await ctx._begin_scope()
+        tools = AgentTools.from_context(ctx)
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            ForbiddenError(
+                body=Error(
+                    error=ErrorError(
+                        code="forbidden",
+                        message="Agent execution is stopped; cannot post events",
+                        request_id="req-1",
+                    )
+                )
+            )
+        )
+        for content in ("first", "later"):
+            with pytest.raises(asyncio.CancelledError):
+                await tools.send_event(content, "thought")
+        assert not ctx.is_stopped
+        assert not tools.turn.complete
+        mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
+
+    async def test_send_event_without_an_execution_still_raises_the_typed_error(
+        self, mock_rest_client
+    ):
+        """Tools built without an execution context have no room state to
+        adopt: the typed error propagates so the caller sees the platform's
+        rejection."""
+        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+            ForbiddenError(
+                body=Error(
+                    error=ErrorError(
+                        code="forbidden",
+                        message="Agent execution is stopped; cannot post events",
+                        request_id="req-1",
+                    )
+                )
+            )
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(RoomExecutionStoppedError):
+            await tools.send_event("thinking", "thought")
+
 
 class TestAgentToolsSendFailure:
     """Test send_failure's best-effort delegation over the real REST boundary."""
@@ -2421,33 +2475,33 @@ class TestToolInputModels:
         assert model.task_id is None
 
 
-class TestSettlesTurnReply:
-    """Which tool calls count as having settled the turn's reply."""
+class TestReplyEffectSpellings:
+    """Which tool names resolve to Band's reply effect."""
 
     def test_sdk_injected_tool(self):
-        assert settles_turn_reply("band_send_message") is True
+        assert turn_effect("band_send_message") is TurnEffect.REPLY
 
     def test_standalone_band_mcp_tool(self):
-        assert settles_turn_reply("create_agent_chat_message") is True
+        assert turn_effect("create_agent_chat_message") is TurnEffect.REPLY
 
     def test_mcp_server_prefixed_names(self):
         """MCP clients may prefix the server name onto the tool name."""
-        assert settles_turn_reply("band-band_send_message") is True
-        assert settles_turn_reply("band-create_agent_chat_message") is True
+        assert turn_effect("band-band_send_message") is TurnEffect.REPLY
+        assert turn_effect("band-create_agent_chat_message") is TurnEffect.REPLY
 
     def test_non_settling_tools(self):
-        assert settles_turn_reply("band_send_event") is False
-        assert settles_turn_reply("band_lookup_peers") is False
-        assert settles_turn_reply("get_weather") is False
+        assert turn_effect("band_send_event") is TurnEffect.OBSERVE
+        assert turn_effect("band_lookup_peers") is TurnEffect.OBSERVE
+        assert turn_effect("get_weather") is TurnEffect.OBSERVE
 
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
-        assert settles_turn_reply("band_send_message_draft") is False
+        assert turn_effect("band_send_message_draft") is TurnEffect.OBSERVE
 
     def test_non_band_server_prefix_does_not_resolve(self):
         """An unrelated MCP server's own tool must never be treated as a Band
         reply just because it ends in ``-band_send_message``."""
-        assert settles_turn_reply("other-band_send_message") is False
+        assert turn_effect("other-band_send_message") is TurnEffect.OBSERVE
 
 
 class TestCanonicalizeMcpToolName:
@@ -2501,3 +2555,69 @@ class TestFetchRoomContext:
         )
 
         assert context["meta"]["total_pages"] == 3
+
+
+@pytest.mark.parametrize(
+    "name", ["band_get_memory", "band_supersede_memory", "band_archive_memory"]
+)
+@pytest.mark.parametrize("memory_id", INVALID_IDS)
+@pytest.mark.asyncio
+async def test_memory_validation_prevents_http(name: str, memory_id: str) -> None:
+    async with memory_client() as (rest, requests):
+        outcome = await AgentTools("room-1", rest).execute_tool_call_structured(
+            name, {"memory_id": memory_id}
+        )
+        assert not outcome.ok
+        assert f"Invalid arguments for {name}" in outcome.error_message
+        assert "memory_id:" in outcome.error_message
+        assert requests == []
+
+
+@pytest.mark.parametrize(
+    "name,method,suffix",
+    [
+        ("band_get_memory", "GET", ""),
+        ("band_supersede_memory", "POST", "/supersede"),
+        ("band_archive_memory", "POST", "/archive"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_valid_memory_dispatch_addresses_item(
+    name: str, method: str, suffix: str
+) -> None:
+    async with memory_client() as (rest, requests):
+        outcome = await AgentTools("room-1", rest).execute_tool_call_structured(
+            name, {"memory_id": UUID_ID}
+        )
+        assert outcome.ok, outcome.error_message
+        assert outcome.value["id"] == UUID_ID
+        assert outcome.value["content"] == "remember this"
+        assert [(q.method, q.url.path) for q in requests] == [
+            (method, f"/api/v1/agent/memories/{UUID_ID}{suffix}")
+        ]
+
+
+@pytest.mark.parametrize("boundary", ["dispatcher", "failure"])
+async def test_unbound_stopped_refusal_escapes_tool_error_conversion(
+    mock_rest_client, boundary: str
+) -> None:
+    tools = AgentTools("room-123", mock_rest_client)
+    mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+        ForbiddenError(
+            body=Error(
+                error=ErrorError(
+                    code="forbidden",
+                    message="Agent execution is stopped; cannot post events",
+                    request_id="req-1",
+                )
+            )
+        )
+    )
+    with pytest.raises(RoomExecutionStoppedError):
+        if boundary == "dispatcher":
+            await tools.execute_tool_call_structured(
+                "band_send_event", {"content": "thought", "message_type": "thought"}
+            )
+        else:
+            await tools.send_failure(AgentFailure("provider", "failed"))
+    assert not tools.turn.complete

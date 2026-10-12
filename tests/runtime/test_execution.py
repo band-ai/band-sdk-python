@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,16 +13,18 @@ from band_sdk_core import AgentFailure, ClaimRegistry, RetryTracker
 from band.client.streaming import MessageMetadata
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TURN_FAILURE_PROVIDER,
     TurnResultAlreadyReported,
 )
 from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
+from band.platform.link import BandLink
 from band.runtime.execution import (
-    _TURN_FAILURE_PROVIDER,
     BacklogProcessResult,
     Execution,
     ExecutionContext,
     ExecutionState,
+    ResyncOutcome,
     _error_label,
 )
 from band.runtime.tools import AgentTools
@@ -35,6 +38,7 @@ from tests.conftest import (
     make_participant_removed_event,
 )
 from tests.runtime.conftest import wait_for_condition
+from tests.runtime.helpers import LifecyclePlatform, rest_client_over
 
 
 @pytest.fixture
@@ -73,6 +77,7 @@ def mock_link():
     link.mark_failed = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.report_activity = AsyncMock(return_value=True)
 
     return link
 
@@ -648,6 +653,7 @@ class TestCrashRecoverySync:
         link.mark_failed = AsyncMock()
         link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
         link.get_stale_processing_messages = AsyncMock(return_value=[])  # No stale msgs
+        link.report_activity = AsyncMock(return_value=True)
 
         return link
 
@@ -1710,7 +1716,7 @@ class TestCrashRecoverySync:
 
         synchronized = await ctx._resync_pending_messages()
 
-        assert synchronized is False
+        assert synchronized is ResyncOutcome.RETRY
         mock_link_with_next.get_next_message.assert_awaited_once()
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-resync-claim-fails"
@@ -1954,7 +1960,7 @@ class TestTurnFailureReport:
         assert await self._context(mock_link)._process_event(event) is True
 
         mock_link.mark_failed.assert_awaited_once()
-        assert self._reporters(error_events) == [_TURN_FAILURE_PROVIDER]
+        assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
 
     async def test_report_waits_for_the_final_attempt(self, mock_link, error_events):
         """A failure the message will be retried from is not final; only the
@@ -2039,11 +2045,13 @@ class TestTurnFailureReport:
         assert self._reporters(error_events) == ["codex"]
 
         await ctx._process_backlog_message(self._backlog_message("msg-unreported"))
-        assert self._reporters(error_events) == ["codex", _TURN_FAILURE_PROVIDER]
+        assert self._reporters(error_events) == ["codex", TURN_FAILURE_PROVIDER]
 
-    async def test_turn_result_already_reported_is_not_repeated(
+    async def test_an_already_reported_claim_without_a_post_is_still_reported(
         self, mock_link, error_events
     ):
+        """Only a failure post that landed suppresses the runtime's report."""
+
         async def handler(ctx, event):
             raise TurnResultAlreadyReported("reported by a nested handler")
 
@@ -2052,7 +2060,7 @@ class TestTurnFailureReport:
         )
 
         mock_link.mark_failed.assert_awaited_once()
-        error_events.assert_not_awaited()
+        assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
 
     async def test_report_post_failure_is_swallowed(self, mock_link, error_events):
         """The turn is already marked failed; a failed report must not stop
@@ -2685,3 +2693,36 @@ class TestBandSdkCoreConstructorValidation:
     def test_rejects_invalid_constructor_args(self, factory):
         with pytest.raises(ValueError):
             factory()
+
+
+async def test_stopped_startup_uses_next_gate_not_processing_list() -> None:
+    peer = LifecyclePlatform(stopped=True)
+    peer.add_message("stale")
+    peer.add_message("newer")
+    invoked: list[str] = []
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        invoked.append(event.payload.id)
+
+    async with rest_client_over(peer.answer) as rest:
+        link = BandLink(agent_id="agent-123", api_key="test")
+        link.rest = rest
+        ctx = ExecutionContext(
+            "room-123",
+            link,
+            handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        assert await ctx._synchronize_with_next()
+        assert invoked == []
+        assert peer.accepted_marks == []
+        assert peer.processing_list_reads == 0
+        peer.stopped = False
+        assert await ctx._synchronize_with_next()
+        assert invoked == ["stale", "newer"]
+        assert peer.accepted_marks == [
+            ("stale", "processing"),
+            ("stale", "processed"),
+            ("newer", "processing"),
+            ("newer", "processed"),
+        ]

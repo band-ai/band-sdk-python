@@ -120,7 +120,7 @@ class OrchestratorSettings(BaseSettings):
     )
 
     openai_api_key: str
-    openai_model: str = "gpt-5.4-mini"
+    openai_model: str = "gpt-6-luna"
     # Comma-separated peer handles (e.g. "weather,translator").
     available_peers: str = ""
 

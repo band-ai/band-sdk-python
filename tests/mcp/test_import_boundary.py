@@ -16,7 +16,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests.paths import REPO_ROOT
+from tests.paths import REPO_ROOT, SHIPPED_SOURCE_ROOTS
 
 # The only places an `mcp`-package import may appear.
 #
@@ -32,8 +32,6 @@ _ALLOWED_MCP_IMPORT_FILES: frozenset[Path] = frozenset(
         "packages/band-mcp/src/band_mcp/server.py",
     )
 )
-
-_SCAN_ROOTS = (REPO_ROOT / "src" / "band", REPO_ROOT / "packages" / "band-mcp" / "src")
 
 
 def _imports_mcp_package(source: str) -> bool:
@@ -57,7 +55,7 @@ def _mcp_import_offenders() -> list[Path]:
     """Files under the scan roots, outside the allowlist, that import ``mcp``."""
     return sorted(
         path.relative_to(REPO_ROOT)
-        for scan_root in _SCAN_ROOTS
+        for scan_root in SHIPPED_SOURCE_ROOTS
         for path in scan_root.rglob("*.py")
         if path not in _ALLOWED_MCP_IMPORT_FILES
         and _imports_mcp_package(path.read_text(encoding="utf-8"))

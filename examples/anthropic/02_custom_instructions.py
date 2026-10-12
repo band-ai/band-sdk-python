@@ -48,9 +48,7 @@ async def main() -> None:
     # Custom instructions; the adapter's default emit already shows tool
     # calls in the chat.
     adapter = AnthropicAdapter(
-        AnthropicAdapterConfig(
-            model="claude-sonnet-4-5-20250929", custom_section=CUSTOM_PROMPT
-        )
+        AnthropicAdapterConfig(model="claude-sonnet-5-5", custom_section=CUSTOM_PROMPT)
     )
 
     logger.info("Starting support agent...")

@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from band.core.content import has_visible_content
+
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
 
@@ -43,10 +45,36 @@ async def deliver_reply(
     content: str,
     mentions: list[str] | list[dict[str, str]] | None = None,
 ) -> Any:
-    """Send a reply, raising ``DeliveryFailedError`` on failure instead of
-    the raw exception, so the caller's except can distinguish a delivery
-    failure from a provider failure."""
+    """Send the model's words as the turn's reply, raising
+    ``DeliveryFailedError`` on failure instead of the raw exception, so the
+    caller's except can distinguish a delivery failure from a provider
+    failure."""
     try:
         return await tools.send_message(content, mentions=mentions)
     except Exception as exc:
         raise DeliveryFailedError(exc) from exc
+
+
+async def deliver_notice(
+    tools: AgentToolsProtocol,
+    content: str,
+    mentions: list[str] | list[dict[str, str]] | None = None,
+) -> Any:
+    """Post the adapter's own message via ``send_notice`` (never the turn's
+    reply), raising ``DeliveryFailedError`` on failure like ``deliver_reply``."""
+    try:
+        return await tools.send_notice(content, mentions=mentions)
+    except Exception as exc:
+        raise DeliveryFailedError(exc) from exc
+
+
+async def relay_reply(
+    tools: AgentToolsProtocol,
+    text: str | None,
+    mentions: list[str] | list[dict[str, str]] | None = None,
+) -> bool:
+    """Relay the model's final text unless a tool call already replied or
+    declined this turn; return whether it posted."""
+    if text is None or tools.turn.replied or not has_visible_content(text):
+        return False
+    return await deliver_reply(tools, text, mentions) is not None

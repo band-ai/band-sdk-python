@@ -26,7 +26,7 @@ Environment variables:
     BAND_WS_URL   — defaults to wss://app.band.ai/api/v1/socket/websocket
                        (unused by the container; reserved for SDK consistency)
     BAND_REST_URL — defaults to https://app.band.ai
-    ANTHROPIC_MODEL  — defaults to claude-sonnet-4-5-20250929
+    ANTHROPIC_MODEL  — defaults to claude-sonnet-5-5
     SYSTEM_PROMPT    — optional custom system prompt for the adapter
     EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
                        events; set "false" to silence them
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    anthropic_model: str = "claude-sonnet-4-5-20250929"
+    anthropic_model: str = "claude-sonnet-5-5"
     system_prompt: str = ""
     emit_execution: bool = True
     port: int = 8080

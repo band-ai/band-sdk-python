@@ -43,7 +43,7 @@ def create_llm() -> BaseChatModel:
                 "Run: pip install langchain-anthropic"
             ) from None
 
-        return ChatAnthropic(model="claude-sonnet-4-5-20250929")
+        return ChatAnthropic(model="claude-sonnet-5-5")
     elif settings.openai_api_key:
         from langchain_openai import (  # noqa: PLC0415 -- only load the model actually selected by which API key is configured
             ChatOpenAI,

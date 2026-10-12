@@ -59,7 +59,7 @@ async def main() -> None:
 
     # The Agno agent owns its tools; the adapter reports their executions.
     agno_agent = AgnoAgent(
-        model=Claude(id="claude-sonnet-4-6"),
+        model=Claude(id="claude-sonnet-5-5"),
         instructions="You are a helpful assistant. Use tools when relevant.",
         tools=[get_weather],
     )

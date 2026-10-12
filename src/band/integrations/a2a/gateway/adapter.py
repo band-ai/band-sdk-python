@@ -98,10 +98,7 @@ _GATEWAY_ERROR_MAX_CHARS = 240
 
 def _sanitize_gateway_error_message(exc: BaseException) -> str:
     """Redact bearer tokens/API keys before an internal exception message
-    reaches an external A2A client, and cap its length.
-
-    Mirrors the TS SDK's ``sanitizeGatewayErrorMessage``.
-    """
+    reaches an external A2A client, and cap its length."""
     trimmed = str(exc).strip()
     if not trimmed:
         return "Unknown error"
@@ -146,6 +143,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+
+    @property
+    def judges_turns(self) -> bool:
+        """Peer messages go back to an A2A caller, not the room: never judged."""
+        return False
 
     def __init__(
         self,

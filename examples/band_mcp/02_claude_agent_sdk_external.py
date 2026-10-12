@@ -9,10 +9,11 @@ Vanilla Claude Agent SDK script — durable memory across independent sessions.
 No `band-sdk`, no `ClaudeSDKAdapter`, no `Agent.create`: this is what a
 Claude Agent SDK user reaches for on their own, wiring Band in exactly like
 Claude Desktop or Cursor would via `mcp_config_example.json`. Contrast with
-`ClaudeSDKAdapter`, which hands Claude an in-process `LocalMCPServer`
-(`mcp_servers={"band": <server object>}`); here Claude spawns `band-mcp` as
-its own subprocess (`{"type": "stdio", "command": "band-mcp", ...}`) and the
-two processes never share Python state.
+`ClaudeSDKAdapter`, which points each room's Claude session at that room's
+endpoint on a loopback `LocalMCPServer` it hosts
+(`{"type": "http", "url": ".../rooms/<room>/mcp"}`); here Claude spawns
+`band-mcp` as its own subprocess (`{"type": "stdio", "command": "band-mcp",
+...}`) and the two processes never share Python state.
 
 The point of this example specifically: `--tools memory` gives *any*
 external agent script durable, cross-session memory with no shared Python

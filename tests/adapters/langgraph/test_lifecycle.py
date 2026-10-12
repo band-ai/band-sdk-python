@@ -44,8 +44,7 @@ class TestInitialization:
         )
 
         assert adapter.graph_factory is not None
-        # additional_tools cleared after baking into factory
-        assert adapter.additional_tools == []
+        assert adapter.additional_tools == [mock_tool]
 
     def test_simple_pattern_creates_default_checkpointer(self, mock_llm):
         """The simple path should not silently become stateless."""
@@ -66,6 +65,20 @@ class TestInitialization:
         adapter = LangGraphAdapter(graph=mock_graph)
 
         assert adapter._static_graph is mock_graph
+
+    @pytest.mark.parametrize(
+        ("pattern", "judged"),
+        [
+            pytest.param({"graph_factory": MagicMock()}, True, id="graph-factory"),
+            pytest.param({"graph": MagicMock()}, False, id="static-graph"),
+        ],
+    )
+    def test_only_a_graph_given_band_tools_is_judged(
+        self, pattern: dict[str, Any], judged: bool
+    ):
+        """A static graph never receives Band tools, so judging it would
+        report every turn as a missing reply."""
+        assert LangGraphAdapter(**pattern).judges_turns is judged
 
     def test_raises_without_llm_or_graph(self):
         """Should raise if neither llm nor graph_factory/graph provided."""

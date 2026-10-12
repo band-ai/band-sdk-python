@@ -30,10 +30,8 @@ async def test_a_repeated_reply_reaches_its_room_once_even_after_the_turn_ends(
     await room.send("anything else?", tools=next_turn_tools)
     await other_room.send("say hello")
 
-    assert room.chat == ["hello"]
-    assert [message["content"] for message in next_turn_tools.messages_sent] == [
-        "a new answer"
-    ]
+    assert room.chat == ["hello", "a new answer"]
+    assert next_turn_tools.turn.replied
     assert other_room.chat == ["hello"]
     assert room.failures == []
 

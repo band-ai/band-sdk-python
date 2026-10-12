@@ -8,10 +8,13 @@ Tests:
 4. JSON schema generation is correct
 """
 
+from __future__ import annotations
+
 import pytest
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from band.runtime.tools import (
+    TOOL_DEFINITIONS,
     TOOL_MODELS,
     AddParticipantInput,
     GetTaskInput,
@@ -29,6 +32,7 @@ from band.runtime.tools import (
     platform_tool,
 )
 from tests.content import BLANK_CONTENT_CASES
+from tests.identifiers import INVALID_IDS, TASK_REFERENCES, VALID_IDS
 
 
 class TestSendMessageInput:
@@ -437,3 +441,93 @@ class TestPlatformArgsSchema:
             == SendMessageInput.model_fields["mentions"].description
         )
         assert schema(content="hi", mentions="@alice").mentions == ["@alice"]
+
+
+PATH_FIELDS = [
+    ("GetMemoryInput", "memory_id"),
+    ("SupersedeMemoryInput", "memory_id"),
+    ("ArchiveMemoryInput", "memory_id"),
+    ("GetUserMemoryInput", "memory_id"),
+    ("SupersedeUserMemoryInput", "memory_id"),
+    ("ArchiveUserMemoryInput", "memory_id"),
+    ("RestoreUserMemoryInput", "memory_id"),
+    ("DeleteUserMemoryInput", "memory_id"),
+    ("GetTaskInput", "id"),
+    ("UpdateTaskInput", "id"),
+    ("GetTaskHistoryInput", "id"),
+    ("ReadRoomFileInput", "file_id"),
+    ("GetMyChatRoomInput", "chat_id"),
+    ("ListMyChatMessagesInput", "chat_id"),
+    ("SendMyChatMessageInput", "chat_id"),
+    ("ListMyChatParticipantsInput", "chat_id"),
+    ("AddMyChatParticipantInput", "chat_id"),
+    ("RemoveMyChatParticipantInput", "chat_id"),
+    ("RemoveMyChatParticipantInput", "participant_id"),
+    ("ApproveContactRequestInput", "request_id"),
+    ("RejectContactRequestInput", "request_id"),
+    ("CancelContactRequestInput", "request_id"),
+]
+
+
+TASK_MODELS = tuple(name for name, field in PATH_FIELDS if field == "id")
+
+
+def path_input(
+    model_name: str, field: str, value: str
+) -> tuple[type[BaseModel], dict[str, object]]:
+    model = next(
+        d.input_model
+        for d in TOOL_DEFINITIONS.values()
+        if d.input_model.__name__ == model_name
+    )
+    args: dict[str, object] = {
+        "chat_id": "room-1",
+        "participant_id": "peer-1",
+        "content": "hello",
+        "recipients": "@alice",
+        "comment": "progress",
+        field: value,
+    }
+    return model, args
+
+
+@pytest.mark.parametrize(
+    "model_name,field", PATH_FIELDS, ids=[f"{m}.{f}" for m, f in PATH_FIELDS]
+)
+@pytest.mark.parametrize("value", INVALID_IDS)
+def test_path_ids_reject_routing_changes(
+    model_name: str, field: str, value: str
+) -> None:
+    model, args = path_input(model_name, field, value)
+    with pytest.raises(ValidationError) as error:
+        model.model_validate(args)
+    assert field in {str(e["loc"][0]) for e in error.value.errors()}
+
+
+@pytest.mark.parametrize(
+    "model_name,field", PATH_FIELDS, ids=[f"{m}.{f}" for m, f in PATH_FIELDS]
+)
+@pytest.mark.parametrize("value", VALID_IDS)
+def test_path_ids_preserve_accepted_text_and_schema(
+    model_name: str, field: str, value: str
+) -> None:
+    model, args = path_input(model_name, field, value)
+    assert model.model_validate(args).model_dump()[field] == value
+    schema = model.model_json_schema()["properties"][field]
+    assert schema["type"] == "string"
+    assert "pattern" not in schema and "minLength" not in schema
+
+
+@pytest.mark.parametrize("model_name", TASK_MODELS)
+@pytest.mark.parametrize("value", TASK_REFERENCES)
+def test_task_shorthand_survives_validation(model_name: str, value: str) -> None:
+    model, args = path_input(model_name, "id", value)
+    assert model.model_validate(args).model_dump()["id"] == value
+
+
+@pytest.mark.parametrize("model_name", TASK_MODELS)
+@pytest.mark.parametrize("value", ["##1", "##"])
+def test_task_shorthand_rejects_repeated_prefix(model_name: str, value: str) -> None:
+    model, args = path_input(model_name, "id", value)
+    with pytest.raises(ValidationError, match="id"):
+        model.model_validate(args)

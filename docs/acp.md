@@ -4,6 +4,9 @@ Facts about the ACP integration that span modules or that the code cannot say fo
 itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
 the server side is `ACPServer` + `BandACPServerAdapter`.
 
+Client-side automatic idle release is unavailable pending provider-specific
+safety qualification; see [idle room resource retention](idle-room-release.md).
+
 ## Configuration
 
 `ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig`,
@@ -21,28 +24,89 @@ adapter = ACPClientAdapter(config)
 assert adapter.config.command == ("codex-acp",)
 ```
 
+## Band tools
+
+- **Injected tools are bound to the room.** With `inject_band_tools` on (the
+  default), the adapter hosts one loopback `LocalMCPServer` and gives each room's
+  session that room's endpoint (`/rooms/<room>/mcp`, or `/sse`), so the tools take no
+  `chat_id` and the prompt never states one. A reloaded session gets the same endpoint.
+  If that server dies, the next message replaces it on a new port, and a room whose
+  session still dials the old one gets a fresh session with the transcript replayed.
+- **An external Band MCP server takes the room as an argument.** With
+  `inject_band_tools=False` (a remote `band-mcp`), the session's first prompt states
+  `Current chat_id` for its tools to use.
+
 ## Turn delivery
 
 - **Narration is live and ordered.** `ACPCollectingClient` streams finalized chunks to
   `RoomTurnEmitter` as they arrive, so a Band tool's own room post (a remote band-mcp
   posts over REST mid-turn) lands between its `tool_call` and `tool_result`.
-- **Assistant text is held to turn close** and relayed only if no completed call settled
-  the reply (`turn_replied_in_room`, `settles_turn_reply`). Detection matches the
-  `tool_call` title, because tools may run out-of-process. Narrated names are canonicalized
-  (`canonicalize_mcp_tool_name`) so Copilot's `band-` prefix never reaches the room.
-- **`emit=` never gates** chunk recording (the reply decision must see the whole turn),
-  the held text, or the closing `task` event. That event is resume state:
-  `ACPClientHistoryConverter` reads `acp_client_session_id` / `acp_client_room_id` from it
-  to `session/load` after a restart.
+- **Native summaries finish the provider turn.** After the required Band action,
+  the prompt requests a brief tool-free summary so coding runtimes do not keep
+  continuing. That summary is telemetry, never another room reply.
+- **Held agent text is thought telemetry.** At clean prompt close, successful
+  external Band-tool effects are recorded first; held native text is an optional
+  thought without mentions, suppressed after a successful reply or decline.
+  It never settles a turn. Failed tools alone and native-only output reach the
+  shared missing-reply verdict, with thoughts enabled or disabled.
+- **Injected Band tools record their own successful effects.** With
+  `inject_band_tools=False`, completed external tool effects are staged from
+  normalized identities until successful close. Failed calls record nothing.
+  Such peers need external Band tools to reply or decline; native text alone
+  no longer supplies room replies.
+- **`emit=` never gates effects or resume state.** The closing session `task`
+  carries restoration identifiers after held-text handling, regardless of flags.
+  Runtime judging may report an error afterward. Failed/cancelled prompts post
+  neither held text nor resume state.
 - **Usage is forwarded as-is** from the `session/prompt` response's `usage`. The unstable
   spec calls `PromptResponse.usage` per-turn while the `Usage` docs say "across session",
   so a vendor reporting running totals would be over-counted. The live
   `test_usage_not_cumulative_across_turns` guards only backends with a CI lane.
+- **Migration:** delete retired `assistant_text_mode` config keys; explicit
+  configs reject them. Tool filters narrow SDK-injected registrations; external
+  MCP servers remain outside SDK registration control.
 - **Approved permissions are silent.** Only a denied request posts a synthetic
   `tool_call`/`tool_result` pair, and only when `Emit.TOOL_CALLS` is on.
-- **Replay happens once**, only for a freshly minted session (a failed `session/load`
-  counts), under a nonce'd boundary marker so a replayed message cannot spoof it. History
-  stops strictly before the triggering message (`messages_before`).
+- **Definitively rejected prompts stay pending.** The exact OMP JSON-RPC busy
+  response (`-32003` with `data.reason == "session_busy"`) raises
+  `InputNotAccepted` after one attempt. It preserves the room's runtime and
+  session without cancellation or a failure event; the shared runtime schedules
+  later attempts. Other errors retain normal failure cleanup. Session-scoped
+  external notifications cannot complete the rejected request: their successful
+  effects commit only after a prompt closes successfully.
+- **Bootstrap commits after successful prompt completion.** A rejection keeps
+  room context owed. Fresh sessions also keep transcript replay owed; restored
+  sessions already hold their history and receive only Band context. Replay uses
+  a nonce'd boundary marker so history cannot spoof the live message, and stops
+  strictly before the triggering message (`messages_before`).
+
+## Upgrading from SDK 4.x to 5.x
+
+ACP client adapters and Codex no longer relay native assistant text as room
+messages. Replies must use `band_send_message`; messages needing no response
+must use `band_no_reply`. Native text is optional thought telemetry and cannot
+hide a missing reply. The shared turn judgment and other adapters' text relays
+are unchanged.
+
+- Keep SDK-injected Band tools enabled, or supply a reachable external Band MCP
+  server when using `inject_band_tools=False`. A conversation-only ACP peer
+  without Band tools can no longer reply or deliberately decline. The
+  [Copilot sandbox example](../examples/acp/copilot_sandbox/README.md) requires
+  `BAND_MCP_SSE_URL` for that reason.
+- Update custom prompts to use the two Band tools. Coding runtimes may finish
+  with a native summary after the required action; that summary is not another
+  room message.
+- Remove Codex's `fallback_send_agent_text` config key and
+  `CODEX_FALLBACK_SEND_AGENT_TEXT` environment variable. Also remove
+  `assistant_text_mode` from any configurations using the retired workaround
+  and `CODEX_ASSISTANT_TEXT_MODE` from the environment. Explicit config keys
+  are rejected; retired environment variables are ignored.
+- Keep the required communication tools available when changing tool filters.
+  SDK-injected ACP registrations now honor those filters. Start a fresh Codex
+  thread after changing filters; resumed threads retain their saved tools.
+
+These are breaking changes; integrations relying on native-text relay must
+migrate before upgrading. TypeScript parity is a separate change.
 
 ## Isolation
 
@@ -68,7 +132,12 @@ failure fails that room turn visibly instead of falling back.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Cursor omits the session id on its
   extension notifications, so the adapter holds a turn lock and binds them to that turn's
-  session; Cursor turns are serialized.
+  session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
+  replies post through `send_notice`, so they never count as the model's reply, and a
+  `/cursor` message settles its own turn without reaching the agent. A turn parked on a
+  decision releases its message early (`tools.turn.detach()`), so it is judged when the
+  ACP turn completes normally; a failed or cancelled turn is never reported as a missing
+  reply.
   The adapter does not pick a plan/agent mode itself; a caller selects one through
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`

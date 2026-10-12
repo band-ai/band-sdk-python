@@ -46,20 +46,27 @@ from enum import StrEnum
 from typing import Any, cast
 
 from band_sdk_core import (
+    ClaimRegistry,
     DrainCandidate,
     evaluate_adapter_result,
     evaluate_delivery_event,
     evaluate_drain_candidate,
-    evaluate_next_message,
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.streaming import DeliveryStatus
+from band.core.exceptions import (
+    BandConnectionError,
+    InputNotAccepted,
+    RoomExecutionStoppedError,
+)
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AgentInput,
     HistoryProvider,
     PlatformMessage,
+    delivery_status_for_agent,
 )
 from band.logging_config import current_traceparent
 from band.platform.link import BandLink
@@ -79,6 +86,8 @@ from band.runtime.types import PlatformMessage as RestPlatformMessage
 
 logger = logging.getLogger(__name__)
 
+FAILURE_DETAIL_LIMIT = 500
+
 
 class OneShotStatus(StrEnum):
     """``handle_event``/``_process_message_event``'s ``status`` vocabulary.
@@ -95,6 +104,7 @@ class OneShotStatus(StrEnum):
     NO_PENDING = "no_pending"
     ALREADY_PROCESSED = "already_processed"
     DONE = "done"
+    NOT_ACCEPTED = "not_accepted"
 
 
 # Defensive cap on the drain loop. The platform shouldn't backlog dozens of
@@ -151,6 +161,7 @@ class OneShotInvoker:
         drain_cap: int = DEFAULT_DRAIN_CAP,
         history_page_cap: int = DEFAULT_HISTORY_PAGE_CAP,
     ) -> None:
+        self._claims = ClaimRegistry()
         self._link = link
         self._adapter = adapter
         self._agent_id = agent_id
@@ -306,10 +317,14 @@ class OneShotInvoker:
     ) -> None:
         match evaluate_adapter_result(room_id, message_id, succeeded):
             case {"decision": "processed"}:
-                await self._link.mark_processed(room_id, message_id)
+                if not await self._link.mark_processed(room_id, message_id):
+                    raise BandConnectionError("Platform refused message completion")
             case {"decision": "failed"}:
                 try:
-                    await self._link.mark_failed(room_id, message_id, error)
+                    detail = error[:FAILURE_DETAIL_LIMIT] or "error"
+                    await self._link.mark_failed(room_id, message_id, detail)
+                except RoomExecutionStoppedError:
+                    raise
                 except Exception:
                     logger.warning(
                         "Could not mark %s failed in room %s",
@@ -319,6 +334,29 @@ class OneShotInvoker:
                     )
 
     async def _process_message_event(
+        self, *, room_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        msg_id = payload["id"]
+        if self._claims.is_completed(room_id, msg_id):
+            return {"status": OneShotStatus.ALREADY_PROCESSED, "message_id": msg_id}
+        if self._claims.is_ack_pending(room_id, msg_id):
+            await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
+            self._claims.remember_completed(room_id, msg_id)
+            return {
+                "status": OneShotStatus.DONE,
+                "message_id": msg_id,
+                "room_id": room_id,
+            }
+        if not self._claims.try_claim(room_id, msg_id):
+            return {"status": OneShotStatus.NOT_ACCEPTED, "message_id": msg_id}
+        try:
+            return await self._process_claimed_message_event(
+                room_id=room_id, payload=payload
+            )
+        finally:
+            self._claims.release(room_id, msg_id)
+
+    async def _process_claimed_message_event(
         self, *, room_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Run the SDK agent loop for one forwarded message_created event.
@@ -345,67 +383,102 @@ class OneShotInvoker:
         # ``processing`` from a previous crash — so a single call covers both
         # the normal claim case and stuck-message reclaim.
         next_msg = await self._link.get_next_message(room_id)
-        match evaluate_next_message(msg_id, next_msg.id if next_msg else None):
-            case {"decision": "no_pending"}:
-                logger.info(
-                    "Skip: room %s has no pending messages (triggering=%s)",
-                    room_id,
-                    msg_id,
-                )
-                return {"status": OneShotStatus.NO_PENDING, "message_id": msg_id}
-            case {"decision": "already_processed", "next_open_id": next_open_id}:
-                logger.info(
-                    "Skip: room %s next-open=%s != triggering=%s",
-                    room_id,
-                    next_open_id,
-                    msg_id,
-                )
+        if next_msg is None:
+            return {"status": OneShotStatus.NO_PENDING, "message_id": msg_id}
+        ordered = next_msg.id == msg_id
+        candidate = next_msg
+        if not ordered:
+            candidate = await self._link.get_actionable_message(room_id, msg_id)
+            if candidate is None:
                 return {
                     "status": OneShotStatus.ALREADY_PROCESSED,
                     "message_id": msg_id,
-                    "next_open": next_open_id,
+                    "next_open": next_msg.id,
                 }
-            case {"decision": "ready_to_claim"}:
-                pass
+
+        if (
+            delivery_status_for_agent(candidate.metadata, self._agent_id)
+            == DeliveryStatus.PROCESSED
+        ):
+            self._claims.remember_completed(room_id, msg_id)
+            return {"status": OneShotStatus.ALREADY_PROCESSED, "message_id": msg_id}
 
         logger.info("Claiming msg %s in room %s", msg_id, room_id)
-        await self._link.mark_processing(room_id, msg_id)
+        if not await self._link.mark_processing(room_id, msg_id):
+            raise BandConnectionError("Platform refused message claim")
+
+        participants = await self._fetch_participants(room_id)
+        sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
+
+        msg = _build_platform_message(payload, room_id, sender_name, participants)
+        tools = AgentTools(
+            room_id=room_id, rest=self._link.rest, participants=participants
+        )
+        control = getattr(self._adapter, "try_handle_control", None)
+        try:
+            consumed = control is not None and await control(msg, tools)
+        except RoomExecutionStoppedError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Control failed for message %s in room %s", msg_id, room_id
+            )
+            await self._acknowledge(
+                room_id=room_id,
+                message_id=msg_id,
+                succeeded=False,
+                error=str(exc),
+            )
+            raise
+        if consumed:
+            self._claims.remember_ack_pending(room_id, msg_id)
+            await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
+            self._claims.remember_completed(room_id, msg_id)
+            return {
+                "status": OneShotStatus.DONE,
+                "room_id": room_id,
+                "message_id": msg_id,
+            }
+        if not ordered:
+            return {
+                "status": OneShotStatus.ALREADY_PROCESSED,
+                "message_id": msg_id,
+                "next_open": next_msg.id,
+            }
+
+        history, seen_ids, history_truncated = await self._fetch_history(
+            room_id,
+            exclude_message_id=msg.id,
+            participants=participants,
+        )
+        seen_ids.add(msg_id)
+
+        inp = AgentInput(
+            msg=msg,
+            tools=tools,
+            history=HistoryProvider(raw=history),
+            # OneShotInvoker has no cross-call state to diff the roster
+            # against, so every invocation is "first time" from that
+            # perspective — the same condition under which the
+            # long-running path itself sends the roster (see
+            # ExecutionContext.participants_changed).
+            participants_msg=build_participants_message(participants),
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=room_id,
+        )
 
         try:
-            participants = await self._fetch_participants(room_id)
-            sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
-
-            msg = _build_platform_message(payload, room_id, sender_name, participants)
-            history, seen_ids, history_truncated = await self._fetch_history(
-                room_id,
-                exclude_message_id=msg.id,
-                participants=participants,
-            )
-            # The triggering message is always something the LLM "saw".
-            seen_ids.add(msg_id)
-
-            tools = AgentTools(
-                room_id=room_id, rest=self._link.rest, participants=participants
-            )
-
-            inp = AgentInput(
-                msg=msg,
-                tools=tools,
-                history=HistoryProvider(raw=history),
-                # OneShotInvoker has no cross-call state to diff the roster
-                # against, so every invocation is "first time" from that
-                # perspective — the same condition under which the
-                # long-running path itself sends the roster (see
-                # ExecutionContext.participants_changed).
-                participants_msg=build_participants_message(participants),
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id=room_id,
-            )
-
             await self._adapter.on_event(inp)
 
-            await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
+        except InputNotAccepted:
+            return {
+                "status": OneShotStatus.NOT_ACCEPTED,
+                "room_id": room_id,
+                "message_id": msg_id,
+            }
+        except RoomExecutionStoppedError:
+            raise
         except Exception as exc:
             logger.exception(
                 "Adapter failed for message %s in room %s", msg_id, room_id
@@ -414,9 +487,13 @@ class OneShotInvoker:
                 room_id=room_id,
                 message_id=msg_id,
                 succeeded=False,
-                error=str(exc)[:500] or "error",
+                error=str(exc),
             )
             raise
+
+        self._claims.remember_ack_pending(room_id, msg_id)
+        await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
+        self._claims.remember_completed(room_id, msg_id)
 
         # Drain is scoped to what the LLM saw (seen_ids). A message that
         # arrived after the history snapshot is NOT swallowed; it's left open
@@ -456,8 +533,13 @@ class OneShotInvoker:
                     break
                 case {"decision": "drain", "message_id": stale_id}:
                     stale_id = cast(str, stale_id)
-                    await self._link.mark_processing(room_id, stale_id)
-                    await self._link.mark_processed(room_id, stale_id)
+                    try:
+                        if not await self._link.mark_processing(room_id, stale_id):
+                            break
+                        if not await self._link.mark_processed(room_id, stale_id):
+                            break
+                    except RoomExecutionStoppedError:
+                        break
                     drained.append(stale_id)
         else:
             drain_truncated = True

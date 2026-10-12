@@ -1,5 +1,7 @@
 """Tests for contacts_msg in preprocessing."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -20,7 +22,8 @@ def mock_execution_context():
     ctx.config.enable_context_hydration = False
     ctx.is_llm_initialized = False
     ctx.participants = []
-    ctx.get_pending_system_messages = MagicMock(return_value=[])
+    ctx.current_scope = None
+    ctx.peek_pending_system_messages = MagicMock(return_value=[])
     ctx.mark_llm_initialized = MagicMock()
     # AgentTools.from_context needs ctx.link.rest
     ctx.link = MagicMock()
@@ -56,7 +59,7 @@ class TestPreprocessorContactsMsg:
         self, mock_execution_context, sample_message_event
     ):
         """AgentInput should have contacts_msg field."""
-        mock_execution_context.get_pending_system_messages = MagicMock(
+        mock_execution_context.peek_pending_system_messages = MagicMock(
             return_value=["[Contacts]: @bob is now a contact"]
         )
 
@@ -68,26 +71,30 @@ class TestPreprocessorContactsMsg:
         assert result is not None
         assert result.contacts_msg == "[Contacts]: @bob is now a contact"
 
-    async def test_preprocessor_drains_from_context(
+    async def test_preprocessor_commits_prepared_context(
         self, mock_execution_context, sample_message_event
     ):
-        """Preprocessor should call get_pending_system_messages."""
-        mock_execution_context.get_pending_system_messages = MagicMock(
+        """Preparation leaves context owed until the attempt commits."""
+        mock_execution_context.peek_pending_system_messages = MagicMock(
             return_value=["test message"]
         )
 
         preprocessor = DefaultPreprocessor()
-        await preprocessor.process(
+        result = await preprocessor.process(
             mock_execution_context, sample_message_event, "agent-123"
         )
 
-        mock_execution_context.get_pending_system_messages.assert_called_once()
+        mock_execution_context.commit_system_messages.assert_not_called()
+        result.commit_context()
+        mock_execution_context.commit_system_messages.assert_called_once_with(
+            ["test message"]
+        )
 
     async def test_preprocessor_contacts_msg_none_when_empty(
         self, mock_execution_context, sample_message_event
     ):
         """contacts_msg should be None if no updates."""
-        mock_execution_context.get_pending_system_messages = MagicMock(return_value=[])
+        mock_execution_context.peek_pending_system_messages = MagicMock(return_value=[])
 
         preprocessor = DefaultPreprocessor()
         result = await preprocessor.process(
@@ -101,7 +108,7 @@ class TestPreprocessorContactsMsg:
         self, mock_execution_context, sample_message_event
     ):
         """Multiple updates should be joined with newline."""
-        mock_execution_context.get_pending_system_messages = MagicMock(
+        mock_execution_context.peek_pending_system_messages = MagicMock(
             return_value=[
                 "[Contacts]: @alice is now a contact",
                 "[Contacts]: @bob is now a contact",
@@ -120,38 +127,3 @@ class TestPreprocessorContactsMsg:
         assert "@bob" in result.contacts_msg
         assert "@charlie" in result.contacts_msg
         assert result.contacts_msg.count("\n") == 2
-
-
-class TestDrainSystemMessages:
-    """Tests for _drain_system_messages helper."""
-
-    def test_drain_returns_none_when_empty(self, mock_execution_context):
-        """Should return None if no messages."""
-        mock_execution_context.get_pending_system_messages = MagicMock(return_value=[])
-
-        preprocessor = DefaultPreprocessor()
-        result = preprocessor._drain_system_messages(mock_execution_context)
-
-        assert result is None
-
-    def test_drain_joins_multiple_messages(self, mock_execution_context):
-        """Should join multiple messages with newlines."""
-        mock_execution_context.get_pending_system_messages = MagicMock(
-            return_value=["Message 1", "Message 2", "Message 3"]
-        )
-
-        preprocessor = DefaultPreprocessor()
-        result = preprocessor._drain_system_messages(mock_execution_context)
-
-        assert result == "Message 1\nMessage 2\nMessage 3"
-
-    def test_drain_single_message(self, mock_execution_context):
-        """Should return single message without newline."""
-        mock_execution_context.get_pending_system_messages = MagicMock(
-            return_value=["Single message"]
-        )
-
-        preprocessor = DefaultPreprocessor()
-        result = preprocessor._drain_system_messages(mock_execution_context)
-
-        assert result == "Single message"

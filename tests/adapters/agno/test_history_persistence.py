@@ -27,7 +27,7 @@ from band.core.types import PlatformMessage
 from band.runtime.formatters import format_history_for_llm
 from tests.adapters.agno.helpers import (
     CapturingModel,
-    SchemaTools,
+    ContactAwareTools,
     make_agent_input,
     platform_msg,
 )
@@ -66,7 +66,7 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
         # Same db + session_id across instances models a persistent backend that
         # outlives a single agent process.
         return AgnoAgent(
-            model=CapturingModel(reply),
+            model=CapturingModel(reply, replies=True),
             db=db,
             session_id=ROOM_ID,
             add_history_to_context=True,
@@ -84,7 +84,9 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
     # Turn 1 — Band supplies NO history (raw=[]); only the live message is sent.
     first = _platform_message("m1", "remember the code is 42")
     await adapter.on_event(
-        make_agent_input(first, [], is_session_bootstrap=True, tools=SchemaTools([]))
+        make_agent_input(
+            first, [], is_session_bootstrap=True, tools=ContactAwareTools()
+        )
     )
     assert not any(m.from_history for m in _captured(adapter).captured_messages or [])
 
@@ -102,7 +104,7 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
     )
     await adapter2.on_event(
         make_agent_input(
-            second, band_raw, is_session_bootstrap=True, tools=SchemaTools([])
+            second, band_raw, is_session_bootstrap=True, tools=ContactAwareTools()
         )
     )
 

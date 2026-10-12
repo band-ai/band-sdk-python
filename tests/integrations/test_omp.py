@@ -24,7 +24,6 @@ from band.integrations.omp import (
     omp_provider_env,
     validate_omp_command,
 )
-from band.runtime.tools import settles_turn_reply
 from tests.paths import CI_SCRIPTS
 
 
@@ -137,7 +136,6 @@ def test_normalize_mcp_title_maps_registered_band_tool() -> None:
     name, args = normalize_omp_mcp_device_call(title, {"chat_id": "r1"}, own)
     assert name == "band_send_message"
     assert args == {"chat_id": "r1"}
-    assert settles_turn_reply(name) is True
 
 
 def test_normalize_device_call_leaves_unknown_paths() -> None:
@@ -148,6 +146,77 @@ def test_normalize_device_call_leaves_unknown_paths() -> None:
         "write",
         arguments,
     )
+
+
+@pytest.mark.parametrize("content", ["not json", "[1, 2]", "{"])
+def test_a_malformed_write_to_a_band_tool_keeps_its_identity(content: str) -> None:
+    """OMP executes the payload and the tool refuses it, so the call fails; it
+    must still read as that Band tool, or its failure is lost (a failed reply
+    goes unnoticed)."""
+    arguments = {"path": "xd://mcp__band_send_message", "content": content}
+    assert normalize_omp_mcp_device_call(
+        "write", arguments, frozenset({"band_send_message"})
+    ) == ("band_send_message", arguments)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"path": "xd://mcp__band_send_message"}, id="no-content"),
+        pytest.param(
+            {"path": "xd://mcp__band_send_message", "content": {"content": "hi"}},
+            id="object-content",
+        ),
+    ],
+)
+def test_an_executed_write_without_a_string_payload_keeps_its_identity(
+    arguments: dict[str, object],
+) -> None:
+    """OMP reports a device write as ``execute`` (a read as ``read``) and
+    refuses a missing or non-string payload; the failed call is still the
+    Band tool's."""
+    assert normalize_omp_mcp_device_call(
+        "Sending the answer",
+        arguments,
+        frozenset({"band_send_message"}),
+        kind="execute",
+    ) == ("band_send_message", arguments)
+
+
+def test_a_read_is_never_the_band_tool() -> None:
+    """A call OMP reports as ``read`` is discovery, whatever arguments ride
+    along with it."""
+    arguments = {"path": "xd://mcp__band_send_message", "content": '{"content":"hi"}'}
+    assert normalize_omp_mcp_device_call(
+        "read", arguments, frozenset({"band_send_message"}), kind="read"
+    ) == ("read", arguments)
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        pytest.param("read", {"path": "xd://mcp__band_send_message"}, id="read"),
+        pytest.param(
+            "write", {"path": "xd://mcp__band_send_message", "content": ""}, id="empty"
+        ),
+        pytest.param(
+            "write", {"path": "xd://mcp__band_send_message", "content": "?"}, id="?"
+        ),
+        pytest.param(
+            "write",
+            {"path": "xd://mcp__band_send_message", "content": " HELP \n"},
+            id="help",
+        ),
+    ],
+)
+def test_a_documentation_request_is_not_the_band_tool(
+    name: str, arguments: dict[str, object]
+) -> None:
+    """Reading a device, or writing empty, ``?`` or ``help``, shows the tool's
+    docs without running it; naming it as the tool would count a reply."""
+    assert normalize_omp_mcp_device_call(
+        name, arguments, frozenset({"band_send_message"})
+    ) == (name, arguments)
 
 
 def test_omp_elicitation_call_id_format() -> None:

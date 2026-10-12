@@ -39,7 +39,7 @@ uv run examples/20-questions-arena/guesser_agent.py
 # Additional guessers with different configs and models
 uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_2 --model gpt-5-nano
 uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_3 --model claude-opus-4-6
-uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_4 --model claude-sonnet-4-6
+uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_4 --model claude-sonnet-5-5
 ```
 
 Each guesser runs independently and waits to be invited into a game room.

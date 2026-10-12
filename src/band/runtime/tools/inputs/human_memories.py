@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from band.runtime.tools.inputs.identifiers import ResourceId
+
 
 class ListUserMemoriesInput(BaseModel):
     """List memories available to the authenticated user."""
@@ -25,28 +27,28 @@ class ListUserMemoriesInput(BaseModel):
 class GetUserMemoryInput(BaseModel):
     """Get a single user memory by ID."""
 
-    memory_id: str = Field(..., description="Memory ID (required).")
+    memory_id: ResourceId = Field(..., description="Memory ID (required).")
 
 
 class SupersedeUserMemoryInput(BaseModel):
     """Mark a user memory as superseded."""
 
-    memory_id: str = Field(..., description="Memory ID (required).")
+    memory_id: ResourceId = Field(..., description="Memory ID (required).")
 
 
 class ArchiveUserMemoryInput(BaseModel):
     """Archive a user memory."""
 
-    memory_id: str = Field(..., description="Memory ID (required).")
+    memory_id: ResourceId = Field(..., description="Memory ID (required).")
 
 
 class RestoreUserMemoryInput(BaseModel):
     """Restore an archived user memory."""
 
-    memory_id: str = Field(..., description="Memory ID (required).")
+    memory_id: ResourceId = Field(..., description="Memory ID (required).")
 
 
 class DeleteUserMemoryInput(BaseModel):
     """Delete a user memory permanently."""
 
-    memory_id: str = Field(..., description="Memory ID (required).")
+    memory_id: ResourceId = Field(..., description="Memory ID (required).")

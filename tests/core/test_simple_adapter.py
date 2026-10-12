@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.logging_config import TRACE_CONTEXT
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, failure_reports
 from tests.logsupport import fake_traceparent
 
 
@@ -30,7 +30,8 @@ class ListHistoryConverter(HistoryConverter[list[str]]):
 
 
 class RecordingAdapter(SimpleAdapter[str]):
-    """Test adapter that records calls for verification."""
+    """Test adapter that records calls for verification, then declines the
+    turn so the verdict stays out of these dispatch tests."""
 
     def __init__(self, *, history_converter: HistoryConverter[str] | None = None):
         super().__init__(history_converter=history_converter)
@@ -59,6 +60,7 @@ class RecordingAdapter(SimpleAdapter[str]):
                 "room_id": room_id,
             }
         )
+        await tools.no_reply()
 
     async def on_cleanup(self, room_id: str) -> None:
         self.cleanup_calls.append(room_id)
@@ -162,6 +164,7 @@ class TestOnEventTraceContext:
                 room_id,
             ):
                 seen.append(TRACE_CONTEXT.get())
+                await tools.no_reply()
 
         adapter = TracingAdapter()
         assert TRACE_CONTEXT.get() is None
@@ -338,6 +341,7 @@ class TestAdapterSubclassing:
                 room_id,
             ):
                 self.received_history = history
+                await tools.no_reply()
 
         adapter = ListAdapter()
         inp = make_agent_input(
@@ -368,6 +372,7 @@ class TestAdapterSubclassing:
                 room_id,
             ):
                 self.received_history = history
+                await tools.no_reply()
 
         adapter = NoConverterAdapter()
         raw = [{"content": "Test"}]
@@ -394,3 +399,15 @@ class TestMultipleEvents:
         assert adapter.calls[0]["msg"].content == "First"
         assert adapter.calls[1]["msg"].content == "Second"
         assert adapter.calls[2]["msg"].content == "Third"
+
+
+async def test_unaccepted_input_is_not_judged_or_reported() -> None:
+    class OccupiedAdapter(RecordingAdapter):
+        async def on_message(self, *args: Any, **kwargs: Any) -> None:
+            raise InputNotAccepted("occupied")
+
+    inp = make_agent_input()
+    with pytest.raises(InputNotAccepted):
+        await OccupiedAdapter().on_event(inp)
+    assert not inp.tools.turn.judged
+    assert failure_reports(inp.tools) == []

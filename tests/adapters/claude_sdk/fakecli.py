@@ -1,8 +1,8 @@
 """A scripted Claude CLI behind the SDK's public ``Transport`` seam.
 
 Everything above the subprocess runs for real: ``ClaudeSDKClient``, its
-control protocol, the adapter's ``can_use_tool`` and hooks, and the in-process
-Band MCP server. Each prompt plays the next scripted turn, and tool calls pass
+control protocol, the adapter's ``can_use_tool`` and hooks, and its Band MCP
+server, which the fake dials over loopback HTTP as the real CLI does. Each prompt plays the next scripted turn, and tool calls pass
 the CLI's permission order before they run
 (https://code.claude.com/docs/en/agent-sdk/permissions).
 """
@@ -15,20 +15,23 @@ import json
 import re
 from collections import deque
 from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError
+from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
+from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
+from band.integrations.mcp import BandMCPTransport
 from tests.baseline.decisions import ModelDecision, ToolCall
+from tests.mcpclient import mcp_session
 
 MODEL = "claude-fake"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
-MCP_PROTOCOL_VERSION = "2025-06-18"
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,8 @@ class FakeClaude:
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
+        # Parks every connect, e.g. to land a shutdown while a session starts.
+        self.connecting: Hold | None = None
         # Modes the account or model can't run; the CLI falls back to
         # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
         self.unavailable_modes: set[ClaudePermissionMode] = set()
@@ -112,15 +117,21 @@ class FakeClaude:
         # neither stops nor ends.
         self.ignore_interrupt = False
         self.errors: list[BaseException] = []
+        self.closing: Hold | None = None
+        self.refuse_close = False
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
 
-    def client(self, *, options: ClaudeAgentOptions) -> ClaudeSDKClient:
-        """Stands in for the ``ClaudeSDKClient`` constructor."""
+    def transport(self, options: ClaudeAgentOptions) -> FakeCLISession:
+        """A scripted CLI behind the real SDK client and session lifecycle."""
         session = FakeCLISession(self, options)
         self.sessions.append(session)
-        return ClaudeSDKClient(options=options, transport=session)
+        return session
+
+    @property
+    def session_workspaces(self) -> list[str]:
+        return [str(session.options.cwd) for session in self.sessions]
 
     @property
     def resumed(self) -> list[str | None]:
@@ -157,8 +168,12 @@ class FakeCLISession(Transport):
         self._served: dict[str, set[str]] = {}
         self._turn: asyncio.Task[None] | None = None
         self.alive = True
+        self.refuse_close = False
 
     async def connect(self) -> None:
+        if (hold := self.claude.connecting) is not None:
+            hold.reached.set()
+            await hold.released.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
             raise CLIConnectionError("Claude CLI exited during startup")
 
@@ -168,6 +183,11 @@ class FakeCLISession(Transport):
     async def end_input(self) -> None: ...
 
     async def close(self) -> None:
+        if (hold := self.claude.closing) is not None:
+            hold.reached.set()
+            await hold.released.wait()
+        if self.claude.refuse_close or self.refuse_close:
+            raise RuntimeError("Claude CLI cleanup failed")
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()
@@ -409,41 +429,26 @@ class FakeCLISession(Transport):
     async def _served_tools(self, server: str) -> set[str]:
         """The server's tool names, listed once as the CLI does at startup."""
         if server not in self._served:
-            await self._mcp(
-                server,
-                "initialize",
-                protocolVersion=MCP_PROTOCOL_VERSION,
-                capabilities={},
-                clientInfo={"name": "fake-claude", "version": "0"},
-            )
-            listing = await self._mcp(server, "tools/list")
-            self._served[server] = {tool["name"] for tool in listing["result"]["tools"]}
+            async with self._mcp(server) as session:
+                listing = await session.list_tools()
+            self._served[server] = {tool.name for tool in listing.tools}
         return self._served[server]
 
     async def _execute(self, call: ToolCall) -> tuple[Any, bool]:
         if not call.name.startswith("mcp__"):
             return f"{call.name} ran", False
         _, server, tool = call.name.split("__", 2)
-        reply = await self._mcp(
-            server, "tools/call", name=tool, arguments=call.arguments
-        )
-        if "error" in reply:
-            return reply["error"]["message"], True
-        result = reply["result"]
-        return result["content"], bool(result.get("isError"))
+        async with self._mcp(server) as session:
+            result = await session.call_tool(tool, call.arguments)
+        content = [block.model_dump(exclude_none=True) for block in result.content]
+        return content, result.isError
 
-    async def _mcp(self, server: str, method: str, **params: Any) -> dict[str, Any]:
-        response = await self._ask_sdk(
-            subtype="mcp_message",
-            server_name=server,
-            message={
-                "jsonrpc": "2.0",
-                "id": next(self._ids),
-                "method": method,
-                "params": params,
-            },
-        )
-        return response["response"]["mcp_response"]
+    def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
+        """A session to the MCP server the options name, dialed by its URL."""
+        servers = self.options.mcp_servers
+        assert isinstance(servers, dict), servers
+        config = servers[server]
+        return mcp_session(config["url"], BandMCPTransport(config["type"]))
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:
         self._emit(

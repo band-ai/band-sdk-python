@@ -6,28 +6,41 @@ import re
 from typing import Any
 
 _REDACTED = "[REDACTED]"
+# Any whitespace but CR/LF. The gap before a value may span line breaks (blank
+# lines included) but the value itself ends at its line, so later diagnostic
+# lines survive.
+_INLINE_SPACE = r"[^\S\r\n]"
+_VALUE_GAP = rf"{_INLINE_SPACE}*(?:(?:\r\n|\r|\n){_INLINE_SPACE}*)*"
+_SEPARATOR = rf"(?:{_INLINE_SPACE}|[_-])"
+_NAME_SEPARATOR = rf"{_SEPARATOR}?"
 # Names whose ``name: value`` in free text is a credential value.
 _CREDENTIAL_NAMES = (
-    r"token|authorization|api[_-]?key|access[_-]?key|secret(?:[_-]?key)?"
-    r"|password|passwd|private[_-]?key|session[_-]?key"
+    rf"token|authorization|api{_NAME_SEPARATOR}key|access{_NAME_SEPARATOR}key"
+    rf"|secret(?:{_NAME_SEPARATOR}key)?|password|passwd"
+    rf"|private{_NAME_SEPARATOR}key|session{_NAME_SEPARATOR}key"
 )
 # In prose these usually introduce an explanation ("Invalid credentials: ..."),
 # so they are matched only as field names.
 _CREDENTIAL_FIELD_NAMES = rf"{_CREDENTIAL_NAMES}|auth|credential|cookie"
-_AUTH_SCHEME_VALUE_RE = re.compile(r"\b(Bearer|Basic)\s+[^\s,;]+", re.IGNORECASE)
-# Include spaces so a scheme-prefixed value is redacted in full.
+_AUTH_SCHEME_VALUE_RE = re.compile(
+    rf"\b(Bearer|Basic)(?=\s){_VALUE_GAP}[^\s,;]+", re.IGNORECASE
+)
+# The value runs to the end of its line: values such as SigV4 headers contain
+# spaces, commas and semicolons, so any shorter stop leaks a suffix. A value
+# may start on the next line. The optional quote, escaped or not, is a JSON or
+# repr key's closing quote.
 _CREDENTIAL_KV_RE = re.compile(
-    rf"({_CREDENTIAL_NAMES})\s*[:=]\s*[^,;]+",
+    rf"({_CREDENTIAL_NAMES})(?:\\?[\"'])?{_INLINE_SPACE}*[:=]{_VALUE_GAP}\S[^\r\n]*",
     re.IGNORECASE,
 )
-# Matched against the key with separators removed, so ``apiKey``, ``api-key`` and
+# Matched against the key with separators removed, so ``apiKey``, ``api key`` and
 # ``OpenAIAPIKey`` all end in ``apikey``. End-anchored so a non-secret such as
 # ``token_count`` is left intact.
 _CREDENTIAL_FIELD_RE = re.compile(
     rf"(?:{_CREDENTIAL_FIELD_NAMES})s?(?:value)?$",
     re.IGNORECASE,
 )
-_KEY_SEPARATOR_RE = re.compile(r"[_-]")
+_KEY_SEPARATOR_RE = re.compile(_SEPARATOR)
 
 
 def redact_credentials(text: str) -> str:

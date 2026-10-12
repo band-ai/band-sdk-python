@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.platform.event import ReconnectedEvent
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.types import PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
@@ -321,28 +321,25 @@ class TestReconnectSync:
     @pytest.mark.asyncio
     async def test_reconnected_event_is_enqueued_for_serialized_sync(self, ctx):
         """Reconnect events should be serialized through the room queue."""
-        ctx._synchronize_with_next = AsyncMock()
-
         await ctx.on_event(ReconnectedEvent())
 
-        assert ctx._reconnect_sync_requested is True
         queued = ctx.queue.get_nowait()
-        assert isinstance(queued, ReconnectedEvent)
+        assert isinstance(queued, ResyncRequest)
+        ctx._handler_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_reconnected_event_runs_sync_when_processed(self, ctx):
+    async def test_reconnected_event_runs_sync_when_processed(self, ctx, mock_link):
         """Queued reconnect events should run sync inside the execution loop."""
-        ctx._synchronize_with_next = AsyncMock()
-        ctx._reconnect_sync_requested = True
+        mock_link.get_next_message.side_effect = [make_message("reconnected"), None]
 
         await ctx._process_event(ReconnectedEvent())
 
-        ctx._synchronize_with_next.assert_awaited_once_with()
-        assert ctx._reconnect_sync_requested is False
+        assert ctx.claims.completed_ids(ctx.room_id) == ["reconnected"]
+        ctx._handler_mock.assert_awaited_once()
 
 
 class TestCrashRecovery:
-    """Tests for _recover_stale_processing_messages()."""
+    """Unfinished messages recover through authoritative /next selection."""
 
     @pytest.fixture
     def ctx(self, mock_link):
@@ -362,9 +359,9 @@ class TestCrashRecovery:
     async def test_recovers_single_stale_message(self, ctx, mock_link):
         """Should process a single stale message from crash recovery."""
         stale_msg = make_message("stale-001")
-        mock_link.get_stale_processing_messages.return_value = [stale_msg]
+        mock_link.get_next_message.side_effect = [stale_msg, None]
 
-        await ctx._recover_stale_processing_messages()
+        assert await ctx._synchronize_with_next()
 
         # Handler should be called once for the stale message
         assert ctx._handler_mock.call_count == 1
@@ -377,29 +374,33 @@ class TestCrashRecovery:
             make_message("stale-002"),
             make_message("stale-003"),
         ]
-        mock_link.get_stale_processing_messages.return_value = stale_msgs
+        mock_link.get_next_message.side_effect = [*stale_msgs, None]
 
-        await ctx._recover_stale_processing_messages()
+        assert await ctx._synchronize_with_next()
 
         assert ctx._handler_mock.call_count == 3
 
     @pytest.mark.asyncio
     async def test_no_stale_messages_is_noop(self, ctx, mock_link):
         """Should do nothing when no stale messages exist."""
-        mock_link.get_stale_processing_messages.return_value = []
+        mock_link.get_next_message.return_value = None
 
-        await ctx._recover_stale_processing_messages()
+        assert await ctx._synchronize_with_next()
 
         ctx._handler_mock.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_sync_calls_recovery_before_next(self, ctx, mock_link):
-        """_synchronize_with_next should call crash recovery before /next loop."""
+    async def test_next_gate_does_not_fall_back_to_processing_list(
+        self, ctx, mock_link
+    ):
+        """An empty /next never dispatches unfinished work from a listing."""
         mock_link.get_next_message.return_value = None
+        mock_link.get_stale_processing_messages.return_value = [
+            make_message("unfinished")
+        ]
 
         await ctx._synchronize_with_next()
 
-        # Recovery should be called exactly once
-        mock_link.get_stale_processing_messages.assert_called_once()
-        # And it should happen (we verify order by checking both were called)
-        mock_link.get_next_message.assert_called_once()
+        ctx._handler_mock.assert_not_awaited()
+        mock_link.get_stale_processing_messages.assert_not_awaited()
+        mock_link.get_next_message.assert_awaited_once()

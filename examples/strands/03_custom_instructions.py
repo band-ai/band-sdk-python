@@ -55,7 +55,7 @@ async def main() -> None:
     adapter = StrandsAdapter(
         # Full override: custom_section would be ignored alongside this.
         StrandsAdapterConfig(system_prompt=SUPPORT_PROMPT),
-        llm=OpenAIModel(model_id="gpt-5.4-mini"),
+        llm=OpenAIModel(model_id="gpt-6-luna"),
         # Post each tool call and result into the room for visibility.
         emit=Emit.TOOL_CALLS,
     )

@@ -145,7 +145,7 @@ on-disk Copilot sessions). Opt out with `AgentConfig(single_instance=False)`.
 - `model=None` (default) uses the Copilot CLI's default model. List what
   your account can use with `await client.list_models()`.
 - With **BYOK** (`provider=...`) the `model` names the *provider's* model
-  (e.g. `claude-haiku-4-5` for Anthropic) — not a Copilot model id, and `base_url` is required. BYOK moves
+  (e.g. `claude-sonnet-5-5` for Anthropic) — not a Copilot model id, and `base_url` is required. BYOK moves
   inference billing and authentication to your provider key; GitHub auth is
   not required.
 

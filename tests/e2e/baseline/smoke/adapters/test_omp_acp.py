@@ -92,7 +92,7 @@ async def test_omp_acp_band_tool_call_is_narrated(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    marker = unique_marker("omp-acp-event")
+    marker = unique_marker("ompevent")
     room_id = await resource_manager.provision_room(
         title="e2e-omp-acp-tool-call", participants=[agent.id]
     )

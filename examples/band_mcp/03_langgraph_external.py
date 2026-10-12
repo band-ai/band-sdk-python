@@ -63,7 +63,7 @@ async def main() -> None:
         "Loaded %d band-mcp human-scope tools: %s", len(tools), [t.name for t in tools]
     )
 
-    agent = create_agent(ChatAnthropic(model="claude-haiku-4-5"), tools)
+    agent = create_agent(ChatAnthropic(model="claude-sonnet-5-5"), tools)
 
     result = await agent.ainvoke(
         {

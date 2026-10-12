@@ -14,6 +14,7 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
+from band.testing import FakeAgentTools
 
 
 def _make_inner() -> MagicMock:
@@ -519,3 +520,54 @@ class TestInnerSendFailure:
         await wrapper.send_message("hi", ["alice"])  # dedup hit
 
         assert calls[0] == 2
+
+
+class GatedSendTools(FakeAgentTools):
+    """Tools whose send stays in flight until ``gate`` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> Any:
+        await self.gate.wait()
+        return await super().send_message(content, mentions)
+
+
+class TestDedupedSendBelongsToItsTurn:
+    """A suppressed duplicate is the earlier turn's send re-issued: it posts
+    nothing new, so it never counts as a later turn's reply."""
+
+    @pytest.mark.asyncio
+    async def test_a_cached_duplicate_does_not_answer_the_next_turn(self):
+        first_turn = FakeAgentTools()
+        wrapper = DedupingAgentTools(first_turn)
+        await wrapper.send_message("hi", ["alice"])
+
+        next_turn = FakeAgentTools()
+        await wrapper.update_inner(next_turn)
+        await wrapper.send_message("hi", ["alice"])
+
+        assert first_turn.turn.replied
+        assert not next_turn.turn.replied
+
+    @pytest.mark.asyncio
+    async def test_a_duplicate_joining_an_in_flight_send_does_not_answer_its_turn(
+        self,
+    ):
+        first_turn = GatedSendTools()
+        wrapper = DedupingAgentTools(first_turn)
+        original = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+
+        next_turn = FakeAgentTools()
+        await wrapper.update_inner(next_turn)
+        duplicate = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+        first_turn.gate.set()
+        await asyncio.gather(original, duplicate)
+
+        assert first_turn.turn.replied
+        assert not next_turn.turn.replied

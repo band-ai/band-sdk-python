@@ -10,7 +10,7 @@ Example:
     from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
     from band.integrations.slack import SlackAdapter, SlackAdapterConfig, SlackApp
 
-    brain = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-6"))
+    brain = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-5-5"))
 
     slack = SlackAdapter(
         SlackAdapterConfig(

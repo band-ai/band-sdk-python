@@ -73,12 +73,12 @@ def test_mcp_facade_exposes_band_backend_names_only() -> None:
     )
     from band.integrations.mcp import (  # noqa: PLC0415 -- pins the exact import path this test exercises
         BandMCPBackend,
-        BandMCPBackendKind,
+        BandMCPTransport,
     )
 
     legacy_prefix = "Then" + "voi"
 
     assert BandMCPBackend.__name__ == "BandMCPBackend"
-    assert BandMCPBackendKind.__name__ == "BandMCPBackendKind"
+    assert BandMCPTransport.__name__ == "BandMCPTransport"
     assert not hasattr(mcp, f"{legacy_prefix}MCPBackend")
     assert not hasattr(mcp, f"{legacy_prefix}MCPBackendKind")

@@ -28,6 +28,7 @@ from acp.schema import (
     ResourceContentBlock,
     ResumeSessionResponse,
     SessionCapabilities,
+    SessionCloseCapabilities,
     SessionForkCapabilities,
     SessionInfo,
     SessionListCapabilities,
@@ -125,12 +126,13 @@ class ACPServer:
                     audio=False,
                     embedded_context=True,
                 ),
-                # resume/fork are unstable ACP routes; they only answer when
+                # resume/fork/close are unstable ACP routes; they only answer when
                 # the server is run via run_acp_server().
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),
                     resume=SessionResumeCapabilities(),
                     fork=SessionForkCapabilities(),
+                    close=SessionCloseCapabilities(),
                 ),
                 field_meta={
                     "streaming": True,
@@ -508,6 +510,7 @@ class ACPServer:
             logger.debug("close_session: session %s not found", session_id)
             return
         logger.info("Closing ACP session %s (room %s)", session_id, room_id)
+        await self._adapter.cancel_prompt(session_id)
         await self._adapter.on_cleanup(room_id)
         return
 
@@ -575,7 +578,7 @@ async def run_acp_server(
     Equivalent to :func:`acp.run_agent` with that flag set. The ACP SDK
     registers ``session/fork``, ``session/resume`` and ``session/close`` as
     unstable routes, which return ``method_not_found`` when the flag is off.
-    :class:`ACPServer` implements all three and reports fork/resume in the
+    :class:`ACPServer` implements all three and reports fork/resume/close in the
     ``session_capabilities`` it returns from ``initialize``.
 
     Args:

@@ -38,7 +38,7 @@ from band.platform.event import (
     RoomRemovedEvent,
     WebSocketDisconnectedEvent,
 )
-from band.platform.message_lifecycle import MessageLifecycle
+from band.platform.message_lifecycle import ActionablePage, MessageLifecycle
 from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage
 
@@ -238,10 +238,15 @@ class BandLink:
         self._subscriptions_manager.end_session()
         logger.info("Disconnected from platform")
 
-    async def run_forever(self) -> None:
+    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
+        """Block until the connection ends.
+
+        ``install_signal_handlers`` goes to ``PHXChannelsClient.run_forever``;
+        see ``Agent.run_forever`` for when a host turns it off.
+        """
         if not self._ws:
             raise RuntimeError("Not connected")
-        await self._ws.run_forever()
+        await self._ws.run_forever(install_signal_handlers=install_signal_handlers)
 
     async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
         """Shared join call for agent_control -- used by both the initial
@@ -583,6 +588,20 @@ class BandLink:
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
         return await self._messages.get_next_message(self.rest, room_id)
+
+    async def get_actionable_page(
+        self, room_id: str, *, cursor: str | None = None
+    ) -> ActionablePage:
+        return await self._messages.get_actionable_page(
+            self.rest, room_id, cursor=cursor
+        )
+
+    async def get_actionable_message(
+        self, room_id: str, message_id: str
+    ) -> PlatformMessage | None:
+        return await self._messages.get_actionable_message(
+            self.rest, room_id, message_id
+        )
 
     async def get_stale_processing_messages(
         self, room_id: str

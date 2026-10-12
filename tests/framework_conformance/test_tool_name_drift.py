@@ -35,11 +35,12 @@ from band.runtime.tools import (
     FILE_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
     TASK_TOOL_NAMES,
-    iter_tool_definitions,
 )
 
 if _HAS_CLAUDE_SDK:
-    from band.integrations.claude_sdk.tools import build_band_sdk_tools
+    from band.integrations.mcp.engine import (
+        build_resolved_band_mcp_tool_registrations,
+    )
 
 if importlib.util.find_spec("pydantic_ai") is None:
     _HAS_PYDANTIC_AI = False
@@ -114,17 +115,16 @@ class TestClaudeSDKAdapterToolDrift:
         not _HAS_CLAUDE_SDK,
         reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
-    def test_shared_builder_covers_all_tools(self):
-        """Every Band tool should be buildable for the Claude SDK adapter."""
-        sdk_tools = build_band_sdk_tools(
-            tool_definitions=iter_tool_definitions(capabilities=ALL_CAPABILITIES),
+    def test_band_mcp_backend_covers_all_tools(self):
+        """Every Band tool is served by the room-bound backend the adapter dials."""
+        registrations = build_resolved_band_mcp_tool_registrations(
             get_tools=lambda _room_id: None,
+            capabilities=ALL_CAPABILITIES,
+            room_from_connection=True,
         )
-        found = {tool.name for tool in sdk_tools}
-        missing = ALL_TOOL_NAMES - found
+        missing = ALL_TOOL_NAMES - {registration.name for registration in registrations}
         assert not missing, (
-            f"Claude SDK adapter is missing tool wrappers for: {sorted(missing)}. "
-            "Add the tool definition to the shared Claude SDK builder."
+            f"Claude SDK adapter's Band MCP backend is missing: {sorted(missing)}."
         )
 
 
@@ -141,12 +141,6 @@ class TestClaudeSDKIntegrationToolDrift:
             "band.runtime.tools instead of hardcoding MCP tool names."
         )
 
-    def test_delegates_to_shared_builder(self):
-        """The integration should delegate tool wrapping to the shared Claude helper."""
-        source = self._FILE.read_text()
-        assert "build_band_sdk_tools(" in source
-        assert "create_band_sdk_mcp_server(" in source
-
 
 class TestClaudeSDKPromptsToolDrift:
     """Claude SDK prompts (integrations/claude_sdk/prompts.py) — chat tools only."""
@@ -162,6 +156,11 @@ class TestClaudeSDKPromptsToolDrift:
             f"Claude SDK prompts are missing documentation for: {sorted(missing)}. "
             f"Add tool documentation to the system prompt in prompts.py."
         )
+
+    def test_prompt_omits_chat_id_routing_guidance(self):
+        """Room-bound MCP tools take no chat_id; the prompt must not ask for one."""
+        source = self._FILE.read_text()
+        assert "chat_id" not in source
 
 
 class TestLangGraphToolDrift:

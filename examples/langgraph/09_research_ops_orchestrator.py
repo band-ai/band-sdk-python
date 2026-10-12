@@ -132,7 +132,7 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
 async def main() -> None:
     load_dotenv()
     agent_id, api_key = load_agent_config("research_ops_agent")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    model = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 
     logger.info(
         "Creating custom LangGraph operations orchestrator with model %s", model

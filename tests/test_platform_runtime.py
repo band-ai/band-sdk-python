@@ -10,6 +10,7 @@ from band.core.types import ConflictPolicy
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import AgentConfig, SessionConfig
+from tests.signalcases import INSTALL_SIGNAL_HANDLER_CASES, INSTALL_SIGNAL_HANDLER_IDS
 
 
 @pytest.fixture
@@ -456,6 +457,56 @@ class TestStop:
                 mock_link.disconnect.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_disconnects_even_when_runtime_stop_fails(
+        self, mock_link, mock_runtime
+    ):
+        """A failed AgentRuntime.stop still disconnects so run_forever can end."""
+        mock_runtime.stop = AsyncMock(side_effect=RuntimeError("teardown failed"))
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                )
+
+                await runtime.start(on_execute=AsyncMock())
+                with pytest.raises(RuntimeError, match="teardown failed"):
+                    await runtime.stop()
+
+                mock_link.disconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_disconnects_even_when_contacts_unsubscribe_fails(
+        self, mock_link, mock_runtime
+    ):
+        """A failed contacts unsubscribe still disconnects the link."""
+        mock_link.unsubscribe_agent_contacts = AsyncMock(
+            side_effect=RuntimeError("unsubscribe failed")
+        )
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                )
+
+                await runtime.start(on_execute=AsyncMock())
+                runtime._contacts_subscribed = True
+                await runtime.stop()
+
+                mock_link.disconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_stop_before_start_is_safe(self):
         """Should handle stop before start gracefully."""
         runtime = PlatformRuntime(
@@ -471,8 +522,13 @@ class TestRunForever:
     """Tests for PlatformRuntime.run_forever() method."""
 
     @pytest.mark.asyncio
-    async def test_delegates_to_link(self, mock_link, mock_runtime):
-        """Should delegate to link.run_forever()."""
+    @pytest.mark.parametrize(
+        ("kwargs", "installs"),
+        INSTALL_SIGNAL_HANDLER_CASES,
+        ids=INSTALL_SIGNAL_HANDLER_IDS,
+    )
+    async def test_delegates_to_link(self, mock_link, mock_runtime, kwargs, installs):
+        """run_forever hands the host's signal choice to the link."""
         with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
@@ -486,9 +542,11 @@ class TestRunForever:
                 )
 
                 await runtime.start(on_execute=AsyncMock())
-                await runtime.run_forever()
+                await runtime.run_forever(**kwargs)
 
-                mock_link.run_forever.assert_awaited_once()
+                mock_link.run_forever.assert_awaited_once_with(
+                    install_signal_handlers=installs
+                )
 
     @pytest.mark.asyncio
     async def test_run_forever_before_start_is_safe(self):

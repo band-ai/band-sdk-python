@@ -53,6 +53,7 @@ from .core.exceptions import (
     BandConnectionError,
     BandError,
     BandToolError,
+    RoomExecutionStoppedError,
 )
 
 # Core types (v0.3.0)
@@ -154,6 +155,7 @@ __all__ = [
     "PlatformEvent",
     # Runtime - Types
     "PlatformMessage",
+    "RoomExecutionStoppedError",
     "RoomPresence",
     "SessionConfig",
     "build_logging_config",

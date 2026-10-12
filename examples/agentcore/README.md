@@ -109,7 +109,7 @@ For each agent (weather, math, personal_assistant):
    - `BAND_AGENT_ID` — that agent's Band UUID.
    - `BAND_API_KEY` — that agent's Band API key.
    - `ANTHROPIC_API_KEY` — your Anthropic key.
-   - `ANTHROPIC_MODEL` — e.g. `claude-sonnet-4-5-20250929`.
+   - `ANTHROPIC_MODEL` — e.g. `claude-sonnet-5-5`.
    - `SYSTEM_PROMPT` — paste contents of
      `examples/agentcore/agents/<agent>.txt`.
 3. Capture each runtime's ARN.

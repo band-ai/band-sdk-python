@@ -23,18 +23,22 @@ from band_rest import (
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
+from band.core.exceptions import BandConnectionError, RoomExecutionStoppedError
 from band.core.model_catalog import ModelSelection, ModelSelectionError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability
 from band.runtime.capabilities import FeatureFlag
+from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.formatters import build_participants_message
 from band.runtime.oneshot import (
     OneShotEnvelopeError,
     OneShotInvoker,
+    OneShotStatus,
     _build_platform_message,
     _lookup_sender_name,
     _parse_inserted_at,
 )
+from band.runtime.tools import TurnEffect
 from tests.catalogs import CatalogAdapter
 from tests.runtime.conftest import ctx_item, make_link_mock, platform_msg
 
@@ -69,6 +73,7 @@ def _make_adapter_mock() -> MagicMock:
     async def _capture(inp: Any) -> None:
         adapter.received_input = inp
 
+    adapter.try_handle_control = AsyncMock(return_value=False)
     adapter.on_started = AsyncMock()
     adapter.on_event = AsyncMock(side_effect=_capture)
     adapter.on_cleanup = AsyncMock()
@@ -875,6 +880,7 @@ class TestToolCallReplayAcrossCrash:
     async def test_crash_before_mark_processed_replays_the_tool(self) -> None:
         sent_emails: list[str] = []
 
+        @declares_turn_effect(TurnEffect.ACT)
         async def send_email(args: SendEmailInput) -> str:
             sent_emails.append(args.to)
             return "sent"
@@ -935,3 +941,51 @@ class TestToolCallReplayAcrossCrash:
         # idempotency (e.g. keying on tool arguments), same as any at-least-
         # once delivery system.
         assert sent_emails == ["boss@example.com", "boss@example.com"]
+
+
+@pytest.mark.parametrize("refusal", [False, "stopped"])
+async def test_refused_claim_never_invokes_adapter(refusal: bool | str) -> None:
+    adapter = _make_adapter_mock()
+    link = make_link_mock(next_messages=[platform_msg("m1")])
+    if refusal == "stopped":
+        link.mark_processing.side_effect = RoomExecutionStoppedError("r1")
+        error = RoomExecutionStoppedError
+    else:
+        link.mark_processing.return_value = False
+        error = BandConnectionError
+    invoker = await _make_invoker(link, adapter)
+    with pytest.raises(error):
+        await invoker.handle_event(_msg_body(msg_id="m1"))
+    adapter.on_event.assert_not_awaited()
+    link.mark_failed.assert_not_awaited()
+
+
+@pytest.mark.parametrize("refusal", [False, "stopped"])
+async def test_refused_completion_is_not_done_or_provider_failure(
+    refusal: bool | str,
+) -> None:
+    link = make_link_mock(next_messages=[platform_msg("m1")])
+    if refusal == "stopped":
+        link.mark_processed.side_effect = RoomExecutionStoppedError("r1")
+        error = RoomExecutionStoppedError
+    else:
+        link.mark_processed.return_value = False
+        error = BandConnectionError
+    invoker = await _make_invoker(link)
+    with pytest.raises(error):
+        await invoker.handle_event(_msg_body(msg_id="m1"))
+    link.mark_failed.assert_not_awaited()
+
+
+@pytest.mark.parametrize("operation", ["claim", "ack"])
+async def test_drain_records_only_accepted_messages(operation: str) -> None:
+    link = make_link_mock(
+        history_items=[ctx_item("m2"), ctx_item("m3")],
+        next_messages=[platform_msg("m1"), platform_msg("m2"), platform_msg("m3")],
+    )
+    mark = link.mark_processing if operation == "claim" else link.mark_processed
+    mark.side_effect = [True, True, RoomExecutionStoppedError("r1")]
+    invoker = await _make_invoker(link)
+    result = await invoker.handle_event(_msg_body(msg_id="m1"))
+    assert result["status"] == OneShotStatus.DONE
+    assert result["drained"] == ["m2"]

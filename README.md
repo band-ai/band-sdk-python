@@ -140,7 +140,7 @@ configure_logging()
 
 async def main() -> None:
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-6-luna")),
         checkpointer=InMemorySaver(),
     )
 
@@ -194,22 +194,31 @@ Your model/provider credentials change with the framework, but Band room routing
 ```python
 from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
-adapter = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-4-5"))
+adapter = AnthropicAdapter(AnthropicAdapterConfig(model="claude-sonnet-5-5"))
 ```
 
 ```python
 from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 
-adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4-mini"))
+adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-6-luna"))
 ```
 
 ```python
 from band.adapters import GeminiAdapter, GeminiAdapterConfig
 
-adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-2.5-flash"))
+adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-3.8-flash"))
 ```
 
 Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
+
+### Process Signals
+
+`agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) passes `install_signal_handlers=False` and calls `agent.stop()` from its own handler; `run_forever` then returns. `GracefulShutdown` is a ready-made handler that does this, and `run_with_graceful_shutdown(agent)` wraps it. Put `GracefulShutdown` outside `agent` so its handlers are registered before `start()` and a mid-initialize SIGTERM can still tear down:
+
+```python notest
+async with GracefulShutdown(agent), agent:
+    await agent.run_forever(install_signal_handlers=False)
+```
 
 ### Logging
 
@@ -332,7 +341,7 @@ from band.adapters import PydanticAIAdapter, PydanticAIAdapterConfig
 # None (default) inherits Agent.instrument_all(); False opts out of it;
 # True uses the global TracerProvider; InstrumentationSettings(...) customizes.
 adapter = PydanticAIAdapter(
-    PydanticAIAdapterConfig(model="openai:gpt-5.4-mini"), instrument=True
+    PydanticAIAdapterConfig(model="openai:gpt-6-luna"), instrument=True
 )
 ```
 
@@ -502,7 +511,7 @@ from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.types import Capability
 
 adapter = AnthropicAdapter(
-    AnthropicAdapterConfig(model="claude-sonnet-4-5"),
+    AnthropicAdapterConfig(model="claude-sonnet-5-5"),
     capabilities=Capability.CONTACTS | Capability.MEMORY,
 )
 ```
@@ -519,7 +528,7 @@ from band.adapters import AnthropicAdapter, AnthropicAdapterConfig
 
 adapter = AnthropicAdapter(
     AnthropicAdapterConfig(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
         custom_section="You are a concise technical reviewer.",
     ),
     capabilities=Capability.CONTACTS,
@@ -903,6 +912,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | ---- | ---- |
 | **Connect** | `agent = Agent.create(adapter=..., agent_id=..., api_key=...); await agent.run()` |
 | **Connect from config** | `agent = Agent.from_config("agent_name", adapter=...); await agent.run()` |
+| **Embed in a host** | `async with GracefulShutdown(agent), agent: await agent.run_forever(install_signal_handlers=False)` |
 | **Send message** | `band_send_message(content, mentions)` |
 | **Find peers** | `band_lookup_peers()` |
 | **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |

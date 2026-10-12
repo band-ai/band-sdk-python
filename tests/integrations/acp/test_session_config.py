@@ -260,7 +260,7 @@ class TestACPConfigurationHarness:
         async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
             reply = await session.send("Configure the session")
 
-        assert reply.texts == ["Configured"]
+        assert reply.thoughts == ["Configured"]
         assert agent.config_option_requests == [
             ("fake-session-1", "reasoning_effort", "high")
         ]
@@ -394,8 +394,8 @@ class TestACPConfigurationHarness:
             release_first_resolver.set()
             first_reply, second_reply = await asyncio.gather(first_turn, second_turn)
 
-        assert first_reply.texts == ["Configured"]
-        assert second_reply.texts == ["Configured"]
+        assert first_reply.thoughts == ["Configured"]
+        assert second_reply.thoughts == ["Configured"]
 
     @pytest.mark.asyncio
     async def test_same_room_shares_one_inflight_configuration(self) -> None:
@@ -449,7 +449,7 @@ class TestACPConfigurationHarness:
 
             reply = await session.send("Retry")
 
-        assert reply.texts == ["Configured"]
+        assert reply.thoughts == ["Configured"]
         assert agent.session_ids() == [
             "fake-session-1",
             "fake-session-2",
@@ -478,7 +478,7 @@ class TestACPConfigurationHarness:
                 ),
             )
 
-        assert reply.texts == ["Restored"]
+        assert reply.thoughts == ["Restored"]
         assert agent.config_option_requests == [
             ("persisted-session", "reasoning_effort", "high")
         ]
@@ -564,7 +564,7 @@ class TestTypedModelSelection:
         async with started_acp_adapter(adapter, agent) as session:
             reply = await session.send("Hello")
 
-        assert reply.texts == ["Configured"]
+        assert reply.thoughts == ["Configured"]
         assert agent.config_selections() == [("model", "large"), ("thinking", "high")]
 
     @pytest.mark.asyncio

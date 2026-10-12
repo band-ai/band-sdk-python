@@ -82,7 +82,7 @@ async def main() -> None:
     # Create adapter with custom tools
     adapter = GoogleADKAdapter(
         GoogleADKAdapterConfig(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             custom_section="You are a helpful assistant with access to a calculator and "
             "weather tool in addition to the platform tools.",
         ),

@@ -12,12 +12,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agno.media import Image
 from agno.tools.function import ToolResult
-from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.core.adapterconfig import BaseAdapterConfig
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
+from band.core.exceptions import ProviderRunError
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -36,7 +36,6 @@ from band.runtime.tools import (
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
-    settles_turn_reply,
 )
 
 try:
@@ -74,29 +73,25 @@ _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
 )
 
 
-class AgnoRunError(RuntimeError):
+class AgnoRunError(ProviderRunError):
     """An Agno run finished in an error state instead of raising.
 
     Agno catches exceptions inside ``Agent.arun`` (model/API failures included)
     and reports them as an error-status result rather than propagating. Raising
     here restores the cross-adapter contract: a failed turn must reach the
-    runtime so the message is marked failed and the platform retries it,
-    instead of being recorded as a successful turn that produced no output.
+    runtime so the message is marked failed (and runs again only up to the
+    runtime's retry budget), instead of being recorded as a successful turn
+    that produced no output.
     """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(RunStatus.error.value, detail)
 
 
 def _error_summary(detail: str | None) -> str:
     """A bounded, log-safe summary of Agno's swallowed error text."""
     text = (detail or "unknown error").strip() or "unknown error"
     return text if len(text) <= 500 else f"{text[:500]}..."
-
-
-def _tool_executions(response: RunOutput) -> list[Any]:
-    return list(getattr(response, "tools", None) or [])
-
-
-def _tool_name(execution: Any) -> str:
-    return getattr(execution, "tool_name", None) or ""
 
 
 def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolResult]]:
@@ -364,16 +359,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         self._persist_turn(room_id, response)
 
-        if not any(
-            settles_turn_reply(_tool_name(execution))
-            for execution in _tool_executions(response)
-        ):
-            logger.debug(
-                "Room %s msg %s: agent did not settle its reply; nothing delivered",
-                room_id,
-                msg.id,
-            )
-
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
         self._message_history.pop(room_id, None)
@@ -503,18 +488,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             if response is not None and response.status == RunStatus.error:
                 raise AgnoRunError(_error_summary(response.content))
         except Exception as e:
-            # Keep the user-facing payload generic; the full traceback is in the
-            # agent log via logger.exception. Exception text can include DB
-            # strings, paths, and tokens that must not surface in chat. Only
-            # the coarse RunStatus.error code -- never response.content -- is
-            # safe to attach.
             logger.exception(
                 "Room %s msg %s: error running Agno agent", room_id, msg_id
             )
-            code = RunStatus.error.value if isinstance(e, AgnoRunError) else None
-            await tools.send_failure(
-                AgentFailure("agno", GENERIC_PROVIDER_FAILURE_MESSAGE, code)
-            )
+            await tools.send_failure(generic_provider_failure("agno", e))
             raise
 
         if response is None:

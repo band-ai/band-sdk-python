@@ -26,7 +26,7 @@ Run with:
     # optional:
     export BAND_REST_URL=https://app.band.ai
     export BAND_WS_URL=wss://app.band.ai/api/v1/socket/websocket
-    export SLACK_BOT_MODEL=claude-sonnet-4-6
+    export SLACK_BOT_MODEL=claude-sonnet-5-5
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     slack_signing_secret: str = ""
     slack_app_token: str = ""
-    slack_bot_model: str = "claude-sonnet-4-6"
+    slack_bot_model: str = "claude-sonnet-5-5"
 
 
 async def main() -> None:

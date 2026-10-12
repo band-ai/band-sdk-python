@@ -32,7 +32,7 @@ async def main() -> None:
     # Create adapter with framework-specific settings
     adapter = PydanticAIAdapter(
         PydanticAIAdapterConfig(
-            model="openai:gpt-5.4-mini",
+            model="openai:gpt-6-luna",
             custom_section="You are a helpful assistant. Be concise and friendly.",
         )
     )

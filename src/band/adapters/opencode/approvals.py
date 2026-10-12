@@ -155,6 +155,13 @@ REJECTED_PERMISSION_FEEDBACK = (
     "This request was declined. Do not retry it or try another way to do the "
     "same thing; reply to the user instead."
 )
+# A declined question is answered with this, one line per question, never sent
+# to POST /question/{id}/reject: that route carries no feedback, so OpenCode
+# ends the turn on it and the model never replies to the room.
+DECLINED_QUESTION_ANSWER = (
+    "This question was declined. Do not ask it again; continue and reply to "
+    "the user without it."
+)
 
 
 def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -> str:
@@ -299,15 +306,25 @@ class RoomApprovals:
             return
         entry = registration.entry
         self._known_permission_ids.add(request_id)
+        logger.info(
+            "OpenCode permission asked room=%s request=%s permission=%s mode=%s",
+            self._ports.room_id,
+            request_id,
+            pending.permission,
+            self._config.approval_mode,
+        )
 
-        if self._config.approval_mode == "auto_accept":
-            await self._reply_permission(pending, "once")
-            return
+        match self._config.approval_mode:
+            case "auto_accept":
+                await self._reply_permission(pending, "once")
+            case "auto_decline":
+                await self._reply_permission(pending, "reject")
+            case "manual":
+                await self._ask_room(entry)
 
-        if self._config.approval_mode == "auto_decline":
-            await self._reply_permission(pending, "reject")
-            return
-
+    async def _ask_room(self, entry: DecisionEntry[PendingPermission]) -> None:
+        """Park the ask on a human: post it to the room and start its expiry."""
+        pending = entry.payload
         self._permissions.start_timeout(
             entry, self._config.approval_wait_timeout_s, self._expire_permission
         )
@@ -317,7 +334,7 @@ class RoomApprovals:
             APPROVAL_REQUESTED_TEMPLATE.format(
                 permission=pending.permission,
                 patterns=pattern_text,
-                request_id=request_id,
+                request_id=pending.request_id,
             ),
             self._ports.turn_mentions(),
         )
@@ -343,10 +360,16 @@ class RoomApprovals:
             return
         entry = registration.entry
         self._known_question_ids.add(request_id)
+        logger.info(
+            "OpenCode question asked room=%s request=%s mode=%s",
+            self._ports.room_id,
+            request_id,
+            self._config.question_mode,
+        )
 
         if not request.questions:
             logger.warning(
-                "Rejecting malformed OpenCode question.asked with no questions "
+                "Declining malformed OpenCode question.asked with no questions "
                 "(request_id=%s room=%s)",
                 request_id,
                 self._ports.room_id,
@@ -568,7 +591,10 @@ class RoomApprovals:
         )
 
     async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
-        """Post a room message best-effort.
+        """Post an adapter notice best-effort.
+
+        A notice, never the turn's reply: it posts on the in-flight turn's
+        tools, and counting it would stop that turn relaying the model's answer.
 
         A send failure must never strand the turn or crash the SSE event loop:
         the platform requires at least one mention, so a sender-less turn (no
@@ -578,7 +604,7 @@ class RoomApprovals:
         if (tools := self._ports.tools()) is None:
             return
         try:
-            await tools.send_message(text, mentions=mentions)
+            await tools.send_notice(text, mentions=mentions)
         except Exception:
             logger.exception(
                 "Failed to post approval message to room %s", self._ports.room_id
@@ -654,6 +680,11 @@ class RoomApprovals:
                 await client.reply_question(entry.token, answers=answers)
         except ApprovalReplyError:
             return False
+        logger.info(
+            "OpenCode question answered room=%s request=%s",
+            self._ports.room_id,
+            entry.token,
+        )
         self._forget(self._questions, entry)
         return True
 
@@ -667,12 +698,22 @@ class RoomApprovals:
     async def _send_question_reject(
         self, entry: DecisionEntry[PendingQuestion]
     ) -> bool:
-        """Perform the reject I/O for an already-claimed question."""
+        """Decline an already-claimed question; see ``DECLINED_QUESTION_ANSWER``.
+
+        A malformed question with no questions gets an empty answer list, which
+        OpenCode accepts and hands back to the model like any other decline.
+        """
+        declined = [[DECLINED_QUESTION_ANSWER] for _ in entry.payload.questions]
         try:
             async with self._client_reply("reject question", entry.token) as client:
-                await client.reject_question(entry.token)
+                await client.reply_question(entry.token, answers=declined)
         except ApprovalReplyError:
             return False
+        logger.info(
+            "OpenCode question rejected room=%s request=%s",
+            self._ports.room_id,
+            entry.token,
+        )
         self._forget(self._questions, entry)
         return True
 
@@ -718,6 +759,12 @@ class RoomApprovals:
 
     async def _expire_permission(self, entry: DecisionEntry[PendingPermission]) -> None:
         reply = self._config.approval_timeout_reply
+        logger.info(
+            "OpenCode permission expired room=%s request=%s reply=%s",
+            self._ports.room_id,
+            entry.token,
+            reply,
+        )
         if await self._send_permission_reply(entry, reply) and (
             tools := self._ports.tools()
         ):
@@ -727,6 +774,11 @@ class RoomApprovals:
             )
 
     async def _expire_question(self, entry: DecisionEntry[PendingQuestion]) -> None:
+        logger.info(
+            "OpenCode question expired room=%s request=%s",
+            self._ports.room_id,
+            entry.token,
+        )
         if await self._send_question_reject(entry) and (tools := self._ports.tools()):
             await tools.send_event(
                 f"OpenCode question `{entry.token}` timed out and was rejected.",

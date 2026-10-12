@@ -200,7 +200,7 @@ class TestCopilotACPModelSelection:
         ) as session:
             reply = await session.send("Hello")
 
-        assert reply.texts == ["Configured"]
+        assert reply.thoughts == ["Configured"]
         assert agent.config_selections() == [
             (MODEL_OPTION_ID, "gpt-5.4"),
             (EFFORT_OPTION_ID, "high"),
@@ -219,7 +219,7 @@ class TestCopilotACPModelSelection:
                 ),
             )
 
-        assert reply.texts == ["Configured"]
+        assert reply.thoughts == ["Configured"]
         assert agent.config_option_requests == [
             ("persisted-session", MODEL_OPTION_ID, "gpt-5.4")
         ]
@@ -429,7 +429,7 @@ class TestCopilotACPModelSelection:
             CONFIG_FAILURE_PREFIX
             + 'model "gpt-5.4" is not advertised; available: claude-sonnet-5'
         ]
-        assert recovered.texts == ["Configured"]
+        assert recovered.thoughts == ["Configured"]
 
     @pytest.mark.asyncio
     async def test_a_remembered_switch_survives_a_set_the_agent_never_answered(
@@ -531,7 +531,7 @@ class TestCopilotACPModelSelection:
             healed = await session.send("And again")
 
         assert lost.errors == [CONFIG_FAILURE_PREFIX + "Connection closed"]
-        assert healed.texts == ["Configured"]
+        assert healed.thoughts == ["Configured"]
         assert agent.config_selections("fake-session-3") == [
             (MODEL_OPTION_ID, "gpt-5.4"),
             (EFFORT_OPTION_ID, "medium"),

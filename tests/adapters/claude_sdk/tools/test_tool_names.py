@@ -1,6 +1,6 @@
 """claude_sdk surfaces bare tool names, not its MCP transport prefix.
 
-claude_sdk exposes band + custom tools via an in-process MCP server, so the Claude
+claude_sdk exposes band + custom tools via its Band MCP server, so the Claude
 Agent SDK namespaces them ``mcp__band__<tool>``. The platform ``tool_call`` event and
 the approval UX are cross-adapter, semantic records where every other adapter uses the
 bare name, so the adapter strips its own server's prefix at those boundaries.

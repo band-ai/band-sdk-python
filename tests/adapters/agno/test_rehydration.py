@@ -23,7 +23,7 @@ class TestRehydrationPipeline:
     actual run input Agno received."""
 
     async def test_all_message_kinds_become_the_right_messages(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         # Authentic rehydration: build platform dicts and run them through the
         # real runtime formatter (which also drops the current message).
@@ -50,10 +50,14 @@ class TestRehydrationPipeline:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, agent = await make_started_adapter(RunOutput(content="ack"))
+        adapter, agent = await make_started_adapter(
+            RunOutput(content="ack"), replies_through=tools
+        )
 
         await adapter.on_event(
-            make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
+            make_agent_input(
+                sample_platform_message, raw, is_session_bootstrap=True, tools=tools
+            )
         )
 
         msgs = run_input(agent)
@@ -71,7 +75,7 @@ class TestRehydrationPipeline:
         assert msgs[-1].content == sample_platform_message.format_for_llm()
 
     async def test_unsupported_kinds_are_dropped(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         raw = format_history_for_llm(
             [
@@ -87,10 +91,14 @@ class TestRehydrationPipeline:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, agent = await make_started_adapter(RunOutput(content="ack"))
+        adapter, agent = await make_started_adapter(
+            RunOutput(content="ack"), replies_through=tools
+        )
 
         await adapter.on_event(
-            make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
+            make_agent_input(
+                sample_platform_message, raw, is_session_bootstrap=True, tools=tools
+            )
         )
 
         msgs = run_input(agent)
@@ -101,16 +109,20 @@ class TestRehydrationPipeline:
         ]
 
     async def test_history_is_from_history_but_current_message_is_live(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         raw = format_history_for_llm(
             [platform_msg("h1", "hi", sender_name="Alice")],
             exclude_id=sample_platform_message.id,
         )
-        adapter, agent = await make_started_adapter(RunOutput(content="ack"))
+        adapter, agent = await make_started_adapter(
+            RunOutput(content="ack"), replies_through=tools
+        )
 
         await adapter.on_event(
-            make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
+            make_agent_input(
+                sample_platform_message, raw, is_session_bootstrap=True, tools=tools
+            )
         )
 
         msgs = run_input(agent)
@@ -118,9 +130,11 @@ class TestRehydrationPipeline:
         assert not msgs[-1].from_history  # the message to actually answer
 
     async def test_participants_and_contacts_injected_before_current_message(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
-        adapter, agent = await make_started_adapter(RunOutput(content="ok"))
+        adapter, agent = await make_started_adapter(
+            RunOutput(content="ok"), replies_through=tools
+        )
 
         await adapter.on_event(
             make_agent_input(
@@ -129,6 +143,7 @@ class TestRehydrationPipeline:
                 is_session_bootstrap=True,
                 participants_msg="Alice and Bob are here",
                 contacts_msg="Carol is now a contact",
+                tools=tools,
             )
         )
 
@@ -158,7 +173,7 @@ class TestUnansweredMessage:
         assert all(current.content not in h["content"] for h in raw)
 
         adapter, agent = await make_started_adapter(
-            RunOutput(content="here is your answer")
+            RunOutput(content="here is your answer"), replies_through=tools
         )
 
         await adapter.on_event(
@@ -184,7 +199,9 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, agent = await make_started_adapter(RunOutput(content="fresh answer"))
+        adapter, agent = await make_started_adapter(
+            RunOutput(content="fresh answer"), replies_through=tools
+        )
 
         await adapter.on_event(
             make_agent_input(
@@ -208,7 +225,9 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, agent = await make_started_adapter(RunOutput(content="answering all"))
+        adapter, agent = await make_started_adapter(
+            RunOutput(content="answering all"), replies_through=tools
+        )
 
         await adapter.on_event(
             make_agent_input(
@@ -227,7 +246,7 @@ class TestUnansweredMessage:
 
 class TestMultiTurnCarryover:
     async def test_persisted_transcript_feeds_the_next_turn(
-        self, make_started_adapter, sample_platform_message
+        self, make_started_adapter, sample_platform_message, tools
     ):
         # Turn 1's run produces a transcript; _persist_turn keeps it and the next
         # turn must build on top of it (carryover through the real on_message path).
@@ -238,13 +257,17 @@ class TestMultiTurnCarryover:
                 Message(role="assistant", content="a1"),
             ],
         )
-        adapter, agent = await make_started_adapter(turn)
+        adapter, agent = await make_started_adapter(turn, replies_through=tools)
 
         await adapter.on_event(
-            make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
+            make_agent_input(
+                sample_platform_message, [], is_session_bootstrap=True, tools=tools
+            )
         )
         await adapter.on_event(
-            make_agent_input(sample_platform_message, [], is_session_bootstrap=False)
+            make_agent_input(
+                sample_platform_message, [], is_session_bootstrap=False, tools=tools
+            )
         )
 
         msgs = run_input(agent)  # the second (follow-up) turn's input

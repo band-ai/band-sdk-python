@@ -456,6 +456,22 @@ class AdapterFeatures:
         )
 
 
+# Sender identity of the messages ContactEventHandler's HUB_ROOM strategy
+# injects into the hub room; they never come from the platform.
+SYNTHETIC_SENDER_TYPE = "System"
+SYNTHETIC_CONTACT_EVENTS_SENDER_ID = "contact-events"
+SYNTHETIC_CONTACT_EVENTS_SENDER_NAME = "Contact Events"
+
+
+def is_contact_hub_turn(*, sender_type: str | None, sender_id: str | None) -> bool:
+    """Whether a message is a synthetic contact event the SDK injected into the
+    hub room, rather than a platform message addressed to the agent."""
+    return (
+        sender_type == SYNTHETIC_SENDER_TYPE
+        and sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+    )
+
+
 @dataclass(frozen=True)
 class PlatformMessage:
     """Message from the platform."""
@@ -513,6 +529,9 @@ class AgentInput:
 
     Contains everything an adapter needs to process a message.
     History is provided via HistoryProvider for lazy conversion.
+    Custom preprocessors that consume context can supply ``commit_context``;
+    the host calls it after model attempts except proven non-acceptance.
+    Controls leave model context owed.
     """
 
     msg: PlatformMessage
@@ -522,3 +541,16 @@ class AgentInput:
     contacts_msg: str | None  # Contact changes broadcast message
     is_session_bootstrap: bool
     room_id: str
+    commit_context: Callable[[], None] | None = None
+
+
+def delivery_status_for_agent(metadata: Any, agent_id: str | None) -> str | None:
+    """Read an agent's authoritative delivery status from wire metadata."""
+    statuses = metadata_to_dict(metadata).get("delivery_status")
+    if not isinstance(statuses, dict):
+        return None
+    delivery = statuses.get(agent_id)
+    if not isinstance(delivery, dict):
+        return None
+    status = delivery.get("status")
+    return status if isinstance(status, str) else None

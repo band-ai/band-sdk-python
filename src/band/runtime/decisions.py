@@ -176,7 +176,11 @@ class DecisionRegistry(Mapping[str, T]):
         first or it was replaced; a reply that claimed it first is always
         waited for."""
         try:
-            return await asyncio.wait_for(asyncio.shield(future), timeout_s)
+            # asyncio.timeout(), not wait_for: on Python 3.11 wait_for returns
+            # an answer that lands in the same tick as a cancel of this task
+            # and drops the cancel, so a cleaned-up turn carries on.
+            async with asyncio.timeout(timeout_s):
+                return await asyncio.shield(future)
         except TimeoutError:
             # Whoever removed the ask in the deadline's own tick resolved it.
             if future.done():

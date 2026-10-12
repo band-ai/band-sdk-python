@@ -40,7 +40,7 @@ async def main() -> None:
     # Create adapter with Google ADK settings
     adapter = GoogleADKAdapter(
         GoogleADKAdapterConfig(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             custom_section="You are a helpful assistant. Be concise and friendly.",
         )
     )

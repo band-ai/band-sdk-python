@@ -25,6 +25,11 @@ from band.client.rest import (
     ChatRoomRequest,
 )
 from band.client.streaming import MessageCreatedPayload, MessageMetadata
+from band.core.types import (
+    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    SYNTHETIC_CONTACT_EVENTS_SENDER_NAME,
+    SYNTHETIC_SENDER_TYPE,
+)
 from band.platform.event import (
     ContactAddedEvent,
     ContactEvent,
@@ -36,9 +41,6 @@ from band.platform.event import (
 from band.platform.posting import post_event
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import (
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-    SYNTHETIC_CONTACT_EVENTS_SENDER_NAME,
-    SYNTHETIC_SENDER_TYPE,
     ContactEventConfig,
     ContactEventStrategy,
     normalize_handle,

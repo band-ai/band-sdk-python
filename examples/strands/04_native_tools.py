@@ -67,7 +67,7 @@ async def main() -> None:
             custom_section="You convert currencies with the convert_from_usd tool. Escalate to a "
             "human only when the request is outside currency conversion."
         ),
-        llm=OpenAIModel(model_id="gpt-5.4-mini"),
+        llm=OpenAIModel(model_id="gpt-6-luna"),
         additional_tools=[convert_from_usd, escalate_to_human],
         emit=Emit.TOOL_CALLS,
     )

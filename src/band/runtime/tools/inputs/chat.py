@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from band_sdk_core import no_reply_tool
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from band.core.content import BLANK_CONTENT_ERROR, has_visible_content
@@ -36,8 +37,8 @@ class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
     Use this to respond to users or other agents. Messages require at least one @mention
-    in the mentions array. You MUST use this tool to communicate - plain text responses
-    won't reach users.
+    in the mentions array. When the latest message needs no answer from you, call
+    band_no_reply instead of sending one.
     """
 
     content: str = Field(..., description="The message content to send")
@@ -124,19 +125,18 @@ class GetParticipantsInput(BaseModel):
     # No parameters required
 
 
+# band-sdk-core owns band_no_reply's definition, shared by every SDK.
+_NO_REPLY_TOOL = no_reply_tool()
+_NO_REPLY_REASON = next(
+    p["description"] for p in _NO_REPLY_TOOL["parameters"] if p["name"] == "reason"
+)
+
+
 class NoReplyInput(BaseModel):
-    """End this turn without posting anything to the room.
+    reason: str | None = Field(default=None, description=_NO_REPLY_REASON)
 
-    Call this instead of band_send_message when the latest message needs no
-    answer from you: it was addressed to someone else, it is an FYI or an
-    acknowledgement, or another participant already answered it. It is a
-    complete turn, not an error; do not also send a message.
-    """
 
-    reason: str | None = Field(
-        default=None,
-        description="Short note on why no reply is needed (kept in local logs only)",
-    )
+NoReplyInput.__doc__ = _NO_REPLY_TOOL["description"]
 
 
 class CreateChatroomInput(BaseModel):

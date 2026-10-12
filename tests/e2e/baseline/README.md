@@ -467,8 +467,10 @@ Each message carries a per-recipient delivery state, exposed as
 DELIVERED -> PROCESSING -> PROCESSED | FAILED
 ```
 
-`FAILED` is **not** terminal — the platform retries (bounded by max retries), so a
-message may cycle `FAILED -> PROCESSING` again before reaching `PROCESSED`.
+`FAILED` is **not** terminal — the platform's `/next` serves a failed message again,
+so a new agent process (or execution context) may cycle it `FAILED -> PROCESSING`
+before `PROCESSED`. The running agent skips a message once it has failed
+`max_message_retries` times (default 1), so it does not retry the message itself.
 `PROCESSED` is the only success terminal.
 
 ```python notest

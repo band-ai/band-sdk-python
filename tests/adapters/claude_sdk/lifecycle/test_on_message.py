@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+import pytest
+
+from band.core.exceptions import InputNotAccepted
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -19,13 +22,13 @@ async def test_a_room_bootstraps_once_then_keeps_talking_in_the_same_session(
     room = await claude_room()
     room.claude.script([room.model_reply("hi Bob")], [room.model_reply("still here")])
 
-    await room.send("Hello, agent!", history="[Alice]: the code word is tulip")
+    await room.send("Hello, agent!", history=(said("Alice", "the code word is tulip"),))
     await room.send("Are you there?")
 
     first, second = room.claude.prompts
     assert MEMORY_FRAMING in first
     assert "[Alice]: the code word is tulip" in first
-    assert f"[chat_id: {room.room_id}]" in first
+    assert "chat_id" not in first
     assert "Hello, agent!" in first
     assert MEMORY_FRAMING not in second
     assert "Are you there?" in second
@@ -37,17 +40,16 @@ async def test_a_room_bootstraps_once_then_keeps_talking_in_the_same_session(
 async def test_a_second_message_is_refused_while_the_first_is_still_running(
     claude_room: OpenRoom,
 ) -> None:
-    """One room runs one turn: a message arriving mid-turn is told to wait,
-    reaches no model, and the running turn still finishes normally."""
+    """Unaccepted work reaches no model and the active turn finishes normally."""
     room = await claude_room()
     thinking = Hold()
     room.claude.script([thinking, room.model_reply("done")])
 
     first = asyncio.create_task(room.send("do the long thing"))
     async with thinking:
-        await room.send("are you done yet?")
+        with pytest.raises(InputNotAccepted):
+            await room.send("are you done yet?")
     await first
 
-    assert room.chat == ["Still processing the previous request in this room.", "done"]
-    assert room.tools.messages_sent[0]["mentions"] == ["u1"]
+    assert room.chat == ["done"]
     assert len(room.claude.prompts) == 1

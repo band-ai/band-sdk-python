@@ -41,7 +41,7 @@ async def main() -> None:
 
     adapter = CrewAIAdapter(
         CrewAIAdapterConfig(
-            model="gpt-5.4-mini",
+            model="gpt-6-luna",
             role="Contact-aware relationship manager",
             goal=(
                 "Help users manage contacts, keep track of relationship context, "

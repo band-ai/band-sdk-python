@@ -9,12 +9,13 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 from band.runtime.tools.inputs.chat import require_visible_content
+from band.runtime.tools.inputs.identifiers import ResourceId
 
 
 class ListMyChatMessagesInput(BaseModel):
     """List messages in a chat room."""
 
-    chat_id: str = Field(..., description="The chat room ID (required).")
+    chat_id: ResourceId = Field(..., description="The chat room ID (required).")
     page: int | None = Field(None, description="Page number (optional).")
     page_size: int | None = Field(None, description="Items per page (optional).")
     message_type: str | None = Field(
@@ -30,7 +31,7 @@ class ListMyChatMessagesInput(BaseModel):
 class SendMyChatMessageInput(BaseModel):
     """Send a message in a chat room."""
 
-    chat_id: str = Field(..., description="The chat room ID (required).")
+    chat_id: ResourceId = Field(..., description="The chat room ID (required).")
     content: str = Field(..., description="Message text (required).")
     recipients: str = Field(
         ...,
