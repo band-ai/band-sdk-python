@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -7163,6 +7164,23 @@ async def test_restored_codex_thread_receives_the_mandatory_transport_contract()
     inputs = client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
     assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
     assert client.params_of(CodexRequestMethod.THREAD_RESUME)
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="eager task factories need Python 3.12"
+)
+async def test_cleanup_readmits_the_room_under_an_eager_task_factory() -> None:
+    asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
+    client = FakeCodexClient(events=[turn_completed(), turn_completed("turn-2")])
+    adapter = make_codex_adapter(client)
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await send_bootstrap(adapter)
+
+    await adapter.on_cleanup(ROOM_ID)
+    await send_bootstrap(adapter)
+
+    assert client.closed
+    assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
 
 async def test_cleanup_cancelled_during_close_still_readmits_the_room() -> None:

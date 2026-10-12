@@ -159,7 +159,9 @@ class ApprovalInterruptMixin:
         if task is None or (task.done() and task_failure(task) is not None):
             task = asyncio.create_task(self._close_room_once(room_id, close))
             task.add_done_callback(task_failure)
-            self._room_cleanup[room_id] = task
+            # An eager task factory can finish the close before it is joinable.
+            if not task.done():
+                self._room_cleanup[room_id] = task
         await asyncio.shield(task)
 
     async def _close_room_once(
@@ -168,7 +170,7 @@ class ApprovalInterruptMixin:
         # Readmission belongs to the close itself, so a cancelled waiter cannot
         # leave the room fenced after the close succeeded.
         await close()
-        del self._room_cleanup[room_id]
+        self._room_cleanup.pop(room_id, None)
         self._closing_rooms.discard(room_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
