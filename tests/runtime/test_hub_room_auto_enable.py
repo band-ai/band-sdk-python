@@ -105,7 +105,7 @@ class TestRuntimeHubRoomWiring:
         runtime.set_hub_room_id("hub-room-xyz")
         assert runtime._hub_room_id == "hub-room-xyz"
 
-        # Build an ExecutionContext the way _create_execution does
+        # Build an ExecutionContext the way the runtime admits a room
         ctx = ExecutionContext(
             room_id="hub-room-xyz",
             link=link,

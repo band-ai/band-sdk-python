@@ -130,8 +130,8 @@ class TestAgentRuntimeLifecycle:
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
         # Create some executions
-        await runtime._create_execution("room-1")
-        await runtime._create_execution("room-2")
+        await runtime.rooms.admit("room-1")
+        await runtime.rooms.admit("room-2")
 
         assert len(runtime.executions) == 2
 
@@ -150,8 +150,8 @@ class TestAgentRuntimeLifecycle:
             mock_link, "agent-123", mock_handler, on_session_cleanup=on_cleanup
         )
 
-        await runtime._create_execution("room-1")
-        await runtime._create_execution("room-2")
+        await runtime.rooms.admit("room-1")
+        await runtime.rooms.admit("room-2")
 
         await runtime.stop()
 
@@ -213,7 +213,7 @@ class TestAgentRuntimeExecutionManagement:
         """Room left should destroy execution context."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
-        await runtime._create_execution("room-123")
+        await runtime.rooms.admit("room-123")
         await runtime._on_room_left("room-123")
 
         assert "room-123" not in runtime.executions
@@ -222,8 +222,8 @@ class TestAgentRuntimeExecutionManagement:
         """Creating execution twice should return same instance."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
-        exec1 = await runtime._create_execution("room-123")
-        exec2 = await runtime._create_execution("room-123")
+        exec1 = await runtime.rooms.admit("room-123")
+        exec2 = await runtime.rooms.admit("room-123")
 
         assert exec1 is exec2
 
@@ -235,10 +235,10 @@ class TestAgentRuntimeExecutionManagement:
         retaining room-local ownership state."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
-        room_a = await runtime._create_execution("room-a")
-        room_b = await runtime._create_execution("room-b")
+        room_a = await runtime.rooms.admit("room-a")
+        room_b = await runtime.rooms.admit("room-b")
         await _left(runtime, "room-a")
-        room_a_again = await runtime._create_execution("room-a")
+        room_a_again = await runtime.rooms.admit("room-a")
 
         assert room_a.claims is room_b.claims
         assert room_a_again.claims is room_a.claims
@@ -251,8 +251,8 @@ class TestAgentRuntimeExecutionManagement:
         """A shared registry must not acknowledge a different room's message."""
         mock_link.mark_processed = AsyncMock(return_value=True)
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
-        room_a = await runtime._create_execution("room-a")
-        room_b = await runtime._create_execution("room-b")
+        room_a = await runtime.rooms.admit("room-a")
+        room_b = await runtime.rooms.admit("room-b")
         room_a.claims.remember_ack_pending("room-a", "msg-1")
 
         assert await room_b._retry_pending_processed_acks()
@@ -268,13 +268,13 @@ class TestAgentRuntimeExecutionManagement:
     ):
         """Room teardown may drop durable cache, but not unacknowledged success."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
-        original = await runtime._create_execution("room-a")
+        original = await runtime.rooms.admit("room-a")
         original.claims.remember_completed("room-a", "msg-completed")
         original.claims.remember_ack_pending("room-a", "msg-ack-pending")
 
         mock_link.mark_processed = AsyncMock(return_value=True)
         await _left(runtime, "room-a")
-        recreated = await runtime._create_execution("room-a")
+        recreated = await runtime.rooms.admit("room-a")
 
         assert not recreated.claims.is_completed("room-a", "msg-completed")
         await wait_for_condition(lambda: mock_link.mark_processed.await_count == 1)
@@ -286,7 +286,7 @@ class TestAgentRuntimeExecutionManagement:
         """active_sessions should return a copy."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
-        await runtime._create_execution("room-123")
+        await runtime.rooms.admit("room-123")
         sessions = runtime.active_sessions
 
         # Modifying returned dict shouldn't affect internal state
@@ -304,7 +304,7 @@ class TestAgentRuntimeEventRouting:
         """Room events should be routed to execution context."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
 
-        await runtime._create_execution("room-123")
+        await runtime.rooms.admit("room-123")
 
         event = make_message_event(
             room_id="room-123",
@@ -342,7 +342,7 @@ class TestAgentRuntimeEventRouting:
             on_participant_added=on_participant_added,
         )
 
-        await runtime._create_execution("room-123")
+        await runtime.rooms.admit("room-123")
 
         event = make_participant_added_event(
             room_id="room-123",
@@ -374,7 +374,7 @@ class TestAgentRuntimeCustomFactory:
             mock_link, "agent-123", mock_handler, execution_factory=my_factory
         )
 
-        await runtime._create_execution("room-123")
+        await runtime.rooms.admit("room-123")
 
         assert runtime.executions["room-123"] is custom_execution
         assert custom_execution.room_id == "room-123"
@@ -518,7 +518,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
         leaving = asyncio.create_task(runtime._on_room_left("room-1"))
         await room_cleanup.entered.wait()
 
-        assert await runtime._create_execution("room-1") is None
+        assert await runtime.rooms.admit("room-1") is None
         await runtime._on_room_event("room-1", make_message_event(room_id="room-1"))
         assert runtime.active_sessions == {}
         assert runtime.unsettled_rooms == ["room-1"]
@@ -628,7 +628,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
 
 async def _settled(runtime: AgentRuntime, room_id: str) -> None:
     """Let the room's owned lifecycle task finish, whatever its outcome."""
-    record = runtime._rooms.get(room_id)
+    record = runtime.rooms.record(room_id)
     if record is not None and record.task is not None:
         await asyncio.wait({record.task})
 
@@ -744,7 +744,7 @@ class TestAgentRuntimeStartupOwnership:
             withdrawn = asyncio.ensure_future(_settled(held_runtime, "room-1"))
         else:
             withdrawn = asyncio.create_task(held_runtime.stop())
-        await wait_for_condition(lambda: not held_runtime._rooms["room-1"].wanted)
+        await wait_for_condition(lambda: not held_runtime.rooms.wanted("room-1"))
         (execution,) = start_gate.built
         assert not withdrawn.done() and not execution.stopped
 
@@ -796,7 +796,7 @@ class TestAgentRuntimeStartupOwnership:
         joining = asyncio.create_task(held_runtime._on_room_joined("room-1", {}))
         await start_gate.entered.wait()
         await held_runtime._on_room_left("room-1")
-        assert await held_runtime._create_execution("room-1") is None
+        assert await held_runtime.rooms.admit("room-1") is None
 
         start_gate.release.set()
         await joining
@@ -879,7 +879,7 @@ async def test_leave_behind_a_held_start_is_consumed_and_wins(
         feed.events.put_nowait(make_room_added_event("room-1"))
         await start_gate.entered.wait()
         feed.events.put_nowait(make_room_removed_event("room-1"))
-        await wait_for_condition(lambda: not runtime._rooms["room-1"].wanted)
+        await wait_for_condition(lambda: not runtime.rooms.wanted("room-1"))
 
         start_gate.release.set()
         await _settled(runtime, "room-1")

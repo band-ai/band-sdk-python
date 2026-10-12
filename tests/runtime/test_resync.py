@@ -767,7 +767,7 @@ class TestAgentRuntimeOnReconnected:
         exec2 = MagicMock()
         exec2.request_resync = AsyncMock()
 
-        runtime.executions = {"room-1": exec1, "room-2": exec2}
+        runtime.executions.update({"room-1": exec1, "room-2": exec2})
 
         await runtime._on_reconnected()
 
@@ -783,7 +783,7 @@ class TestAgentRuntimeOnReconnected:
         # Simulate a legacy/custom Execution without the new method
         legacy_exec = MagicMock(spec=[])  # spec=[] → no attributes at all
 
-        runtime.executions = {"room-legacy": legacy_exec}
+        runtime.executions.update({"room-legacy": legacy_exec})
 
         # Should not raise AttributeError
         await runtime._on_reconnected()
@@ -797,7 +797,7 @@ class TestAgentRuntimeOnReconnected:
         exec2 = MagicMock()
         exec2.request_resync = AsyncMock()
 
-        runtime.executions = {"room-1": exec1, "room-2": exec2}
+        runtime.executions.update({"room-1": exec1, "room-2": exec2})
 
         await runtime._on_reconnected()
 
@@ -811,7 +811,7 @@ class TestAgentRuntimeOnReconnected:
 
         execution = MagicMock()
         execution.request_resync = AsyncMock()
-        runtime.executions = {"room-1": execution}
+        runtime.executions.update({"room-1": execution})
 
         mock_link.rest.agent_api_chats.list_agent_chats = AsyncMock(
             side_effect=RuntimeError("network error")

@@ -391,7 +391,7 @@ class OneShotInvoker:
                 # entries is ``adapter.on_cleanup``. Without this hookup the
                 # cache grows unbounded — and for adapters that spawn
                 # subprocesses per room, those subprocesses leak too. Mirrors
-                # ``AgentRuntime._destroy_execution``'s cleanup-callback hook
+                # ``RoomExecutions.destroy``'s cleanup-callback hook
                 # in the long-running path.
                 return await self._cleanup_room(event_type, cast(str, room_id))
             case {"decision": "skip_self", "message_id": message_id}:

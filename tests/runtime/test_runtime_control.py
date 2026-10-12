@@ -54,7 +54,7 @@ class ControlledRooms:
             )
             for room_id in room_ids
         }
-        self.runtime.executions = dict(self.executions)
+        self.runtime.executions.update(self.executions)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         self.heard.append((room_id, mode))
@@ -214,7 +214,7 @@ class TestGracefulDegradation:
         runtime = AgentRuntime(
             link=link, agent_id=link.agent_id, on_execute=never_executes
         )
-        runtime.executions = {"r1": BareExecution()}  # type: ignore[dict-item]
+        runtime.executions.update({"r1": BareExecution()})  # type: ignore[dict-item]
 
         for mode in ("interrupt", "stop", "play"):
             await runtime.handle_control(_control(mode, scope="room", room_id="r1"))
@@ -234,7 +234,7 @@ async def test_rest_stop_uses_default_runtime_adapter_hook_without_latching() ->
         on_execute=never_executes,
         on_control=on_control,
     )
-    ctx = await runtime._create_execution("room-1")
+    ctx = await runtime.rooms.admit("room-1")
     assert isinstance(ctx, ExecutionContext)
     try:
         await ctx._begin_scope()
