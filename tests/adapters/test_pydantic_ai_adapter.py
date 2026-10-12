@@ -72,6 +72,7 @@ from band.core.types import (
     Emit,
     MessageType,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.runtime.custom_tools import (
@@ -96,6 +97,7 @@ from band.runtime.tools import (
 from band.testing import (
     MISSING_REPLY_FAILURE,
     FakeAgentTools,
+    events_of_type,
     failure_reports,
     reported_failures,
 )
@@ -106,6 +108,7 @@ from tests.framework_conformance.turnprobes import (
     ROOM_ID,
     turn_input,
 )
+from tests.testing.support import seeded_peer
 
 
 def make_stream_events(
@@ -1095,6 +1098,25 @@ class TestBuiltinToolExecution:
 
 class TestBuiltinToolResults:
     """What a finished built-in tool call hands back to the model."""
+
+    @pytest.mark.asyncio
+    async def test_add_participant_result_event_reads_as_plain_data(self):
+        """The tool_result event renders the result with str(), so a status
+        must read as its value, not as an enum member's repr."""
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="test"))
+        await adapter.on_started("Probe", "probe")
+        adapter._agent.model = _streamed_tool_calls(
+            (BandTool.ADD_PARTICIPANT, {"identifier": "bob"})
+        )
+        tools = FakeAgentTools(
+            room_id=ROOM_ID, peers=[seeded_peer("bob-id", handle="bob", name="Bob")]
+        )
+
+        await adapter.on_event(turn_input(tools))
+
+        [event] = events_of_type(tools, MessageType.TOOL_RESULT)
+        output = json.loads(event["content"])[ToolEventKey.OUTPUT]
+        assert "'status': 'added'" in output
 
     @pytest.mark.asyncio
     async def test_pydantic_results_are_serialized(self):
