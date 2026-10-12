@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext, ResyncRequest
@@ -52,3 +54,16 @@ class ControlledRooms:
         queue = self.executions[room_id].queue
         drained = [queue.get_nowait() for _ in range(queue.qsize())]
         return sum(isinstance(item, ResyncRequest) for item in drained)
+
+
+class StoppingAdapter:
+    """An adapter whose first ``on_interrupt`` is still winding down."""
+
+    def __init__(self) -> None:
+        self.heard: list[tuple[str, ControlMode]] = []
+        self.release = asyncio.Event()
+
+    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        self.heard.append((room_id, mode))
+        if len(self.heard) == 1:
+            await self.release.wait()

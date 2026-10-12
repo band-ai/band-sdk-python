@@ -51,8 +51,6 @@ class TestControlSignalInClaimWindow:
         assert handler.invoked == []  # handler never ran
         mock_link.mark_processed.assert_awaited_once_with("room-123", "w1")  # consumed
         assert "w1" in ctx.claims.completed_ids(ctx.room_id)
-        assert ctx._pending_interrupt is None
-        assert ctx._cycle_armed is False
 
     async def test_stop_in_window_leaves_message_actionable(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
@@ -99,7 +97,6 @@ class TestControlSignalInClaimWindow:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
         assert ctx.interrupt() is False
-        assert ctx._pending_interrupt is None
 
         # The next message runs to completion, unaffected.
         result = await ctx._process_event(make_message_event(msg_id="n1"))

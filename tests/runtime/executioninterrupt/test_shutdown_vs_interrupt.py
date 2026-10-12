@@ -27,13 +27,12 @@ class TestShutdownVsInterrupt:
             "room-123", mock_link, swallow_cancel, agent_id="agent-123"
         )
         first = asyncio.create_task(
-            ctx._run_cycle(make_message_event(msg_id="swallow"), "swallow")
+            ctx._process_event(make_message_event(msg_id="swallow"))
         )
         await first_started.wait()
 
         assert ctx.interrupt() is True
         assert await first is True
-        assert ctx._interrupt_kind is None
 
         await assert_fresh_cycle_still_propagates_shutdown_cancel(ctx, "shutdown")
 

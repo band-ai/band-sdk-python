@@ -254,4 +254,4 @@ class ClaudeRoom:
     async def settled(self) -> None:
         """Wait for a turn still running after ``send`` returned."""
         if (turn := self.adapter._turn_tasks.get(self.room_id)) is not None:
-            await asyncio.wait([turn])
+            await asyncio.wait([turn.task])

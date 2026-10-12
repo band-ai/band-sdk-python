@@ -13,6 +13,7 @@ from band.adapters.claude_sdk import (
     APPROVAL_TIMED_OUT_TEMPLATE,
     APPROVAL_UNAUTHORIZED_MESSAGE,
 )
+from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.claude_sdk.helpers import (
@@ -106,6 +107,23 @@ async def test_controls_preserve_a_parked_turn_and_busy_work_is_unaccepted(
     await room.settled()
     assert busy.turn.replied
     assert len(room.claude.prompts) == 2
+
+
+async def test_stop_ends_a_parked_turn_and_frees_the_room(
+    claude_room: OpenRoom,
+) -> None:
+    """The worker released to wait on an approval outlives its handler, so
+    STOP ends it before it can reply and the room accepts new work."""
+    room = await claude_room(with_approvals())
+    room.claude.script([LIST_FILES, room.model_reply("Listed.")])
+
+    await room.send("List the files")
+    await room.adapter.on_interrupt(room.room_id, ControlMode.STOP)
+    room.claude.script([room.model_reply("Hidden files listed.")])
+    await room.send("And the hidden ones?")
+    await room.settled()
+
+    assert room.chat == [prompt("a-1", "Bash: `ls`"), "Hidden files listed."]
 
 
 async def test_a_released_turn_that_ends_unanswered_is_reported_at_its_end(

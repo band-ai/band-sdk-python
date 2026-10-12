@@ -512,6 +512,16 @@ PR titles MUST use the same conventional commits format as commit messages
 - `fix: Handle validation errors in execute_tool_call`
 - `docs: Update README with new adapter examples`
 
+### Pull Request Descriptions
+
+Use only three sections: **Why**, **What**, and **Scope**. Explain why the
+change is needed, what the final implementation does, and its boundaries.
+Keep the description concise and write it for a reviewer without chat context.
+Do not append testing sections, checklists, progress updates, investigation
+history, or repeated addenda. Keep validation evidence and unresolved failures
+in the linked Linear issue or evidence attachments. The PR template follows
+this format.
+
 ### Pre-Commit Checklist
 
 See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.

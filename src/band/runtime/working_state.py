@@ -107,7 +107,7 @@ class WorkingStateReporter:
             await self._finish_false_send()
             return
         task = self._arm_false_report()
-        if task is not None:
+        if task is not None and not task.done():
             # ``gather(return_exceptions=True)`` swallows the keep-alive task's
             # own CancelledError (returned as a result) while still propagating a
             # cancellation aimed at *us* — the caller awaiting stop(). A bare
@@ -116,6 +116,10 @@ class WorkingStateReporter:
             # process loop and stalling shutdown (observed as a hang on Windows,
             # where scheduling makes the race routine).
             await asyncio.gather(task, return_exceptions=True)
+        elif task is not None and not task.cancelled():
+            # Already finished. Python 3.11's gather always schedules a done
+            # callback on the task's loop, which raises once that loop has closed.
+            task.exception()
         await self._finish_false_send()
 
     def _arm_false_report(self) -> asyncio.Task[None] | None:
