@@ -52,6 +52,15 @@ class TestRouting:
         assert rooms.executions["r1"]._stopped is False
         assert rooms.heard == [("r1", ControlMode.INTERRUPT)]
 
+    async def test_a_signal_that_reached_no_room_applies_when_repeated_later(
+        self, rooms: ControlledRooms
+    ) -> None:
+        await rooms.signal("stop", scope="room", room_id="r3", correlation_id="early")
+        rooms.route("r3")
+        await rooms.signal("stop", scope="room", room_id="r3", correlation_id="early")
+
+        assert rooms.heard == [("r3", ControlMode.STOP)]
+
     async def test_a_correlation_id_applies_its_signal_once(
         self, rooms: ControlledRooms
     ) -> None:

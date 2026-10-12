@@ -318,14 +318,14 @@ class AgentRuntime:
         - any signal with a ``room_id`` → that room only.
         - unknown room → no-op.
 
-        Dedupes on ``correlation_id`` (the server does not). Note: exceptions
-        raised here are swallowed-and-logged by the channel handler, so this
-        method must not rely on propagating errors to signal anything.
+        Dedupes on ``correlation_id`` (the server does not). A signal that
+        reached no room is not recorded, so a later copy still applies once
+        the room is routed. Note: exceptions raised here are
+        swallowed-and-logged by the channel handler, so this method must not
+        rely on propagating errors to signal anything.
         """
-        if not self._control_ids.first_sighting(payload):
-            return
         targets = control_targets(payload, self.executions)
-        if not targets:
+        if not targets or not self._control_ids.first_sighting(payload):
             return
         logger.info(
             "Applying control mode=%s scope=%s to %d room(s) "
