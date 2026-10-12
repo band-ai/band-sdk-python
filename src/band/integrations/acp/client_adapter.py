@@ -60,10 +60,18 @@ from band.core.types import (
     TurnUsage,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
-from band.integrations.acp.client_runtime import (
-    ACPCollectingClient,
-    ACPConnectionProtocol,
-    ACPRuntime,
+from band.integrations.acp.client_runtime import ACPRuntime
+from band.integrations.acp.client_types import (
+    ACPClientSessionState,
+    BandACPClient,
+)
+from band.integrations.acp.collecting import ACPCollectingClient
+from band.integrations.acp.model_selection import (
+    ACPModelOptions,
+    apply_model_selection,
+    locate_model_options,
+)
+from band.integrations.acp.permissions import (
     ElicitationHandler,
     ElicitationNarrator,
     PermissionHandler,
@@ -72,15 +80,6 @@ from band.integrations.acp.client_runtime import (
     cancel_permission,
     permission_option_ids,
     select_allow_option_id,
-)
-from band.integrations.acp.client_types import (
-    ACPClientSessionState,
-    BandACPClient,
-)
-from band.integrations.acp.model_selection import (
-    ACPModelOptions,
-    apply_model_selection,
-    locate_model_options,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.session_config import (
@@ -94,6 +93,7 @@ from band.integrations.acp.session_config import (
     SessionConfigSetter,
     apply_session_config_selections,
 )
+from band.integrations.acp.transport import ACPConnectionProtocol
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp import (
     BandMCPBackend,
