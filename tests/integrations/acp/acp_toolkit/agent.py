@@ -468,22 +468,11 @@ class FakeACPAgent:
         *,
         tool_call_id: str = "tc-1",
         title: str | None = None,
-        allow_option_id: str = "allow-1",
         options: list[PermissionOption] | None = None,
     ) -> FakeACPAgent:
+        offered = options if options is not None else allow_or_reject()
+
         async def _action(a: FakeACPAgent, sid: str) -> None:
-            offered = (
-                options
-                if options is not None
-                else [
-                    PermissionOption(
-                        kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id
-                    ),
-                    PermissionOption(
-                        kind="reject_once", name="Reject", optionId="reject-1"
-                    ),
-                ]
-            )
             resp = await a.ask_permission(
                 sid,
                 ToolCallUpdate(tool_call_id=tool_call_id, title=title),
@@ -719,6 +708,14 @@ class FakeACPAgent:
             for action in self._script:
                 await action(self, session_id)
         return PromptResponse(stop_reason="end_turn")
+
+
+def allow_or_reject(allow_option_id: str = "allow-1") -> list[PermissionOption]:
+    """The usual permission menu: one-shot allow, one-shot reject."""
+    return [
+        PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id),
+        PermissionOption(kind="reject_once", name="Reject", optionId="reject-1"),
+    ]
 
 
 def select_option(
