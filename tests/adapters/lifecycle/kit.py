@@ -8,7 +8,6 @@ these shared files.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -24,10 +23,8 @@ from band.core.retention import Residency, RetainedRoom
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from tests.adapters.hold import Hold
 from tests.adapters.roompeer import STARTING_MARKER
+from tests.adapters.waiting import until
 from tests.framework_conformance.turnprobes import DispatchingFakeTools
-
-# A transition settles in a few loop turns; this bounds a wait that never would.
-MAX_SETTLE_POLLS = 500
 
 IN_FLIGHT = frozenset({Residency.ACQUIRING, Residency.SUSPENDING})
 
@@ -39,15 +36,6 @@ async def pause_at(hold: Hold | None) -> None:
     """Stop at ``hold``, when set, until the test releases it."""
     if hold is not None:
         await hold.wait()
-
-
-async def until(done: Callable[[], bool], *, failure: str) -> None:
-    """Poll ``done`` until it holds, failing with ``failure`` if it never does."""
-    for _ in range(MAX_SETTLE_POLLS):
-        if done():
-            return
-        await asyncio.sleep(0.01)
-    raise AssertionError(failure)
 
 
 @dataclass(frozen=True)
