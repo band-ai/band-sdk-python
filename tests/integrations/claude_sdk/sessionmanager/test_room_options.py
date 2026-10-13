@@ -15,6 +15,7 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
     ClaudeSessionManager,
 )
+from band.workspaces import RoomWorkspaces, create_room_workspace_resolver
 from tests.adapters.claude_sdk.fakecli import MODEL, FakeClaude
 from tests.adapters.claude_sdk.helpers import exchange
 from tests.integrations.claude_sdk.sessionmanager.kit import (
@@ -39,6 +40,7 @@ class TestRoomOptions:
             mcp_servers_factory=lambda room_id: {
                 "band": {"type": "http", "url": room_id}
             },
+            workspaces=RoomWorkspaces(create_room_workspace_resolver(tmp_path)),
         )
         base = manager.base_options
         claude.script(thinking("hi"))
@@ -48,6 +50,7 @@ class TestRoomOptions:
         await manager.stop()
 
         [cli] = claude.sessions
+        assert cli.options.cwd == str(tmp_path / "room-a")
         assert cli.options.resume == "sess-earlier"
         assert cli.options.mcp_servers == {"band": {"type": "http", "url": "room-a"}}
         assert cli.options.model == base.model
