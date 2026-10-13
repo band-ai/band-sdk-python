@@ -233,8 +233,8 @@ def _build_strands(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from strands.models.openai import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
-        OpenAIModel,
+    from strands.models.openai_responses import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
+        OpenAIResponsesModel,
     )
 
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
@@ -247,7 +247,7 @@ def _build_strands(
     api_key = s.llm_credentials.openai_api_key
     return StrandsAdapter(
         StrandsAdapterConfig(custom_section=prompt),
-        llm=OpenAIModel(
+        llm=OpenAIResponsesModel(
             client_args={"api_key": api_key} if api_key else None,
             model_id=s.llm_models.openai_model,
         ),
