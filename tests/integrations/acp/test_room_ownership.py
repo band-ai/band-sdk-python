@@ -435,9 +435,11 @@ class TestFinalCleanup:
                     await session.adapter.cleanup_all()
                 assert session.adapter._mcp.current is not None
                 assert not runtime.closed
-                with pytest.raises(CleanupIncompleteError, match="still closing"):
+                # A restart retries the unfinished stop; it is still held.
+                with pytest.raises(CleanupIncompleteError, match="still running"):
                     await session.adapter.on_started("Fake Agent", "too early")
                 assert DEFAULT_ROOM in session.adapter._rooms
+                assert not runtime.closed
 
                 exiting.release.set()
                 await session.adapter.cleanup_all()

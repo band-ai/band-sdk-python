@@ -649,10 +649,12 @@ class ACPClientAdapter(
         return self._profile
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
+        # Agent.start() reuses this instance after cleanup_all(final=True); a
+        # stop is terminal for its owner, so a restart first finishes that
+        # stop, retrying whatever it left unclosed.
+        if self._retention.stopping:
+            await self.cleanup_all(final=False)
         await super().on_started(agent_name, agent_description)
-        # Agent.start() reuses this instance after cleanup_all(final=True).
-        self._renew_retention()
-        await self._mcp.reopen()
 
     def _renew_retention(self) -> None:
         """Replace a stopped residency owner; a stop is terminal for its owner."""

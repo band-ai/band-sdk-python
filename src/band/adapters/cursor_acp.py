@@ -173,6 +173,12 @@ def _close_turn(turn: CursorTurn) -> None:
     turn.session_id = None
 
 
+def _cancel(turn: CursorTurn) -> None:
+    _close_turn(turn)
+    if turn.task is not None:
+        turn.task.cancel()
+
+
 async def _report_unreported_failure(
     tools: AgentToolsProtocol, error: Exception
 ) -> None:
@@ -278,9 +284,16 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         self._turns.setdefault(room_id, []).append(turn)
         turn_task.add_done_callback(partial(self._on_turn_task_done, turn=turn))
         room.retained.own(turn_task)
-        done, _ = await asyncio.wait(
-            {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
-        )
+        try:
+            done, _ = await asyncio.wait(
+                {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            # Until it detaches, the turn belongs to this delivery and ends
+            # with it, as an inline OMP or Copilot turn does.
+            _cancel(turn)
+            await asyncio.wait({turn_task})
+            raise
         if turn_task in done:
             # No decision ever opened: completion or failure is this turn's.
             await turn_task
@@ -431,10 +444,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         ``session/cancel``.
         """
         for turn in list(self._turns.get(room_id, ())):
-            _close_turn(turn)
             turn.tools.turn.settle()
-            if turn.task is not None:
-                turn.task.cancel()
+            _cancel(turn)
         self._cancel_room_decisions(room_id)
 
     async def cleanup_all(self, *, final: bool = True) -> None:
