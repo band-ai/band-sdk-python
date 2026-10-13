@@ -263,10 +263,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         if room_id in self._turns:
             raise InputNotAccepted("The room already has an active Cursor turn")
 
-        # A decision reply for this room must never queue behind its parked
-        # prompt, so the turn body runs detached: on_message returns the moment
-        # a decision opens, while the task keeps the room's reservation and
-        # lease through the turn's actual end.
+        # The turn runs detached for the same reason: on_message returns the
+        # moment a decision opens, while the task keeps the room's reservation
+        # and lease through the turn's actual end.
         room = self._room(room_id)
         loop = asyncio.get_running_loop()
         release: asyncio.Future[None] = loop.create_future()
