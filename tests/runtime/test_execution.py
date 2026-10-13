@@ -621,7 +621,7 @@ class TestExecutionContextParticipantEvents:
             name="User Two",
             type="User",
         )
-        await ctx._process_event_body(event, None, None)
+        await ctx._process_event_body(event)
 
         assert "user-1" in captured
         assert "user-2" in captured

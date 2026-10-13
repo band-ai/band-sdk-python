@@ -149,9 +149,9 @@ async def test_stop_on_initial_activity_report_never_enters_handler() -> None:
     async with activity_context(peer, handler, observer) as ctx:
         scope = await ctx._begin_scope()
         assert scope is not None
-        assert not await ctx._run_cycle(
-            scope, make_message_event(msg_id="trigger"), "trigger"
-        )
+        event = make_message_event(msg_id="trigger")
+        scope.originals = (event,)
+        assert not await ctx._run_cycle(scope, event)
 
         assert handler.invoked == []
         assert peer.activity_reports == [STOP_ECHO, IDLE]
@@ -271,7 +271,8 @@ async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
                     return
             event = make_message_event(msg_id="newer")
             assert scope is not None
-            turn = tasks.create_task(ctx._run_cycle(scope, event, "newer"))
+            scope.originals = (event,)
+            turn = tasks.create_task(ctx._run_cycle(scope, event))
             await started.wait()
             peer.release.set()
             assert await report

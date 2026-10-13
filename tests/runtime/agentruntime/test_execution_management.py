@@ -108,10 +108,10 @@ class TestAgentRuntimeExecutionManagement:
         room_b = await runtime.rooms.admit("room-b")
         room_a.claims.remember_ack_pending("room-a", "msg-1")
 
-        assert await room_b._retry_pending_processed_acks()
+        assert await room_b._retry_pending_terminal_acks()
         mock_link.mark_processed.assert_not_awaited()
 
-        assert await room_a._retry_pending_processed_acks()
+        assert await room_a._retry_pending_terminal_acks()
         mock_link.mark_processed.assert_awaited_once_with("room-a", "msg-1")
 
         await runtime.stop()

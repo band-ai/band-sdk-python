@@ -13,8 +13,10 @@ from tests.runtime.executioninterrupt.kit import (
 
 
 class TestControlSignalInClaimWindow:
-    """Signals landing after a message is claimed but before its cancellable
-    cycle task exists (the mark_processing/hydration window) must not be lost.
+    """Signals landing while processing acceptance is still pending.
+
+    The scope is admitted only after every acceptance is confirmed, so a signal
+    in this window consumes nothing and leaves the message recoverable.
     """
 
     @staticmethod
@@ -31,7 +33,7 @@ class TestControlSignalInClaimWindow:
 
         return AsyncMock(side_effect=_gate)
 
-    async def test_interrupt_in_window_aborts_before_handler(self, mock_link):
+    async def test_interrupt_in_window_consumes_nothing(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
         mock_link.mark_processing = self._gated_mark_processing(claiming, release)
         handler = BlockingHandler()
@@ -40,17 +42,18 @@ class TestControlSignalInClaimWindow:
         proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w1")))
         await claiming.wait()
 
-        # No cycle task to cancel yet, but the signal must still take effect.
+        # Not admitted yet: nothing to terminate, but the signal is not lost.
         assert ctx._active_cycle_task is None
-        assert ctx.interrupt() is True
+        assert ctx.interrupt() is False
 
         release.set()
         result = await proc
 
-        assert result is True
+        assert result is False  # deferred for recovery
         assert handler.invoked == []  # handler never ran
-        mock_link.mark_processed.assert_awaited_once_with("room-123", "w1")  # consumed
-        assert "w1" in ctx.claims.completed_ids(ctx.room_id)
+        mock_link.mark_processed.assert_not_awaited()
+        assert "w1" not in ctx.claims.completed_ids(ctx.room_id)
+        assert not ctx.claims.is_ack_pending(ctx.room_id, "w1")
 
     async def test_stop_in_window_leaves_message_actionable(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
@@ -66,13 +69,15 @@ class TestControlSignalInClaimWindow:
         release.set()
         result = await proc
 
-        assert result is True
+        assert result is False
         assert handler.invoked == []
         assert ctx._stopped is True
         mock_link.mark_processed.assert_not_awaited()  # left for replay on play
         assert "w2" not in ctx.claims.completed_ids(ctx.room_id)
 
-    async def test_interrupt_in_backlog_window_aborts_and_advances(self, mock_link):
+    async def test_interrupt_in_backlog_window_defers_without_consuming(
+        self, mock_link
+    ):
         claiming, release = asyncio.Event(), asyncio.Event()
         mock_link.mark_processing = self._gated_mark_processing(claiming, release)
         handler = BlockingHandler()
@@ -81,14 +86,14 @@ class TestControlSignalInClaimWindow:
         proc = asyncio.create_task(ctx._process_backlog_message(backlog_message("bw1")))
         await claiming.wait()
 
-        assert ctx.interrupt() is True
+        assert ctx.interrupt() is False
 
         release.set()
         result = await proc
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.RETRY_LATER
         assert handler.invoked == []
-        mock_link.mark_processed.assert_awaited_once_with("room-123", "bw1")
+        mock_link.mark_processed.assert_not_awaited()
 
     async def test_interrupt_between_cycles_arms_nothing(self, mock_link):
         """A truly idle interrupt (no claim in flight) stays a no-op and does not

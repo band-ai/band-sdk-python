@@ -5,13 +5,23 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from band.client.streaming import ControlMode
+from band.client.streaming import ControlMode, DeliveryStatus
 from band.core.turn_lifecycle import TurnTask, terminal_deadline
+from band.platform.event import MessageEvent
 
 
 @dataclass(eq=False)
 class TurnScope:
+    """One room-owned attempt: its originals share one handler and one outcome."""
+
     control_revision: int
+    # The ordered originals this attempt consumes; fixed before admission.
+    originals: tuple[MessageEvent, ...] = ()
+    # The terminal write every original owes, chosen once at the synchronous
+    # settlement point. ``None`` leaves the originals recoverable.
+    intent: DeliveryStatus | None = None
+    # False when a control probe declined the original, leaving it unconsumed.
+    consumed: bool = True
     # Revision at which a platform STOP was observed; a heartbeat begun after
     # PLAY can observe STOP in the original turn.
     stop_revision: int | None = None
