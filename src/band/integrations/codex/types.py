@@ -29,6 +29,8 @@ class CodexItemType(StrEnum):
     WEB_SEARCH = "webSearch"
     IMAGE_VIEW = "imageView"
     COLLAB_AGENT_TOOL_CALL = "collabAgentToolCall"
+    # multi_agent_v2 announces sub-agents with this instead of a collab call.
+    SUB_AGENT_ACTIVITY = "subAgentActivity"
     DYNAMIC_TOOL_CALL = "dynamicToolCall"
     REASONING = "reasoning"
     PLAN = "plan"

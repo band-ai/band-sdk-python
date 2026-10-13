@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -22,7 +23,7 @@ from band.integrations.codex.types import (
     CodexTokenUsage,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.tools import ToolCallOutcome
+from band.runtime.tools import BandTool, ToolCallOutcome
 from band.testing import (
     events_of_type,
     reported_failures,
@@ -30,6 +31,7 @@ from band.testing import (
 from tests.adapters.codex.kit import (
     LIVE_EFFORTS_MODEL_LIST,
     ROOM_ID,
+    CodexRoom,
     ToolSchemaFakeTools,
     make_platform_message,
     patch_codex_clients_by_room,
@@ -678,6 +680,21 @@ class TestCodexAdapter:
         assert len(tools.messages_sent) == 1
         assert "Codex status:" in tools.messages_sent[0]["content"]
         assert "thread_id: not mapped" in tools.messages_sent[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_status_reports_the_room_model_without_registering_a_room(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            tool_call_request(1, BandTool.NO_REPLY), turn_completed()
+        )
+
+        await room.send("/status")
+        assert ROOM_ID not in room.adapter._room_clients
+        await room.send("work")
+        await room.send("/status")
+
+        assert "selected_model: gpt-5.5\n" in room.chat[-1]
 
     @pytest.mark.asyncio
     async def test_model_command_sets_override_without_starting_turn(self) -> None:

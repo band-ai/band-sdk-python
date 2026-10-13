@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 import pytest
 
 from band.adapters.codex import PROCESS_NOT_READY_ERROR, CodexAdapterConfig
@@ -13,10 +15,8 @@ from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
     HeldStartClient,
-    send_bootstrap,
 )
 from tests.adapters.codexturns import (
-    FakeCodexClient,
     make_codex_adapter,
     tool_call_request,
     turn_completed,
@@ -51,18 +51,21 @@ class TestProcessResidency:
         assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
             PROCESS_NOT_READY_ERROR
         ]
+        # The abandoned start was closed; the second message started anew.
+        assert (client.starts, client.closes) == (2, 1)
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 1
 
-    async def test_an_idle_release_is_refused_and_keeps_the_process(self) -> None:
-        client = FakeCodexClient(events=[turn_completed()])
-        adapter = make_codex_adapter(client)
-        await adapter.on_started("Codex Agent", "A coding agent")
-        await send_bootstrap(adapter)
-        room = adapter._room_clients[ROOM_ID]
+    async def test_an_idle_release_is_refused_and_keeps_the_process(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            tool_call_request(1, BandTool.NO_REPLY), turn_completed()
+        )
+        await room.send("work")
+        resident = room.adapter._room_clients[ROOM_ID]
 
-        outcome = await adapter._release(room, ReleaseCause.IDLE)
+        outcome = await room.adapter._release(resident, ReleaseCause.IDLE)
 
         assert outcome == ReleaseOutcome.BUSY
-        assert not client.closed
-        assert room.reader is not None and not room.reader.done()
-        await adapter.on_cleanup(ROOM_ID)
+        assert not room.client.closed
+        assert resident.reader is not None and not resident.reader.done()

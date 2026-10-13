@@ -274,6 +274,15 @@ _MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
     {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
 )
 
+# Read only to attribute a sub-agent's requests to its turn; never rendered.
+_ROUTING_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.SUB_AGENT_ACTIVITY}
+)
+
+_UNRENDERED_ITEM_TYPES = (
+    _REQUESTED_TOOL_ITEM_TYPES | _MESSAGE_ITEM_TYPES | _ROUTING_ITEM_TYPES
+)
+
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
 # _extract_thought_text.
 _THOUGHT_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
@@ -465,15 +474,19 @@ def _thread_id(event: RpcEvent) -> str | None:
     return str(thread_id) if thread_id else None
 
 
-def _collab_receivers(event: RpcEvent) -> set[str]:
-    """Sub-agent threads a collab tool call item addresses, spawned ones included."""
-    params = _event_params(event)
-    item = params.get("item")
-    if not isinstance(item, dict) or (
-        item.get("type") != CodexItemType.COLLAB_AGENT_TOOL_CALL
-    ):
+def _delegated_threads(event: RpcEvent) -> set[str]:
+    """Sub-agent threads an item says the turn spawned or addressed."""
+    item = _event_params(event).get("item")
+    if not isinstance(item, dict):
         return set()
-    return {str(thread) for thread in item.get("receiverThreadIds") or () if thread}
+    match item.get("type"):
+        case CodexItemType.COLLAB_AGENT_TOOL_CALL:
+            threads = item.get("receiverThreadIds") or ()
+        case CodexItemType.SUB_AGENT_ACTIVITY:
+            threads = (item.get("agentThreadId"),)
+        case _:
+            return set()
+    return {str(thread) for thread in threads if thread}
 
 
 @dataclass
@@ -483,8 +496,8 @@ class NativeTurn:
     Codex names the turn only when ``turn/start`` answers, so events that
     arrive first wait in ``early`` until ``turn_id`` is known. Sub-agents
     the turn delegates to ask under their own thread and turn, and Codex
-    names their thread only in the turn's collab item, so their requests
-    wait in ``unattributed`` until it does.
+    names their thread only in the turn's own items, so their requests
+    wait in ``unattributed`` until one does.
     """
 
     client: CodexClientProtocol
@@ -518,7 +531,7 @@ class NativeTurn:
     def deliver(self, event: RpcEvent) -> None:
         """Queue an owned event, then the held requests it names a sub-agent for."""
         self.events.put_nowait(event)
-        if not (receivers := _collab_receivers(event) - self.sub_agents):
+        if not (receivers := _delegated_threads(event) - self.sub_agents):
             return
         self.sub_agents |= receivers
         held, self.unattributed = self.unattributed, []
@@ -1218,13 +1231,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 # unlike an arbitrary caught exception, worth showing verbatim.
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
-            except TimeoutError:
+            except TimeoutError as timeout:
                 # Only waiting on the room's process start or stop raises
                 # this; an abandoned start stays owned until recovery closes it.
                 logger.warning(
-                    "Room %s: Codex process not ready within %ss",
-                    room.room_id,
-                    self.config.retention.transition_timeout_s,
+                    "Room %s: Codex process not ready: %s", room.room_id, timeout
                 )
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, PROCESS_NOT_READY_ERROR)
@@ -1723,9 +1734,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 if event.method == TRANSPORT_CLOSED:
                     result.turn_status = "failed"
                     result.turn_error = TRANSPORT_LOST_ERROR
-                    # The reader logged the loss and handed the process to
-                    # recovery, which closes it once this turn releases its lease.
-
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
                     # twice -- but the turn still fails either way.
@@ -1962,10 +1970,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             try:
                 event = await client.recv_event()
             except Exception as error:
-                logger.exception("Room %s: Codex event reader failed", room.room_id)
+                logger.exception(
+                    "Room %s: Codex event reader failed; recovering generation %s",
+                    room.room_id,
+                    generation,
+                )
                 self._lose_process(room, generation, error)
                 return
             if event.method == TRANSPORT_CLOSED:
+                logger.warning(
+                    "Room %s: Codex transport closed (%s); recovering generation %s",
+                    room.room_id,
+                    _loss_reason(event),
+                    generation,
+                )
                 self._lose_process(room, generation, event)
                 return
             if (
@@ -1993,15 +2011,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         waiting on them with ``cause``: the transport's closing notice, or the
         reader's own failure. Recovery closes the process once that turn unwinds.
         """
-        stopped = _loss_reason(cause)
-        logger.warning(
-            "Room %s: Codex process generation %s stopped (%s); recovering",
-            room.room_id,
-            generation,
-            stopped,
-        )
         room.residency.recover(
-            generation=generation, reason=f"Codex events stopped: {stopped}"
+            generation=generation,
+            reason=f"Codex events stopped: {_loss_reason(cause)}",
         )
         native = room.turn
         if native is not None and native.generation == generation:
@@ -2067,6 +2079,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     ) -> None:
         """Refuse a finished turn's leftovers, within the turn's settle bound so
         a process that stopped reading cannot hold the room's turn open."""
+        if native.lost:
+            # The process can never read a refusal.
+            return
         try:
             async with asyncio.timeout(self.config.turn_settle_timeout_s):
                 for event in _undelivered(native):
@@ -2957,7 +2972,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        if item_type in _REQUESTED_TOOL_ITEM_TYPES or item_type in _MESSAGE_ITEM_TYPES:
+        if item_type in _UNRENDERED_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -3652,7 +3667,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 usage.format_summary() if usage and usage.total_tokens > 0 else "none"
             )
             session_approvals = len(self._session_approved.get(room_id) or ())
-            room = self._room_clients.get(room_id)
+            room = self._active_client_state()
             selected_model = room.selected_model if room is not None else None
             status_text = (
                 "Codex status:\n"

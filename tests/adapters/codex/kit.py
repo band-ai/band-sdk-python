@@ -32,6 +32,7 @@ from band.integrations.codex import (
     RpcEvent,
 )
 from band.integrations.codex.types import (
+    CodexApprovalMethod,
     CodexItemType,
     CodexRequestMethod,
     CodexSessionState,
@@ -287,11 +288,26 @@ def delegated_to(thread_id: str) -> RpcEvent:
     )
 
 
+def started_sub_agent(thread_id: str) -> RpcEvent:
+    """The item ``multi_agent_v2`` sends when the turn spawns a sub-agent."""
+    return event_notification(
+        "item/completed",
+        {
+            "item": {
+                "type": CodexItemType.SUB_AGENT_ACTIVITY,
+                "id": f"activity-{thread_id}",
+                "kind": "started",
+                "agentThreadId": thread_id,
+            }
+        },
+    )
+
+
 def asked_by_sub_agent(request_id: int, thread_id: str) -> RpcEvent:
     """An approval a sub-agent asks under its own thread and turn."""
     return event_request(
         request_id,
-        "item/commandExecution/requestApproval",
+        CodexApprovalMethod.COMMAND_EXECUTION,
         {"threadId": thread_id, "turnId": f"{thread_id}-turn", "command": "make"},
     )
 
@@ -299,7 +315,7 @@ def asked_by_sub_agent(request_id: int, thread_id: str) -> RpcEvent:
 def parked_on_approval(*then: RpcEvent) -> tuple[RpcEvent, ...]:
     """A turn that asks the room to approve one command, then plays ``then``."""
     return (
-        event_request(10, "item/commandExecution/requestApproval", {"command": "a"}),
+        event_request(10, CodexApprovalMethod.COMMAND_EXECUTION, {"command": "a"}),
         *then,
     )
 
@@ -329,7 +345,7 @@ class CodexApprovalRoom:
                     msg=make_platform_message(room_id=ROOM_ID),
                     room_id=ROOM_ID,
                     event=event_request(
-                        request_id, "item/commandExecution/requestApproval", params
+                        request_id, CodexApprovalMethod.COMMAND_EXECUTION, params
                     ),
                     summary="npm test",
                     params=params,
@@ -466,13 +482,18 @@ class HeldStartClient(FakeCodexClient):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.starting = asyncio.Event()
         self.finish_start = asyncio.Event()
+        self.starts = 0
+        self.closes = 0
 
     async def initialize(self, **kwargs: Any) -> dict[str, Any]:
-        self.starting.set()
+        self.starts += 1
         await self.finish_start.wait()
         return await super().initialize(**kwargs)
+
+    async def close(self) -> None:
+        self.closes += 1
+        await super().close()
 
 
 # Adapters run their turns on the loop that started them, so setup, the test

@@ -55,7 +55,8 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
 - **Native work answers to the turn that started it.** Each tool call or
   approval request is handled for the Band turn whose native turn sent it, on
   the process that sent it. Requests from a sub-agent the turn delegated to
-  belong to that turn once its collab tool call names the sub-agent's thread.
+  belong to that turn once one of its items names the sub-agent's thread: a
+  collab tool call, or `multi_agent_v2`'s sub-agent activity.
   A request from a native turn no Band turn started gets a failed tool result
   or a declined approval, and late events of a finished turn are dropped
   rather than reaching the next turn.

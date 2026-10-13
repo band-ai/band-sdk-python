@@ -23,7 +23,7 @@ from band.integrations.codex import (
     CodexJsonRpcError,
     RpcEvent,
 )
-from band.integrations.codex.types import CodexRequestMethod
+from band.integrations.codex.types import CodexApprovalMethod, CodexRequestMethod
 from band.runtime.tools import BandTool
 from band.testing import (
     events_of_type,
@@ -43,6 +43,7 @@ from tests.adapters.codex.kit import (
     delegated_to,
     parked_on_approval,
     send_bootstrap,
+    started_sub_agent,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -98,7 +99,7 @@ class TestNativeTurnOwnership:
             ),
             event_request(
                 42,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {**autonomous, "command": "x"},
             ),
         )
@@ -127,7 +128,7 @@ class TestNativeTurnOwnership:
             ),
             event_request(
                 42,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {**autonomous, "command": "x"},
             ),
         )
@@ -142,8 +143,10 @@ class TestNativeTurnOwnership:
         [
             (delegated_to("thr-child"), asked_by_sub_agent(77, "thr-child")),
             (asked_by_sub_agent(77, "thr-child"), delegated_to("thr-child")),
+            (started_sub_agent("thr-child"), asked_by_sub_agent(77, "thr-child")),
+            (asked_by_sub_agent(77, "thr-child"), started_sub_agent("thr-child")),
         ],
-        ids=["named-first", "asked-first"],
+        ids=["named-first", "asked-first", "v2-named-first", "v2-asked-first"],
     )
     async def test_a_sub_agent_the_turn_delegated_to_asks_its_room(
         self,
@@ -164,11 +167,19 @@ class TestNativeTurnOwnership:
         assert await answer_to(room.client, 77) == {"decision": "accept"}
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "named",
+        [(), (delegated_to("thr-child"),)],
+        ids=["nothing-named", "another-named"],
+    )
     async def test_a_sub_agent_the_turn_never_named_is_refused_when_it_ends(
-        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+        self,
+        codex_room: Callable[..., Awaitable[CodexRoom]],
+        named: tuple[RpcEvent, ...],
     ) -> None:
         room = await codex_room(
             asked_by_sub_agent(77, "thr-elsewhere"),
+            *named,
             tool_call_request(1, BandTool.NO_REPLY),
             turn_completed(),
         )
@@ -283,6 +294,17 @@ class TestNativeTurnOwnership:
         assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
             TRANSPORT_LOST_ERROR
         ]
+
+    @pytest.mark.asyncio
+    async def test_requests_a_lost_process_left_waiting_are_not_answered_into_it(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(asked_by_sub_agent(77, "thr-elsewhere"), PROCESS_EXITED)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("work")
+
+        assert room.client.responses == []
 
     @pytest.mark.asyncio
     async def test_a_decision_the_exited_process_cannot_read_still_reports_the_loss(
