@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 from acp.schema import NewSessionResponse
 
 from band.integrations.acp.client_adapter import ACPClientAdapter
@@ -22,7 +24,10 @@ def mock_spawn() -> FakeSpawn:
     return FakeSpawn(conn=conn)
 
 
-@pytest.fixture
-def adapter_with_mocks(mock_spawn: FakeSpawn) -> ACPClientAdapter:
-    """An adapter whose room processes run on ``mock_spawn``'s connection."""
-    return adapter_on(mock_spawn.conn)
+@pytest_asyncio.fixture(loop_scope="function")
+async def adapter_with_mocks(mock_spawn: FakeSpawn) -> AsyncIterator[ACPClientAdapter]:
+    """An adapter whose room processes run on ``mock_spawn``'s connection,
+    its rooms torn down after the test."""
+    adapter = adapter_on(mock_spawn.conn)
+    yield adapter
+    await adapter.cleanup_all()
