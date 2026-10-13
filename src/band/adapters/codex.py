@@ -1235,7 +1235,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 # Only waiting on the room's process start or stop raises
                 # this; an abandoned start stays owned until recovery closes it.
                 logger.warning(
-                    "Room %s: Codex process not ready: %s", room.room_id, timeout
+                    "Room %s: Codex process not ready", room.room_id, exc_info=timeout
                 )
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, PROCESS_NOT_READY_ERROR)
