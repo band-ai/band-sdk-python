@@ -196,3 +196,35 @@ class TestDisposalGrace:
         await resident.room.dispose()
 
         assert resident.releases == [ReleaseCause.FINAL]
+
+    async def test_work_its_owner_already_cancelled_finishes_its_own_cleanup(
+        self, graceful_host: ResidenceHost
+    ) -> None:
+        resident = graceful_host.room()
+        parked, cleanup = asyncio.Event(), Barrier()
+
+        async def cancelled_by_its_owner() -> None:
+            async with resident.room.use():
+                try:
+                    parked.set()
+                    await asyncio.Future[None]()
+                finally:
+                    await cleanup.wait()
+
+        work = asyncio.create_task(cancelled_by_its_owner())
+        resident.room.own(work)
+        await parked.wait()
+        work.cancel()
+        await cleanup.reached.wait()
+        disposal = asyncio.create_task(resident.room.dispose())
+        for _ in range(GRACE_TURNS):
+            await asyncio.sleep(0)
+
+        # No grace is armed for it, and disposal does not cancel it again.
+        assert armed(graceful_host.clock) == []
+        cleanup.released.set()
+        with pytest.raises(asyncio.CancelledError):
+            await work
+        await disposal
+
+        assert resident.releases == [ReleaseCause.FINAL]
