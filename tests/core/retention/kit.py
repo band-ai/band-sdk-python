@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -182,3 +183,16 @@ class ResidenceHost:
 def armed(clock: ManualClock) -> list[float]:
     """Deadlines of the timers still waiting to fire."""
     return [timer.when for timer in clock.timers if not timer.cancelled]
+
+
+#: The logger every retention module logs under.
+RETENTION_LOGGER = "band.core.retention"
+
+
+def retention_logs(records: list[logging.LogRecord]) -> list[tuple[int, str]]:
+    """Each retention log line as (level, message)."""
+    return [
+        (record.levelno, record.getMessage())
+        for record in records
+        if record.name.startswith(RETENTION_LOGGER)
+    ]

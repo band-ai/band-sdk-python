@@ -7,7 +7,12 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
-from band.core.retention.cleanup import rejoin_owned, report_owned, task_failure
+from band.core.retention.cleanup import (
+    await_owned,
+    rejoin_owned,
+    report_owned,
+    task_failure,
+)
 from band.core.retention.clock import Cancellable, MonotonicClock, RetentionClock
 from band.core.retention.config import RoomRetentionConfig
 from band.core.retention.room import RetainedRoom
@@ -131,7 +136,7 @@ class RoomRetention:
             if (disposal := room._begin_disposal()) is not None
         ]
         if pending:
-            await asyncio.wait(pending)
+            await await_owned(pending, None)
         failures = [error for task in pending if (error := task_failure(task))]
         if failures:
             raise BaseExceptionGroup("Room cleanup remains incomplete", failures)

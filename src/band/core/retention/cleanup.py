@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
+from collections import Counter
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
+from contextlib import contextmanager
 from functools import partial
 from typing import Any
 
@@ -14,12 +16,15 @@ from band.core.retention.config import RoomRetentionConfig
 
 logger = logging.getLogger(__name__)
 
+# Callers awaiting each owned task that re-raise its failure themselves.
+_reporters: Counter[asyncio.Task[Any]] = Counter()
+
 
 def spawn_owned(
     operation: Coroutine[object, object, None], *, label: str
 ) -> asyncio.Task[None]:
-    """Run work that outlives a cancelled caller; log its failure even when
-    nobody is left to await it."""
+    """Run work that outlives a cancelled caller; log its failure only when
+    no caller is waiting to report it."""
     task = asyncio.create_task(operation)
     task.add_done_callback(partial(_log_failure, label=label))
     return task
@@ -40,7 +45,9 @@ def rejoin_owned(
 
 
 def _log_failure(task: asyncio.Task[None], *, label: str) -> None:
-    if not task.cancelled() and (error := task.exception()) is not None:
+    if task in _reporters or task.cancelled():
+        return
+    if (error := task.exception()) is not None:
         logger.warning("%s failed: %s", label, error, exc_info=error)
 
 
@@ -51,10 +58,32 @@ def task_failure(task: asyncio.Task[Any]) -> BaseException | None:
     return task.exception()
 
 
-async def report_owned(task: asyncio.Task[Any], timeout: float) -> None:
+@contextmanager
+def reporting(tasks: Collection[asyncio.Task[Any]]) -> Iterator[None]:
+    """Mark the caller as the reporter of ``tasks``' failures while it waits."""
+    _reporters.update(tasks)
+    try:
+        yield
+    finally:
+        _reporters.subtract(tasks)
+        for task in tasks:
+            if not _reporters[task]:
+                del _reporters[task]
+
+
+async def await_owned(
+    tasks: Collection[asyncio.Task[Any]], timeout: float | None
+) -> bool:
+    """Wait up to ``timeout`` for owned ``tasks`` without cancelling them, as
+    the caller that reports their failures; whether all finished."""
+    with reporting(tasks):
+        done, _ = await asyncio.wait(tasks, timeout=timeout)
+    return len(done) == len(tasks)
+
+
+async def report_owned(task: asyncio.Task[Any], timeout: float | None) -> None:
     """Report an owned cleanup's result within ``timeout`` without cancelling it."""
-    done, _ = await asyncio.wait({task}, timeout=timeout)
-    if not done:
+    if not await await_owned({task}, timeout):
         raise CleanupIncompleteError(f"Cleanup still running after {timeout}s")
     if (error := task_failure(task)) is not None:
         raise error

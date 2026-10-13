@@ -10,7 +10,12 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
-from band.core.retention.cleanup import report_owned, spawn_owned
+from band.core.retention.cleanup import (
+    await_owned,
+    report_owned,
+    reporting,
+    spawn_owned,
+)
 from band.core.retention.states import (
     BUSY_ACTIVITY_REASON,
     UNKNOWN_ACTIVITY_REASON,
@@ -298,7 +303,7 @@ class RetainedRoom:
         """Wait a bounded time for a transition without cancelling it."""
         timeout = self._owner.config.transition_timeout_s
         try:
-            done, _ = await asyncio.wait({transition}, timeout=timeout)
+            done = await await_owned({transition}, timeout)
         except asyncio.CancelledError:
             if initiator:
                 self._abandon_acquisition(transition)
@@ -306,6 +311,9 @@ class RetainedRoom:
         if not done:
             if initiator:
                 self._abandon_acquisition(transition)
+                raise TimeoutError(
+                    f"Room {self.room_id} start abandoned after {timeout}s"
+                )
             raise TimeoutError(
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
@@ -330,6 +338,11 @@ class RetainedRoom:
         it to disposal."""
         self._abandon()
         if self._state == Residency.ACQUIRING and self._cause == ReleaseCause.RECOVERY:
+            logger.warning(
+                "Room %s: abandoned acquisition (generation %s) cancelled for recovery",
+                self.room_id,
+                self._generation,
+            )
             transition.cancel(f"Room {self.room_id} acquisition was abandoned")
 
     def _request(self, cause: ReleaseCause) -> None:
@@ -552,7 +565,10 @@ class RetainedRoom:
         if self._transition is not None:
             await asyncio.wait({self._transition})
         if self._state != Residency.SUSPENDED:
-            await self._start_release(ReleaseCause.FINAL, automatic=False)
+            # Awaited directly so cancelling disposal also cancels its release.
+            release = self._start_release(ReleaseCause.FINAL, automatic=False)
+            with reporting({release}):
+                await release
         self._state = Residency.DISPOSING
         try:
             await self._dispose()
