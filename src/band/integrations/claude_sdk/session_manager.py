@@ -370,6 +370,7 @@ class ClaudeSessionManager:
         mcp_servers_factory: Callable[[str], dict[str, McpServerConfig]] | None = None,
         workspaces: RoomWorkspaces | None = None,
         retention: RoomRetentionConfig | None = None,
+        on_disposed: Callable[[str], None] | None = None,
     ) -> None:
         """
         Initialize session manager.
@@ -385,11 +386,14 @@ class ClaudeSessionManager:
             retention: Residency settings, including the transition reporting
                 budget, which defaults to ``CLI_STARTUP_TIMEOUT_S``; idle
                 release stays with the adapter's validation.
+            on_disposed: Called with a room's id once its final release is
+                confirmed, even if the leave that started it stopped waiting.
         """
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
         self._workspaces = workspaces
+        self._on_disposed = on_disposed
         self._retention = RoomRetention(retention or default_claude_retention())
         self._rooms: dict[str, ClaudeRoomSession] = {}
 
@@ -432,6 +436,8 @@ class ClaudeSessionManager:
         """Forget a disposed room and release its workspace claim."""
         if self._rooms.get(session.room_id) is session:
             del self._rooms[session.room_id]
+            if self._on_disposed is not None:
+                self._on_disposed(session.room_id)
         if self._workspaces is not None:
             self._workspaces.release(session.room_id)
 

@@ -776,6 +776,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             mcp_servers_factory=self._room_mcp_servers,
             workspaces=self._workspaces,
             retention=self.config.retention,
+            on_disposed=self._forget_room,
         )
 
         logger.info(
@@ -1594,12 +1595,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
     async def on_cleanup(self, room_id: str) -> None:
         """Leave a room: admission closes at once, its turn and any startup
-        are cancelled, its CLI closes, then its state is dropped. A failed or
-        unfinished cleanup keeps everything for a retry to join."""
+        are cancelled, its CLI closes, then its state is dropped. A failed
+        cleanup keeps everything for a retry to join; an unfinished one still
+        drops the state once it finishes."""
         self._clear_pending_approvals_for_room(room_id)
-        if self._session_manager:
-            await self._session_manager.cleanup_session(room_id)
-        self._forget_room(room_id)
+        manager = self._session_manager
+        if manager is None or manager.session(room_id) is None:
+            self._forget_room(room_id)
+            return
+        await manager.cleanup_session(room_id)
 
     def _forget_room(self, room_id: str) -> None:
         self._room_tools.pop(room_id, None)
@@ -1624,14 +1628,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await self._mcp.close_after(
             self._stop_sessions(), retention=self.config.retention
         )
-        self._room_tools.clear()
-        self._mcp_room_tools.clear()
-        self._recorded_session_ids.clear()
-        self._room_last_sender.clear()
-        self._notified_declines.clear()
-        self._pending_tool_names.clear()
-        self._turn_release.clear()
-        self._turn_tasks.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow

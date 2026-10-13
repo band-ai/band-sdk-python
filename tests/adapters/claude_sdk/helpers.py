@@ -6,6 +6,7 @@ import asyncio
 import copy
 import itertools
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -27,7 +28,11 @@ from band.core.types import (
     MessageType,
     PlatformMessage,
 )
-from band.integrations.claude_sdk.session_manager import ClaudeRoomSession
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeRoomSession,
+    ClaudeSessionManager,
+)
+from band.integrations.mcp.backends import BandMCPBackend
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
@@ -198,9 +203,10 @@ class ClaudeRoom:
         return ClaudeRoom(self.adapter, self.claude, room_id)
 
     async def leave(self) -> None:
-        """The agent leaves the room; a later message bootstraps it afresh."""
-        await self.adapter.on_cleanup(self.room_id)
+        """The agent leaves the room; a later message bootstraps it afresh,
+        even if this leave stops waiting before its cleanup finishes."""
         self._bootstrapped = False
+        await self.adapter.on_cleanup(self.room_id)
 
     def model_call(self, tool: str, **arguments: Any) -> ModelDecision:
         """The model calling a Band-server tool, by bare name, for this room."""
@@ -267,6 +273,23 @@ class ClaudeRoom:
         await self.tools.until_said(fragment, times=times)
 
     @property
+    def session_manager(self) -> ClaudeSessionManager:
+        manager = self.adapter._session_manager
+        assert manager is not None, "the adapter was never started"
+        return manager
+
+    @property
+    def mcp_backend(self) -> BandMCPBackend:
+        backend = self.adapter._mcp.current
+        assert backend is not None, "no Band MCP server is running"
+        return backend
+
+    @property
+    def disposed(self) -> bool:
+        """Whether the room's final cleanup finished and erased its session."""
+        return self.session_manager.session(self.room_id) is None
+
+    @property
     def turn_running(self) -> bool:
         """Whether the room's detached turn is still running."""
         return self.adapter._turn_running(self.room_id)
@@ -275,6 +298,9 @@ class ClaudeRoom:
         """Wait for a turn still running after ``send`` returned."""
         if (turn := self.adapter._turn_tasks.get(self.room_id)) is not None:
             await asyncio.wait([turn.task])
+
+
+OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 async def band_server_replaced(room: ClaudeRoom) -> None:
