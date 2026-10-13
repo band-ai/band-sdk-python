@@ -349,6 +349,7 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.LANGGRAPH,
     Adapter.AGNO,
     Adapter.STRANDS,
+    Adapter.NOOA,
     Adapter.COPILOT_SDK,
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,

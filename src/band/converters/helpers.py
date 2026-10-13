@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from band.core.types import MessageType
+
 
 def optional_str(value: Any) -> str | None:
     """Return ``str(value)`` or ``None`` if *value* is ``None``."""
@@ -28,14 +30,15 @@ def build_replay_messages(raw: list[dict[str, Any]]) -> list[str]:
 
     Used by resume-else-replay adapters to re-seed a fresh backend session
     from platform history when the previous session cannot be resumed.
-    Non-text messages (task/tool/thought events) are skipped.
+    Non-text messages (task/tool/thought events) are skipped; a message with
+    no ``message_type`` is text.
     """
     return [line for msg in raw if (line := _replay_line(msg)) is not None]
 
 
 def _replay_line(msg: dict[str, Any]) -> str | None:
     """The ``[sender]: content`` replay line for a text message, else None."""
-    if msg.get("message_type") != "text":
+    if msg.get("message_type", MessageType.TEXT) != MessageType.TEXT:
         return None
     content = optional_str(msg.get("content"))
     if not content or not content.strip():

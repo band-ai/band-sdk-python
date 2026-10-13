@@ -86,7 +86,14 @@ def get_tool_docstring_with_args(name: str) -> str:
     model = resolve_tool_model(name)
     if model is None:
         return description
+    return docstring_with_args(description, model)
 
+
+def docstring_with_args(description: str, model: type[BaseModel]) -> str:
+    """*description* plus a Google-style ``Args:`` section from *model*'s fields.
+
+    Fields without a description are left out of ``Args:``.
+    """
     arg_lines = [
         format_arg_doc(field_name, field.description)
         for field_name, field in model.model_fields.items()
