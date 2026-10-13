@@ -140,6 +140,19 @@ class ToolSchemaFakeTools(FakeAgentTools):
         ]
 
 
+#: Why FailingNoticeTools cannot post a notice.
+NOTICE_REJECTED = "platform rejected the notice"
+
+
+class FailingNoticeTools(ToolSchemaFakeTools):
+    """Room tools whose every notice the platform rejects."""
+
+    async def send_notice(
+        self, content: str, mentions: list[dict[str, str]] | None = None
+    ) -> Any:
+        raise RuntimeError(NOTICE_REJECTED)
+
+
 # model/list as codex-cli reports it: per-model efforts, including ones newer
 # than the SDK ever knew about.
 LIVE_EFFORTS_MODEL_LIST: dict[str, Any] = {

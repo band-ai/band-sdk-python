@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import pytest
 
@@ -11,7 +10,9 @@ from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from band.testing import reported_failures
 from tests.adapters.codex.kit import (
+    NOTICE_REJECTED,
     ROOM_ID,
+    FailingNoticeTools,
     ToolSchemaFakeTools,
     make_platform_message,
     send_bootstrap,
@@ -114,12 +115,6 @@ class TestSlashCommandCoverage:
         propagates (the delivery is still marked FAILED), just never
         misreported as a Codex AgentFailure."""
 
-        class FailingNoticeTools(ToolSchemaFakeTools):
-            async def send_notice(
-                self, content: str, mentions: list[dict[str, str]] | None = None
-            ) -> Any:
-                raise RuntimeError("platform rejected the message")
-
         fake_client = FakeCodexClient()
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = FailingNoticeTools()
@@ -127,7 +122,7 @@ class TestSlashCommandCoverage:
         await adapter.on_started("Agent", "A coding agent")
         with (
             caplog.at_level(logging.ERROR, logger="band.core.delivery"),
-            pytest.raises(RuntimeError, match="platform rejected the message"),
+            pytest.raises(RuntimeError, match=NOTICE_REJECTED),
         ):
             await send_bootstrap(adapter, content="/help", tools=tools)
 
@@ -145,12 +140,6 @@ class TestSlashCommandCoverage:
         the approval-command path, which runs outside on_message's main
         try/except and needs its own DeliveryFailedError handling."""
 
-        class FailingNoticeTools(ToolSchemaFakeTools):
-            async def send_notice(
-                self, content: str, mentions: list[dict[str, str]] | None = None
-            ) -> Any:
-                raise RuntimeError("platform rejected the message")
-
         fake_client = FakeCodexClient()
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = FailingNoticeTools()
@@ -158,7 +147,7 @@ class TestSlashCommandCoverage:
         await adapter.on_started("Agent", "A coding agent")
         with (
             caplog.at_level(logging.ERROR, logger="band.core.delivery"),
-            pytest.raises(RuntimeError, match="platform rejected the message"),
+            pytest.raises(RuntimeError, match=NOTICE_REJECTED),
         ):
             await send_bootstrap(adapter, content="/approvals", tools=tools)
 

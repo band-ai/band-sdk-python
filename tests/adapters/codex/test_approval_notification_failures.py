@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from band.adapters.codex import (
@@ -14,6 +12,7 @@ from band.testing import (
 )
 from tests.adapters.codex.kit import (
     ROOM_ID,
+    FailingNoticeTools,
     ToolSchemaFakeTools,
     send_bootstrap,
 )
@@ -55,12 +54,6 @@ class TestApprovalNotificationFailures:
 
     @pytest.mark.asyncio
     async def test_auto_approval_responds_even_if_notification_fails(self) -> None:
-        class FailingNotifyTools(ToolSchemaFakeTools):
-            async def send_notice(
-                self, content: str, mentions: list[dict[str, str]] | None = None
-            ) -> Any:
-                raise RuntimeError("notification failed")
-
         events = [
             event_request(
                 7,
@@ -76,7 +69,7 @@ class TestApprovalNotificationFailures:
                 approval_mode="auto_decline", approval_text_notifications=True
             ),
         )
-        tools = FailingNotifyTools()
+        tools = FailingNoticeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
@@ -90,12 +83,6 @@ class TestApprovalNotificationFailures:
     async def test_manual_approval_responds_with_decline_if_notification_fails(
         self,
     ) -> None:
-        class FailingNotifyTools(ToolSchemaFakeTools):
-            async def send_notice(
-                self, content: str, mentions: list[dict[str, str]] | None = None
-            ) -> Any:
-                raise RuntimeError("notification failed")
-
         events = [
             event_request(
                 7,
@@ -108,7 +95,7 @@ class TestApprovalNotificationFailures:
         adapter = make_codex_adapter(
             fake_client, config=CodexAdapterConfig(approval_mode="manual")
         )
-        tools = FailingNotifyTools()
+        tools = FailingNoticeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
         await send_bootstrap(adapter, tools=tools)
