@@ -6,8 +6,6 @@ import asyncio
 import contextlib
 from unittest.mock import MagicMock
 
-import pytest
-
 from tests.bridge.kit import (
     HangingForwarder,
     await_cancelled,
@@ -15,8 +13,6 @@ from tests.bridge.kit import (
     control_signal,
     make_message_event,
 )
-
-pytestmark = pytest.mark.asyncio
 
 
 class TestControlDedup:

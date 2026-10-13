@@ -14,8 +14,6 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-import pytest
-
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
 from band.adapters.parlant.messages import process_session_tag
 from band.client.streaming import ControlMode
@@ -24,7 +22,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
@@ -39,7 +37,6 @@ TAG_IS_LIVE = "process_session_tag names the engine's running task"
 @asynccontextmanager
 async def started() -> AsyncIterator[tuple[ParlantAdapter, Any]]:
     """A started adapter on an owned server whose model never answers."""
-    pytest.importorskip("parlant.sdk")
     import parlant.sdk as p  # noqa: PLC0415 -- dev-parlant extra
 
     from tests.integrations.parlant.stubnlp import (  # noqa: PLC0415 -- dev-parlant extra
@@ -140,7 +137,7 @@ def record_cancels(adapter: ParlantAdapter) -> list[str]:
 async def idle() -> list[str]:
     async with started() as (adapter, _nlp):
         cancelled = record_cancels(adapter)
-        await stop_idle_room(adapter, ROOM_ID)
+        await stop_room(adapter, ROOM_ID)
         return cancelled
 
 

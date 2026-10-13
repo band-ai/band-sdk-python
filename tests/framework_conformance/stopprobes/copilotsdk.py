@@ -20,7 +20,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
@@ -78,7 +78,7 @@ async def next_message_after_stop() -> list[str]:
 
 async def idle() -> list[str]:
     adapter, client, _ = await started()
-    await stop_idle_room(adapter, ROOM_ID)
+    await stop_room(adapter, ROOM_ID)
     return journal(client)
 
 

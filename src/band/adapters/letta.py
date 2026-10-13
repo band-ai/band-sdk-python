@@ -514,8 +514,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                             timeout=self.config.turn_timeout_s,
                         )
                     except TimeoutError:
-                        self.backend_turns.cancel(room_id)
-                        await self.backend_turns.settled(room_id)
+                        await self.backend_turns.stop(room_id)
                         raise
                 room_ctx.pending_seed = []
                 room_ctx.last_interaction = datetime.now(UTC)

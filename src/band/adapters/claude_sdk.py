@@ -680,6 +680,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         approvals = self.config.approvals
         return approvals.mode if approvals is not None else "disabled"
 
+    @property
+    def backend_turns(self) -> BackendTurns[str]:
+        return self._backend_turns
+
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
@@ -814,10 +818,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         return True
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
-    @property
-    def backend_turns(self) -> BackendTurns[str]:
-        return self._backend_turns
-
     async def on_message(
         self,
         msg: PlatformMessage,

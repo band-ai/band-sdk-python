@@ -18,7 +18,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_message
@@ -85,8 +85,7 @@ async def agent_wide_stop_with_slow_backends() -> list[str]:
         runtime.executions[room_id] = ExecutionContext(
             room_id, link, never_executes, agent_id=platform.agent_id
         )
-        message = user_message()
-        message = replace(message, room_id=room_id)
+        message = replace(user_message(), room_id=room_id)
         turns.append(
             asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools(), message)))
         )
@@ -106,7 +105,7 @@ async def agent_wide_stop_with_slow_backends() -> list[str]:
 
 async def idle() -> list[str]:
     adapter, client = await started()
-    await stop_idle_room(adapter, ROOM_ID)
+    await stop_room(adapter, ROOM_ID)
     return interrupts(client)
 
 
@@ -130,7 +129,7 @@ CASES: dict[str, StopCase] = {
         run=agent_wide_stop_with_slow_backends,
         expected=[
             "control returned",
-            "turn/interrupt thr-1 turn-1",
+            INTERRUPT_FIRST_TURN,
             "turn/interrupt thr-2 turn-2",
         ],
     ),

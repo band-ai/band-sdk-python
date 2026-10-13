@@ -23,7 +23,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
 )
 
 ROOM_ID = "room-1"
@@ -115,9 +115,7 @@ async def stop_detached_after_approval() -> list[str]:
     tools = FakeAgentTools()
     await deliver(adapter, tools)
     asked = len(tools.messages_sent)
-    await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
-    assert adapter.backend_turns is not None
-    await adapter.backend_turns.drain()
+    await stop_room(adapter, ROOM_ID)
     await stopped_turn_winds_down(client)
     recorded = client.journal + posted(tools, asked)
     await adapter.on_cleanup(ROOM_ID)
@@ -140,7 +138,7 @@ async def cleanup_after_stop() -> list[str]:
 async def idle() -> list[str]:
     client = JournalingOpencodeClient()
     adapter = await started(client)
-    await stop_idle_room(adapter, ROOM_ID)
+    await stop_room(adapter, ROOM_ID)
     recorded = list(client.journal)
     await adapter.on_cleanup(ROOM_ID)
     return recorded

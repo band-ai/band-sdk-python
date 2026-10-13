@@ -59,13 +59,13 @@ async def end_turn(
     turn.cancel()
     with suppress(asyncio.CancelledError):
         await turn
+    await stop_room(adapter, room_id, mode)
+
+
+async def stop_room(
+    adapter: SimpleAdapter, room_id: str, mode: ControlMode = ControlMode.STOP
+) -> None:
+    """Send the room a control, then let its backend stop finish."""
     await adapter.on_interrupt(room_id, mode)
-    assert adapter.backend_turns is not None
-    await adapter.backend_turns.drain()
-
-
-async def stop_idle_room(adapter: SimpleAdapter, room_id: str) -> None:
-    """A STOP for a room with no turn in progress."""
-    await adapter.on_interrupt(room_id, ControlMode.STOP)
     assert adapter.backend_turns is not None
     await adapter.backend_turns.drain()

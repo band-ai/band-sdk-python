@@ -4,15 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-import pytest
-
 from tests.bridge.kit import (
     build_runner,
     control_signal,
     drain_control_tasks,
 )
-
-pytestmark = pytest.mark.asyncio
 
 
 class TestControlGracefulDegradation:

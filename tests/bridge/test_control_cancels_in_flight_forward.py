@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
     HangingForwarder,
@@ -14,8 +12,6 @@ from tests.bridge.kit import (
     control_signal,
     make_message_event,
 )
-
-pytestmark = pytest.mark.asyncio
 
 
 class TestControlCancelsInFlightForward:

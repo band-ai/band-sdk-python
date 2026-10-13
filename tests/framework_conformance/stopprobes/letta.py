@@ -15,7 +15,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
@@ -111,12 +111,12 @@ async def timeout() -> list[str]:
         await adapter.on_event(turn_input(tools))
     assert adapter.backend_turns is not None
     await adapter.backend_turns.drain()
-    return [entry for entry in client.journal if not entry.startswith("send ")]
+    return [entry for entry in client.journal if entry not in client.sent]
 
 
 async def idle() -> list[str]:
     adapter, client = held_adapter()
-    await stop_idle_room(adapter, ROOM_ID)
+    await stop_room(adapter, ROOM_ID)
     return client.cancels
 
 

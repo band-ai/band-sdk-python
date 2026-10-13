@@ -18,7 +18,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
@@ -86,7 +86,7 @@ async def idle() -> list[str]:
     adapter = acp_adapter()
     agent = prompting_agent()
     async with started_acp_adapter(adapter, agent):
-        await stop_idle_room(adapter, ROOM_ID)
+        await stop_room(adapter, ROOM_ID)
         return cancels(agent)
 
 

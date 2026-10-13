@@ -493,12 +493,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             turn_task = asyncio.create_task(
                 self._watch_turn_completion(room_state, room_id, turn)
             )
-            turn.watcher = turn_task
-            # Register the watcher only while this turn is still current; a
-            # superseded turn's task must not clobber (or be cancelled through)
-            # the next turn's ambient pointer.
-            if room_state.turn is turn:
-                room_state.turn_task = turn_task
+            turn.watcher = room_state.turn_task = turn_task
             # Snapshot THIS turn's state before the prompt await: prompt_async
             # can span the whole turn (session.idle may arrive mid-POST), and a
             # message racing in during that window would _begin_turn again;
@@ -593,8 +588,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         try:
             if room_state:
                 try:
-                    self.backend_turns.cancel(room_id)
-                    await self.backend_turns.settled(room_id)
+                    await self.backend_turns.stop(room_id)
                     await room_state.approvals.abandon()
                 finally:
                     self._clear_turn_state(room_state)

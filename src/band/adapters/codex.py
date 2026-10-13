@@ -1564,8 +1564,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 thread_id,
                 turn_id,
             )
-            self.backend_turns.cancel(room_id)
-            await self.backend_turns.settled(room_id)
+            await self.backend_turns.stop(room_id)
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )

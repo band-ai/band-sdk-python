@@ -12,11 +12,12 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from band.client.streaming import ControlMode
+from tests.baseline.decisions import ModelDecision
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
     wait_until,
 )
 
@@ -105,9 +106,6 @@ async def stop_after_approval_release() -> list[str]:
     from tests.adapters.claude_sdk.helpers import (  # noqa: PLC0415 -- claude_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
         with_approvals,
     )
-    from tests.baseline.decisions import (  # noqa: PLC0415 -- paired with the claude_sdk fake CLI above
-        ModelDecision,
-    )
 
     async with claude_room(with_approvals()) as room:
         room.claude.script([ModelDecision.call("Bash", command="ls")])
@@ -120,7 +118,7 @@ async def stop_after_approval_release() -> list[str]:
 
 async def idle() -> list[str]:
     async with claude_room() as room:
-        await stop_idle_room(room.adapter, room.room_id)
+        await stop_room(room.adapter, room.room_id)
         return closes(room.claude)
 
 

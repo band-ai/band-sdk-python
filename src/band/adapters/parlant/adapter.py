@@ -440,8 +440,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 poll=self.config.response_poll,
             )
             if gave_up:
-                self.backend_turns.cancel(room_id)
-                await self.backend_turns.settled(room_id)
+                await self.backend_turns.stop(room_id)
 
     @staticmethod
     async def _cancel_processing(turn: ParlantSessionTurn) -> None:

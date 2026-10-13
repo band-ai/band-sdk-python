@@ -172,8 +172,8 @@ class BackendTurns(Generic[H]):
     - The task that owns the backend call holds ``running``, so a turn that
       outlives ``on_message`` (released for approval) stays registered.
     - ``running`` wraps outside any timeout scope: a timeout reaches it as
-      ``TimeoutError``, and the adapter's timeout branch calls ``cancel`` then
-      awaits ``settled`` before its own cleanup.
+      ``TimeoutError``, and the adapter's timeout branch awaits ``stop``
+      before its own cleanup.
     - Where the backend is acquired before the owning task enters ``running``,
       the adapter awaits ``settled`` first.
     - The handle carries everything the cancel needs; the cancel reads no
@@ -222,6 +222,11 @@ class BackendTurns(Generic[H]):
         turn.stop_requested = True
         if turn.handle is not None:
             self._stop(room_id, turn.handle)
+
+    async def stop(self, room_id: str) -> None:
+        """Stop the room's backend turn and wait until that stop settles."""
+        self.cancel(room_id)
+        await self.settled(room_id)
 
     def stopping(self, room_id: str) -> bool:
         """Whether the room's backend stop is still in flight."""

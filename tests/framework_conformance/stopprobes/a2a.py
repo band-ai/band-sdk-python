@@ -11,7 +11,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     StopCase,
     end_turn,
-    stop_idle_room,
+    stop_room,
     wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
@@ -71,13 +71,13 @@ async def input_required_is_not_cancelled() -> list[str]:
     adapter, client = started()
     client.script(task_in("TASK_STATE_INPUT_REQUIRED"))
     await adapter.on_event(turn_input(FakeAgentTools()))
-    await stop_idle_room(adapter, ROOM_ID)
+    await stop_room(adapter, ROOM_ID)
     return [*client.cancelled, await next_message(adapter, client)]
 
 
 async def idle() -> list[str]:
     adapter, client = started()
-    await stop_idle_room(adapter, ROOM_ID)
+    await stop_room(adapter, ROOM_ID)
     return client.cancelled
 
 

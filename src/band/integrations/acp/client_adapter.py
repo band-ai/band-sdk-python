@@ -800,8 +800,7 @@ class ACPClientAdapter(
             room_id,
             session_id,
         )
-        self.backend_turns.cancel(room_id)
-        await self.backend_turns.settled(room_id)
+        await self.backend_turns.stop(room_id)
         await self.on_cleanup(room_id)
         await tools.send_failure(
             AgentFailure(

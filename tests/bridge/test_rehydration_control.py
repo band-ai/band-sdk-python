@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from bridge_core.bridge import AgentRunner
 
 from tests.bridge.kit import (
     MultiRoomHangingForwarder,
@@ -16,13 +17,11 @@ from tests.bridge.kit import (
     make_platform_message,
 )
 
-pytestmark = pytest.mark.asyncio
-
 HANGING_ROOM = "r1"
 OTHER_ROOM = "r2"
 
 
-def rehydrating_runner() -> tuple[object, MultiRoomHangingForwarder, MagicMock]:
+def rehydrating_runner() -> tuple[AgentRunner, MultiRoomHangingForwarder, MagicMock]:
     forwarder = MultiRoomHangingForwarder([HANGING_ROOM])
     runner, _, link = build_runner(forwarder=forwarder)
     link.rest.agent_api_chats.list_agent_chats = AsyncMock(

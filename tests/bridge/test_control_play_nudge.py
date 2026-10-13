@@ -6,8 +6,6 @@ import asyncio
 import contextlib
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
     build_runner,
@@ -15,8 +13,6 @@ from tests.bridge.kit import (
     drain_control_tasks,
     make_platform_message,
 )
-
-pytestmark = pytest.mark.asyncio
 
 
 class TestControlPlayNudge:

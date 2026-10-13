@@ -6,8 +6,6 @@ import asyncio
 import contextlib
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from band.client.streaming import AgentControlPayload
 from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
@@ -17,8 +15,6 @@ from tests.bridge.kit import (
     control_signal,
     make_message_event,
 )
-
-pytestmark = pytest.mark.asyncio
 
 
 class TestControlRouting:

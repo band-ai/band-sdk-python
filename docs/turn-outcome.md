@@ -384,7 +384,7 @@ timeout scope, and binds the handle the backend reveals; the adapter supplies
 only the cancel call for that handle. A cancelled turn, `on_interrupt` (STOP or
 INTERRUPT, including for a detached turn), the watchdog and shutdown all stop it
 once, in a task the primitive owns, bounded by `BACKEND_CANCEL_TIMEOUT_SECONDS`
-and never awaited on the control-processing task. A timeout branch calls
-`cancel` and awaits `settled` before its own cleanup and report. The room's next
+and never awaited on the control-processing task. A timeout branch awaits
+`stop` before its own cleanup and report. The room's next
 turn waits for `settled(room_id)`, and teardown for `settled` or `drain()`,
 before reacquiring or closing the backend.
