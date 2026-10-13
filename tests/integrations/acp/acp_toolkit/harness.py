@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -16,17 +18,19 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
-from band.core.types import PlatformMessage
+from band.adapters.cursor_acp import CursorACPAdapter
+from band.core.retention import Residency
+from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
     _resolve_launcher,
 )
 from band.integrations.acp.client_runtime import ACPRuntime
-from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
+from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
@@ -159,6 +163,92 @@ class Launch:
     client_capabilities: object | None
 
 
+class SlowFailureReports(TranscriptTools):
+    """Room tools whose first ``lost`` failure posts are lost, as in a REST
+    outage, and whose next one lands only once ``reporting`` is released."""
+
+    def __init__(self, *, lost: int) -> None:
+        super().__init__()
+        self.reporting = Gate()
+        self._lost = lost
+
+    async def send_event(
+        self, content: str, message_type: str, metadata: dict[str, Any] | None = None
+    ) -> Any:
+        if message_type == MessageType.ERROR:
+            if self._lost:
+                self._lost -= 1
+                raise ConnectionError("Band REST unavailable")
+            await self.reporting.hold()
+        return await super().send_event(content, message_type, metadata)
+
+
+def pending_decisions(adapter: CursorACPAdapter) -> dict[str, list[str]]:
+    """The open decision tokens of each room that has any."""
+    return {
+        room_id: list(decisions)
+        for room_id, decisions in adapter._pending_decisions.items()
+        if decisions
+    }
+
+
+# Loop turns a scripted in-process release may take; a bound, not a delay.
+RELEASE_TURNS = 200
+
+
+async def started_runtime(
+    adapter: ACPClientAdapter, room: str = DEFAULT_ROOM
+) -> ACPRuntime:
+    """A started runtime built by ``adapter`` for ``room``, outside residency."""
+    runtime = adapter._build_runtime(room_holder(adapter, room), 1)
+    await runtime.start()
+    return runtime
+
+
+async def spin() -> None:
+    """Give every runnable task its loop turns, so a step that would happen
+    without a barrier has happened; a bound, not a delay."""
+    for _ in range(RELEASE_TURNS):
+        await asyncio.sleep(0)
+
+
+async def released(room: ACPRoom) -> None:
+    """Let a release already started for ``room`` confirm closure."""
+    for _ in range(RELEASE_TURNS):
+        if room.retained.snapshot.state in (Residency.SUSPENDED, Residency.CLOSED):
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"{room.room_id} never released: {room.retained.snapshot}")
+
+
+def accepted_work(room: ACPRoom) -> list[asyncio.Task[Any]]:
+    """The tasks ``room`` holds as accepted work, such as a turn still running
+    detached after its message returned."""
+    current = asyncio.current_task()
+    return [
+        task
+        for task in asyncio.all_tasks()
+        if task is not current and room.retained.enrolls(task)
+    ]
+
+
+async def accepted_work_finished(room: ACPRoom) -> None:
+    """Wait for every task ``room`` holds as accepted work."""
+    await asyncio.gather(*accepted_work(room), return_exceptions=True)
+
+
+def room_holder(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> ACPRoom:
+    """A holder for ``room`` with its workspace, not registered for residency."""
+    return ACPRoom(room_id=room, workspace=adapter._workspaces.claim(room))
+
+
+def decision_token(prompt: str) -> str:
+    """The token a Cursor decision prompt asks the room to answer with."""
+    match = re.search(r"`/cursor \w+ (\S+)", prompt)
+    assert match is not None, prompt
+    return match[1]
+
+
 async def launch_for(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> Launch:
     """Start ``room``'s runtime through the adapter's real ``_build_runtime`` and
     record the subprocess launch, which is replaced by a scripted connection."""
@@ -167,8 +257,7 @@ async def launch_for(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> Lau
         patch("band.integrations.acp.client_adapter.spawn_agent_process", spawn),
         patch("band.integrations.acp.client_adapter.shutil.which", return_value=None),
     ):
-        runtime = await adapter._runtime_for(room)
-        await runtime.start()
+        runtime = await started_runtime(adapter, room)
     await runtime.stop()
     command, kwargs = spawn.last_call
     authenticate = spawn.conn.authenticate.await_args
@@ -189,16 +278,13 @@ def inject_acp_spawn(
 ) -> None:
     """Patch ``adapter._build_runtime`` so each room runtime uses ``spawn``."""
 
-    def _build_runtime(workspace: str | None = None) -> ACPRuntime:
+    def _build_runtime(room: ACPRoom, generation: int) -> ACPRuntime:
         return ACPRuntime(
             command=_resolve_launcher(adapter._spawn_command(None)),
             env=adapter._spawn_env(),
-            cwd=workspace,
+            cwd=room.workspace,
             auth_method=adapter.config.auth_method,
-            client_factory=lambda: BandACPClient(
-                profile=adapter._profile,
-                canonicalize_tool_name=adapter._canonical_tool_name,
-            ),
+            client_factory=partial(adapter._runtime_client_factory, room, generation),
             spawn_process=spawn,
             pass_builtin_transport_options=False,
         )
@@ -326,6 +412,7 @@ class AcpSession:
         room_context: list[dict[str, Any]] | None = None,
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
+        tools: TranscriptTools | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -336,7 +423,7 @@ class AcpSession:
         rehydration path). ``participants_msg``/``contacts_msg`` model the
         change-triggered roster/contacts updates the runtime attaches to a turn.
         """
-        tools = TranscriptTools()
+        tools = tools or TranscriptTools()
         if room_context is not None:
             tools.set_room_context(room_context)
         self._last_tools = tools
@@ -351,13 +438,27 @@ class AcpSession:
         )
         return tools.reply
 
+    def room(self, room: str = DEFAULT_ROOM) -> ACPRoom:
+        return self.adapter._rooms[room]
+
     def session_id(self, room: str) -> str:
-        return self.adapter._room_to_session[room].session_id
+        session = self.room(room).session
+        assert session is not None, f"{room} has no session"
+        return session.session_id
+
+    def runtime(self, room: str = DEFAULT_ROOM) -> ACPRuntime:
+        runtime = self.room(room).runtime
+        assert runtime is not None, f"{room} has no process"
+        return runtime
 
     def runtime_keeps_output_of(self, session_id: str, *, room: str) -> bool:
         """Whether the room's runtime still holds what a turn collected for
         ``session_id``; a retired session's must not linger."""
-        return bool(self.adapter._runtimes[room].get_collected_chunks(session_id))
+        return bool(self.runtime(room).get_collected_chunks(session_id))
+
+    async def retired_sessions_closed(self, room: str = DEFAULT_ROOM) -> None:
+        """Wait for the room's background closes of retired sessions."""
+        await asyncio.gather(*self.room(room).session_closes)
 
 
 def fake_agent_config(**settings: Any) -> ACPClientAdapterConfig:
@@ -450,8 +551,10 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
 
 async def _exit(agent: FakeACPAgent) -> None:
     if (gate := agent.exit_gate) is not None:
-        gate.received.set()
-        await gate.release.wait()
+        await gate.hold()
+    if (failure := agent.exit_failure) is not None:
+        agent.exit_failure = None
+        raise failure
 
 
 LIVE_SENDER_NAME = "Peer"

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractAsyncContextManager, contextmanager, suppress
 from typing import Any, cast
 
 from acp import spawn_agent_process
@@ -13,6 +13,8 @@ from acp.schema import (
     ClientCapabilities,
 )
 
+from band.core.retention import task_failure
+from band.core.retention.cleanup import spawn_owned
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -73,6 +75,10 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+STDOUT_DISCARD_CHUNK_BYTES = 65536
+INJECTED_TRANSPORT = "<injected transport>"
+STDOUT_HELD_WARNING_SECONDS = 5.0
+
 
 class ACPRuntime(ACPSessionOperations):
     """Generic ACP subprocess runtime shared by outbound ACP bridges."""
@@ -105,40 +111,34 @@ class ACPRuntime(ACPSessionOperations):
         self._ctx: (
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         ) = None
-        self._stop_lock = asyncio.Lock()
+        self._transport: object = None
+        self._exit_attempted = False
+        self._closure: asyncio.Task[None] | None = None
         self._stderr = ACPStderrDrain(logger)
 
-    async def start(self, *, respawn: bool = False) -> None:
-        """Spawn or respawn the ACP agent subprocess."""
-        async with self._stop_lock:
-            await self._start(respawn=respawn)
-
-    async def _start(self, *, respawn: bool) -> None:
+    async def start(self) -> None:
+        """Spawn the ACP agent subprocess and initialize its connection."""
+        if self._ctx is not None:
+            raise RuntimeError("ACP runtime is already started or not yet closed")
         self._connection_failed = False
-        logger.info(
-            "%s ACP agent subprocess",
-            "Respawning" if respawn else "Spawning",
-        )
+        logger.info("Spawning ACP agent subprocess")
 
-        ctx = self._spawn_context()
-        self._ctx = ctx
+        self._ctx = self._spawn_context()
         try:
-            self._conn, transport = await ctx.__aenter__()
-            if isinstance(transport, asyncio.subprocess.Process):
-                self._stderr.start(transport)
+            self._conn, self._transport = await self._ctx.__aenter__()
+            if isinstance(self._transport, asyncio.subprocess.Process):
+                self._stderr.start(self._transport)
             await self._initialize_connection(self._conn)
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            self._stderr.expect_exit(connection_failed=self._connection_failed)
-            await self._cleanup_failed_start(ctx, "init cancel")
-            raise
-        except Exception:
-            await self._cleanup_failed_start(ctx, "init failure")
+        except BaseException as error:
+            if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt)):
+                self._stderr.expect_exit(connection_failed=self._connection_failed)
+            await self._close_failed_start()
             raise
         # A connect-only transport (e.g. TCP) carries no command; describe it
         # rather than logging a blank suffix.
         logger.info(
             "Connected to ACP agent: %s",
-            " ".join(self._command) or "<injected transport>",
+            " ".join(self._command) or INJECTED_TRANSPORT,
         )
 
     def _spawn_context(
@@ -174,55 +174,85 @@ class ACPRuntime(ACPSessionOperations):
             await conn.authenticate(method_id=self._auth_method)
             logger.info("Authenticated with method: %s", self._auth_method)
 
-    async def ensure_connection(self, *, can_respawn: bool) -> ACPConnectionProtocol:
-        async with self._stop_lock:
-            if self._conn is None:
-                if self._ctx is None and can_respawn:
-                    await self._start(respawn=False)
-                else:
-                    raise RuntimeError(
-                        "ACP client not initialized. Call on_started first."
-                    )
+    async def ensure_connection(self) -> ACPConnectionProtocol:
+        if self._conn is None:
+            raise RuntimeError("ACP client connection is not open")
+        return self._conn
 
-            conn = self._conn
-
-        if conn is None:
-            raise RuntimeError("ACP client connection dropped before prompt")
-        return conn
+    @property
+    def closed(self) -> bool:
+        """Whether no process or connection remains to close."""
+        return self._ctx is None
 
     async def stop(self) -> None:
-        ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
-        async with self._stop_lock:
-            self._stderr.expect_exit(connection_failed=self._connection_failed)
-            ctx = self._ctx
-            self._ctx = None
-            self._conn = None
-            self._client = None
-            self._agent_supports_session_load = False
-            self._agent_supports_session_close = False
-            try:
-                if ctx is not None:
-                    await ctx.__aexit__(None, None, None)
-            except Exception:
-                logger.exception("Error during ACP runtime shutdown")
-            finally:
-                await self._stderr.finish()
+        """Close the connection and confirm its process exited.
 
-    async def _cleanup_failed_start(
-        self,
-        ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
-        reason: str,
-    ) -> None:
+        The closure is one owned task: a cancelled caller leaves it running
+        and the next ``stop`` joins it. After a failed closure the handles stay
+        held and the next ``stop`` closes that same process again.
+
+        Raises:
+            Exception: The closure failed; the runtime still holds its process.
+        """
+        if self._ctx is None:
+            return
+        self._stderr.expect_exit(connection_failed=self._connection_failed)
+        await self._closed()
+
+    async def _closed(self) -> None:
+        closure = self._closure
+        if closure is None or (closure.done() and task_failure(closure) is not None):
+            closure = self._closure = spawn_owned(
+                self._close(), label="ACP runtime closure"
+            )
+        await asyncio.shield(closure)
+
+    async def _close(self) -> None:
         try:
-            await ctx.__aexit__(None, None, None)
-        except Exception:
-            logger.exception("Error cleaning up ACP subprocess after %s", reason)
+            await self._exit_transport()
         finally:
             await self._stderr.finish()
+        self._forget_connection()
+
+    async def _exit_transport(self) -> None:
+        """Exit the spawn context once; after that exit failed, only the
+        process is left to confirm.
+
+        Closure is confirmed at stdout EOF, not exit: ``Process.wait`` returns
+        at once for a process that already exited, while a descendant that
+        inherited stdout can still hold it.
+        """
+        process = self._transport
+        with _warning_while_held(process):
+            if not self._exit_attempted and self._ctx is not None:
+                self._exit_attempted = True
+                try:
+                    await self._ctx.__aexit__(None, None, None)
+                except Exception:
+                    logger.exception(
+                        "ACP agent subprocess %s failed to exit", _pid(process)
+                    )
+                    raise
+            elif isinstance(process, asyncio.subprocess.Process):
+                await _kill(process)
+            if isinstance(process, asyncio.subprocess.Process) and process.stdout:
+                await _read_to_eof(process.stdout)
+
+    def _forget_connection(self) -> None:
         self._ctx = None
         self._conn = None
+        self._client = None
+        self._transport = None
+        self._exit_attempted = False
+        self._closure = None
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
+
+    async def _close_failed_start(self) -> None:
+        """Close what a failed start opened; a failed close, already logged by
+        the closure, keeps it for ``stop``."""
+        with suppress(Exception):
+            await self._closed()
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> BandMCPTransport:
@@ -246,3 +276,49 @@ class ACPRuntime(ACPSessionOperations):
         capabilities = getattr(init_response, "agent_capabilities", None)
         session_capabilities = getattr(capabilities, "session_capabilities", None)
         return getattr(session_capabilities, "close", None) is not None
+
+
+def _pid(transport: object) -> int | str:
+    if isinstance(transport, asyncio.subprocess.Process):
+        return transport.pid
+    return INJECTED_TRANSPORT
+
+
+async def _kill(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        logger.warning(
+            "Killing ACP agent subprocess %s after its exit failed", process.pid
+        )
+        with suppress(ProcessLookupError):
+            process.kill()
+    await process.wait()
+
+
+@contextmanager
+def _warning_while_held(transport: object) -> Iterator[None]:
+    """Warn once when closing the agent outlasts ``STDOUT_HELD_WARNING_SECONDS``:
+    the SDK's exit and the EOF read both wait while a descendant holds stdout."""
+    if not isinstance(transport, asyncio.subprocess.Process):
+        yield
+        return
+    timer = asyncio.get_running_loop().call_later(
+        STDOUT_HELD_WARNING_SECONDS, _warn_held, transport
+    )
+    try:
+        yield
+    finally:
+        timer.cancel()
+
+
+def _warn_held(process: asyncio.subprocess.Process) -> None:
+    logger.warning(
+        "ACP agent subprocess %s (exit code %s) has not closed its stdout; a "
+        "descendant may hold it, and its room stays owned until that closes",
+        process.pid,
+        process.returncode,
+    )
+
+
+async def _read_to_eof(stream: asyncio.StreamReader) -> None:
+    while await stream.read(STDOUT_DISCARD_CHUNK_BYTES):
+        pass

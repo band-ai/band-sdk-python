@@ -25,6 +25,7 @@ from band.integrations.acp.client_adapter import (
     PermissionResolver,
     SpawnProcess,
 )
+from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import (
     ElicitationHandler,
@@ -192,7 +193,10 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
             return {}
         return omp_provider_env(model=self.config.model, api_key=self.config.api_key)
 
-    def _runtime_client_factory(self) -> OmpACPCollectingClient:
+    def _runtime_client_factory(
+        self, room: ACPRoom, generation: int
+    ) -> OmpACPCollectingClient:
+        del room, generation
         return OmpACPCollectingClient(
             own_tool_names=self._own_tool_names,
             canonicalize_tool_name=self._canonical_tool_name,
