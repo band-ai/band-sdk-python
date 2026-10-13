@@ -1484,6 +1484,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_activity_acknowledgement_recovers_without_stop_push",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_next_actionable_semantics.py::test_known_stop_recovers_without_play_push",
       "adapter": "suite",
       "lanes": [

@@ -1,0 +1,278 @@
+"""PlatformRuntime start."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from band_rest.core.api_error import ApiError
+
+from band.core.types import ConflictPolicy
+from band.runtime.capabilities import FeatureFlag
+from band.runtime.platform_runtime import PlatformRuntime
+from band.runtime.types import AgentConfig, SessionConfig
+
+
+class TestStart:
+    """Tests for PlatformRuntime.start() method."""
+
+    @pytest.mark.asyncio
+    async def test_creates_link(self, mock_link, mock_runtime):
+        """Should create BandLink on start, forwarding the conflict policy."""
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                    config=AgentConfig(conflict_policy=ConflictPolicy.REJECT),
+                )
+
+                on_execute = AsyncMock()
+                await runtime.start(on_execute=on_execute)
+
+                mock_link_class.assert_called_once_with(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                    ws_url="wss://app.band.ai/api/v1/socket/websocket",
+                    rest_url="https://app.band.ai",
+                    conflict_policy=ConflictPolicy.REJECT,
+                )
+
+    @pytest.mark.asyncio
+    async def test_fetches_agent_metadata(self, mock_link, mock_runtime):
+        """Should fetch agent metadata after creating link."""
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                )
+
+                on_execute = AsyncMock()
+                await runtime.start(on_execute=on_execute)
+
+                mock_link.rest.agent_api_identity.get_agent_me.assert_awaited_once()
+                assert runtime.agent_name == "TestBot"
+                assert runtime.agent_description == "A test bot"
+
+    @pytest.mark.asyncio
+    async def test_captures_feature_flags(self, mock_link, mock_runtime):
+        """The /me response's feature_flags is retained for capability negotiation."""
+        mock_link.rest.agent_api_identity.get_agent_me.return_value.data.feature_flags = {
+            FeatureFlag.FILE_TRANSFER: True
+        }
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(agent_id="agent-123", api_key="test-key")
+                assert runtime.feature_flags is None
+
+                await runtime.start(on_execute=AsyncMock())
+
+                assert runtime.feature_flags == {FeatureFlag.FILE_TRANSFER: True}
+
+    @pytest.mark.asyncio
+    async def test_creates_agent_runtime(self, mock_link, mock_runtime):
+        """Should create AgentRuntime with correct config."""
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                session_config = SessionConfig()
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                    session_config=session_config,
+                )
+
+                on_execute = AsyncMock()
+                on_cleanup = AsyncMock()
+                await runtime.start(on_execute=on_execute, on_cleanup=on_cleanup)
+
+                mock_runtime_class.assert_called_once()
+                call_kwargs = mock_runtime_class.call_args.kwargs
+                assert call_kwargs["link"] is mock_link
+                assert call_kwargs["agent_id"] == "agent-123"
+                assert call_kwargs["on_execute"] is on_execute
+                assert call_kwargs["session_config"] is session_config
+                assert call_kwargs["on_session_cleanup"] is on_cleanup
+
+    @pytest.mark.asyncio
+    async def test_passes_participant_callbacks_to_agent_runtime(
+        self, mock_link, mock_runtime
+    ):
+        """Should forward participant callbacks into AgentRuntime."""
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                on_participant_added = AsyncMock()
+                on_participant_removed = AsyncMock()
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                    on_participant_added=on_participant_added,
+                    on_participant_removed=on_participant_removed,
+                )
+
+                await runtime.start(on_execute=AsyncMock())
+
+                call_kwargs = mock_runtime_class.call_args.kwargs
+                assert call_kwargs["on_participant_added"] is on_participant_added
+                assert call_kwargs["on_participant_removed"] is on_participant_removed
+
+    @pytest.mark.asyncio
+    async def test_uses_noop_cleanup_when_none_provided(self, mock_link, mock_runtime):
+        """Should use noop cleanup when none provided."""
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                )
+
+                on_execute = AsyncMock()
+                await runtime.start(on_execute=on_execute)
+
+                call_kwargs = mock_runtime_class.call_args.kwargs
+                # Should have a cleanup function (the noop)
+                assert call_kwargs["on_session_cleanup"] is not None
+
+    @pytest.mark.asyncio
+    async def test_starts_agent_runtime(self, mock_link, mock_runtime):
+        """Should start the AgentRuntime."""
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(
+                    agent_id="agent-123",
+                    api_key="test-key",
+                )
+
+                on_execute = AsyncMock()
+                await runtime.start(on_execute=on_execute)
+
+                mock_runtime.start.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_wires_control_hook_to_runtime(self, mock_link, mock_runtime):
+        """start() should route control signals to AgentRuntime.handle_control."""
+        mock_runtime.handle_control = AsyncMock()
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(agent_id="agent-123", api_key="test-key")
+                await runtime.start(on_execute=AsyncMock())
+
+                assert mock_link.on_control == mock_runtime.handle_control
+
+    @pytest.mark.asyncio
+    async def test_raises_on_missing_metadata(self, mock_link, mock_runtime):
+        """Should raise if agent metadata response is empty."""
+        mock_link.rest.agent_api_identity.get_agent_me = AsyncMock(
+            return_value=MagicMock(data=None)
+        )
+
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+
+            runtime = PlatformRuntime(
+                agent_id="agent-123",
+                api_key="test-key",
+            )
+
+            on_execute = AsyncMock()
+            with pytest.raises(RuntimeError, match="Failed to fetch agent metadata"):
+                await runtime.start(on_execute=on_execute)
+
+    @pytest.mark.asyncio
+    async def test_raises_on_missing_description(self, mock_link, mock_runtime):
+        """Should raise if agent has no description."""
+        mock_agent = MagicMock()
+        mock_agent.name = "TestBot"
+        mock_agent.description = None
+
+        mock_link.rest.agent_api_identity.get_agent_me = AsyncMock(
+            return_value=MagicMock(data=mock_agent)
+        )
+
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+
+            runtime = PlatformRuntime(
+                agent_id="agent-123",
+                api_key="test-key",
+            )
+
+            on_execute = AsyncMock()
+            with pytest.raises(ValueError, match="has no description"):
+                await runtime.start(on_execute=on_execute)
+
+    @pytest.mark.asyncio
+    async def test_retries_metadata_fetch_on_rate_limit(self, mock_link, mock_runtime):
+        """Should retry agent metadata fetch when the platform returns 429."""
+        mock_agent = MagicMock()
+        mock_agent.name = "TestBot"
+        mock_agent.description = "A test bot"
+        mock_link.rest.agent_api_identity.get_agent_me = AsyncMock(
+            side_effect=[
+                ApiError(status_code=429, headers={}, body=""),
+                ApiError(status_code=429, headers={}, body=""),
+                MagicMock(data=mock_agent),
+            ]
+        )
+
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+                with patch(
+                    "band.runtime.platform_runtime.asyncio.sleep",
+                    new=AsyncMock(),
+                ) as mock_sleep:
+                    runtime = PlatformRuntime(
+                        agent_id="agent-123",
+                        api_key="test-key",
+                    )
+
+                    await runtime.start(on_execute=AsyncMock())
+
+                    assert (
+                        mock_link.rest.agent_api_identity.get_agent_me.await_count == 3
+                    )
+                    assert mock_sleep.await_count == 2
