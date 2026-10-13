@@ -75,10 +75,18 @@ class ACPRoom:
         return self.retained.snapshot.generation
 
     @property
+    def live_record(self) -> RoomSession | None:
+        """The room's session while it is loaded on the current process."""
+        session = self.session
+        if session is None or not session.live or self.runtime is None:
+            return None
+        return session
+
+    @property
     def live_session(self) -> tuple[str, ACPRuntime] | None:
-        """The session loaded on the room's current process, if any."""
-        session, runtime = self.session, self.runtime
-        if session is None or not session.live or runtime is None:
+        """The live session's id and the process it is loaded on, if any."""
+        session, runtime = self.live_record, self.runtime
+        if session is None or runtime is None:
             return None
         return session.session_id, runtime
 

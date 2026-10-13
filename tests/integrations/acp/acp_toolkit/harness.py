@@ -19,6 +19,7 @@ from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
 from band.adapters.cursor_acp import CursorACPAdapter
+from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency
 from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.client_adapter import (
@@ -567,6 +568,25 @@ def live_line(content: str) -> str:
     position against this projection instead of hand-building the line.
     """
     return f"[{LIVE_SENDER_NAME}]: {content}"
+
+
+async def send_to(
+    adapter: ACPClientAdapter,
+    room_id: str,
+    tools: AgentToolsProtocol | None = None,
+    *,
+    content: str = "Hello",
+) -> None:
+    """Deliver one non-bootstrap message to ``room_id``, as the runtime does."""
+    await adapter.on_message(
+        _message(content, room_id),
+        tools or TranscriptTools(),
+        ACPClientSessionState(),
+        None,
+        None,
+        is_session_bootstrap=False,
+        room_id=room_id,
+    )
 
 
 def _message(content: str, room_id: str) -> PlatformMessage:

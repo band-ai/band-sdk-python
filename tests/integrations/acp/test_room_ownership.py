@@ -28,10 +28,18 @@ from acp.schema import SessionConfigOptionSelect
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.client.streaming import ControlMode
-from band.core.exceptions import BandConfigError, CleanupIncompleteError
+from band.core.exceptions import (
+    BandConfigError,
+    CleanupIncompleteError,
+    InputNotAccepted,
+)
 from band.core.model_catalog import ModelSelection
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
-from band.core.retention import ReleaseCause, Residency, RoomRetentionConfig
+from band.core.retention import (
+    ReleaseCause,
+    ReleaseOutcome,
+    Residency,
+    RoomRetentionConfig,
+)
 from band.integrations.acp import client_adapter, client_runtime, sessions
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -39,11 +47,12 @@ from band.integrations.acp.client_adapter import (
     ACPTurnTimeoutError,
 )
 from band.integrations.acp.client_profiles import CURSOR_ASK_QUESTION_METHOD
-from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
+from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.model_selection import MODEL_CATEGORY
 from band.integrations.acp.session_config import ACPConfigError
 from band.integrations.acp.sessions import ACPSessionRestoreError
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
+from tests.conftest import eager_tasks, requires_eager_tasks
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     AcpSession,
@@ -63,6 +72,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     RELEASE_TURNS,
     SlowFailureReports,
     TranscriptTools,
+    send_to,
     spin,
 )
 from tests.integrations.acp.acp_toolkit.peer import (
@@ -71,14 +81,16 @@ from tests.integrations.acp.acp_toolkit.peer import (
     FailingExits,
     stdio_peer_config,
 )
-from tests.integrations.acp.conftest import make_platform_message
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 from tests.mcpclient import crash_backend
 from tests.paths import REPO_ROOT
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
-# A start bound short enough that waiting it out costs nothing.
+# Start and transition bounds short enough that waiting them out costs nothing.
 HUNG_START_TIMEOUT_S = 0.05
+SHORT_TRANSITION_S = 0.05
+# A guard on a wait that should finish at once, so a hang fails clearly.
+TEST_GUARD_S = 5
 
 
 def models(current: str, *offered: str) -> FakeACPAgent:
@@ -231,6 +243,20 @@ class TestRecovery:
     """A failed turn retires its process through the owner and keeps the session."""
 
     @pytest.mark.asyncio
+    async def test_an_idle_release_is_refused_and_keeps_the_process(self) -> None:
+        agent = FakeACPAgent().will_say("ok")
+        async with acp_adapter(agent) as session:
+            await session.send("hello")
+            room = session.room()
+            runtime = session.runtime()
+
+            outcome = await session.adapter._release_room(room, ReleaseCause.IDLE)
+
+            assert outcome == ReleaseOutcome.BUSY
+            assert room.runtime is runtime and not runtime.closed
+            assert room.live_session == (session.session_id(DEFAULT_ROOM), runtime)
+
+    @pytest.mark.asyncio
     async def test_the_next_turn_reloads_the_recovered_session(self) -> None:
         agent = FakeACPAgent(supports_session_load=True)
         prompts = 0
@@ -270,10 +296,18 @@ class TestRecovery:
             agent.knows_session(retained).advertises(model_select("a", "a"))
 
             refused = await session.send("again")
+            refused_on = session.room().runtime
             served = await session.send("once more")
 
-            assert refused.errors
+            assert refused.errors == [
+                (
+                    'ACP session configuration failed: model "b" is not advertised; '
+                    "available: a"
+                )
+            ]
             assert served.errors == []
+            # Loaded but unconfigured, the session is reloaded on a new process.
+            assert session.runtime() is not refused_on
             assert (
                 session.adapter._room_selection(DEFAULT_ROOM)
                 == session.adapter.model_selection
@@ -294,7 +328,7 @@ class TestRecovery:
 
             await session.send("again")
 
-            assert failed.errors
+            assert failed.errors == ["Internal error"]
             assert session.runtime() is not first_runtime
         assert len(agent.prompts) == 1
 
@@ -380,7 +414,7 @@ class TestFinalCleanup:
             room = session.room()
             assert room.runtime is runtime
             assert room.retained.snapshot.pending_cleanup
-            with pytest.raises(RuntimeError, match="closing"):
+            with pytest.raises(InputNotAccepted, match="closing"):
                 await session.send("rejoin")
             assert agent.session_ids() == ["fake-session-1"]
 
@@ -403,7 +437,7 @@ class TestFinalCleanup:
             cleanup = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
             await exiting.received.wait()
 
-            with pytest.raises(RuntimeError, match="closing"):
+            with pytest.raises(InputNotAccepted, match="closing"):
                 await session.send("rejoin")
             cleanup.cancel()
             await asyncio.gather(cleanup, return_exceptions=True)
@@ -421,10 +455,7 @@ class TestFinalCleanup:
         self,
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
-        config = fake_agent_config(
-            inject_band_tools=True,
-            retention=RoomRetentionConfig(transition_timeout_s=0.05),
-        )
+        config = stop_budget()
         with backends_created_by():
             async with acp_adapter(agent, config) as session:
                 await session.send("hello")
@@ -453,10 +484,7 @@ class TestFinalCleanup:
         agent = FakeACPAgent().will_say("ok")
         stopping = asyncio.Event()
         backend = FakeBandMCPBackend(stop_release=stopping)
-        config = fake_agent_config(
-            inject_band_tools=True,
-            retention=RoomRetentionConfig(transition_timeout_s=0.05),
-        )
+        config = stop_budget()
         with backends_created_by(backend):
             async with acp_adapter(agent, config) as session:
                 await session.send("hello")
@@ -525,9 +553,10 @@ class TestFinalCleanup:
 
 
 def stop_budget() -> ACPClientAdapterConfig:
+    """Band tools on, with a transition bound short enough to outlast."""
     return fake_agent_config(
         inject_band_tools=True,
-        retention=RoomRetentionConfig(transition_timeout_s=0.05),
+        retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S),
     )
 
 
@@ -593,7 +622,7 @@ class TestDirectStop:
                 stops = [asyncio.create_task(session.adapter.stop()) for _ in range(2)]
                 await closing.wait()
                 stopped.set()
-                async with asyncio.timeout(5):
+                async with asyncio.timeout(TEST_GUARD_S):
                     await asyncio.gather(*stops)
                 reply = await session.send("again")
 
@@ -652,6 +681,55 @@ class TestSettings:
     """A model switch takes its room in turn, like a prompt."""
 
     @pytest.mark.asyncio
+    async def test_a_switch_on_a_recovered_room_starts_no_process(self) -> None:
+        agent = models("a", "a", "b")
+        async with acp_adapter(agent) as session:
+            await session.send("bootstrap")
+            session_id = session.session_id(DEFAULT_ROOM)
+            room = await recover(session)
+
+            with pytest.raises(BandConfigError, match="no live ACP session"):
+                await session.adapter.apply_model_selection(
+                    ModelSelection(model="b"), room_id=DEFAULT_ROOM
+                )
+
+            assert room.runtime is None
+        assert agent.config_selections(session_id) == []
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_switch_caller_stays_cancelled_while_its_room_leaves(
+        self,
+    ) -> None:
+        agent = models("a", "a", "b")
+        prompting = holds_prompt(agent, 2)
+        async with acp_adapter(agent) as session:
+            await session.send("bootstrap")
+            session_id = session.session_id(DEFAULT_ROOM)
+            held = asyncio.create_task(session.send("held"))
+            await prompting.received.wait()
+            switch = asyncio.create_task(
+                session.adapter.apply_model_selection(
+                    ModelSelection(model="b"), room_id=DEFAULT_ROOM
+                )
+            )
+            await spin()
+
+            async with asyncio.timeout(TEST_GUARD_S):
+                held.cancel()
+                leaving = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
+                await asyncio.sleep(0)
+                # The caller gives up as the room starts closing.
+                assert session.room().closing
+                switch.cancel()
+                prompting.release.set()
+                await leaving
+                with pytest.raises(asyncio.CancelledError):
+                    await switch
+                await asyncio.gather(held, return_exceptions=True)
+
+        assert agent.config_selections(session_id) == []
+
+    @pytest.mark.asyncio
     async def test_a_switch_waits_for_the_rooms_running_prompt(self) -> None:
         agent = models("a", "a", "b")
         prompting = holds_prompt(agent, 2)
@@ -694,7 +772,7 @@ class TestSettings:
             )
             await spin()
 
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(TEST_GUARD_S):
                 # The runtime cancels the room's handler, then the room leaves.
                 held.cancel()
                 leaving = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
@@ -722,7 +800,7 @@ class TestSettings:
             held = asyncio.create_task(session.send("held", room="room-a"))
             await prompting.received.wait()
 
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(TEST_GUARD_S):
                 await session.adapter.apply_model_selection(
                     ModelSelection(model="b"), room_id="room-b"
                 )
@@ -810,7 +888,7 @@ class TestStartup:
             await starting.received.wait()
 
             await stop(session, first)
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(TEST_GUARD_S):
                 served = await session.send("again")
                 await accepted_work_finished(session.room())
 
@@ -824,7 +902,7 @@ class TestStartup:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         config = fake_agent_config(
-            retention=RoomRetentionConfig(transition_timeout_s=0.05)
+            retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S)
         )
         async with acp_adapter(agent, config) as session:
             with pytest.raises(TimeoutError):
@@ -906,7 +984,7 @@ class TestCursorOrigin:
             successor = asyncio.create_task(session.send("again"))
             await parked.received.wait()
 
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(TEST_GUARD_S):
                 stale = await old_client.ext_method(
                     CURSOR_ASK_QUESTION_METHOD,
                     {"questions": [{"id": "mode", "options": [{"id": "agent"}]}]},
@@ -977,9 +1055,11 @@ class TestCursorTurns:
             prompting.release.set()
 
     @pytest.mark.asyncio
-    async def test_a_queued_message_never_blocks_the_answer_to_a_parked_one(
+    async def test_a_message_during_a_parked_turn_is_left_for_a_retry(
         self,
     ) -> None:
+        """The host keeps it, so the parked turn's answer still gets through
+        and the message runs once the room is free."""
         agent = FakeACPAgent()
         answers: list[dict[str, object]] = []
 
@@ -992,46 +1072,48 @@ class TestCursorTurns:
 
         async with cursor(agent) as session:
             asked = await session.send("ask")
-            async with asyncio.timeout(5):
-                await session.send("queued")
-                await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            refused = TranscriptTools()
+            with pytest.raises(InputNotAccepted):
+                await session.send("next", tools=refused)
+            await session.send(f"/cursor answer {question_token(asked)} mode=plan")
             await accepted_work_finished(session.room())
+            retried = await session.send("next")
 
+        assert refused.reply.texts == [] and refused.reply.errors == []
         assert answers == [answered("plan")]
-        assert len(agent.prompts) == 2
+        assert len(agent.prompts) == 2 and retried.errors == []
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("fails_at", "reported"),
-        [("start", GENERIC_PROVIDER_FAILURE_MESSAGE), ("prompt", "Internal error")],
-    )
-    async def test_a_queued_turns_failure_is_reported_once(
-        self, fails_at: str, reported: str
+    async def test_a_message_during_an_interrupted_turns_unwind_is_not_failed(
+        self,
     ) -> None:
+        """Cursor may still be finishing a cancelled prompt when the next one
+        arrives; its ``session_busy`` refusal leaves the message for a retry."""
         agent = FakeACPAgent()
-        prompting = Gate()
+        cancelled = asyncio.Event()
 
         @agent.on_prompt
-        async def crash(peer: FakeACPAgent, session_id: str) -> None:
+        async def busy_after_cancel(peer: FakeACPAgent, session_id: str) -> None:
             if len(peer.prompts) == 1:
-                prompting.received.set()
-                await prompting.release.wait()
-            raise RequestError.internal_error()
+                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+                await cancelled.wait()
+                return
+            raise RequestError(-32003, "busy", {"reason": "session_busy"})
 
         async with cursor(agent) as session:
-            first = asyncio.create_task(session.send("first"))
-            await prompting.received.wait()
-            async with asyncio.timeout(5):
-                queued = await session.send("queued")
-            if fails_at == "start":
-                agent.fails_next_initialize()
-            prompting.release.set()
-
-            with pytest.raises(RequestError):
-                await first
+            await session.send("long task")
+            await session.adapter.on_interrupt(DEFAULT_ROOM, ControlMode.INTERRUPT)
+            unwinding = TranscriptTools()
+            with pytest.raises(InputNotAccepted):
+                await session.send("next", tools=unwinding)
+            cancelled.set()
             await accepted_work_finished(session.room())
+            busy = TranscriptTools()
+            with pytest.raises(InputNotAccepted):
+                await session.send("next", tools=busy)
 
-        assert queued.errors == [reported]
+        assert unwinding.reply.errors == [] and busy.reply.errors == []
+        assert len(agent.prompts) == 2
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1061,15 +1143,16 @@ class TestCursorTurns:
         async with cursor(agent) as session:
             failing = SlowFailureReports(lost=lost)
             asked = await session.send("ask", tools=failing)
-            queued = await session.send("queued")
             await session.send(f"/cursor answer {question_token(asked)} mode=plan")
             await failing.reporting.received.wait()
-            await spin()
 
-            assert len(agent.prompts) == 1
+            with pytest.raises(InputNotAccepted):
+                await session.send("next")
             failing.reporting.release.set()
-            await question_asked(queued)
-            await session.send(f"/cursor answer {question_token(queued)} mode=agent")
+            await accepted_work_finished(session.room())
+            retried = await session.send("next")
+            await question_asked(retried)
+            await session.send(f"/cursor answer {question_token(retried)} mode=agent")
             await accepted_work_finished(session.room())
 
         assert answers == [answered("agent")]
@@ -1093,49 +1176,27 @@ class TestCursorTurns:
         async with cursor(agent) as session:
             failing = SlowFailureReports(lost=1)
             asked = await session.send("ask", tools=failing)
-            queued = await session.send("queued")
             await session.send(f"/cursor answer {question_token(asked)} mode=plan")
-            await question_asked(queued)
-            await session.send(f"/cursor answer {question_token(queued)} mode=agent")
+            await accepted_work_finished(session.room())
+            retried = await session.send("next")
+            await question_asked(retried)
+            await session.send(f"/cursor answer {question_token(retried)} mode=agent")
             await accepted_work_finished(session.room())
 
             assert not failing.reporting.received.is_set()
         assert answers == [answered("agent")]
 
+    @requires_eager_tasks
     @pytest.mark.asyncio
-    async def test_a_message_accepted_as_the_room_frees_waits_off_the_queue(
+    async def test_a_turn_run_by_an_eager_task_factory_is_owned_first(
         self,
     ) -> None:
-        """A turn starting after the room's holder let go, but before the
-        queued turn ahead of it took the room, still hands the queue back."""
-        agent = FakeACPAgent()
-        parked = Gate()
-
-        @agent.on_prompt
-        async def park_queued(peer: FakeACPAgent, session_id: str) -> None:
-            if len(peer.prompts) == 2:
-                parked.received.set()
-                await parked.release.wait()
-
+        agent = FakeACPAgent().will_say("ok")
         async with cursor(agent) as session:
-            await session.send("first")
-            room = session.room()
-            await room.reservation.acquire()
-            async with asyncio.timeout(5):
-                await session.send("queued")
-            latest = asyncio.create_task(session.send("latest"))
-            async with asyncio.timeout(5):
-                while len(session.adapter._turns[DEFAULT_ROOM]) < 2:
-                    await asyncio.sleep(0)
-            room.reservation.release()
+            with eager_tasks():
+                served = await session.send("hello")
 
-            async with asyncio.timeout(5):
-                await latest
-                await parked.received.wait()
-            parked.release.set()
-            await accepted_work_finished(room)
-
-        assert len(agent.prompts) == 3
+        assert served.errors == [] and len(agent.prompts) == 1
 
 
 @pytest.mark.asyncio
@@ -1168,19 +1229,10 @@ async def test_a_descendant_holding_the_agents_pipes_keeps_its_room_owned(
         ),
         workspace_for_room=lambda room_id: str(REPO_ROOT),
     )
-    message = make_platform_message("hello", room_id=DEFAULT_ROOM)
     await adapter.on_started("Stdio peer", "Real subprocess")
     try:
         with nullcontext() if turn_error is None else pytest.raises(turn_error):
-            await adapter.on_message(
-                message,
-                TranscriptTools(),
-                ACPClientSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id=DEFAULT_ROOM,
-            )
+            await send_to(adapter, DEFAULT_ROOM)
         room = adapter._rooms[DEFAULT_ROOM]
         runtime = room.runtime
         assert runtime is not None
@@ -1220,15 +1272,7 @@ async def test_a_retry_after_a_failed_exit_kills_the_running_agent(
         monkeypatch.setattr(client_adapter, "spawn_agent_process", spawns)
         await adapter.on_started("Stdio peer", "Real subprocess")
         try:
-            await adapter.on_message(
-                make_platform_message("hello", room_id=DEFAULT_ROOM),
-                TranscriptTools(),
-                ACPClientSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id=DEFAULT_ROOM,
-            )
+            await send_to(adapter, DEFAULT_ROOM)
             room = adapter._rooms[DEFAULT_ROOM]
             runtime = room.runtime
             [process] = spawns.processes

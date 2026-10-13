@@ -23,7 +23,7 @@ from band.adapters.omp_acp import (
     OmpACPCollectingClient,
 )
 from band.integrations.acp.client_adapter import ACPPermissionRequest
-from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
+from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.omp import (
@@ -45,7 +45,7 @@ from tests.integrations.acp.acp_toolkit import (
     make_acp_connection,
     room_holder,
 )
-from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.acp.acp_toolkit.harness import send_to
 
 
 def omp_in(
@@ -444,15 +444,7 @@ class TestOmpElicitationHandlerWiring:
         )
         inject_acp_spawn(adapter, FakeSpawn(conn=conn))
 
-        await adapter.on_message(
-            make_platform_message("Hello", room_id="room-123"),
-            FakeAgentTools(),
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
+        await send_to(adapter, "room-123")
 
         client = adapter._rooms["room-123"].runtime.client
         assert "acp-session-123" in client._elicitation_handlers

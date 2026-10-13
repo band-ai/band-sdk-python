@@ -732,7 +732,7 @@ async def test_a_turn_after_shutdown_is_refused(fake_agent) -> None:
             await session.send("before shutdown", room="room-1")
             await session.adapter.cleanup_all()
 
-            with pytest.raises(RuntimeError, match="retention is stopping"):
+            with pytest.raises(InputNotAccepted, match="retention is stopping"):
                 await session.send("after shutdown", room="room-2")
 
     assert len(starts.requested) == 1

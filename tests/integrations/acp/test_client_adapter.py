@@ -54,6 +54,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     make_acp_connection,
     released,
     room_holder,
+    send_to,
     started_runtime,
 )
 from tests.integrations.acp.conftest import make_platform_message
@@ -1947,20 +1948,6 @@ def adapter_on(conn: AsyncMock, **settings: object) -> ACPClientAdapter:
     )
     inject_acp_spawn(adapter, FakeSpawn(conn=conn))
     return adapter
-
-
-async def send_to(
-    adapter: ACPClientAdapter, room_id: str, tools: FakeAgentTools | None = None
-) -> None:
-    await adapter.on_message(
-        make_platform_message("Hello", room_id=room_id),
-        tools or FakeAgentTools(),
-        ACPClientSessionState(),
-        None,
-        None,
-        is_session_bootstrap=False,
-        room_id=room_id,
-    )
 
 
 class TestACPClientAdapterDeadConnectionRecovery:

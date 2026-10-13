@@ -97,43 +97,22 @@ class ACPSessionOperations(ABC):
         mcp_servers: list[object],
     ) -> LoadSessionResponse | None:
         """Load a persisted session, falling back on an unavailable or failed load."""
-        if not self._agent_supports_session_load:
-            return None
-
-        conn = await self.ensure_connection()
         try:
-            response = await asyncio.wait_for(
-                self._request(
-                    conn.load_session(
-                        cwd=cwd,
-                        session_id=session_id,
-                        mcp_servers=mcp_servers,
-                    )
-                ),
-                timeout=ACP_SESSION_LOAD_TIMEOUT_SECONDS,
+            return await self.restore_session_response(
+                cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
             )
-        except TimeoutError:
-            logger.warning(
-                "ACP session %s did not load within %s seconds",
-                session_id,
-                ACP_SESSION_LOAD_TIMEOUT_SECONDS,
-            )
-            return None
-        except RequestError as error:
+        except ACPSessionRestoreError as error:
             # Any load failure is equally recoverable: the caller falls back to
             # a fresh session (with history replay) rather than letting a remote
             # protocol error kill the bootstrap turn.
-            if self._is_missing_session_error(error):
-                logger.info("ACP session %s is no longer available", session_id)
-            else:
-                logger.warning(
-                    "ACP session/load for %s failed (%s); using a new session",
-                    session_id,
-                    error,
-                )
+            match error.__cause__:
+                case None:
+                    pass
+                case RequestError() as cause if self._is_missing_session_error(cause):
+                    logger.info("ACP session %s is no longer available", session_id)
+                case _:
+                    logger.warning("%s; using a new session", error)
             return None
-        self._record_config_options(session_id, response)
-        return response
 
     async def restore_session_response(
         self,
@@ -141,13 +120,13 @@ class ACPSessionOperations(ABC):
         cwd: str,
         session_id: str,
         mcp_servers: list[object],
-    ) -> LoadSessionResponse | None:
+    ) -> LoadSessionResponse:
         """Load exactly ``session_id``; any refusal raises instead of falling back.
 
         Raises:
             ACPSessionRestoreError: The connection does not advertise
-                ``loadSession``, or the agent refused or did not answer the
-                load.
+                ``loadSession`` (no cause), or the agent refused or did not
+                answer the load (its cause).
         """
         if not self._agent_supports_session_load:
             raise ACPSessionRestoreError(
@@ -156,10 +135,13 @@ class ACPSessionOperations(ABC):
         conn = await self.ensure_connection()
         try:
             async with asyncio.timeout(ACP_SESSION_LOAD_TIMEOUT_SECONDS):
-                response = await self._request(
-                    conn.load_session(
-                        cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
-                    )
+                response = cast(
+                    LoadSessionResponse,
+                    await self._request(
+                        conn.load_session(
+                            cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
+                        )
+                    ),
                 )
         except TimeoutError as error:
             raise ACPSessionRestoreError(

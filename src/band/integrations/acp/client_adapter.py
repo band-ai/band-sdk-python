@@ -660,6 +660,8 @@ class ACPClientAdapter(
         """Replace a stopped residency owner; a stop is terminal for its owner."""
         if not self._retention.stopping:
             return
+        # Unreachable while stop() keeps its contract: it succeeds only after
+        # disposing every room. Guards against renewing over a live room.
         if self._rooms:
             raise CleanupIncompleteError(
                 "ACP rooms from the previous stop are still closing"
@@ -692,6 +694,8 @@ class ACPClientAdapter(
         The runtime is held before its first await, so a failed or abandoned
         start leaves it for the owner's recovery to close.
         """
+        # Unreachable while the owner keeps its contract: it acquires only after
+        # a confirmed release. Guards against replacing an unclosed process.
         if room.runtime is not None:
             raise RuntimeError(
                 f"Room {room.room_id}'s previous ACP process is not confirmed closed"
@@ -927,14 +931,18 @@ class ACPClientAdapter(
         error: Exception,
     ) -> None:
         """Report an agent failure and retire the residency it left unusable."""
-        logger.exception("ACP agent error")
+        logger.exception(
+            "ACP agent error (room=%s, generation=%s); recovering its process",
+            room.room_id,
+            generation,
+        )
         room.retained.recover(generation=generation, reason=f"ACP agent error: {error}")
         await tools.send_failure(_to_agent_failure(error))
 
     @staticmethod
     def _live_room_session(room: ACPRoom) -> RoomSession:
-        session = room.session
-        if session is None or not session.live:
+        session = room.live_record
+        if session is None:
             raise RuntimeError(f"Room {room.room_id} has no live ACP session")
         return session
 
@@ -1286,7 +1294,9 @@ class ACPClientAdapter(
 
         A refused remembered selection reverts, so only this turn fails. A
         ``retained`` id is still the room's and stays its identity through
-        that refusal; a bootstrap candidate is closed instead.
+        that refusal, and its process is recovered: the session is loaded
+        there, and loading it again on the same process is undefined. A
+        bootstrap candidate is closed instead.
         """
         loaded = await runtime.load_session_response(
             cwd=room.workspace,
@@ -1303,8 +1313,13 @@ class ACPClientAdapter(
 
         try:
             await self._configure_session(runtime, room.room_id, session_id)
-        except BaseException:
-            if not retained:
+        except BaseException as error:
+            if retained:
+                room.retained.recover(
+                    generation=room.generation,
+                    reason=f"Reloaded ACP session {session_id} is unconfigured: {error!r}",
+                )
+            else:
                 await self._close_session(
                     runtime, session_id, reason=SessionCloseReason.UNCONFIGURED
                 )

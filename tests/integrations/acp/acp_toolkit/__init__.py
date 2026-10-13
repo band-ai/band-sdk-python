@@ -47,6 +47,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     pending_decisions,
     released,
     room_holder,
+    send_to,
     started_acp_adapter,
     started_runtime,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "released",
     "room_holder",
     "select_option",
+    "send_to",
     "started_acp_adapter",
     "started_runtime",
 ]

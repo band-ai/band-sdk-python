@@ -176,11 +176,9 @@ def pending_tokens(adapter: CursorACPAdapter) -> list[str]:
 
 
 def activate(adapter: CursorACPAdapter, turn: CursorTurn) -> CursorTurn:
-    """Make ``turn`` its room's holder, as a running turn is."""
-    room_id = turn.room.room_id
-    turn.generation = turn.room.generation
-    adapter._turns.setdefault(room_id, []).append(turn)
-    adapter._holders[room_id] = turn
+    """Accept ``turn`` and let it take its room, as a running turn does."""
+    adapter._accept(turn)
+    adapter._take_room(turn)
     return turn
 
 

@@ -134,7 +134,9 @@ it, so the room's next message gets a new process.
   new process and reloads the same session. If the agent no longer has it, the turn
   falls back to a fresh session with a transcript replay. A refused remembered
   selection fails that turn only and reverts to the configured one; the room keeps
-  its session. Only a bootstrap resume candidate is closed when its configuration
+  its session, and when that refusal follows a reload, the room's process is
+  recovered too, so the next turn reloads the session on a new process rather
+  than twice on the same one. Only a bootstrap resume candidate is closed when its configuration
   is refused.
 - **Closure is confirmed, not assumed.** The process handle stays on the room until
   `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
@@ -174,12 +176,13 @@ failure fails that room turn visibly instead of falling back.
   turn closes or is interrupted. Cursor omits the session id on its
   extension requests, so each room process gets its own client profile and binds them to
   that room's active turn on that process; a request from a replaced process opens no
-  decision. Rooms run in parallel, one turn per room; a message queued behind its room's
-  current turn hands the room's message queue back at once, so a `/cursor` reply
-  never waits on it. Only the turn holding the room's lease answers Cursor's
-  extension requests, and a failed turn reports its failure before the lease
-  passes on, once, whether it failed starting or prompting. An interrupt or `/stop` cancels every accepted turn in the room,
-  whether it is starting, queued or parked. `max_pending_decisions` caps each room
+  decision. Rooms run in parallel, one turn per room; a message that arrives while its
+  room's turn still runs is not accepted, so the host keeps it unacknowledged and
+  retries it once the room is free, and a `/cursor` reply still reaches the parked
+  turn. Only the turn holding the room's lease answers Cursor's extension requests,
+  and a failed turn reports its failure before the lease passes on, once, whether
+  it failed starting or prompting. An interrupt or `/stop` cancels the room's
+  accepted turn, whether it is starting, prompting or parked. `max_pending_decisions` caps each room
   separately. Decision prompts, timeout notices and `/cursor` replies post through
   `send_notice`, so they never count as the model's reply, and a
   `/cursor` message settles its own turn without reaching the agent. A turn parked on a
