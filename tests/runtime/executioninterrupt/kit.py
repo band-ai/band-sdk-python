@@ -27,8 +27,8 @@ async def assert_fresh_cycle_still_propagates_shutdown_cancel(
     ctx: ExecutionContext, msg_id: str
 ) -> None:
     """A cycle genuinely cancelled by shutdown (no new interrupt()) must
-    propagate CancelledError, not get misclassified as an interrupt/stop via
-    a leaked ``_interrupt_kind`` from whatever ran on ``ctx`` before it."""
+    propagate CancelledError, not get misclassified as an interrupt/stop left
+    over from whatever ran on ``ctx`` before it."""
     started = asyncio.Event()
 
     async def block(ctx, event):
@@ -37,7 +37,7 @@ async def assert_fresh_cycle_still_propagates_shutdown_cancel(
 
     ctx._on_execute = block
     shutdown = asyncio.create_task(
-        ctx._run_cycle(make_message_event(msg_id=msg_id), msg_id)
+        ctx._process_event(make_message_event(msg_id=msg_id))
     )
     await started.wait()
     shutdown.cancel()

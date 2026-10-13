@@ -11,7 +11,6 @@ from band.adapters.codex import CodexAdapter
 from band.core.exceptions import InputNotAccepted
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.lifecycle.kit import (
-    ROOM_REFUSES_WORK,
     RetentionHost,
 )
 from tests.adapters.roompeer import PeerCommand, memo_instruction, write_instruction
@@ -43,7 +42,7 @@ class TestRoomOwnership:
             await host.leave("room-a")
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))
-        with pytest.raises((RuntimeError, InputNotAccepted), match=ROOM_REFUSES_WORK):
+        with pytest.raises(InputNotAccepted, match="is closing"):
             await host.send("room-a", write_instruction("changed"))
         assert host.exited == [False]
         assert (Path(host.workspace("room-a")) / "notes.txt").read_text() == "alpha"
@@ -79,6 +78,7 @@ class TestRoomOwnership:
         with pytest.raises(RuntimeError, match="cleanup failed"):
             await host.leave("room-a")
         host.children[0].refuse_close = False
+        await host.leave("room-a")
         assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
         assert host.exited == [True, False]
         with pytest.raises(ValueError, match="both"):

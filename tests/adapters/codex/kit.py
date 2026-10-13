@@ -245,7 +245,7 @@ class CodexRoom:
 
     @property
     def turn(self) -> asyncio.Task[None]:
-        return self.adapter._turn_tasks[ROOM_ID]
+        return self.adapter._turn_tasks[ROOM_ID].task
 
     async def send(self, content: str) -> None:
         self.deliveries.append(tools := ToolSchemaFakeTools())
@@ -415,3 +415,23 @@ class ExitsWhileAskedClient(FakeCodexClient):
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
         raise ConnectionResetError("Connection lost")
+
+
+class CountingCloseClient(FakeCodexClient):
+    """Counts physical closes, optionally holding each one open."""
+
+    def __init__(self, *, events: list[RpcEvent], hold: bool = False) -> None:
+        super().__init__(events=events)
+        self.closes = 0
+        self.closing = asyncio.Event()
+        self.finish_close = asyncio.Event()
+        self.close_finished = asyncio.Event()
+        if not hold:
+            self.finish_close.set()
+
+    async def close(self) -> None:
+        self.closes += 1
+        self.closing.set()
+        await self.finish_close.wait()
+        await super().close()
+        self.close_finished.set()

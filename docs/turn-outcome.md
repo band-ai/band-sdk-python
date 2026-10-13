@@ -345,3 +345,28 @@ the existing retry policy.
 
 One-shot invocations also require accepted claims and completion. They raise on
 refusal instead of returning `DONE`; a drain records only accepted messages.
+
+## Cancellation ownership
+
+Each runtime handler and SDK-managed Codex/Claude worker has one task owner.
+The originating turn scope coordinates termination and fixes one absolute cleanup
+deadline using the existing one-second grace. Repeated controls still notify the
+adapter and update the unsettled delivery outcome, but never cancel its cleanup
+again or renew its deadline.
+
+A stopped tool or auxiliary claim first revokes that scope's posting permission
+and raises cancellation in its caller. Bound workers and the handler get the same
+cleanup grace to unwind cooperatively; an unfinished task receives cancellation
+once at expiry if none was delivered, even when nothing waits for it. Native
+controls, heartbeat refusal, watchdog expiry and shutdown cancel a running turn
+immediately; a worker already released for approval is left to the adapter's
+room cleanup. Provider execution and recovery timeouts retain their adapter
+policy and coordinate with that same owner.
+
+Unfinished tasks remain owned after grace expires. They cannot post late replies,
+change a newer turn's activity, or overlap replacement provider work. Room cleanup
+reports `CleanupIncompleteError` while the worker still needs its resources;
+a later existing host cleanup retry completes retirement. Worker completion alone
+does not readmit the room. Successful approval release retains its original tools
+and judgment until the worker actually finishes; `Turn.detach()` is still only
+an outcome-ledger operation.

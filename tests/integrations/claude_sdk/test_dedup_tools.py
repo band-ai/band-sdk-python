@@ -9,11 +9,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from band_sdk_core import AgentFailure
 
+from band.core.turn_lifecycle import bind_turn_task
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_MAX_ENTRIES,
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
+from band.runtime.cycle import TurnScope
+from band.runtime.tools.agent import AgentTools
 from band.testing import FakeAgentTools
 
 
@@ -571,3 +574,26 @@ class TestDedupedSendBelongsToItsTurn:
 
         assert first_turn.turn.replied
         assert not next_turn.turn.replied
+
+
+async def test_tools_replacement_does_not_rebind_an_accepted_worker() -> None:
+    original = AgentTools(room_id="room", rest=MagicMock(), participants=[])
+    original._scope = scope = TurnScope(control_revision=0)
+    replacement = AgentTools(room_id="room", rest=MagicMock(), participants=[])
+    replacement._scope = TurnScope(control_revision=1)
+    wrapper = DedupingAgentTools(original)
+    started = asyncio.Event()
+
+    async def work() -> None:
+        started.set()
+        await asyncio.Future[None]()
+
+    owner = bind_turn_task(wrapper, asyncio.create_task(work()))
+    await started.wait()
+    await wrapper.update_inner(replacement)
+    scope.terminate()
+    assert await owner.drain()
+    assert owner.task.cancelled()
+    assert not replacement._scope.aborted
+    with pytest.raises(asyncio.CancelledError):
+        await original.send_event("late reply", "thought")

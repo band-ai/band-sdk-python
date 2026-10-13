@@ -17,7 +17,7 @@ from tests.runtime.agentruntime.kit import (
     settled,
     until_admitted,
 )
-from tests.runtime.helpers import RoomCleanup
+from tests.runtime.helpers import RoomCleanup, resist_cancellation_until
 
 
 class TestAgentRuntimeRoomCleanupOwnership:
@@ -109,16 +109,12 @@ class TestAgentRuntimeRoomCleanupOwnership:
     async def test_cancellation_resistant_execution_keeps_room_fenced(
         self, mock_link, room_cleanup: RoomCleanup, monkeypatch
     ):
-        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+        monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
         started, finish = asyncio.Event(), asyncio.Event()
 
         async def stubborn(ctx: ExecutionContext, event) -> None:
             started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                await finish.wait()
-                raise
+            await resist_cancellation_until(finish)
 
         runtime = AgentRuntime(
             mock_link, "agent-123", stubborn, on_session_cleanup=room_cleanup

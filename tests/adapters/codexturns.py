@@ -42,9 +42,9 @@ async def await_released_turn(
     if turn is None:
         return
     if timeout_s is None:
-        await turn
+        await turn.task
     else:
-        await asyncio.wait_for(turn, timeout=timeout_s)
+        await asyncio.wait_for(asyncio.shield(turn.task), timeout=timeout_s)
 
 
 class FakeCodexClient(RecordedRequests):

@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import shutil
+import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
@@ -16,6 +18,32 @@ from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPol
 logger = logging.getLogger(__name__)
 
 _PROCESS_EXIT_TIMEOUT_S = 1.0
+
+
+async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Force-stop ``process`` and everything it spawned.
+
+    The ``codex`` launcher is a shim (``codex.cmd`` on Windows, a node script
+    elsewhere) whose real CLI is its child; killing only the shim leaves that
+    child running, and on Windows its open workdir cannot be removed.
+    """
+    if os.name != "nt":
+        # The child leads its own session, so its pid is the group id.
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        return
+    taskkill = await asyncio.create_subprocess_exec(
+        "taskkill",
+        "/F",
+        "/T",
+        "/PID",
+        str(process.pid),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    if await taskkill.wait() != 0:
+        with suppress(ProcessLookupError):
+            process.kill()
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -74,6 +102,7 @@ class CodexStdioClient(BaseJsonRpcClient):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.cwd,
                 env=self.env,
+                start_new_session=True,
                 limit=16 * 1024 * 1024,  # 16 MB — Codex sends large JSON-RPC lines
             )
         except FileNotFoundError as exc:
@@ -121,10 +150,7 @@ class CodexStdioClient(BaseJsonRpcClient):
             try:
                 await asyncio.wait_for(process.wait(), timeout=_PROCESS_EXIT_TIMEOUT_S)
             except TimeoutError:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
+                await kill_process_tree(process)
                 await process.wait()
 
         self._fail_pending("Codex stdio client closed")

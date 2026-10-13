@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.core.exceptions import RoomExecutionStoppedError
+from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, bind_turn_task
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import BacklogProcessResult, ExecutionContext
 from band.runtime.tools.agent import AgentTools
@@ -154,3 +155,43 @@ class TestStoppedPosts:
             await provider
         await cleanup.wait()
         assert await ctx._process_event(make_message_event(msg_id="after"))
+
+    @pytest.mark.looptime
+    async def test_stopped_post_cancels_a_released_worker_at_its_grace(
+        self, mock_link
+    ) -> None:
+        peer = LifecyclePlatform()
+        async with rest_client_over(peer.answer) as rest:
+            mock_link.rest = rest
+            ctx = ExecutionContext(
+                "room-123", mock_link, AsyncMock(), agent_id="agent-123"
+            )
+            await ctx._begin_scope()
+            tools = AgentTools.from_context(ctx)
+            refused = asyncio.Event()
+            refused_at: list[float] = []
+
+            async def released_worker() -> None:
+                # Provider tool calls post from their own task, so the refusal
+                # cannot unwind the worker itself.
+                post = asyncio.create_task(
+                    tools.send_message(
+                        "late", mentions=[{"id": "user-1", "handle": "user"}]
+                    )
+                )
+                await asyncio.wait({post})
+                refused_at.append(asyncio.get_running_loop().time())
+                refused.set()
+                await asyncio.Future[None]()
+
+            worker = bind_turn_task(tools, asyncio.create_task(released_worker()))
+            await ctx._begin_scope()
+            await refused.wait()
+            await asyncio.wait({worker.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS)
+
+            assert peer.posts == ["messages"]
+            assert worker.task.cancelled()
+            assert (
+                asyncio.get_running_loop().time() - refused_at[0]
+                == CYCLE_CANCEL_GRACE_SECONDS
+            )

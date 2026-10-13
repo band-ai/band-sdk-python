@@ -95,8 +95,9 @@ class TestAuxiliaryClaimRefusal:
             assert peer.requested("processed") == []
             assert peer.requested("failed") == []
 
+    @pytest.mark.parametrize("replay_head", ["trigger", "aux-1", "aux-2"])
     async def test_auxiliary_control_runtime_releases_then_commits_replayed_burst(
-        self,
+        self, replay_head: str
     ) -> None:
         peer = LifecyclePlatform()
         control = AuxiliaryClaimRuntime()
@@ -121,9 +122,14 @@ class TestAuxiliaryClaimRefusal:
             refuse = False
             peer.stopped = False
             await ctx.resume_room()
-            await ctx._process_backlog_message(backlog_message("trigger"))
+            await ctx._process_backlog_message(backlog_message(replay_head))
+            for mid in ("trigger", "aux-1", "aux-2"):
+                await ctx._process_backlog_message(backlog_message(mid))
             assert control.downstream_started.is_set()
-            assert control.completed_message_ids == ["trigger"]
-            assert peer.marked("processed") == ["aux-1", "aux-2", "trigger"]
+            assert control.completed_message_ids == (
+                ["trigger"] if replay_head == "trigger" else [replay_head, "trigger"]
+            )
+            assert peer.requested("failed") == []
+            assert sorted(peer.marked("processed")) == ["aux-1", "aux-2", "trigger"]
             assert not ctx.claims.pending_ack_ids(ctx.room_id)
             assert not control.owned_ids

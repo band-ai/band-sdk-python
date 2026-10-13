@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from typing import Any
 from unittest.mock import AsyncMock
+
+import pytest
 
 from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
@@ -30,7 +34,6 @@ class TestInterruptInFlightCycle:
         # Consumed: durable mark + local dedupe.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "msg-1")
         assert "msg-1" in ctx.claims.completed_ids(ctx.room_id)
-        assert ctx._interrupt_kind is None  # flag cleared
         assert ctx._active_cycle_task is None
 
         # Loop still alive: a fresh message processes normally.
@@ -69,9 +72,58 @@ class TestInterruptInFlightCycle:
         flag (which would mis-flag the next cycle)."""
         ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
         assert ctx.interrupt() is False
-        assert ctx._interrupt_kind is None
 
         # Next cycle runs normally.
         result = await ctx._process_event(make_message_event(msg_id="m1"))
         assert result is True
         mock_link.mark_processed.assert_awaited_once_with("room-123", "m1")
+
+    async def test_interrupted_cleanup_failure_is_logged(
+        self, mock_link, caplog
+    ) -> None:
+        started = asyncio.Event()
+
+        async def handler(ctx: ExecutionContext, event: Any) -> None:
+            started.set()
+            try:
+                await asyncio.Future[None]()
+            except asyncio.CancelledError:
+                raise RuntimeError("provider interrupt failed") from None
+
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+        with caplog.at_level(logging.ERROR, logger="band.runtime.execution"):
+            turn = asyncio.create_task(ctx._process_event(make_message_event()))
+            await started.wait()
+            ctx.interrupt()
+            assert await turn
+
+        [record] = caplog.records
+        assert record.exc_info is not None
+        assert str(record.exc_info[1]) == "provider interrupt failed"
+
+    @pytest.mark.looptime
+    async def test_cleanup_outliving_its_grace_is_reported(
+        self, mock_link, caplog
+    ) -> None:
+        started, finish = asyncio.Event(), asyncio.Event()
+
+        async def handler(ctx: ExecutionContext, event: Any) -> None:
+            started.set()
+            try:
+                await asyncio.Future[None]()
+            except asyncio.CancelledError:
+                await finish.wait()
+                raise
+
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+        with caplog.at_level(logging.WARNING, logger="band.runtime.execution"):
+            turn = asyncio.create_task(ctx._process_event(make_message_event()))
+            await started.wait()
+            ctx.interrupt()
+            assert await turn
+
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert "outlived its cleanup grace" in record.getMessage()
+        finish.set()
+        assert await ctx.stop()

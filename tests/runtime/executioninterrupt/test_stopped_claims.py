@@ -58,7 +58,7 @@ class TestStoppedClaims:
         await ctx._begin_scope()
         ctx.observe_platform_stop(ctx.current_scope)
         await entered.wait()
-        monkeypatch.setattr("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
+        monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
         assert not await ctx._process_event(make_message_event(msg_id="later"))
         mock_link.mark_processing.assert_not_awaited()
         release.set()

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -125,6 +126,21 @@ def runtime_failures(link: MagicMock) -> list[tuple[str, str]]:
     return [post for post in failure_posts(link) if post[0] == TURN_FAILURE_PROVIDER]
 
 
+async def resist_cancellation_until(release: asyncio.Event) -> None:
+    """Ignore every cancel until ``release`` is set, then finish cancelled."""
+    while not release.is_set():
+        with suppress(asyncio.CancelledError):
+            await release.wait()
+    raise asyncio.CancelledError
+
+
+# An activity report as (requested working, platform recorded working).
+ActivityReport = tuple[bool, bool]
+KEEP_ALIVE: ActivityReport = (True, True)
+STOP_ECHO: ActivityReport = (True, False)
+IDLE: ActivityReport = (False, False)
+
+
 class LifecyclePlatform:
     """A controlled HTTP peer for the real Fern lifecycle and posting client."""
 
@@ -137,6 +153,7 @@ class LifecyclePlatform:
         self.processing_list_reads = 0
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
+        self.activity_reports: list[ActivityReport] = []
 
     def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(
@@ -157,6 +174,11 @@ class LifecyclePlatform:
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
+        if tail == "activity":
+            working = json.loads(request.content)["working"]
+            recorded = working and not self.stopped
+            self.activity_reports.append((working, recorded))
+            return httpx.Response(200, json={"data": {"working": recorded}})
         if tail == "me":
             return httpx.Response(
                 200,
@@ -386,3 +408,13 @@ class StartGate:
         execution = HeldExecution(room_id, self, number=len(self.built) + 1)
         self.built.append(execution)
         return execution
+
+
+@asynccontextmanager
+async def running_execution(ctx: ExecutionContext) -> AsyncIterator[ExecutionContext]:
+    """Exercise admission, handler supervision and shutdown through the room loop."""
+    await ctx.start()
+    try:
+        yield ctx
+    finally:
+        await ctx.stop()

@@ -25,9 +25,6 @@ MAX_SETTLE_POLLS = 500
 IN_FLIGHT = frozenset({Residency.ACQUIRING, Residency.SUSPENDING})
 
 
-ROOM_REFUSES_WORK = "cleanup failed|is closing"
-
-
 class CodexPeer(CodexStdioClient):
     """Inject a held start or a failed or held close at the real transport."""
 

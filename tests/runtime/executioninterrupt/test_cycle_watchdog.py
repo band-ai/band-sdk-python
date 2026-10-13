@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import logging
-from collections.abc import AsyncIterator
 from unittest.mock import patch
 
-from band.client.streaming import ControlMode
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
@@ -135,7 +131,7 @@ class TestCycleWatchdog:
         the same task takes priority over the watchdog's own (coincidental)
         expiry -- honoring its documented contract instead of reporting the
         user's own interrupt as a timeout failure -- and must not leave a
-        stale ``_interrupt_kind`` for a later, unrelated cycle's genuine
+        stale interrupt for a later, unrelated cycle's genuine
         shutdown cancellation to misread either way."""
         handler = BlockingHandler(block_seconds=_NEVER_RETURNS_SECONDS)
         ctx = ExecutionContext(
@@ -149,12 +145,17 @@ class TestCycleWatchdog:
         # Simulate the race deterministically rather than chasing real timing:
         # an interrupt() landed on this same task right as the watchdog also
         # independently expired.
-        ctx._interrupt_kind = ControlMode.INTERRUPT
+        async def interrupted_cleanup(ctx, event):
+            try:
+                await asyncio.Future[None]()
+            finally:
+                ctx.interrupt()
+                await asyncio.sleep(0)
 
+        ctx._on_execute = interrupted_cleanup
         result = await ctx._process_event(make_message_event(msg_id="race-1"))
 
         assert result is True
-        assert ctx._interrupt_kind is None  # cleared, not leaked to the next cycle
         # The interrupt won, not the watchdog: consumed/acked, not failed.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "race-1")
         mock_link.mark_failed.assert_not_awaited()
@@ -162,52 +163,24 @@ class TestCycleWatchdog:
         await assert_fresh_cycle_still_propagates_shutdown_cancel(ctx, "race-2")
 
     async def test_child_completing_at_the_deadline_boundary_is_not_misreported(
-        self, mock_link, caplog
+        self, mock_link
     ):
-        """CPython's Task/Timeout interaction can fire the deadline's cancel on
-        the *outer* task after the child has already completed successfully in
-        the same event-loop tick, fabricating a CancelledError for the outer
-        task's own resumption and discarding the child's real result --
-        without the child itself ever actually being cancel-requested (its
-        ``cancelling()`` count stays 0). The watchdog must recover the child's
-        real outcome in that case rather than reporting a cycle that
-        genuinely finished in time as a failure."""
-        handler = BlockingHandler(block=False)
+        completed: list[str] = []
+
+        async def finish_at_deadline(ctx, event):
+            completed.append("reply")
+
         ctx = ExecutionContext(
             "room-123",
             mock_link,
-            handler,
+            finish_at_deadline,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=_AMPLE_CYCLE_BUDGET_SECONDS),
+            config=SessionConfig(max_cycle_seconds=1e-9),
         )
-
-        class _FakeExpiredDeadline:
-            def expired(self) -> bool:
-                return True
-
-        @contextlib.asynccontextmanager
-        async def fake_timeout(_seconds: float) -> AsyncIterator[_FakeExpiredDeadline]:
-            # Stands in for the exact race: expired() reports True even though
-            # nothing was ever actually cancelled.
-            yield _FakeExpiredDeadline()
-
-        with (
-            patch("band.runtime.execution.asyncio_timeout", fake_timeout),
-            caplog.at_level(logging.DEBUG, logger="band.runtime.execution"),
-        ):
-            result = await ctx._process_event(make_message_event(msg_id="boundary"))
-
-        assert result is True
+        assert await ctx._process_event(make_message_event(msg_id="boundary"))
+        assert completed == ["reply"]
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
         mock_link.mark_failed.assert_not_awaited()
-        # The outcome above is also what a normal, un-raced completion looks
-        # like -- assert the recovery branch itself actually ran (not just a
-        # fall-through that never hit it), or a regression that silently
-        # removes the recovery logic would still pass this test.
-        assert any(
-            "deadline boundary; recovering its real result" in r.message
-            for r in caplog.records
-        )
 
     async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
         self, mock_link
@@ -233,7 +206,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        with patch("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
+        with patch("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
             result = await asyncio.wait_for(
                 ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
                 timeout=0.2,
