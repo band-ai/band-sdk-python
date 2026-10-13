@@ -140,10 +140,14 @@ process-local recovery, not an exactly-once guarantee across crashes.
 
 ## Declining with `band_no_reply`
 
-`band_no_reply` is in every adapter's tool set, and `BASE_INSTRUCTIONS` tells
-the model to call it when the latest message needs no answer: it was addressed
-to someone else, it is an FYI or an acknowledgement, or someone already answered
-it. The call is local only; its `reason` goes to the agent log.
+`band_no_reply` is in every adapter's tool set, and `BASE_INSTRUCTIONS` carries
+the tool's canonical description from band-sdk-core: the model considers every
+current input together and calls it only when the turn as a whole needs no
+answer — the inputs were addressed to someone else, are FYIs or
+acknowledgements, or someone already answered them. An FYI never cancels another
+input's outstanding request, a correction or cancellation is read in context,
+and one reply may answer several inputs. A decline ends the whole turn, never a
+single input. The call is local only; its `reason` goes to the agent log.
 
 Pydantic AI ends its native model loop after a successful current-run decline
 whose other tool results in that response also succeeded. Tool results, history

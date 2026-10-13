@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from band_sdk_core import no_reply_tool
+
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemorySegment,
@@ -34,7 +36,8 @@ from band.runtime.tools.inputs.chat import MENTION_IDENTIFIERS
 from band.runtime.tools.types import BandTool
 
 COMMUNICATION_INSTRUCTIONS = f"""Use `{BandTool.SEND_MESSAGE}(content, mentions)` to respond — a `{BandTool.SEND_MESSAGE}` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `{BandTool.SEND_MESSAGE}`; a turn that ends with the answer written as plain text delivers nothing.
-When the latest message needs no answer from you (it was addressed to someone else, it is an FYI or an acknowledgement, or another participant already answered it), call `{BandTool.NO_REPLY}` instead to end the turn deliberately. End every turn with one of the two.
+{BandTool.NO_REPLY}: {no_reply_tool()["description"]}
+End every turn with one of the two.
 {MENTION_IDENTIFIERS}"""
 
 
@@ -44,7 +47,7 @@ TURN_COMPLETION_GUIDANCE = (
     "This runtime may prompt you to continue after you act (for example, "
     '"continue from where you left off"). Treat that as a check, not a new '
     "request. Your turn is complete once you have taken every action the current "
-    f"message requires — including sending your reply with {BandTool.SEND_MESSAGE}. "
+    f"inputs require — including sending your reply with {BandTool.SEND_MESSAGE}. "
     "When nothing remains to do, end the turn with a brief plain-text response "
     f'(for example, "Done."); do not call {BandTool.SEND_MESSAGE} again just to report '
     "that you are finished. Plain text is not delivered to the room — which is "
