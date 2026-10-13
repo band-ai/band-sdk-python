@@ -18,8 +18,9 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
+from band.adapters.cursor_acp import CursorACPAdapter
 from band.core.retention import Residency
-from band.core.types import PlatformMessage
+from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -29,7 +30,7 @@ from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
@@ -162,6 +163,35 @@ class Launch:
     client_capabilities: object | None
 
 
+class LostThenSlowFailureReports(TranscriptTools):
+    """Room tools whose first failure post is lost, as in a REST outage, and
+    whose next one lands only once ``reporting`` is released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reporting = Gate()
+        self._failure_posts = 0
+
+    async def send_event(
+        self, content: str, message_type: str, metadata: dict[str, Any] | None = None
+    ) -> Any:
+        if message_type == MessageType.ERROR:
+            self._failure_posts += 1
+            if self._failure_posts == 1:
+                raise ConnectionError("Band REST unavailable")
+            await self.reporting.hold()
+        return await super().send_event(content, message_type, metadata)
+
+
+def pending_decisions(adapter: CursorACPAdapter) -> dict[str, list[str]]:
+    """The open decision tokens of each room that has any."""
+    return {
+        room_id: list(decisions)
+        for room_id, decisions in adapter._pending_decisions.items()
+        if decisions
+    }
+
+
 # Loop turns a scripted in-process release may take; a bound, not a delay.
 RELEASE_TURNS = 200
 
@@ -173,6 +203,13 @@ async def started_runtime(
     runtime = adapter._build_runtime(room_holder(adapter, room), 1)
     await runtime.start()
     return runtime
+
+
+async def spin() -> None:
+    """Give every runnable task its loop turns, so a step that would happen
+    without a barrier has happened; a bound, not a delay."""
+    for _ in range(RELEASE_TURNS):
+        await asyncio.sleep(0)
 
 
 async def released(room: ACPRoom) -> None:
@@ -375,6 +412,7 @@ class AcpSession:
         room_context: list[dict[str, Any]] | None = None,
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
+        tools: TranscriptTools | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -385,7 +423,7 @@ class AcpSession:
         rehydration path). ``participants_msg``/``contacts_msg`` model the
         change-triggered roster/contacts updates the runtime attaches to a turn.
         """
-        tools = TranscriptTools()
+        tools = tools or TranscriptTools()
         if room_context is not None:
             tools.set_room_context(room_context)
         self._last_tools = tools
@@ -513,8 +551,7 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
 
 async def _exit(agent: FakeACPAgent) -> None:
     if (gate := agent.exit_gate) is not None:
-        gate.received.set()
-        await gate.release.wait()
+        await gate.hold()
     if (failure := agent.exit_failure) is not None:
         agent.exit_failure = None
         raise failure

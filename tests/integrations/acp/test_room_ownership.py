@@ -9,11 +9,18 @@ time bound is ever waited out.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, nullcontext, suppress
+from collections.abc import AsyncIterator, Callable
+from contextlib import (
+    AbstractAsyncContextManager,
+    asynccontextmanager,
+    nullcontext,
+    suppress,
+)
 from pathlib import Path
+from typing import Any
 
 import pytest
 from acp import RequestError
@@ -23,8 +30,9 @@ from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError
 from band.core.model_catalog import ModelSelection
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.retention import ReleaseCause, Residency, RoomRetentionConfig
-from band.integrations.acp import client_adapter
+from band.integrations.acp import client_adapter, client_runtime, sessions
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPTurnTimeoutError,
@@ -44,16 +52,22 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
     decision_token,
     fake_agent_config,
+    pending_decisions,
     released,
     select_option,
     started_acp_adapter,
 )
 from tests.integrations.acp.acp_toolkit.agent import MODEL_OPTION_ID, Gate
-from tests.integrations.acp.acp_toolkit.harness import RELEASE_TURNS, TranscriptTools
+from tests.integrations.acp.acp_toolkit.harness import (
+    RELEASE_TURNS,
+    LostThenSlowFailureReports,
+    TranscriptTools,
+    spin,
+)
 from tests.integrations.acp.acp_toolkit.peer import (
     EXIT_FAILURE,
-    ExitFailsOnce,
     ExitStage,
+    FailingExits,
     stdio_peer_config,
 )
 from tests.integrations.acp.conftest import make_platform_message
@@ -62,6 +76,8 @@ from tests.mcpclient import crash_backend
 from tests.paths import REPO_ROOT
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
+# A start bound short enough that waiting it out costs nothing.
+HUNG_START_TIMEOUT_S = 0.05
 
 
 def models(current: str, *offered: str) -> FakeACPAgent:
@@ -96,6 +112,15 @@ async def woken(adapter: ACPClientAdapter, room: ACPRoom) -> AsyncIterator[None]
         yield
     finally:
         await adapter._release_room(room, ReleaseCause.RECOVERY)
+
+
+async def question_asked(reply: Reply) -> None:
+    """Let a running turn post its question decision to ``reply``'s room."""
+    for _ in range(RELEASE_TURNS):
+        if any("Cursor needs input" in text for text in reply.texts):
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"no question was asked: {reply.texts}")
 
 
 def question_token(reply: Reply) -> str:
@@ -155,6 +180,28 @@ class TestDeliberateWake:
             assert (room.session.session_id, room.session.live) == (retained, False)
         assert agent.session_ids() == [retained]
         assert len(agent.prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_unanswered_load_fails_at_its_bound_keeping_the_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sessions, "ACP_SESSION_LOAD_TIMEOUT_SECONDS", 0.05)
+        agent = FakeACPAgent(supports_session_load=True).will_say("ok")
+        async with acp_adapter(agent) as session:
+            await session.send("hello")
+            retained = session.session_id(DEFAULT_ROOM)
+            room = await recover(session)
+            loading = agent.knows_session(retained).holds_next_session_load()
+            try:
+                with pytest.raises(ACPSessionRestoreError, match="no answer"):
+                    async with woken(session.adapter, room):
+                        pass
+            finally:
+                loading.release.set()
+
+            assert room.session is not None
+            assert (room.session.session_id, room.session.live) == (retained, False)
+        assert agent.session_ids() == [retained]
 
     @pytest.mark.asyncio
     async def test_a_refused_selection_is_kept_for_the_room(self) -> None:
@@ -463,8 +510,7 @@ class TestFinalCleanup:
             await closing.received.wait()
 
             cleanup = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
-            for _ in range(RELEASE_TURNS):
-                await asyncio.sleep(0)
+            await spin()
             exited_under_a_held_close = exiting.received.is_set()
             closing.release.set()
             await exiting.received.wait()
@@ -510,8 +556,97 @@ class TestIndependentRooms:
             await cleanup
 
 
+class QuestioningAgent(FakeACPAgent):
+    """Asks one Cursor question per prompt and records each session's answer."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answers: dict[str, dict[str, object]] = {}
+        self.on_prompt(self.ask_mode)
+
+    async def ask_mode(self, peer: FakeACPAgent, session_id: str) -> None:
+        self.answers[session_id] = await self.ask_cursor_question(
+            session_id, "mode", "agent", "plan"
+        )
+
+
+@asynccontextmanager
+async def cursor(agent: FakeACPAgent, **settings: Any) -> AsyncIterator[AcpSession]:
+    adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent", **settings))
+    async with started_acp_adapter(adapter, agent) as session:
+        yield session
+
+
+@asynccontextmanager
+async def inline(agent: FakeACPAgent, **settings: Any) -> AsyncIterator[AcpSession]:
+    """An adapter whose turns run inside their message handler (OMP, Copilot)."""
+    async with acp_adapter(agent, fake_agent_config(**settings)) as session:
+        yield session
+
+
+async def start_failed(room: ACPRoom) -> None:
+    """Wait for ``room``'s hung start to run out its own bound."""
+    async with asyncio.timeout(5):
+        while "did not start" not in (room.retained.snapshot.error or ""):
+            await asyncio.sleep(0)
+
+
+async def stop(session: AcpSession, handler: asyncio.Task[Reply]) -> None:
+    """A room ``/stop``: the runtime cancels the handler and interrupts the room."""
+    handler.cancel()
+    await session.adapter.on_interrupt(DEFAULT_ROOM, ControlMode.STOP)
+    with suppress(asyncio.CancelledError):
+        await handler
+
+
+def answered(option: str) -> dict[str, object]:
+    return {
+        "outcome": {
+            "outcome": "answered",
+            "answers": [{"questionId": "mode", "selectedOptionIds": [option]}],
+        }
+    }
+
+
 class TestStartup:
     """A process starts within the room's bounded acquisition."""
+
+    @pytest.mark.asyncio
+    async def test_a_start_that_never_answers_fails_at_its_bound_and_recovers(
+        self,
+    ) -> None:
+        agent = FakeACPAgent().will_say("ok")
+        agent.holds_next_initialize()
+        config = fake_agent_config(start_timeout_s=HUNG_START_TIMEOUT_S)
+        async with acp_adapter(agent, config) as session:
+            with pytest.raises(TimeoutError, match="did not start"):
+                await session.send("hello")
+
+            served = await session.send("again")
+
+            assert served.errors == []
+            assert session.room().generation == 2
+        assert len(agent.prompts) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("opened", [inline, cursor], ids=["inline", "cursor"])
+    async def test_a_stop_during_a_start_that_never_answers_frees_the_room(
+        self, opened: Callable[..., AbstractAsyncContextManager[AcpSession]]
+    ) -> None:
+        agent = FakeACPAgent().will_say("ok")
+        starting = agent.holds_next_initialize()
+        async with opened(agent, start_timeout_s=HUNG_START_TIMEOUT_S) as session:
+            first = asyncio.create_task(session.send("hello"))
+            await starting.received.wait()
+
+            await stop(session, first)
+            await start_failed(session.room())
+            async with asyncio.timeout(5):
+                served = await session.send("again")
+                await accepted_work_finished(session.room())
+
+            assert served.errors == []
+        assert len(agent.prompts) == 1
 
     @pytest.mark.asyncio
     async def test_a_start_outlasting_the_transition_timeout_fails_and_recovers(
@@ -533,36 +668,6 @@ class TestStartup:
             assert served.errors == []
             assert session.room().generation == 2
         assert len(agent.prompts) == 1
-
-
-class QuestioningAgent(FakeACPAgent):
-    """Asks one Cursor question per prompt and records each session's answer."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.answers: dict[str, dict[str, object]] = {}
-        self.on_prompt(self.ask_mode)
-
-    async def ask_mode(self, peer: FakeACPAgent, session_id: str) -> None:
-        self.answers[session_id] = await self.ask_cursor_question(
-            session_id, "mode", "agent", "plan"
-        )
-
-
-@asynccontextmanager
-async def cursor(agent: FakeACPAgent) -> AsyncIterator[AcpSession]:
-    adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent"))
-    async with started_acp_adapter(adapter, agent) as session:
-        yield session
-
-
-def answered(option: str) -> dict[str, object]:
-    return {
-        "outcome": {
-            "outcome": "answered",
-            "answers": [{"questionId": "mode", "selectedOptionIds": [option]}],
-        }
-    }
 
 
 class TestCursorOrigin:
@@ -639,7 +744,7 @@ class TestCursorOrigin:
                 )
 
             assert stale == CANCELLED
-            assert not any(session.adapter._pending_decisions.values())
+            assert pending_decisions(session.adapter) == {}
             parked.release.set()
             await successor
             assert session.last_reply.texts == []
@@ -657,7 +762,9 @@ class TestCursorTurns:
     """Every accepted Cursor turn is reachable by its room's controls."""
 
     @pytest.mark.asyncio
-    async def test_an_interrupt_during_startup_ends_the_turn(self) -> None:
+    async def test_an_interrupt_during_startup_ends_the_turn_and_frees_the_room(
+        self,
+    ) -> None:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         async with cursor(agent) as session:
@@ -670,6 +777,12 @@ class TestCursorTurns:
             with pytest.raises(asyncio.CancelledError):
                 await turn
             assert agent.prompts == []
+
+            served = await session.send("again")
+            await accepted_work_finished(session.room())
+
+            assert served.errors == []
+        assert len(agent.prompts) == 1
 
     @pytest.mark.asyncio
     async def test_an_interrupt_before_any_decision_cancels_the_prompt(
@@ -719,16 +832,21 @@ class TestCursorTurns:
         assert len(agent.prompts) == 2
 
     @pytest.mark.asyncio
-    async def test_a_queued_turn_that_fails_to_start_reports_its_failure(
-        self,
+    @pytest.mark.parametrize(
+        ("fails_at", "reported"),
+        [("start", GENERIC_PROVIDER_FAILURE_MESSAGE), ("prompt", "Internal error")],
+    )
+    async def test_a_queued_turns_failure_is_reported_once(
+        self, fails_at: str, reported: str
     ) -> None:
         agent = FakeACPAgent()
         prompting = Gate()
 
         @agent.on_prompt
         async def crash(peer: FakeACPAgent, session_id: str) -> None:
-            prompting.received.set()
-            await prompting.release.wait()
+            if len(peer.prompts) == 1:
+                prompting.received.set()
+                await prompting.release.wait()
             raise RequestError.internal_error()
 
         async with cursor(agent) as session:
@@ -736,15 +854,47 @@ class TestCursorTurns:
             await prompting.received.wait()
             async with asyncio.timeout(5):
                 queued = await session.send("queued")
-            agent.fails_next_initialize()
+            if fails_at == "start":
+                agent.fails_next_initialize()
             prompting.release.set()
 
             with pytest.raises(RequestError):
                 await first
             await accepted_work_finished(session.room())
 
-        assert queued.errors
-        assert len(agent.prompts) == 1
+        assert queued.errors == [reported]
+
+    @pytest.mark.asyncio
+    async def test_a_slow_failure_report_keeps_the_room_until_it_lands(
+        self,
+    ) -> None:
+        agent = FakeACPAgent()
+        answers: list[dict[str, object]] = []
+
+        @agent.on_prompt
+        async def fail_then_ask(peer: FakeACPAgent, session_id: str) -> None:
+            if len(peer.prompts) == 1:
+                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+                raise RequestError.internal_error()
+            answers.append(
+                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+            )
+
+        async with cursor(agent) as session:
+            failing = LostThenSlowFailureReports()
+            asked = await session.send("ask", tools=failing)
+            queued = await session.send("queued")
+            await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            await failing.reporting.received.wait()
+            await spin()
+
+            assert len(agent.prompts) == 1
+            failing.reporting.release.set()
+            await question_asked(queued)
+            await session.send(f"/cursor answer {question_token(queued)} mode=agent")
+            await accepted_work_finished(session.room())
+
+        assert answers == [answered("agent")]
 
     @pytest.mark.asyncio
     async def test_a_message_accepted_as_the_room_frees_waits_off_the_queue(
@@ -789,11 +939,16 @@ class TestCursorTurns:
     ids=["exits-at-close", "exited-before-close"],
 )
 async def test_a_descendant_holding_the_agents_pipes_keeps_its_room_owned(
-    tmp_path: Path, stage: ExitStage, turn_error: type[Exception] | None
+    tmp_path: Path,
+    stage: ExitStage,
+    turn_error: type[Exception] | None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The agent exits, at close or before it, but a background descendant
     still holds its stdout, so closure is unconfirmed: the room keeps its
     process until the descendant is gone and a retry confirms the exit."""
+    monkeypatch.setattr(client_runtime, "STDOUT_HELD_WARNING_SECONDS", 0.1)
     holder_pid_file = tmp_path / "holder.pid"
     adapter = ACPClientAdapter(
         stdio_peer_config(
@@ -829,6 +984,10 @@ async def test_a_descendant_holding_the_agents_pipes_keeps_its_room_owned(
 
         assert room.runtime is runtime and not runtime.closed
         assert room.retained.snapshot.state == Residency.SUSPENDING
+        process = runtime._transport
+        assert isinstance(process, asyncio.subprocess.Process)
+        held = f"ACP agent subprocess {process.pid} (exit code"
+        assert any(warning.startswith(held) for warning in runtime_warnings(caplog))
 
         _stop(int(holder_pid_file.read_text()))
         await adapter.on_cleanup(DEFAULT_ROOM)
@@ -843,43 +1002,55 @@ async def test_a_descendant_holding_the_agents_pipes_keeps_its_room_owned(
 
 @pytest.mark.asyncio
 async def test_a_retry_after_a_failed_exit_kills_the_running_agent(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The agent's exit fails and leaves it running; a retry kills that same
     process and confirms its closure before the room is released."""
-    spawns = ExitFailsOnce()
-    monkeypatch.setattr(client_adapter, "spawn_agent_process", spawns)
     adapter = ACPClientAdapter(
         stdio_peer_config(ExitStage.EOF, []),
         workspace_for_room=lambda room_id: str(REPO_ROOT),
     )
-    await adapter.on_started("Stdio peer", "Real subprocess")
-    try:
-        await adapter.on_message(
-            make_platform_message("hello", room_id=DEFAULT_ROOM),
-            TranscriptTools(),
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id=DEFAULT_ROOM,
-        )
-        room = adapter._rooms[DEFAULT_ROOM]
-        runtime = room.runtime
-        [process] = spawns.processes
+    async with FailingExits() as spawns:
+        monkeypatch.setattr(client_adapter, "spawn_agent_process", spawns)
+        await adapter.on_started("Stdio peer", "Real subprocess")
+        try:
+            await adapter.on_message(
+                make_platform_message("hello", room_id=DEFAULT_ROOM),
+                TranscriptTools(),
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id=DEFAULT_ROOM,
+            )
+            room = adapter._rooms[DEFAULT_ROOM]
+            runtime = room.runtime
+            [process] = spawns.processes
 
-        with pytest.raises(RuntimeError, match=EXIT_FAILURE):
+            with pytest.raises(RuntimeError, match=EXIT_FAILURE):
+                await adapter.on_cleanup(DEFAULT_ROOM)
+
+            assert process.returncode is None
+            assert room.runtime is runtime
+
             await adapter.on_cleanup(DEFAULT_ROOM)
 
-        assert process.returncode is None
-        assert room.runtime is runtime
+            assert process.returncode is not None
+            assert DEFAULT_ROOM not in adapter._rooms
+            assert runtime_warnings(caplog) == [
+                f"ACP agent subprocess {process.pid} failed to exit",
+                f"Killing ACP agent subprocess {process.pid} after its exit failed",
+            ]
+        finally:
+            await adapter.cleanup_all()
 
-        await adapter.on_cleanup(DEFAULT_ROOM)
 
-        assert process.returncode is not None
-        assert DEFAULT_ROOM not in adapter._rooms
-    finally:
-        await adapter.cleanup_all()
+def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == client_runtime.__name__ and record.levelno >= logging.WARNING
+    ]
 
 
 def _stop(pid: int) -> None:

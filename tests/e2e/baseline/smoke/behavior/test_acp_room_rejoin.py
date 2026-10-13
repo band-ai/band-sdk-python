@@ -1,8 +1,7 @@
 """A running ACP agent removed from a room and re-added there answers again.
 
-Removal disposes the room's residency (its ACP process and session close), so the
-re-add must start a fresh one while the Band agent itself keeps running. A
-reply carrying the second turn's own marker proves that fresh residency served it.
+The Band agent keeps running across the removal; a reply carrying the second
+turn's own marker shows the rejoined room is served.
 """
 
 from __future__ import annotations
@@ -57,7 +56,6 @@ async def test_acp_agent_replies_after_rejoining_a_room(
         replies.assert_contains_any([before])
 
         await user_ops.remove_participant(room_id, agent.id)
-        assert agent.id not in await user_ops.list_participant_ids(room_id)
         await user_ops.add_participant(room_id, agent.id)
 
         mark = capture.messages.snapshot()

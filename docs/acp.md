@@ -117,9 +117,11 @@ Each room is one `ACPRoom`: its process, connection and session, composed with a
 `RetainedRoom` from the adapter's single `RoomRetention`. Detached work (a Cursor
 turn, a Copilot model switch) is owned by the room before it runs, and a prompt
 binds its tools under the room's lease, so an independent room never waits on
-another room's start, prompt or exit. The room's acquisition starts its process; a
-start that outlasts `transition_timeout_s` fails that turn and is recovered, so a
-slow agent needs a larger `transition_timeout_s`.
+another room's start, prompt or exit. The room's acquisition starts its process
+within `start_timeout_s` (10s by default). A start that outlasts it, or outlasts
+`transition_timeout_s`, fails that turn and is recovered, so a slow agent needs both
+raised. A message sent while a start that never answers is still running fails with
+that start's error; one sent after that start has failed gets a new process.
 
 - **A deliberate wake reloads the exact session.** It calls `session/load` with a
   fresh Band MCP endpoint, then reapplies the room's model selection and verifies
@@ -136,8 +138,8 @@ slow agent needs a larger `transition_timeout_s`.
 - **Closure is confirmed, not assumed.** The process handle stays on the room until
   `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
   inherited it keeps the room closing until it exits, with a warning naming the
-  agent's pid. A failed or cancelled exit
-  leaves the room owned, and a retry kills and waits for the same process. Final
+  agent's pid. A failed or cancelled exit leaves the room owned, and a retry kills
+  and waits for the same process. Final
   cleanup shares one `transition_timeout_s` budget across the rooms and the shared
   Band MCP server, and keeps that server open while any room is still held.
 - **Idle release stays off.** OMP, Cursor and Copilot report `ProviderActivity.UNKNOWN`,
@@ -171,8 +173,9 @@ failure fails that room turn visibly instead of falling back.
   that room's active turn on that process; a request from a replaced process opens no
   decision. Rooms run in parallel, one turn per room; a message queued behind its room's
   current turn hands the room's message queue back at once, so a `/cursor` reply
-  never waits on it, and a queued turn that fails before its prompt still reports
-  its failure. An interrupt or `/stop` cancels every accepted turn in the room,
+  never waits on it. Only the turn holding the room's lease answers Cursor's
+  extension requests, and a failed turn reports its failure before the lease
+  passes on, once, whether it failed starting or prompting. An interrupt or `/stop` cancels every accepted turn in the room,
   whether it is starting, queued or parked. `max_pending_decisions` caps each room
   separately. Decision prompts, timeout notices and `/cursor` replies post through
   `send_notice`, so they never count as the model's reply, and a

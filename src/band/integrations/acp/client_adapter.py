@@ -194,6 +194,7 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
+DEFAULT_START_TIMEOUT_SECONDS = 10.0
 
 
 class SessionCloseReason(StrEnum):
@@ -297,6 +298,10 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         use_unstable_protocol: Speak ACP's unstable protocol methods.
         turn_timeout_s: Seconds a prompt may run before the turn is cancelled
             and a ``timeout`` failure is posted to the room.
+        start_timeout_s: Seconds the agent may take to start and finish
+            ``initialize``/``authenticate``; a longer start fails and its room
+            recovers. A start past ``retention.transition_timeout_s`` already
+            fails its turn, so raise both for a slow agent.
         model: Model selected from each session's advertised catalog; a value
             the catalog does not offer fails the turn.
         reasoning_effort: Reasoning effort selected the same way.
@@ -317,6 +322,7 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     custom_section: str = ""
     use_unstable_protocol: bool = False
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
+    start_timeout_s: PositiveFloat = DEFAULT_START_TIMEOUT_SECONDS
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -686,7 +692,7 @@ class ACPClientAdapter(
                 f"Room {room.room_id}'s previous ACP process is not confirmed closed"
             )
         runtime = room.runtime = self._build_runtime(room, generation)
-        await runtime.start()
+        await self._start_runtime(runtime)
         room.retained.observe(
             ProviderActivity.UNKNOWN,
             generation=generation,
@@ -694,6 +700,19 @@ class ACPClientAdapter(
         )
         if resume and room.session is not None:
             await self._restore_retained_session(room, runtime)
+
+    async def _start_runtime(self, runtime: ACPRuntime) -> None:
+        """Start ``runtime`` within ``start_timeout_s``.
+
+        The owner never cancels an acquisition its caller stopped waiting for,
+        so an agent that never answers would otherwise block recovery.
+        """
+        timeout = self.config.start_timeout_s
+        try:
+            async with asyncio.timeout(timeout):
+                await runtime.start()
+        except TimeoutError as error:
+            raise TimeoutError(f"ACP agent did not start within {timeout}s") from error
 
     async def _release_room(self, room: ACPRoom, cause: ReleaseCause) -> ReleaseOutcome:
         """Close the room's process and keep its session identity.
@@ -908,11 +927,6 @@ class ACPClientAdapter(
         """Report an agent failure and retire the residency it left unusable."""
         logger.exception("ACP agent error")
         room.retained.recover(generation=generation, reason=f"ACP agent error: {error}")
-        await ACPClientAdapter._report_failure(tools, error)
-
-    @staticmethod
-    async def _report_failure(tools: AgentToolsProtocol, error: Exception) -> None:
-        """Post ``error`` to the room as its turn's provider failure."""
         await tools.send_failure(_to_agent_failure(error))
 
     @staticmethod

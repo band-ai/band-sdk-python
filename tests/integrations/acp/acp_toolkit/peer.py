@@ -10,7 +10,7 @@ import sys
 from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from acp import run_agent, spawn_agent_process
 from acp.schema import (
@@ -77,21 +77,35 @@ def stdio_peer_config(
 EXIT_FAILURE = "agent subprocess exit failed"
 
 
-class ExitFailsOnce:
-    """``spawn_agent_process`` whose first exit raises without closing
-    anything, leaving the agent running as a failed teardown does."""
+class FailingExits:
+    """``spawn_agent_process`` whose exits raise without closing anything,
+    leaving the agent running as a failed teardown does.
+
+    As an async context manager it exits the abandoned spawns on leaving, so
+    a test leaks no transport.
+    """
 
     def __init__(self) -> None:
         self.processes: list[asyncio.subprocess.Process] = []
-        self._failed = False
+        self._abandoned: list[AbstractAsyncContextManager[Any]] = []
 
     def __call__(self, *args: Any, **kwargs: Any) -> AbstractAsyncContextManager[Any]:
-        return _FailingExit(self, spawn_agent_process(*args, **kwargs))
+        return FailingExit(self, spawn_agent_process(*args, **kwargs))
+
+    def abandon(self, spawn: AbstractAsyncContextManager[Any]) -> None:
+        self._abandoned.append(spawn)
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        for spawn in self._abandoned:
+            await spawn.__aexit__(None, None, None)
 
 
-class _FailingExit:
+class FailingExit:
     def __init__(
-        self, spawns: ExitFailsOnce, inner: AbstractAsyncContextManager[Any]
+        self, spawns: FailingExits, inner: AbstractAsyncContextManager[Any]
     ) -> None:
         self._spawns = spawns
         self._inner = inner
@@ -101,11 +115,9 @@ class _FailingExit:
         self._spawns.processes.append(process)
         return connection, process
 
-    async def __aexit__(self, *exc_info: object) -> bool | None:
-        if not self._spawns._failed:
-            self._spawns._failed = True
-            raise RuntimeError(EXIT_FAILURE)
-        return await self._inner.__aexit__(*exc_info)
+    async def __aexit__(self, *exc_info: object) -> None:
+        self._spawns.abandon(self._inner)
+        raise RuntimeError(EXIT_FAILURE)
 
 
 def spawn_pipe_holder(pid_file: Path) -> None:

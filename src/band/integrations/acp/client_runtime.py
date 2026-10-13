@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager, suppress
+from collections.abc import Callable, Iterator
+from contextlib import AbstractAsyncContextManager, contextmanager, suppress
 from typing import Any, cast
 
 from acp import spawn_agent_process
@@ -76,6 +76,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 STDOUT_DISCARD_CHUNK_BYTES = 65536
+INJECTED_TRANSPORT = "<injected transport>"
 STDOUT_HELD_WARNING_SECONDS = 5.0
 
 
@@ -113,22 +114,14 @@ class ACPRuntime(ACPSessionOperations):
         self._transport: object = None
         self._exit_attempted = False
         self._closure: asyncio.Task[None] | None = None
-        self._stop_lock = asyncio.Lock()
         self._stderr = ACPStderrDrain(logger)
 
-    async def start(self, *, respawn: bool = False) -> None:
-        """Spawn or respawn the ACP agent subprocess."""
-        async with self._stop_lock:
-            await self._start(respawn=respawn)
-
-    async def _start(self, *, respawn: bool) -> None:
+    async def start(self) -> None:
+        """Spawn the ACP agent subprocess and initialize its connection."""
         if self._ctx is not None:
             raise RuntimeError("ACP runtime is already started or not yet closed")
         self._connection_failed = False
-        logger.info(
-            "%s ACP agent subprocess",
-            "Respawning" if respawn else "Spawning",
-        )
+        logger.info("Spawning ACP agent subprocess")
 
         self._ctx = self._spawn_context()
         try:
@@ -145,7 +138,7 @@ class ACPRuntime(ACPSessionOperations):
         # rather than logging a blank suffix.
         logger.info(
             "Connected to ACP agent: %s",
-            " ".join(self._command) or "<injected transport>",
+            " ".join(self._command) or INJECTED_TRANSPORT,
         )
 
     def _spawn_context(
@@ -230,17 +223,20 @@ class ACPRuntime(ACPSessionOperations):
         inherited stdout can still hold it.
         """
         process = self._transport
-        if not self._exit_attempted and self._ctx is not None:
-            self._exit_attempted = True
-            try:
-                await self._ctx.__aexit__(None, None, None)
-            except Exception:
-                logger.exception("ACP agent subprocess failed to exit")
-                raise
-        elif isinstance(process, asyncio.subprocess.Process):
-            await _kill(process)
-        if isinstance(process, asyncio.subprocess.Process) and process.stdout:
-            await _confirm_stdout_closed(process, process.stdout)
+        with _warning_while_held(process):
+            if not self._exit_attempted and self._ctx is not None:
+                self._exit_attempted = True
+                try:
+                    await self._ctx.__aexit__(None, None, None)
+                except Exception:
+                    logger.exception(
+                        "ACP agent subprocess %s failed to exit", _pid(process)
+                    )
+                    raise
+            elif isinstance(process, asyncio.subprocess.Process):
+                await _kill(process)
+            if isinstance(process, asyncio.subprocess.Process) and process.stdout:
+                await _read_to_eof(process.stdout)
 
     def _forget_connection(self) -> None:
         self._ctx = None
@@ -253,11 +249,10 @@ class ACPRuntime(ACPSessionOperations):
         self._agent_supports_session_close = False
 
     async def _close_failed_start(self) -> None:
-        """Close what a failed start opened; a failed close keeps it for ``stop``."""
-        try:
+        """Close what a failed start opened; a failed close, already logged by
+        the closure, keeps it for ``stop``."""
+        with suppress(Exception):
             await self._closed()
-        except Exception:
-            logger.exception("Error cleaning up ACP subprocess after a failed start")
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> BandMCPTransport:
@@ -283,6 +278,12 @@ class ACPRuntime(ACPSessionOperations):
         return getattr(session_capabilities, "close", None) is not None
 
 
+def _pid(transport: object) -> int | str:
+    if isinstance(transport, asyncio.subprocess.Process):
+        return transport.pid
+    return INJECTED_TRANSPORT
+
+
 async def _kill(process: asyncio.subprocess.Process) -> None:
     if process.returncode is None:
         logger.warning(
@@ -293,21 +294,29 @@ async def _kill(process: asyncio.subprocess.Process) -> None:
     await process.wait()
 
 
-async def _confirm_stdout_closed(
-    process: asyncio.subprocess.Process, stdout: asyncio.StreamReader
-) -> None:
-    """Wait for stdout EOF, saying why when a descendant keeps it open."""
+@contextmanager
+def _warning_while_held(transport: object) -> Iterator[None]:
+    """Warn once when closing the agent outlasts ``STDOUT_HELD_WARNING_SECONDS``:
+    the SDK's exit and the EOF read both wait while a descendant holds stdout."""
+    if not isinstance(transport, asyncio.subprocess.Process):
+        yield
+        return
+    timer = asyncio.get_running_loop().call_later(
+        STDOUT_HELD_WARNING_SECONDS, _warn_held, transport
+    )
     try:
-        async with asyncio.timeout(STDOUT_HELD_WARNING_SECONDS):
-            await _read_to_eof(stdout)
-    except TimeoutError:
-        logger.warning(
-            "ACP agent subprocess %s exited (code %s) but a descendant still "
-            "holds its stdout; its room stays owned until that closes",
-            process.pid,
-            process.returncode,
-        )
-        await _read_to_eof(stdout)
+        yield
+    finally:
+        timer.cancel()
+
+
+def _warn_held(process: asyncio.subprocess.Process) -> None:
+    logger.warning(
+        "ACP agent subprocess %s (exit code %s) has not closed its stdout; a "
+        "descendant may hold it, and its room stays owned until that closes",
+        process.pid,
+        process.returncode,
+    )
 
 
 async def _read_to_eof(stream: asyncio.StreamReader) -> None:

@@ -66,6 +66,10 @@ class Gate:
     received: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
 
+    async def hold(self) -> None:
+        self.received.set()
+        await self.release.wait()
+
 
 class FakeACPAgent:
     """A scripted, in-process ACP agent (the peer an ACP client drives).
@@ -111,6 +115,7 @@ class FakeACPAgent:
         self.exit_failure: Exception | None = None
         # Holds the next initialize, as a process slow to start.
         self._initialize_gate: Gate | None = None
+        self._session_load_gate: Gate | None = None
         self._initialize_error: RequestError | None = None
         self._close_gate: Gate | None = None
         self._new_session_error: RequestError | None = None
@@ -185,6 +190,11 @@ class FakeACPAgent:
         """Hold the next connection's ``initialize`` until release."""
         self._initialize_gate = Gate()
         return self._initialize_gate
+
+    def holds_next_session_load(self) -> Gate:
+        """Hold the next ``session/load`` until release."""
+        self._session_load_gate = Gate()
+        return self._session_load_gate
 
     def advertises_models(
         self,
@@ -653,8 +663,7 @@ class FakeACPAgent:
         del client_capabilities, kwargs
         if (gate := self._initialize_gate) is not None:
             self._initialize_gate = None
-            gate.received.set()
-            await gate.release.wait()
+            await gate.hold()
         if (error := self._initialize_error) is not None:
             self._initialize_error = None
             raise error
@@ -683,6 +692,9 @@ class FakeACPAgent:
     ) -> LoadSessionResponse:
         del cwd, kwargs
         self.session_load_requests.append(session_id)
+        if (gate := self._session_load_gate) is not None:
+            self._session_load_gate = None
+            await gate.hold()
         if self._session_load_error is not None:
             raise self._session_load_error
         if session_id not in self._persisted_sessions:
@@ -722,8 +734,7 @@ class FakeACPAgent:
             await asyncio.Event().wait()
         self._config_options = await self._select(session_id, config_id, value)
         if self._reply_gate is not None:
-            self._reply_gate.received.set()
-            await self._reply_gate.release.wait()
+            await self._reply_gate.hold()
         return SetSessionConfigOptionResponse(config_options=self._config_options)
 
     async def _select(
@@ -749,8 +760,7 @@ class FakeACPAgent:
         """Record that the client closed a session before prompting it."""
         del kwargs
         if (gate := self._close_gate) is not None:
-            gate.received.set()
-            await gate.release.wait()
+            await gate.hold()
         self.closed_sessions.append(session_id)
 
     def config_selections(self, session_id: str | None = None) -> list[tuple[str, str]]:

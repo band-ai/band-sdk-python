@@ -33,7 +33,6 @@ from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, Capability, HistoryProvider, PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
-from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.types import ACPToolCall
@@ -53,6 +52,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     decision_token,
     launch_for,
     pair_in_process,
+    pending_decisions,
     started_acp_adapter,
 )
 from tests.mcpclient import STORE_MEMORY_ARGS, crash_backend
@@ -97,13 +97,14 @@ class FailingDecisionTools(DecisionTools):
 
 
 def _turn(
+    adapter: CursorACPAdapter,
     room_id: str,
     tools: AgentToolsProtocol,
     requester_id: str | None,
     session_id: str | None = None,
 ) -> CursorTurn:
     return CursorTurn(
-        room=ACPRoom(room_id=room_id, workspace=room_id),
+        room=adapter._room(room_id),
         tools=tools,
         requester_id=requester_id,
         release=asyncio.get_running_loop().create_future(),
@@ -169,19 +170,17 @@ class CursorRoom:
             await accepted_work_finished(room)
 
 
-# A holder that was never acquired is at its first generation.
-UNACQUIRED_GENERATION = 0
-
-
 def pending_tokens(adapter: CursorACPAdapter) -> list[str]:
     """Every open decision token, across the adapter's rooms."""
-    return [token for room in adapter._pending_decisions.values() for token in room]
+    return [token for room in pending_decisions(adapter).values() for token in room]
 
 
 def activate(adapter: CursorACPAdapter, turn: CursorTurn) -> CursorTurn:
-    """Make ``turn`` its room's open prompt, as a running turn does."""
-    turn.generation = UNACQUIRED_GENERATION
-    adapter._turns.setdefault(turn.room.room_id, []).append(turn)
+    """Make ``turn`` its room's holder, as a running turn is."""
+    room_id = turn.room.room_id
+    turn.generation = turn.room.generation
+    adapter._turns.setdefault(room_id, []).append(turn)
+    adapter._holders[room_id] = turn
     return turn
 
 
@@ -612,6 +611,7 @@ class TestCursorACPAdapterDecisions:
             activate(
                 adapter,
                 _turn(
+                    adapter,
                     "other-room" if inactive == "other-room" else "room-1",
                     tools,
                     "user-1",
@@ -647,7 +647,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_question_requires_a_valid_room_answer(self) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        turn = _turn("room-1", tools, "user-1", "session-1")
+        turn = _turn(adapter, "room-1", tools, "user-1", "session-1")
         activate(adapter, turn)
 
         pending = asyncio.create_task(
@@ -699,7 +699,7 @@ class TestCursorACPAdapterDecisions:
         adapter = CursorACPAdapter(
             CursorACPAdapterConfig(decision_authorized_senders=frozenset({"owner"}))
         )
-        turn = _turn("room-1", tools, "requester", "session-1")
+        turn = _turn(adapter, "room-1", tools, "requester", "session-1")
         activate(adapter, turn)
         pending = asyncio.create_task(
             adapter._resolve_question(
@@ -775,7 +775,7 @@ class TestCursorACPAdapterDecisions:
         construct. It must fall back to a displayable label (its id)."""
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        turn = _turn("room-1", tools, "user-1", "session-1")
+        turn = _turn(adapter, "room-1", tools, "user-1", "session-1")
         activate(adapter, turn)
 
         pending = asyncio.create_task(
@@ -825,7 +825,7 @@ class TestCursorACPAdapterDecisions:
         be marked 'answered' without Cursor's required question ever being
         answered. It must cancel outright instead."""
         adapter = CursorACPAdapter()
-        turn = _turn("room-1", DecisionTools(), "user-1", "session-1")
+        turn = _turn(adapter, "room-1", DecisionTools(), "user-1", "session-1")
 
         result = await adapter._resolve_question(
             turn,
@@ -849,7 +849,7 @@ class TestCursorACPAdapterDecisions:
         to whichever was processed last, discarding the earlier question's
         options with no signal."""
         adapter = CursorACPAdapter(CursorACPAdapterConfig(question_mode="auto_first"))
-        turn = _turn("room-1", DecisionTools(), "user-1", "session-1")
+        turn = _turn(adapter, "room-1", DecisionTools(), "user-1", "session-1")
 
         result = await adapter._resolve_question(
             turn,
@@ -888,7 +888,7 @@ class TestCursorACPAdapterDecisions:
     @pytest.mark.asyncio
     async def test_auto_question_uses_the_first_advertised_option(self) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(question_mode="auto_first"))
-        turn = _turn("room-1", DecisionTools(), "user-1", "session-1")
+        turn = _turn(adapter, "room-1", DecisionTools(), "user-1", "session-1")
 
         result = await adapter._resolve_question(
             turn,
@@ -914,7 +914,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_permission_can_be_denied_from_the_room(self) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        activate(adapter, _turn("room-1", tools, "user-1", "session-1"))
+        activate(adapter, _turn(adapter, "room-1", tools, "user-1", "session-1"))
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
@@ -944,7 +944,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_permission_can_select_an_advertised_option(self) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        activate(adapter, _turn("room-1", tools, "user-1", "session-1"))
+        activate(adapter, _turn(adapter, "room-1", tools, "user-1", "session-1"))
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
@@ -978,7 +978,7 @@ class TestCursorACPAdapterDecisions:
     ) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        activate(adapter, _turn("room-1", tools, "user-1", "session-1"))
+        activate(adapter, _turn(adapter, "room-1", tools, "user-1", "session-1"))
 
         def request(call_id: str) -> ACPPermissionRequest:
             return ACPPermissionRequest(
@@ -1029,7 +1029,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         result = await adapter._resolve_plan(
-            _turn("room-1", DecisionTools(), "user-1", "session-1"),
+            _turn(adapter, "room-1", DecisionTools(), "user-1", "session-1"),
             {"plan": "Plan"},
         )
 
@@ -1041,7 +1041,7 @@ class TestCursorACPAdapterDecisions:
         adapter = CursorACPAdapter()
         pending = asyncio.create_task(
             adapter._resolve_plan(
-                _turn("room-1", tools, "user-1", "session-1"),
+                _turn(adapter, "room-1", tools, "user-1", "session-1"),
                 {"plan": "Plan"},
             )
         )
@@ -1089,7 +1089,9 @@ class TestCursorACPAdapterDecisions:
 
         result = await adapter._wait_for_decision(
             kind="plan",
-            turn=_turn("room-1", FailingDecisionTools(), "user-1", "session-1"),
+            turn=_turn(
+                adapter, "room-1", FailingDecisionTools(), "user-1", "session-1"
+            ),
             prompt="Plan {token}",
         )
 
@@ -1104,7 +1106,11 @@ class TestCursorACPAdapterDecisions:
         result = await adapter._wait_for_decision(
             kind="plan",
             turn=_turn(
-                "room-1", FailingDecisionTools(fail_after=1), "user-1", "session-1"
+                adapter,
+                "room-1",
+                FailingDecisionTools(fail_after=1),
+                "user-1",
+                "session-1",
             ),
             prompt="Plan {token}",
         )
@@ -1124,7 +1130,7 @@ class TestCursorACPAdapterDecisions:
         pending = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-1", tools, "user-1", "session-1"),
+                turn=_turn(adapter, "room-1", tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
@@ -1151,7 +1157,7 @@ class TestCursorACPAdapterDecisions:
         pending = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-1", tools, "user-1", "session-1"),
+                turn=_turn(adapter, "room-1", tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
@@ -1179,7 +1185,7 @@ class TestCursorACPAdapterDecisions:
         touch the future, and never say "resolved"."""
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        turn = _turn("room-1", tools, "user-1", "session-1")
+        turn = _turn(adapter, "room-1", tools, "user-1", "session-1")
 
         pending_task = asyncio.create_task(
             adapter._wait_for_decision(kind="plan", turn=turn, prompt="Plan {token}")
@@ -1214,25 +1220,21 @@ class TestCursorACPAdapterDecisions:
         first = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-1", first_tools, "user-1", "session-1"),
+                turn=_turn(adapter, "room-1", first_tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
         second = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-2", second_tools, "user-2", "session-2"),
+                turn=_turn(adapter, "room-2", second_tools, "user-2", "session-2"),
                 prompt="Plan {token}",
             )
         )
         await asyncio.gather(
             first_tools.prompt_sent.wait(), second_tools.prompt_sent.wait()
         )
-        tokens = {
-            room: token
-            for room, decisions in adapter._pending_decisions.items()
-            for token in decisions
-        }
+        tokens = {room: token for room, [token] in pending_decisions(adapter).items()}
 
         await adapter.on_cleanup("room-1")
 
@@ -1459,7 +1461,7 @@ class TestCursorACPAdapterControlMessages:
         adapter = CursorACPAdapter()
         pending = asyncio.create_task(
             adapter._resolve_plan(
-                _turn("room-1", tools, "user-1", "session-1"),
+                _turn(adapter, "room-1", tools, "user-1", "session-1"),
                 {"plan": "Plan"},
             )
         )
@@ -1519,7 +1521,7 @@ class TestCursorACPAdapterControlMessages:
         first = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-1", first_tools, "user-1", "session-1"),
+                turn=_turn(adapter, "room-1", first_tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
@@ -1527,7 +1529,7 @@ class TestCursorACPAdapterControlMessages:
         second = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-1", second_tools, "user-1", "session-1"),
+                turn=_turn(adapter, "room-1", second_tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
@@ -1547,7 +1549,7 @@ class TestCursorACPAdapterControlMessages:
             asyncio.create_task(
                 adapter._wait_for_decision(
                     kind="plan",
-                    turn=_turn(room, tools[room], "user-1", f"session-{room}"),
+                    turn=_turn(adapter, room, tools[room], "user-1", f"session-{room}"),
                     prompt="Plan {token}",
                 )
             )
