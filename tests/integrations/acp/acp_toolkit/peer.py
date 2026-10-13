@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
+from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from acp import run_agent
+from acp import run_agent, spawn_agent_process
 from acp.schema import (
     InitializeResponse,
     LoadSessionResponse,
@@ -26,6 +28,8 @@ from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 INITIALIZE_PENDING_LINE = "initialization pending"
 PEER_EXIT_CODE = 3
 CRASH_MARKER_ARG = "--crash-marker"
+ORPHAN_PID_FILE_ARG = "--orphan-pid-file"
+ORPHAN_LIFETIME_S = 120
 RECOVERED_REPLY = "Recovered after the connection failed."
 
 
@@ -42,7 +46,12 @@ class ExitStage(StrEnum):
 
 
 def stdio_peer_config(
-    stage: ExitStage, lines: list[str], *, crash_marker: Path | None = None
+    stage: ExitStage,
+    lines: list[str],
+    *,
+    crash_marker: Path | None = None,
+    orphan_pid_file: Path | None = None,
+    **settings: Any,
 ) -> ACPClientAdapterConfig:
     # Windows' venv redirector keeps stdout open until the peer exits.
     command = [
@@ -55,11 +64,62 @@ def stdio_peer_config(
     ]
     if crash_marker is not None:
         command.extend((CRASH_MARKER_ARG, str(crash_marker)))
+    if orphan_pid_file is not None:
+        command.extend((ORPHAN_PID_FILE_ARG, str(orphan_pid_file)))
     return ACPClientAdapterConfig(
         command=command,
         env={"__PYVENV_LAUNCHER__": sys.executable},
         inject_band_tools=crash_marker is not None,
+        **settings,
     )
+
+
+EXIT_FAILURE = "agent subprocess exit failed"
+
+
+class ExitFailsOnce:
+    """``spawn_agent_process`` whose first exit raises without closing
+    anything, leaving the agent running as a failed teardown does."""
+
+    def __init__(self) -> None:
+        self.processes: list[asyncio.subprocess.Process] = []
+        self._failed = False
+
+    def __call__(self, *args: Any, **kwargs: Any) -> AbstractAsyncContextManager[Any]:
+        return _FailingExit(self, spawn_agent_process(*args, **kwargs))
+
+
+class _FailingExit:
+    def __init__(
+        self, spawns: ExitFailsOnce, inner: AbstractAsyncContextManager[Any]
+    ) -> None:
+        self._spawns = spawns
+        self._inner = inner
+
+    async def __aenter__(self) -> Any:
+        connection, process = await self._inner.__aenter__()
+        self._spawns.processes.append(process)
+        return connection, process
+
+    async def __aexit__(self, *exc_info: object) -> bool | None:
+        if not self._spawns._failed:
+            self._spawns._failed = True
+            raise RuntimeError(EXIT_FAILURE)
+        return await self._inner.__aexit__(*exc_info)
+
+
+def spawn_pipe_holder(pid_file: Path) -> None:
+    """Start a descendant that inherits this peer's stdout and stderr, as a
+    background job does, and record its pid."""
+    holder = subprocess.Popen(
+        # Not sys.executable: under __PYVENV_LAUNCHER__ that is Windows' venv
+        # redirector, whose pid is not the child holding the pipes.
+        [sys._base_executable, "-c", f"import time; time.sleep({ORPHAN_LIFETIME_S})"],
+        stdin=subprocess.DEVNULL,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    pid_file.write_text(str(holder.pid))
 
 
 class StdioPeer(FakeACPAgent):
@@ -149,7 +209,10 @@ async def main() -> None:
     parser.add_argument("code", type=int)
     parser.add_argument("lines", nargs="*")
     parser.add_argument(CRASH_MARKER_ARG, type=Path)
+    parser.add_argument(ORPHAN_PID_FILE_ARG, type=Path)
     args = parser.parse_args()
+    if args.orphan_pid_file is not None:
+        spawn_pipe_holder(args.orphan_pid_file)
     peer = StdioPeer(args.stage, args.code, args.lines, args.crash_marker)
     await run_agent(peer)
     peer.exit_process()

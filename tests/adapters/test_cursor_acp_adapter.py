@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
@@ -34,7 +33,7 @@ from band.client.streaming import ControlMode
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, Capability, HistoryProvider, PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
-from band.integrations.acp.client_runtime import ACPRuntime
+from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.cursor import PLAN_REQUESTED_TEMPLATE
 from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.types import ACPToolCall
@@ -49,6 +48,9 @@ from tests.integrations.acp.acp_toolkit.agent import (
 )
 from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
+    accepted_work,
+    accepted_work_finished,
+    decision_token,
     launch_for,
     pair_in_process,
     started_acp_adapter,
@@ -101,7 +103,7 @@ def _turn(
     session_id: str | None = None,
 ) -> CursorTurn:
     return CursorTurn(
-        room_id=room_id,
+        room=ACPRoom(room_id=room_id, workspace=room_id),
         tools=tools,
         requester_id=requester_id,
         release=asyncio.get_running_loop().create_future(),
@@ -123,13 +125,6 @@ def room_message(
         metadata={},
         created_at=datetime.now(UTC),
     )
-
-
-def decision_token(prompt: str) -> str:
-    """The token a decision prompt asks the room to answer with."""
-    match = re.search(r"`/cursor \w+ (\S+)", prompt)
-    assert match is not None, prompt
-    return match[1]
 
 
 def said(tools: FakeAgentTools) -> list[str]:
@@ -168,8 +163,26 @@ class CursorRoom:
         return tools
 
     async def turns_finished(self) -> None:
-        """Wait for every turn still running after its message returned."""
-        await asyncio.gather(*self.adapter._background_tasks, return_exceptions=True)
+        """Wait for every turn still running after its message returned; a
+        disposed room already joined its turns."""
+        if (room := self.adapter._rooms.get("room-1")) is not None:
+            await accepted_work_finished(room)
+
+
+# A holder that was never acquired is at its first generation.
+UNACQUIRED_GENERATION = 0
+
+
+def pending_tokens(adapter: CursorACPAdapter) -> list[str]:
+    """Every open decision token, across the adapter's rooms."""
+    return [token for room in adapter._pending_decisions.values() for token in room]
+
+
+def activate(adapter: CursorACPAdapter, turn: CursorTurn) -> CursorTurn:
+    """Make ``turn`` its room's open prompt, as a running turn does."""
+    turn.generation = UNACQUIRED_GENERATION
+    adapter._turns.setdefault(turn.room.room_id, []).append(turn)
+    return turn
 
 
 # The adapter's ACP runtime lives on the loop that started it, so setup, the
@@ -476,7 +489,6 @@ class TestCursorACPAdapterLaunch:
 
         assert launch.command == DEFAULT_CURSOR_ACP_COMMAND
         assert launch.auth_method is None
-        assert adapter._profile is adapter._cursor_profile
 
     @pytest.mark.parametrize(
         ("config", "env"),
@@ -586,31 +598,6 @@ async def test_raw_input_band_permission_obeys_grant_duration(
 
 class TestCursorACPAdapterDecisions:
     @pytest.mark.asyncio
-    async def test_stale_runtime_cleanup_preserves_live_turn_permission(self) -> None:
-        tools = DecisionTools()
-        adapter = CursorACPAdapter()
-        adapter._runtimes["room-1"] = ACPRuntime(command=[])
-        adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
-        stale_runtime = ACPRuntime(command=[])
-
-        await adapter.on_cleanup("room-1", expected_runtime=stale_runtime)
-        request = ACPPermissionRequest(
-            room_id="room-1",
-            session_id="session-1",
-            tool_call=ACPToolCall(
-                "reply", BandTool.SEND_MESSAGE, {}, mcp_server=BAND_MCP_SERVER_NAME
-            ),
-            options=(
-                PermissionOption(
-                    optionId="once", name="Allow once", kind=ALLOW_ONCE_KIND
-                ),
-            ),
-        )
-
-        assert await adapter._resolve_cursor_permission(request) == "once"
-        assert tools.messages == []
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "inactive",
         ["absent", "other-room", "other-session", "interrupted", "cleaned-up"],
@@ -622,11 +609,14 @@ class TestCursorACPAdapterDecisions:
         tools = DecisionTools()
         adapter = CursorACPAdapter(CursorACPAdapterConfig(approval_mode=approval_mode))
         if inactive != "absent":
-            adapter._active_turn = _turn(
-                "other-room" if inactive == "other-room" else "room-1",
-                tools,
-                "user-1",
-                "other-session" if inactive == "other-session" else "session-1",
+            activate(
+                adapter,
+                _turn(
+                    "other-room" if inactive == "other-room" else "room-1",
+                    tools,
+                    "user-1",
+                    "other-session" if inactive == "other-session" else "session-1",
+                ),
             )
         if inactive == "interrupted":
             await adapter.on_interrupt("room-1", ControlMode.STOP)
@@ -658,7 +648,7 @@ class TestCursorACPAdapterDecisions:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
         turn = _turn("room-1", tools, "user-1", "session-1")
-        adapter._active_turn = turn
+        activate(adapter, turn)
 
         pending = asyncio.create_task(
             adapter._resolve_question(
@@ -680,7 +670,7 @@ class TestCursorACPAdapterDecisions:
         await tools.prompt_sent.wait()
         assert "agent=Agent" in tools.messages[0]
         assert "plan=Plan" in tools.messages[0]
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         handled = await adapter._handle_control_message(
             cast(
@@ -710,7 +700,7 @@ class TestCursorACPAdapterDecisions:
             CursorACPAdapterConfig(decision_authorized_senders=frozenset({"owner"}))
         )
         turn = _turn("room-1", tools, "requester", "session-1")
-        adapter._active_turn = turn
+        activate(adapter, turn)
         pending = asyncio.create_task(
             adapter._resolve_question(
                 turn,
@@ -735,7 +725,7 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -786,7 +776,7 @@ class TestCursorACPAdapterDecisions:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
         turn = _turn("room-1", tools, "user-1", "session-1")
-        adapter._active_turn = turn
+        activate(adapter, turn)
 
         pending = asyncio.create_task(
             adapter._resolve_question(
@@ -806,7 +796,7 @@ class TestCursorACPAdapterDecisions:
         )
         await tools.prompt_sent.wait()
         assert "confirm" in tools.messages[0]
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -924,7 +914,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_permission_can_be_denied_from_the_room(self) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
+        activate(adapter, _turn("room-1", tools, "user-1", "session-1"))
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
@@ -937,7 +927,7 @@ class TestCursorACPAdapterDecisions:
         )
         pending = asyncio.create_task(adapter._resolve_cursor_permission(request))
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -954,7 +944,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_permission_can_select_an_advertised_option(self) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
+        activate(adapter, _turn("room-1", tools, "user-1", "session-1"))
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
@@ -967,7 +957,7 @@ class TestCursorACPAdapterDecisions:
         )
         pending = asyncio.create_task(adapter._resolve_cursor_permission(request))
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -988,7 +978,7 @@ class TestCursorACPAdapterDecisions:
     ) -> None:
         tools = DecisionTools()
         adapter = CursorACPAdapter()
-        adapter._active_turn = _turn("room-1", tools, "user-1", "session-1")
+        activate(adapter, _turn("room-1", tools, "user-1", "session-1"))
 
         def request(call_id: str) -> ACPPermissionRequest:
             return ACPPermissionRequest(
@@ -1010,7 +1000,7 @@ class TestCursorACPAdapterDecisions:
         first = asyncio.create_task(adapter._resolve_cursor_permission(request("a")))
         repeat = asyncio.create_task(adapter._resolve_cursor_permission(request("b")))
         await tools.prompt_sent.wait()
-        [token] = adapter._pending_decisions
+        [token] = pending_tokens(adapter)
 
         await adapter._handle_control_message(
             cast(
@@ -1056,7 +1046,7 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
         assert tools.messages == [
             PLAN_REQUESTED_TEMPLATE.format(plan="Plan", token=token)
         ]
@@ -1104,7 +1094,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert result is None
-        assert len(adapter._pending_decisions) == 0
+        assert len(pending_tokens(adapter)) == 0
 
     @pytest.mark.asyncio
     @pytest.mark.looptime
@@ -1120,7 +1110,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert result is None
-        assert len(adapter._pending_decisions) == 0
+        assert len(pending_tokens(adapter)) == 0
 
     @pytest.mark.asyncio
     async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
@@ -1140,7 +1130,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         async with failing_prompt:
-            token = next(iter(adapter._pending_decisions))
+            token = pending_tokens(adapter)[0]
             await adapter._handle_control_message(
                 room_message(f"/cursor accept {token}"), tools, "room-1"
             )
@@ -1166,7 +1156,7 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
-        [token] = [entry.token for entry in adapter._pending_decisions.unclaimed()]
+        [token] = pending_tokens(adapter)
 
         async with timeout_notice:
             await adapter._handle_control_message(
@@ -1195,9 +1185,9 @@ class TestCursorACPAdapterDecisions:
             adapter._wait_for_decision(kind="plan", turn=turn, prompt="Plan {token}")
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
-        claimed = adapter._pending_decisions.try_claim(token)
+        claimed = adapter._pending_decisions["room-1"].try_claim(token)
         assert claimed is not None
 
         handled = await adapter._handle_control_message(
@@ -1239,8 +1229,9 @@ class TestCursorACPAdapterDecisions:
             first_tools.prompt_sent.wait(), second_tools.prompt_sent.wait()
         )
         tokens = {
-            entry.payload.room_id: entry.token
-            for entry in adapter._pending_decisions.unclaimed()
+            room: token
+            for room, decisions in adapter._pending_decisions.items()
+            for token in decisions
         }
 
         await adapter.on_cleanup("room-1")
@@ -1401,7 +1392,7 @@ class TestCursorACPAdapterDetachedTurn:
         turn = await room.send("run it")
         [prompt] = said(turn)
 
-        for task in room.adapter._background_tasks:
+        for task in accepted_work(room.adapter._rooms["room-1"]):
             task.cancel()
         await room.turns_finished()
 
@@ -1473,7 +1464,7 @@ class TestCursorACPAdapterControlMessages:
             )
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         handled = await adapter._handle_control_message(
             cast(
@@ -1518,7 +1509,9 @@ class TestCursorACPAdapterControlMessages:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_exceeding_max_pending_decisions_evicts_the_oldest(self) -> None:
+    async def test_exceeding_max_pending_decisions_evicts_the_rooms_oldest(
+        self,
+    ) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(max_pending_decisions=1))
         first_tools = DecisionTools()
         second_tools = DecisionTools()
@@ -1531,40 +1524,63 @@ class TestCursorACPAdapterControlMessages:
             )
         )
         await first_tools.prompt_sent.wait()
-        assert len(adapter._pending_decisions) == 1
-
         second = asyncio.create_task(
             adapter._wait_for_decision(
                 kind="plan",
-                turn=_turn("room-2", second_tools, "user-2", "session-2"),
+                turn=_turn("room-1", second_tools, "user-1", "session-1"),
                 prompt="Plan {token}",
             )
         )
         await second_tools.prompt_sent.wait()
 
         assert await first is None
-        assert len(adapter._pending_decisions) == 1
+        assert len(pending_tokens(adapter)) == 1
         adapter._cancel_all_decisions()
         await second
 
+    @pytest.mark.asyncio
+    async def test_a_full_room_never_evicts_another_rooms_decision(self) -> None:
+        adapter = CursorACPAdapter(CursorACPAdapterConfig(max_pending_decisions=1))
+        rooms = ("room-1", "room-2")
+        tools = {room: DecisionTools() for room in rooms}
+        waits = [
+            asyncio.create_task(
+                adapter._wait_for_decision(
+                    kind="plan",
+                    turn=_turn(room, tools[room], "user-1", f"session-{room}"),
+                    prompt="Plan {token}",
+                )
+            )
+            for room in rooms
+        ]
+        for room in rooms:
+            await tools[room].prompt_sent.wait()
+        [first_prompt] = tools["room-1"].messages
+        token = first_prompt.removeprefix("Plan ")
 
-async def leave_the_room(adapter: CursorACPAdapter, session: AcpSession) -> None:
-    await adapter.on_cleanup("room-1")
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(content=f"/cursor accept {token}", sender_id="user-1"),
+            ),
+            tools["room-1"],
+            "room-1",
+        )
+
+        assert await waits[0] == {"outcome": {"outcome": "accepted"}}
+        adapter._cancel_all_decisions()
+        assert await waits[1] is None
 
 
-async def replace_its_band_server(
-    adapter: CursorACPAdapter, session: AcpSession
-) -> None:
-    await crash_backend(adapter._mcp)
-    await session.send("after the crash", room="room-1")
-    await adapter._drain_background_tasks()
+def todo_sessions(session: AcpSession, room: str = "room-1") -> set[str]:
+    """The sessions whose Cursor todos the room's live process still tracks."""
+    client = session.runtime(room).client
+    assert client is not None
+    return set(cast(Any, client)._profile._todos_by_session)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("release", [leave_the_room, replace_its_band_server])
-async def test_a_released_sessions_todos_are_forgotten(
-    release: Callable[[CursorACPAdapter, AcpSession], Awaitable[None]],
-) -> None:
+async def test_a_retired_sessions_todos_are_forgotten() -> None:
     agent = FakeACPAgent().will_update_cursor_todos("ship it").will_say("ok")
     adapter = CursorACPAdapter(
         CursorACPAdapterConfig(command="fake-agent", inject_band_tools=True)
@@ -1572,16 +1588,21 @@ async def test_a_released_sessions_todos_are_forgotten(
 
     async with started_acp_adapter(adapter, agent) as session:
         await session.send("plan it", room="room-1")
-        released = session.session_id("room-1")
-        await release(adapter, session)
+        retired = session.session_id("room-1")
+        await crash_backend(adapter._mcp)
+        await session.send("after the crash", room="room-1")
+        await session.retired_sessions_closed("room-1")
 
-        assert released not in adapter._cursor_profile._todos_by_session
+        assert todo_sessions(session) == {session.session_id("room-1")}
+        assert retired != session.session_id("room-1")
 
 
 @pytest.mark.asyncio
-async def test_a_turn_still_running_at_cleanup_leaves_no_todos() -> None:
-    """A turn left running detached keeps updating todos until the runtime's
-    stop closes its connection; none of that may outlive the cleanup."""
+async def test_a_turn_still_running_at_cleanup_is_settled_before_its_process_closes() -> (
+    None
+):
+    """A turn left running detached keeps updating todos; leaving the room
+    cancels and joins it before the room's process, and its todos, are gone."""
     agent = FakeACPAgent()
     updating = agent.keeps_updating_cursor_todos()
     adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent"))
@@ -1589,35 +1610,20 @@ async def test_a_turn_still_running_at_cleanup_leaves_no_todos() -> None:
     async with started_acp_adapter(adapter, agent) as session:
         turn = asyncio.create_task(session.send("plan it", room="room-1"))
         await updating.wait()
-        released = session.session_id("room-1")
-        await adapter.on_cleanup("room-1")
+        runtime = session.runtime("room-1")
+        [detached] = accepted_work(session.room("room-1"))
+        exiting = agent.exits_slowly()
 
-        assert released not in adapter._cursor_profile._todos_by_session
-        turn.cancel()
-        await asyncio.gather(turn, return_exceptions=True)
-
-
-@pytest.mark.asyncio
-async def test_a_cleanup_cancelled_mid_stop_still_releases_the_session() -> None:
-    """A rejoined room gets fresh context while its old runtime is exiting;
-    cancellation still releases the retired session's todo state."""
-    agent = FakeACPAgent().will_update_cursor_todos("ship it").will_say("ok")
-    exiting = agent.exits_slowly()
-    adapter = CursorACPAdapter(CursorACPAdapterConfig(command="fake-agent"))
-
-    async with started_acp_adapter(adapter, agent) as session:
-        await session.send("plan it", room="room-1")
-        released = session.session_id("room-1")
         cleanup = asyncio.create_task(adapter.on_cleanup("room-1"))
         await exiting.received.wait()
-
-        await session.send("rejoin the room", room="room-1")
-        assert session.session_id("room-1") != released
-        assert "[System Context]" in agent.prompt_texts()[-1]
-        cleanup.cancel()
-        await asyncio.gather(cleanup, return_exceptions=True)
-        assert released not in adapter._cursor_profile._todos_by_session
+        settled_before_exit = detached.done()
         exiting.release.set()
+        await cleanup
+
+        assert settled_before_exit
+        assert runtime.closed and runtime.client is None
+        assert "room-1" not in adapter._rooms
+        await asyncio.gather(turn, return_exceptions=True)
 
 
 class SetupGatedAgent(FakeACPAgent):

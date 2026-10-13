@@ -39,6 +39,7 @@ from acp.schema import (
 )
 from mcp.types import Tool
 
+from band.integrations.acp.client_profiles import CURSOR_ASK_QUESTION_METHOD
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
@@ -106,6 +107,13 @@ class FakeACPAgent:
         self.hang_up: Callable[[], None] = lambda: None
         # Holds the connection's shutdown, as a subprocess slow to exit.
         self.exit_gate: Gate | None = None
+        # Fails the next connection's shutdown, as a transport whose exit raised.
+        self.exit_failure: Exception | None = None
+        # Holds the next initialize, as a process slow to start.
+        self._initialize_gate: Gate | None = None
+        self._initialize_error: RequestError | None = None
+        self._close_gate: Gate | None = None
+        self._new_session_error: RequestError | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
@@ -115,6 +123,7 @@ class FakeACPAgent:
         self.auth_methods: list[str] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
+        self.cancelled_sessions: list[str] = []
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -147,6 +156,35 @@ class FakeACPAgent:
         """Hold every connection's shutdown until release."""
         self.exit_gate = Gate()
         return self.exit_gate
+
+    def fails_next_exit(self) -> None:
+        """Raise from the next connection's shutdown, once."""
+        self.exit_failure = RuntimeError("agent exit failed")
+
+    def holds_session_closes(self) -> Gate:
+        """Hold every ``session/close`` until release, before recording it."""
+        self._close_gate = Gate()
+        return self._close_gate
+
+    def advertises(self, *options: SessionConfigOption) -> FakeACPAgent:
+        """Advertise exactly ``options`` from now on, as a restarted agent may."""
+        self._config_options = list(options)
+        return self
+
+    def fails_next_new_session(self) -> FakeACPAgent:
+        """Refuse the next ``session/new``, once."""
+        self._new_session_error = RequestError.internal_error({"detail": "no session"})
+        return self
+
+    def fails_next_initialize(self) -> FakeACPAgent:
+        """Refuse the next connection's ``initialize``, once."""
+        self._initialize_error = RequestError.internal_error({"detail": "no start"})
+        return self
+
+    def holds_next_initialize(self) -> Gate:
+        """Hold the next connection's ``initialize`` until release."""
+        self._initialize_gate = Gate()
+        return self._initialize_gate
 
     def advertises_models(
         self,
@@ -442,8 +480,14 @@ class FakeACPAgent:
         )
         return self
 
-    def will_update_cursor_todos(self, *contents: str) -> FakeACPAgent:
-        self._script.append(lambda a, sid: a.update_cursor_todos(sid, *contents))
+    def will_update_cursor_todos(
+        self, *contents: str, sessionless: bool = False
+    ) -> FakeACPAgent:
+        self._script.append(
+            lambda a, sid: a.update_cursor_todos(
+                sid, *contents, sessionless=sessionless
+            )
+        )
         return self
 
     def keeps_updating_cursor_todos(self) -> asyncio.Event:
@@ -497,14 +541,14 @@ class FakeACPAgent:
     async def say(self, session_id: str, text: str) -> None:
         await self.emit(session_id, update_agent_message_text(text))
 
-    async def update_cursor_todos(self, session_id: str, *contents: str) -> None:
-        """Push Cursor's ``cursor/update_todos`` extension notification."""
-        todos = [
-            {"id": f"t{index}", "content": content, "status": "pending"}
-            for index, content in enumerate(contents)
-        ]
+    async def update_cursor_todos(
+        self, session_id: str, *contents: str, sessionless: bool = False
+    ) -> None:
+        """Push Cursor's ``cursor/update_todos`` extension notification;
+        ``sessionless`` omits its session id, as Cursor itself does."""
         await self._conn_for(session_id).ext_notification(
-            "cursor/update_todos", {"sessionId": session_id, "todos": todos}
+            "cursor/update_todos",
+            cursor_todos(*contents, session_id=None if sessionless else session_id),
         )
 
     def _conn_for(self, session_id: str) -> AgentSideConnection:
@@ -531,6 +575,25 @@ class FakeACPAgent:
             ConfigOptionUpdate(
                 session_update="config_option_update", config_options=list(options)
             ),
+        )
+
+    async def ask_cursor_question(
+        self, session_id: str, question_id: str, *option_ids: str
+    ) -> dict[str, Any]:
+        """Send Cursor's sessionless ``cursor/ask_question`` and return the reply."""
+        return await self._conn_for(session_id).ext_method(
+            CURSOR_ASK_QUESTION_METHOD,
+            {
+                "questions": [
+                    {
+                        "id": question_id,
+                        "prompt": question_id,
+                        "options": [
+                            {"id": option, "label": option} for option in option_ids
+                        ],
+                    }
+                ]
+            },
         )
 
     async def ask_permission(
@@ -588,6 +651,13 @@ class FakeACPAgent:
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
     ) -> InitializeResponse:
         del client_capabilities, kwargs
+        if (gate := self._initialize_gate) is not None:
+            self._initialize_gate = None
+            gate.received.set()
+            await gate.release.wait()
+        if (error := self._initialize_error) is not None:
+            self._initialize_error = None
+            raise error
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
@@ -598,6 +668,10 @@ class FakeACPAgent:
                 ),
             ),
         )
+
+    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        del kwargs
+        self.cancelled_sessions.append(session_id)
 
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
         """Accept any auth method (Cursor's ``cursor_login``, for one)."""
@@ -621,6 +695,9 @@ class FakeACPAgent:
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
     ) -> NewSessionResponse:
         del kwargs
+        if (error := self._new_session_error) is not None:
+            self._new_session_error = None
+            raise error
         sid = f"fake-session-{len(self.sessions) + 1}"
         self.sessions.append(
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}
@@ -671,6 +748,9 @@ class FakeACPAgent:
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""
         del kwargs
+        if (gate := self._close_gate) is not None:
+            gate.received.set()
+            await gate.release.wait()
         self.closed_sessions.append(session_id)
 
     def config_selections(self, session_id: str | None = None) -> list[tuple[str, str]]:
@@ -737,3 +817,13 @@ def select_option(
             for value in values
         ],
     )
+
+
+def cursor_todos(*contents: str, session_id: str | None = None) -> dict[str, Any]:
+    """A ``cursor/update_todos`` payload; Cursor itself sends no session id."""
+    todos = [
+        {"id": f"t{index}", "content": content, "status": "pending"}
+        for index, content in enumerate(contents)
+    ]
+    session = {} if session_id is None else {"sessionId": session_id}
+    return {**session, "todos": todos}
