@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Self, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -84,7 +84,6 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
-from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -111,11 +110,12 @@ from band.integrations.claude_sdk.dedup_tools import (
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import (
-    CLI_STARTUP_TIMEOUT_S,
+    CLI_STARTUP_TIMEOUT_S,  # noqa: F401 -- re-exported for adapter configs
     ClaudeRoomSession,
     ClaudeSessionManager,
     ClaudeSessionManagerStoppedError,
     TurnStream,
+    default_claude_retention,
 )
 from band.integrations.mcp import (
     BandMCPBackendSettings,
@@ -171,6 +171,8 @@ _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
+#: What a Claude turn that failed in the provider reports to the room.
+_TURN_FAILURE = AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 # Flags the SDK emits from the options the adapter builds (pinned against the
 # SDK's real command by test_cli_options.py).
@@ -362,11 +364,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     model: str | None = None
     fallback_model: str | None = None
-    retention: RoomRetentionConfig = Field(
-        default_factory=lambda: RoomRetentionConfig(
-            transition_timeout_s=CLI_STARTUP_TIMEOUT_S
-        )
-    )
+    retention: RoomRetentionConfig = Field(default_factory=default_claude_retention)
     custom_section: str | None = None
     max_thinking_tokens: PositiveInt | None = None
     effort: EffortLevel | None = None
@@ -540,6 +538,20 @@ class PendingApproval:
     created_at: datetime
     future: asyncio.Future[ApprovalReply | None]
     requester: dict[str, str]
+
+
+async def _fail_turn(
+    session: ClaudeRoomSession,
+    tools: AgentToolsProtocol,
+    error: Exception,
+    *,
+    reason: str,
+    forget_session: bool = False,
+) -> NoReturn:
+    """Recover the room's CLI, report the turn's failure, and mark it reported."""
+    session.recover(reason, forget_session=forget_session)
+    await tools.send_failure(_TURN_FAILURE)
+    raise TurnResultAlreadyReported(str(error)) from error
 
 
 def __getattr__(name: str) -> Any:
@@ -852,8 +864,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             raise ClaudeSessionManagerStoppedError("Claude adapter is stopping")
         self._admit_turn(room_id, "Claude")
         session = self._session_manager.room(room_id)
-        if session.closing:
-            raise InputNotAccepted("The room's Claude session is closing")
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
                 "id": msg.sender_id,
@@ -920,13 +930,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         room_id: str,
     ) -> str:
         """The text sent to Claude: bootstrap memory, system updates, message."""
-        if is_session_bootstrap and history.text:  # Already text via SimpleAdapter
-            logger.info(
-                "Room %s: Loaded historical context (%s chars)",
-                room_id,
-                len(history.text),
-            )
-
         messages_to_send = []
 
         # Include historical context on first message. Frame it as authoritative
@@ -934,7 +937,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # "previous context" aside weakly, so a fact another participant stated (or that
         # you stated) while you were offline gets missed on recall. Tell it plainly this
         # is its own memory of the room and to answer from it.
-        if is_session_bootstrap and history.text:
+        if is_session_bootstrap and history.text:  # Already text via SimpleAdapter
+            logger.info(
+                "Room %s: Loaded historical context (%s chars)",
+                room_id,
+                len(history.text),
+            )
             messages_to_send.append(
                 "Your memory of this room so far — real earlier messages from you and "
                 "from other participants and agents, including ones sent while you were "
@@ -1006,9 +1014,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         except Exception:
             if not started and not session.closing:
                 logger.exception("Room %s: Session creation failed", session.room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
+                await tools.send_failure(_TURN_FAILURE)
             raise
 
     async def _bind_turn(
@@ -1050,19 +1056,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 session.room_id,
                 e,
             )
-            session.recover(f"CLI process terminated: {e}", forget_session=True)
-            await tools.send_failure(
-                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            await _fail_turn(
+                session,
+                tools,
+                e,
+                reason=f"CLI process terminated: {e}",
+                forget_session=True,
             )
-            raise TurnResultAlreadyReported(str(e)) from e
 
         except Exception as e:
             logger.exception("Error processing message")
-            session.recover("Turn failed before its result")
-            await tools.send_failure(
-                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-            )
-            raise TurnResultAlreadyReported(str(e)) from e
+            await _fail_turn(session, tools, e, reason="Turn failed before its result")
 
         except asyncio.CancelledError:
             session.recover("Turn cancelled before its result")

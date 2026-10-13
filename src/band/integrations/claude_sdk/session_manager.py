@@ -57,6 +57,11 @@ logger = logging.getLogger(__name__)
 CLI_STARTUP_TIMEOUT_S = 60.0
 
 
+def default_claude_retention() -> RoomRetentionConfig:
+    """Claude's residency settings: a CLI start may take ``CLI_STARTUP_TIMEOUT_S``."""
+    return RoomRetentionConfig(transition_timeout_s=CLI_STARTUP_TIMEOUT_S)
+
+
 class ClaudeSessionManagerStoppedError(RoomClosingError):
     """A session was requested from a manager that ``stop()`` shut down."""
 
@@ -366,9 +371,7 @@ class ClaudeSessionManager:
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
         self._workspaces = workspaces
-        self._retention = RoomRetention(
-            retention or RoomRetentionConfig(transition_timeout_s=CLI_STARTUP_TIMEOUT_S)
-        )
+        self._retention = RoomRetention(retention or default_claude_retention())
         self._rooms: dict[str, ClaudeRoomSession] = {}
 
     @property
