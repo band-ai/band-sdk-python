@@ -63,3 +63,22 @@ The generated client's empty-body shortcut runs before status classification in
 pinned `band-client-rest` 0.0.41 and remains in released 0.0.46. Public raw response
 status preserves the distinction without accessing generated private fields or
 adding another HTTP client. Real-client HTTP transport tests pin this boundary.
+
+### Terminal write results
+
+`mark_processed_result` and `mark_failed_result` (on `BandLink` and
+`MessageLifecycle`) perform the single logical processed/failed write and return
+a `SettlementResult`:
+
+| Result | Evidence |
+| --- | --- |
+| `ACCEPTED` | HTTP 200 with a valid success payload |
+| `NOT_FOUND` | Any proven HTTP 404, including an empty, malformed or schema-invalid body |
+| `REJECTED` | HTTP 422 with `error.code == "validation_error"` and a non-empty `error.details["/processing_attempt"]` list: the platform's no-current-attempt error |
+| `UNCONFIRMED` | Everything else: transport or parse failure, `success: false`, 401/403/409/503, any other 422 |
+
+HTTP 204 still raises `RoomExecutionStoppedError`; it is not a result. `mark_processed`
+and `mark_failed` are projections that return `result is SettlementResult.ACCEPTED`,
+so every non-accepted result reads as `False`. `mark_processing` keeps its plain
+bool contract. One call is one logical write, but the generated client's
+`max_retries=3` still permits up to four HTTP attempts on 408/409/429/5xx.

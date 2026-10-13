@@ -6,10 +6,12 @@ Components:
     PlatformEvent: Single event type for all platform events
 """
 
-from .event import PlatformEvent
-from .link import BandLink
+from band.platform.event import PlatformEvent
+from band.platform.link import BandLink
+from band.platform.message_lifecycle import SettlementResult
 
 __all__ = [
     "BandLink",
     "PlatformEvent",
+    "SettlementResult",
 ]
