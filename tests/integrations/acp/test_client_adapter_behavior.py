@@ -31,12 +31,15 @@ from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
-    SYSTEM_UPDATE_PREFIX,
     ACPClientAdapter,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
-from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, TURN_COMPLETION_GUIDANCE
+from band.runtime.prompts import (
+    COMMUNICATION_INSTRUCTIONS,
+    SYSTEM_UPDATE_PREFIX,
+    TURN_COMPLETION_GUIDANCE,
+)
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
