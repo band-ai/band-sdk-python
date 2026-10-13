@@ -22,7 +22,7 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
     ClaudeSessionManager,
 )
-from tests.adapters.claude_sdk.fakecli import Thinking
+from tests.adapters.claude_sdk.fakecli import MODEL, Thinking
 from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET
 from tests.adapters.claude_sdk.process import WorkspacePeer
 
@@ -55,7 +55,7 @@ def thoughts(messages: list[Any]) -> list[str]:
 
 def new_manager(**options: Any) -> ClaudeSessionManager:
     return ClaudeSessionManager(
-        ClaudeAgentOptions(model="claude-fake", mcp_servers={}),
+        ClaudeAgentOptions(model=MODEL, mcp_servers={}),
         retention=REPORTING_BUDGET,
         **options,
     )

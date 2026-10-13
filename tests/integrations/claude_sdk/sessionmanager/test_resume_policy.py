@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from claude_agent_sdk import (
     CLIConnectionError,
 )
 
 from band.core.retention import ReleaseCause
-from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.adapters.claude_sdk.fakecli import STARTUP_EXITED, FakeClaude
 from tests.adapters.claude_sdk.helpers import exchange
 from tests.integrations.claude_sdk.sessionmanager.kit import (
     new_manager,
@@ -28,7 +30,7 @@ class TestResumePolicy:
         session.adopt("sess-gone")
         claude.unresumable.add("sess-gone")
 
-        with pytest.raises(CLIConnectionError, match="exited during startup"):
+        with pytest.raises(CLIConnectionError, match=re.escape(STARTUP_EXITED)):
             await session.acquire(1, True)
         await session.release(ReleaseCause.FINAL)
 
@@ -86,7 +88,7 @@ class TestResumePolicy:
         claude.unresumable.add("sess-gone")
         claude.refuse_close = True
 
-        with pytest.raises(CLIConnectionError, match="exited during startup"):
+        with pytest.raises(CLIConnectionError, match=re.escape(STARTUP_EXITED)):
             await exchange(session, "hi")
         [cli] = claude.sessions
         held = (manager.has_session("room-a"), session.session_id)

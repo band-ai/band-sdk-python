@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.integrations.claude_sdk.conftest import Launches
 
 
@@ -39,7 +42,7 @@ class TestPreQueryStartup:
         assert manager.has_session("room-a")
         with pytest.raises(ValueError, match="both"):
             await start(manager, "room-b")
-        with pytest.raises(RuntimeError, match="cleanup failed"):
+        with pytest.raises(RuntimeError, match=re.escape(CLEANUP_FAILURE)):
             await start(manager, "room-a")
         assert launches.children == [child]
 

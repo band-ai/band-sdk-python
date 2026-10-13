@@ -32,6 +32,9 @@ from tests.baseline.decisions import ModelDecision, ToolCall
 from tests.mcpclient import mcp_session
 
 MODEL = "claude-fake"
+# What the fake raises when its startup or its close fails.
+STARTUP_EXITED = "Claude CLI exited during startup"
+CLEANUP_FAILED = "Claude CLI cleanup failed"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
 
@@ -221,7 +224,7 @@ class FakeCLISession(Transport):
             try:
                 raise OSError("Claude CLI exited with status 1")
             except OSError as exited:
-                raise CLIConnectionError("Claude CLI exited during startup") from exited
+                raise CLIConnectionError(STARTUP_EXITED) from exited
 
     def is_ready(self) -> bool:
         return self.alive
@@ -234,7 +237,7 @@ class FakeCLISession(Transport):
             self.claude.closing = None
             await hold.wait()
         if self.claude.refuse_close or self.refuse_close:
-            raise RuntimeError("Claude CLI cleanup failed")
+            raise RuntimeError(CLEANUP_FAILED)
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()

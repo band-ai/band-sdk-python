@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from claude_agent_sdk import CLIConnectionError
 from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.exceptions import InputNotAccepted
 from band.workspaces import create_room_workspace_resolver
-from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
+from tests.adapters.claude_sdk.fakecli import CLEANUP_FAILED, FakeClaude, Hold
 from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
@@ -153,7 +154,7 @@ class TestRoomWorkspaces:
         await room.send("hi")
         claude.refuse_close = True
         try:
-            with pytest.raises(RuntimeError, match="cleanup failed"):
+            with pytest.raises(RuntimeError, match=re.escape(CLEANUP_FAILED)):
                 await room.leave()
             with pytest.raises(ValueError, match="both"):
                 await second.send("hi")
@@ -201,7 +202,7 @@ class TestRoomWorkspaces:
         try:
             with pytest.raises(ExceptionGroup) as failed:
                 await room.adapter.cleanup_all()
-            assert failed.group_contains(RuntimeError, match="cleanup failed")
+            assert failed.group_contains(RuntimeError, match=re.escape(CLEANUP_FAILED))
             assert [session.alive for session in claude.sessions] == [True, False]
         finally:
             claude.sessions[0].refuse_close = False
@@ -236,10 +237,10 @@ class TestRoomWorkspaces:
         try:
             with pytest.raises(ExceptionGroup) as failed:
                 await room.adapter.cleanup_all()
-            assert failed.group_contains(RuntimeError, match="cleanup failed")
+            assert failed.group_contains(RuntimeError, match=re.escape(CLEANUP_FAILED))
             with pytest.raises(ExceptionGroup) as failed:
                 await room.restart()
-            assert failed.group_contains(RuntimeError, match="cleanup failed")
+            assert failed.group_contains(RuntimeError, match=re.escape(CLEANUP_FAILED))
             assert len(claude.sessions) == 1
             assert claude.sessions[0].alive
         finally:

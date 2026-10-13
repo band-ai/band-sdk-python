@@ -15,7 +15,7 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
     ClaudeSessionManager,
 )
-from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.adapters.claude_sdk.fakecli import MODEL, FakeClaude
 from tests.adapters.claude_sdk.helpers import exchange
 from tests.integrations.claude_sdk.sessionmanager.kit import (
     allow_everything,
@@ -34,7 +34,7 @@ class TestRoomOptions:
             return allow_everything(session, generation)
 
         manager = ClaudeSessionManager(
-            ClaudeAgentOptions(model="claude-fake", mcp_servers={}),
+            ClaudeAgentOptions(model=MODEL, mcp_servers={}),
             can_use_tool_factory=bind,
             mcp_servers_factory=lambda room_id: {
                 "band": {"type": "http", "url": room_id}

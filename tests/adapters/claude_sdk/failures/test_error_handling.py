@@ -6,7 +6,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
-from tests.adapters.claude_sdk.fakecli import Raw
+from tests.adapters.claude_sdk.fakecli import MODEL, Raw
 from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
@@ -22,7 +22,7 @@ class TestErrorHandling:
         room = await claude_room()
         room.claude.script(
             [room.model_reply("Hi.")],
-            [Raw({"type": "assistant", "message": {"model": "claude-fake"}})],
+            [Raw({"type": "assistant", "message": {"model": MODEL}})],
             [room.model_reply("Recovered.")],
         )
 

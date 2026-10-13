@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from claude_agent_sdk import CLIConnectionError
 
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from tests.adapters.claude_sdk.fakecli import STARTUP_EXITED
 from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
@@ -52,7 +55,7 @@ async def test_a_cli_that_will_not_start_fails_the_message_without_leaking_why(
     room = await claude_room()
     room.claude.refuse_connect = True
 
-    with pytest.raises(CLIConnectionError, match="exited during startup"):
+    with pytest.raises(CLIConnectionError, match=re.escape(STARTUP_EXITED)):
         await room.send("hello", session_id=recorded_session)
 
     assert room.claude.resumed == attempts

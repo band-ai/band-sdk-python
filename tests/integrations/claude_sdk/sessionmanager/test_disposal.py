@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -10,7 +11,7 @@ from band.core.exceptions import CleanupIncompleteError
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
-from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
+from tests.adapters.claude_sdk.fakecli import CLEANUP_FAILED, FakeClaude, Hold
 from tests.adapters.claude_sdk.helpers import exchange
 from tests.integrations.claude_sdk.sessionmanager.kit import (
     new_manager,
@@ -55,7 +56,7 @@ class TestDisposal:
 
         with pytest.raises(ExceptionGroup) as failed:
             await manager.stop()
-        assert failed.group_contains(RuntimeError, match="cleanup failed")
+        assert failed.group_contains(RuntimeError, match=re.escape(CLEANUP_FAILED))
         with pytest.raises(ClaudeSessionManagerStoppedError):
             manager.room("room-b")
         claude.refuse_close = False
