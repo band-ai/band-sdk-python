@@ -61,6 +61,65 @@ class TestBackendTurns:
 
         assert cancel.sent == [HANDLE]
 
+    async def test_a_turn_cancelled_while_it_starts_is_stopped_once_it_starts(
+        self, turns: BackendTurns[str], cancel: RecordingCancel
+    ) -> None:
+        accepted = asyncio.get_running_loop().create_future()
+
+        async def turn() -> None:
+            async with turns.running(ROOM):
+                await turns.started(ROOM, accepted)
+
+        task = asyncio.create_task(turn())
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cancel.sent == []
+        accepted.set_result(HANDLE)
+        await turns.drain()
+
+        assert cancel.sent == [HANDLE]
+
+    async def test_a_start_that_fails_after_its_turn_was_cancelled_stops_nothing(
+        self,
+        turns: BackendTurns[str],
+        cancel: RecordingCancel,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        refused = asyncio.get_running_loop().create_future()
+
+        async def turn() -> None:
+            async with turns.running(ROOM):
+                await turns.started(ROOM, refused)
+
+        task = asyncio.create_task(turn())
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with caplog.at_level(logging.WARNING):
+            refused.set_exception(RuntimeError("turn refused"))
+            await turns.drain()
+
+        assert cancel.sent == []
+        assert caplog.records == []
+
+    async def test_a_stop_that_never_reached_the_backend_is_logged(
+        self,
+        turns: BackendTurns[str],
+        cancel: RecordingCancel,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.INFO):
+            async with turns.running(ROOM):
+                turns.cancel(ROOM)
+
+        assert cancel.sent == []
+        assert [(r.levelno, ROOM in r.getMessage()) for r in caplog.records] == [
+            (logging.INFO, True)
+        ]
+
     async def test_cancel_returns_while_the_backend_call_is_in_flight(
         self, turns: BackendTurns[str], cancel: RecordingCancel
     ) -> None:
@@ -127,7 +186,10 @@ class TestBackendTurns:
 
         assert loop.time() - started == BACKEND_CANCEL_TIMEOUT_SECONDS
         assert cancel.finished == []
-        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+        assert [
+            (r.levelno, r.getMessage().endswith("TimeoutError()"))
+            for r in caplog.records
+        ] == [(logging.WARNING, True)]
 
     @pytest.mark.parametrize("ending", [TimeoutError, RuntimeError, None])
     async def test_a_turn_that_ends_itself_sends_nothing(

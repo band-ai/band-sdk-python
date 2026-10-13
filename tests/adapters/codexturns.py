@@ -83,6 +83,9 @@ class FakeCodexClient(RecordedRequests):
         # While cleared, a turn/interrupt request stays in flight.
         self.interrupt_released = asyncio.Event()
         self.interrupt_released.set()
+        # While cleared, an accepted turn/start withholds its response.
+        self.turn_start_released = asyncio.Event()
+        self.turn_start_released.set()
 
     async def connect(self) -> None:
         self.connected = True
@@ -135,6 +138,7 @@ class FakeCodexClient(RecordedRequests):
                         self._turn_start_error = None
                     raise err
                 self._turn_counter += 1
+                await self.turn_start_released.wait()
                 return {
                     "turn": {
                         "id": f"turn-{self._turn_counter}",

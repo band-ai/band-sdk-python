@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
 from typing import Any
 
 import band_sdk_core
+import pytest
 
 from band.client.streaming import ControlMode
+from band.core.protocols import TurnResultAlreadyReported
+from band.core.retention import cleanup
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
@@ -25,7 +27,7 @@ CONVERSATION_ID = "conversation-1"
 CANCEL_AGENT_RUNS = f"cancel agent {AGENT_ID}"
 CANCEL_CONVERSATION_RUNS = f"cancel conversation {CONVERSATION_ID}"
 FAILURE_POSTED = "failure posted"
-TURN_ENDED = "turn ended"
+NEXT_TURN_ANSWERED = "next turn answered"
 CANCEL_FAILED_WARNING = "cancel failure logged at WARNING"
 # Short enough that the held turn times out within the probe.
 PROBE_TURN_TIMEOUT_S = 0.05
@@ -44,7 +46,7 @@ class JournaledTools(FakeAgentTools):
 
 
 class WarningRecords(logging.Handler):
-    """Collects the WARNING records logged while it is attached."""
+    """Collects the WARNING records of the logger it is attached to."""
 
     def __init__(self) -> None:
         super().__init__(level=logging.WARNING)
@@ -84,30 +86,37 @@ async def end_running_turn(mode: ControlMode, *, shared: bool = False) -> list[s
 
 
 async def server_rejects_cancel() -> list[str]:
-    """Without Redis the cancel fails; the turn still ends here."""
+    """Without Redis the cancel fails, is logged, and the room takes its next turn."""
     adapter, client = held_adapter()
     client.reject_cancels = True
     turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
     await wait_until(lambda: bool(client.sent))
     warnings = WarningRecords()
-    logging.getLogger().addHandler(warnings)
+    cleanup.logger.addHandler(warnings)
     try:
         await end_turn(adapter, turn, ROOM_ID, ControlMode.STOP)
     finally:
-        logging.getLogger().removeHandler(warnings)
-    outcome = [*client.cancels]
-    if turn.cancelled():
-        outcome.append(TURN_ENDED)
-    if warnings.records:
-        outcome.append(CANCEL_FAILED_WARNING)
-    return outcome
+        cleanup.logger.removeHandler(warnings)
+    stop_failures = [
+        record
+        for record in warnings.records
+        if f"backend stop for room {ROOM_ID}" in record.getMessage()
+    ]
+    client.release.set()
+    next_tools = FakeAgentTools()
+    await adapter.on_event(turn_input(next_tools))
+    return [
+        *client.cancels,
+        *([CANCEL_FAILED_WARNING] if stop_failures else []),
+        *([NEXT_TURN_ANSWERED] if next_tools.messages_sent else []),
+    ]
 
 
 async def timeout() -> list[str]:
     """The cancel is sent once, before the timeout is reported."""
     adapter, client = held_adapter(timeout_s=PROBE_TURN_TIMEOUT_S)
     tools = JournaledTools(client.journal)
-    with suppress(Exception):
+    with pytest.raises(TurnResultAlreadyReported):
         await adapter.on_event(turn_input(tools))
     assert adapter.backend_turns is not None
     await adapter.backend_turns.drain()
@@ -134,7 +143,7 @@ CASES: dict[str, StopCase] = {
     ),
     "server-rejects-cancel": StopCase(
         run=server_rejects_cancel,
-        expected=[CANCEL_AGENT_RUNS, TURN_ENDED, CANCEL_FAILED_WARNING],
+        expected=[CANCEL_AGENT_RUNS, CANCEL_FAILED_WARNING, NEXT_TURN_ANSWERED],
     ),
     "timeout": StopCase(run=timeout, expected=[CANCEL_AGENT_RUNS, FAILURE_POSTED]),
     "idle-room": StopCase(run=idle, expected=[]),

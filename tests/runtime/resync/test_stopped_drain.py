@@ -11,13 +11,13 @@ from band.runtime.execution import ExecutionContext, ResyncOutcome
 from tests.conftest import make_message_event
 from tests.runtime.executioninterrupt.kit import auxiliary_context
 from tests.runtime.helpers import (
-    ROOM_ID,
     LifecyclePlatform,
     contact_event,
     rest_client_over,
 )
 
 CONTACT_EVENTS = ["contact-1", "contact-2", "contact-3"]
+NEIGHBOUR_ROOM = "room-neighbour"
 NEIGHBOUR_MESSAGE = "neighbour-1"
 
 
@@ -46,7 +46,9 @@ class TestStopDuringSyntheticDrain:
 
         async with rest_client_over(peer.answer) as rest:
             hub = auxiliary_context(rest, hub_handler)
-            neighbour = auxiliary_context(rest, neighbour_handler)
+            neighbour = auxiliary_context(
+                rest, neighbour_handler, room_id=NEIGHBOUR_ROOM
+            )
             try:
                 hub._pending_synthetic.extend(map(contact_event, CONTACT_EVENTS))
                 drain = asyncio.create_task(hub._resync_pending_messages())
@@ -54,7 +56,7 @@ class TestStopDuringSyntheticDrain:
 
                 hub.stop_room()
                 await neighbour._process_event(
-                    make_message_event(room_id=ROOM_ID, msg_id=NEIGHBOUR_MESSAGE)
+                    make_message_event(room_id=NEIGHBOUR_ROOM, msg_id=NEIGHBOUR_MESSAGE)
                 )
 
                 assert await drain is ResyncOutcome.STOPPED

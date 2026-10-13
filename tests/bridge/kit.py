@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from bridge_core.bridge import AgentRunner
 from bridge_core.config import ReconnectConfig
@@ -118,6 +119,19 @@ def make_platform_message(
         metadata={},
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
+
+
+def rehydrating_runner(
+    forwarder: Forwarder, *backlog: PlatformMessage
+) -> tuple[AgentRunner, MagicMock]:
+    """A runner whose rooms each hold one backlog message for ``/next``."""
+    runner, _, link = build_runner(forwarder=forwarder)
+    link.rest.agent_api_chats.list_agent_chats = AsyncMock(
+        return_value=MagicMock(data=[SimpleNamespace(id=m.room_id) for m in backlog])
+    )
+    link.get_next_message.side_effect = list(backlog)
+    link.__anext__ = AsyncMock(side_effect=StopAsyncIteration())
+    return runner, link
 
 
 class OrderTrackingForwarder:

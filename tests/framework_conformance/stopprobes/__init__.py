@@ -56,10 +56,15 @@ async def end_turn(
     adapter: SimpleAdapter, turn: asyncio.Task[None], room_id: str, mode: ControlMode
 ) -> None:
     """End ``turn`` as the runtime does, then let its backend stop finish."""
+    await cancel_turn(turn)
+    await stop_room(adapter, room_id, mode)
+
+
+async def cancel_turn(turn: asyncio.Task[None]) -> None:
+    """Cancel the handler task, as a control or the watchdog does."""
     turn.cancel()
     with suppress(asyncio.CancelledError):
         await turn
-    await stop_room(adapter, room_id, mode)
 
 
 async def stop_room(

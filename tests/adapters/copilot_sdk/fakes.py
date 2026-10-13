@@ -8,6 +8,7 @@ test double.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -103,6 +104,9 @@ class FakeCopilotSession:
         self.disconnected = False
         # Every prompt, abort and disconnect, in the order the session saw them.
         self.journal: list[str] = []
+        # While cleared, an abort stays in flight.
+        self.abort_released = asyncio.Event()
+        self.abort_released.set()
 
     def on(self, handler: Any) -> Any:
         self.handlers.append(handler)
@@ -138,6 +142,7 @@ class FakeCopilotSession:
         return SimpleNamespace(data=SimpleNamespace(content=self.reply_content))
 
     async def abort(self) -> None:
+        await self.abort_released.wait()
         self.aborted = True
         self.journal.append("abort")
 

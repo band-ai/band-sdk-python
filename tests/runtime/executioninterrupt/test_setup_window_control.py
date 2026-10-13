@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
-import pytest
-
-from band.client.streaming import ControlMode
 from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event
@@ -27,20 +26,24 @@ class TestControlDuringTurnSetup:
     """A control during participant hydration ends the turn it lands in."""
 
     @staticmethod
-    def recording(invoked: list[str]):
+    def recording(
+        invoked: list[str],
+    ) -> Callable[[ExecutionContext, MessageEvent], Awaitable[None]]:
         async def handler(ctx: ExecutionContext, event: MessageEvent) -> None:
             invoked.append(event.payload.id)
 
         return handler
 
-    @pytest.mark.parametrize("mode", [ControlMode.STOP, ControlMode.INTERRUPT])
-    async def test_control_during_live_setup_ends_the_turn_before_its_handler(
-        self, mode: ControlMode
-    ) -> None:
-        peer = LifecyclePlatform()
+    @asynccontextmanager
+    async def live_turn_controlled_in_setup(
+        self,
+        peer: LifecyclePlatform,
+        invoked: list[str],
+        control: Callable[[ExecutionContext], object],
+    ) -> AsyncIterator[ExecutionContext]:
+        """Run a live message whose hydration ``control`` lands in, to its end."""
         peer.add_message(LIVE)
         gate = ResponseGate(peer, "/participants")
-        invoked: list[str] = []
         async with rest_client_over(gate.answer) as rest:
             ctx = auxiliary_context(rest, self.recording(invoked))
             try:
@@ -48,25 +51,37 @@ class TestControlDuringTurnSetup:
                     ctx._process_event(make_message_event(room_id=ROOM_ID, msg_id=LIVE))
                 )
                 await gate.entered.wait()
-                if mode is ControlMode.STOP:
-                    ctx.stop_room()
-                else:
-                    assert ctx.interrupt() is True
+                control(ctx)
                 gate.release.set()
                 await turn
-
-                assert invoked == []
-                if mode is ControlMode.INTERRUPT:
-                    assert peer.marked("processed") == [LIVE]
-                    return
-                assert peer.marked("processed") == []
-
-                await ctx.resume_room()
-                await ctx._wait_until_resync_complete()
-                assert invoked == [LIVE]
-                assert peer.marked("processed") == [LIVE]
+                yield ctx
             finally:
                 await ctx.stop()
+
+    async def test_stop_during_live_setup_holds_the_message_for_play(self) -> None:
+        peer = LifecyclePlatform()
+        invoked: list[str] = []
+        async with self.live_turn_controlled_in_setup(
+            peer, invoked, ExecutionContext.stop_room
+        ) as ctx:
+            assert invoked == []
+            assert peer.marked("processed") == []
+
+            await ctx.resume_room()
+            await ctx._wait_until_resync_complete()
+            assert invoked == [LIVE]
+            assert peer.marked("processed") == [LIVE]
+
+    async def test_interrupt_during_live_setup_consumes_the_message(self) -> None:
+        peer = LifecyclePlatform()
+        invoked: list[str] = []
+        interrupted: list[bool] = []
+        async with self.live_turn_controlled_in_setup(
+            peer, invoked, lambda ctx: interrupted.append(ctx.interrupt())
+        ):
+            assert interrupted == [True]
+            assert invoked == []
+            assert peer.marked("processed") == [LIVE]
 
     async def test_stop_during_synthetic_setup_retains_the_event_for_play(
         self,

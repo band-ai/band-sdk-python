@@ -16,7 +16,9 @@ from band.testing.platform import platform_connection_stub
 from tests.adapters.codexturns import FakeCodexClient, make_codex_adapter
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
+    STARTUP_TIMEOUT_SECONDS,
     StopCase,
+    cancel_turn,
     end_turn,
     stop_room,
     wait_until,
@@ -24,14 +26,24 @@ from tests.framework_conformance.stopprobes import (
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_message
 from tests.runtime.runtimecontrol.kit import control_payload, never_executes
 
-# The fake app-server numbers its first thread and turn.
-INTERRUPT_FIRST_TURN = "turn/interrupt thr-1 turn-1"
 SLOW_ROOMS = ["room-slow-1", "room-slow-2"]
+
+
+def interrupt_of(thread_id: str, turn_id: str) -> str:
+    return f"turn/interrupt {thread_id} {turn_id}"
+
+
+def still_stopping(room_id: str) -> str:
+    return f"still stopping {room_id}"
+
+
+# The fake app-server numbers its threads and turns from 1.
+INTERRUPT_FIRST_TURN = interrupt_of("thr-1", "turn-1")
 
 
 def interrupts(client: FakeCodexClient) -> list[str]:
     return [
-        f"turn/interrupt {params['threadId']} {params['turnId']}"
+        interrupt_of(params["threadId"], params["turnId"])
         for params in client.params_of(CodexRequestMethod.TURN_INTERRUPT)
     ]
 
@@ -51,6 +63,19 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
     return interrupts(client)
 
 
+async def stop_while_turn_starts(mode: ControlMode) -> list[str]:
+    """A stop that lands before turn/start answers still interrupts that turn."""
+    adapter, client = await started()
+    client.turn_start_released.clear()
+    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    await wait_until(lambda: bool(client.params_of(CodexRequestMethod.TURN_START)))
+    await cancel_turn(turn)
+    await adapter.on_interrupt(ROOM_ID, mode)
+    client.turn_start_released.set()
+    await adapter.backend_turns.drain()
+    return interrupts(client)
+
+
 async def next_turn_after_stop() -> list[str]:
     """The next turn's turn/start goes out only after the interrupt."""
     adapter, client = await started()
@@ -58,14 +83,18 @@ async def next_turn_after_stop() -> list[str]:
     await wait_until(lambda: bool(client.params_of(CodexRequestMethod.TURN_START)))
     await end_turn(adapter, turn, ROOM_ID, ControlMode.STOP)
     nxt = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
-    await wait_until(lambda: len(client.params_of(CodexRequestMethod.TURN_START)) == 2)
-    order = [
-        method
-        for method in client.request_methods
-        if method in {CodexRequestMethod.TURN_START, CodexRequestMethod.TURN_INTERRUPT}
-    ]
-    await end_turn(adapter, nxt, ROOM_ID, ControlMode.STOP)
-    return order
+    try:
+        await wait_until(
+            lambda: len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+        )
+        return [
+            method
+            for method in client.request_methods
+            if method
+            in {CodexRequestMethod.TURN_START, CodexRequestMethod.TURN_INTERRUPT}
+        ]
+    finally:
+        await end_turn(adapter, nxt, ROOM_ID, ControlMode.STOP)
 
 
 async def agent_wide_stop_with_slow_backends() -> list[str]:
@@ -96,8 +125,16 @@ async def agent_wide_stop_with_slow_backends() -> list[str]:
         turn.cancel()
     await asyncio.gather(*turns, return_exceptions=True)
 
-    await runtime.handle_control(control_payload(ControlMode.STOP))
-    journal = ["control returned", *interrupts(client)]
+    async with asyncio.timeout(STARTUP_TIMEOUT_SECONDS):
+        await runtime.handle_control(control_payload(ControlMode.STOP))
+    journal = [
+        *interrupts(client),
+        *(
+            still_stopping(room_id)
+            for room_id in SLOW_ROOMS
+            if adapter.backend_turns.stopping(room_id)
+        ),
+    ]
     client.interrupt_released.set()
     await adapter.backend_turns.drain()
     return journal
@@ -117,6 +154,13 @@ CASES: dict[str, StopCase] = {
         )
         for mode in ENDING_CONTROLS
     },
+    **{
+        f"{mode}-while-turn-starts": StopCase(
+            run=lambda mode=mode: stop_while_turn_starts(mode),
+            expected=[INTERRUPT_FIRST_TURN],
+        )
+        for mode in ENDING_CONTROLS
+    },
     "next-turn-starts-after-the-interrupt": StopCase(
         run=next_turn_after_stop,
         expected=[
@@ -128,9 +172,9 @@ CASES: dict[str, StopCase] = {
     "agent-wide-stop-returns-before-slow-backends": StopCase(
         run=agent_wide_stop_with_slow_backends,
         expected=[
-            "control returned",
             INTERRUPT_FIRST_TURN,
-            "turn/interrupt thr-2 turn-2",
+            interrupt_of("thr-2", "turn-2"),
+            *map(still_stopping, SLOW_ROOMS),
         ],
     ),
     "idle-room": StopCase(run=idle, expected=[]),

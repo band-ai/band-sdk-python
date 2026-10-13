@@ -66,6 +66,18 @@ async def end_running_task(mode: ControlMode) -> list[str]:
     return [*client.cancelled, await next_message(adapter, client)]
 
 
+async def stop_continued_task_before_it_answers(mode: ControlMode) -> list[str]:
+    """A continued task is cancelled even before the remote's first event."""
+    adapter, client = started()
+    client.script(task_in("TASK_STATE_INPUT_REQUIRED"))
+    await adapter.on_event(turn_input(FakeAgentTools()))
+    client.script(hold=True)
+    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    await wait_until(lambda: len(client.continued) == 2)
+    await end_turn(adapter, turn, ROOM_ID, mode)
+    return [*client.cancelled, await next_message(adapter, client)]
+
+
 async def input_required_is_not_cancelled() -> list[str]:
     """A task paused for input ends its turn normally and stays continuable."""
     adapter, client = started()
@@ -85,6 +97,13 @@ CASES: dict[str, StopCase] = {
     **{
         f"{mode}-mid-turn": StopCase(
             run=lambda mode=mode: end_running_task(mode),
+            expected=[CANCEL_TASK, continues(NO_TASK)],
+        )
+        for mode in ENDING_CONTROLS
+    },
+    **{
+        f"{mode}-continued-task-before-it-answers": StopCase(
+            run=lambda mode=mode: stop_continued_task_before_it_answers(mode),
             expected=[CANCEL_TASK, continues(NO_TASK)],
         )
         for mode in ENDING_CONTROLS

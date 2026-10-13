@@ -21,6 +21,7 @@ from tests.adapters.opencode.helpers import (
 )
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
+    STARTUP_TIMEOUT_SECONDS,
     StopCase,
     end_turn,
     stop_room,
@@ -85,8 +86,15 @@ async def stopped_turn_winds_down(client: JournalingOpencodeClient) -> None:
         event_session_idle(SESSION_ID),
     ):
         await client.push_event(event)
-    for _ in range(10):
-        await asyncio.sleep(0)
+    consumed = asyncio.Event()
+
+    async def all_consumed() -> None:
+        consumed.set()
+
+    # The event loop reaches this step only after handling every event above.
+    await client.push_event(all_consumed)
+    async with asyncio.timeout(STARTUP_TIMEOUT_SECONDS):
+        await consumed.wait()
 
 
 def posted(tools: FakeAgentTools, before: int) -> list[str]:

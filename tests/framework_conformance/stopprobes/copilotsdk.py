@@ -18,7 +18,9 @@ from tests.adapters.copilot_sdk.fakes import (
 )
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
+    STARTUP_POLL_SECONDS,
     StopCase,
+    cancel_turn,
     end_turn,
     stop_room,
     wait_until,
@@ -76,6 +78,23 @@ async def next_message_after_stop() -> list[str]:
     return journal(client)
 
 
+async def shutdown_right_after_stop() -> list[str]:
+    """Shutdown waits for the room's abort before it disconnects the session."""
+    adapter, client, hang = await started()
+    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    await wait_until(hang.entered.is_set)
+    session = client.sessions[0]
+    session.abort_released.clear()
+    await cancel_turn(turn)
+    await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+    shutdown = asyncio.create_task(adapter.cleanup_all())
+    # Shutdown gets a window to disconnect early; then the abort completes.
+    await asyncio.wait({shutdown}, timeout=STARTUP_POLL_SECONDS * 50)
+    session.abort_released.set()
+    await shutdown
+    return journal(client)
+
+
 async def idle() -> list[str]:
     adapter, client, _ = await started()
     await stop_room(adapter, ROOM_ID)
@@ -93,6 +112,10 @@ CASES: dict[str, StopCase] = {
     "next-message-reuses-the-session": StopCase(
         run=next_message_after_stop,
         expected=["session 1 prompt", "session 1 abort", "session 1 prompt"],
+    ),
+    "shutdown-right-after-stop": StopCase(
+        run=shutdown_right_after_stop,
+        expected=["session 1 prompt", "session 1 abort", "session 1 disconnect"],
     ),
     "idle-room": StopCase(run=idle, expected=[]),
 }

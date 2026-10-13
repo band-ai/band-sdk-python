@@ -68,11 +68,12 @@ def auxiliary_context(
     max_cycle_seconds: float | None = None,
     execution_type: type[ExecutionContext] = ExecutionContext,
     enable_context_hydration: bool = False,
+    room_id: str = ROOM_ID,
 ) -> ExecutionContext:
     link = BandLink(agent_id=AGENT_ID, api_key="test-key")
     link.rest = rest
     return execution_type(
-        ROOM_ID,
+        room_id,
         link,
         handler,
         agent_id=AGENT_ID,

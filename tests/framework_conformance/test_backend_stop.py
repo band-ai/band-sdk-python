@@ -78,6 +78,7 @@ def probed_by(
             owner is not None
             and issubclass(cls, owner)
             and cls.on_message is owner.on_message
+            and cls.backend_turns is owner.backend_turns
         ):
             return name
     return None
