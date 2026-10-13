@@ -355,9 +355,6 @@ async def copilot_persisted_selection(
     from band.adapters.copilot_acp import (  # noqa: PLC0415 -- the acp extra, as above
         CopilotACPAdapter,
     )
-    from band.integrations.acp.client_types import (  # noqa: PLC0415 -- the acp extra, as above
-        ACPRoom,
-    )
     from band.integrations.acp.model_selection import (  # noqa: PLC0415 -- the acp extra, as above
         locate_model_options,
     )
@@ -366,12 +363,12 @@ async def copilot_persisted_selection(
     )
 
     spawner = CopilotACPAdapter(config)
-    workspace = spawner._workspaces.claim(room_id)
-    runtime = spawner._build_runtime(ACPRoom(room_id=room_id, workspace=workspace), 1)
+    room = spawner._room(room_id)
+    runtime = spawner._build_runtime(room, room.generation)
     await runtime.start()
     try:
         loaded = await runtime.load_session_response(
-            cwd=workspace, session_id=session_id, mcp_servers=[]
+            cwd=room.workspace, session_id=session_id, mcp_servers=[]
         )
     finally:
         await runtime.stop()
