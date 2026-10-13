@@ -71,11 +71,11 @@ class TestRoomReader:
         crashed, *_ = claude.sessions
         crashed.die()
         async with closing:
-            retired = session.speaks_for(1)
+            authority_at_close = session.speaks_for(1)
         await exchange(session, "again")
         await manager.stop()
 
-        assert retired is False
+        assert authority_at_close is False
         assert claude.resumed == ["sess-1", None]
 
     async def test_a_read_failure_after_a_result_retires_the_cli(

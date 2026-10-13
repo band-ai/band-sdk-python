@@ -25,6 +25,7 @@ from band.integrations.claude_sdk.session_manager import (
 from tests.adapters.claude_sdk.fakecli import MODEL, Thinking
 from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET
 from tests.adapters.claude_sdk.process import WorkspacePeer
+from tests.adapters.waiting import UNTIL_TIMEOUT_S
 
 # A result for work the CLI finished after the turn that started it ended.
 STRAY_RESULT = {
@@ -106,12 +107,12 @@ class Signal(logging.Handler):
             self.seen.set()
 
     async def logged(self) -> None:
-        """Wait for the record, failing fast if it never comes."""
-        for _ in range(READER_TURNS):
-            if self.seen.is_set():
-                return
-            await asyncio.sleep(0)
-        raise AssertionError(f"nothing logged {self.fragment!r}")
+        """Wait for the record, failing if it never comes."""
+        try:
+            async with asyncio.timeout(UNTIL_TIMEOUT_S):
+                await self.seen.wait()
+        except TimeoutError:
+            raise AssertionError(f"nothing logged {self.fragment!r}") from None
 
 
 async def retired(session: ClaudeRoomSession, generation: int) -> None:
