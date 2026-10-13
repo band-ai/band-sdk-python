@@ -3,24 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.retention import RoomRetentionConfig
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
     ROOM_ID,
-    CodexRoom,
+    CleaningTurn,
     CountingCloseClient,
     disposed,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
-    FakeCodexClient,
     make_codex_adapter,
     turn_completed,
 )
@@ -113,59 +110,41 @@ class TestRoomRetirement:
 
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
-    @pytest.mark.parametrize("retain", [False, True])
-    async def test_stop_callbacks_share_worker_cleanup(self, retain: bool) -> None:
-        started, cleaning, release = (asyncio.Event() for _ in range(3))
-        cleanup: list[str] = []
+    @pytest.mark.looptime
+    async def test_a_close_past_its_bound_names_the_room_and_bound(self) -> None:
+        client = CountingCloseClient(events=[turn_completed()], hold=True)
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(client_close_timeout_s=0.5)
+        )
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await send_bootstrap(adapter)
 
-        class CleaningClient(FakeCodexClient):
-            async def request(
-                self,
-                method: str,
-                params: dict[str, Any] | None = None,
-                *,
-                retry_on_overload: bool = True,
-            ) -> dict[str, Any]:
-                if method != CodexRequestMethod.TURN_START:
-                    return await super().request(
-                        method, params, retry_on_overload=retry_on_overload
-                    )
-                started.set()
-                try:
-                    await asyncio.Future[None]()
-                finally:
-                    cleaning.set()
-                    await release.wait()
-                    cleanup.append("completed")
-                raise AssertionError("The cancelled turn cannot start")
-
-        client = CleaningClient()
-        adapter = make_codex_adapter(client)
-        room = CodexRoom(adapter, client)
-        sending = asyncio.create_task(room.send("work"))
-        await started.wait()
-        sending.cancel()
-        await cleaning.wait()
-        callbacks = [
-            asyncio.create_task(adapter.on_interrupt(ROOM_ID, ControlMode.STOP))
-            for _ in range(2)
-        ]
-        try:
-            if retain:
-                await asyncio.gather(*callbacks)
-                with pytest.raises(CleanupIncompleteError):
-                    await adapter.on_cleanup(ROOM_ID)
-                assert not client.closed
-                with pytest.raises(InputNotAccepted):
-                    await room.send("overlap")
-            release.set()
-            await asyncio.gather(*callbacks)
-            with pytest.raises(asyncio.CancelledError):
-                await sending
+        with pytest.raises(
+            TimeoutError, match=f"room {ROOM_ID} did not close within 0.5s"
+        ):
             await adapter.on_cleanup(ROOM_ID)
-            assert cleanup == ["completed"]
-            assert client.closed
-        finally:
-            release.set()
-            await asyncio.gather(sending, *callbacks, return_exceptions=True)
-            await adapter.cleanup_all()
+        client.finish_close.set()
+        await adapter.on_cleanup(ROOM_ID)
+
+    async def test_stop_keeps_the_room_fenced_until_worker_cleanup_finishes(
+        self, cleaning_turn: CleaningTurn
+    ) -> None:
+        room, client = cleaning_turn.room, cleaning_turn.client
+        await cleaning_turn.stop_twice()
+
+        with pytest.raises(CleanupIncompleteError):
+            await room.adapter.on_cleanup(ROOM_ID)
+        assert not client.closed
+        with pytest.raises(InputNotAccepted):
+            await room.send("overlap")
+
+    async def test_concurrent_stops_share_one_worker_cleanup(
+        self, cleaning_turn: CleaningTurn
+    ) -> None:
+        stops = asyncio.create_task(cleaning_turn.stop_twice())
+        cleaning_turn.client.release.set()
+        await stops
+
+        await cleaning_turn.room.adapter.on_cleanup(ROOM_ID)
+        assert cleaning_turn.client.cleanups == 1
+        assert cleaning_turn.client.closed

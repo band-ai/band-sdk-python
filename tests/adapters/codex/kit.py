@@ -20,6 +20,7 @@ from band.adapters.codex import (
     CodexCommand,
     PendingApproval,
 )
+from band.client.streaming import ControlMode
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
     AgentInput,
@@ -41,6 +42,7 @@ from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     MAX_LOOP_POLLS,
     FakeCodexClient,
     await_released_turn,
@@ -322,6 +324,38 @@ def asked_by_sub_agent(request_id: int, thread_id: str) -> RpcEvent:
     )
 
 
+def asked_by_autonomous_turn() -> tuple[RpcEvent, RpcEvent]:
+    """A Band tool call (41) and a command approval (42) from a native turn
+    the room's thread started on its own, not from any Band turn."""
+    autonomous = {"threadId": FIRST_THREAD_ID, "turnId": "autonomous"}
+    return (
+        event_request(
+            41,
+            DYNAMIC_TOOL_CALL_METHOD,
+            {
+                **autonomous,
+                "callId": "c-41",
+                "tool": BandTool.SEND_MESSAGE,
+                "arguments": {"content": "unasked", "mentions": ["@a"]},
+            },
+        ),
+        event_request(
+            42, CodexApprovalMethod.COMMAND_EXECUTION, {**autonomous, "command": "x"}
+        ),
+    )
+
+
+async def refusals_of_autonomous_turn(
+    client: FakeCodexClient,
+) -> tuple[bool, dict[str, Any]]:
+    """Whether the tool call (41) succeeded, and the approval (42) answer."""
+    return (await answer_to(client, 41))["success"], await answer_to(client, 42)
+
+
+#: How a native turn no Band turn started is answered.
+REFUSED_AUTONOMOUS_TURN = (False, {"decision": "decline"})
+
+
 def parked_on_approval(*then: RpcEvent) -> tuple[RpcEvent, ...]:
     """A turn that asks the room to approve one command, then plays ``then``."""
     return (
@@ -528,6 +562,55 @@ class HeldTurnClient(CountingCloseClient):
             await self.finish_turn.wait()
         return await super().request(
             method, params, retry_on_overload=retry_on_overload
+        )
+
+
+class CleaningTurnClient(FakeCodexClient):
+    """An app-server whose turn/start never answers; once cancelled it runs
+    a cleanup step that finishes only when ``release`` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cleaning = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cleanups = 0
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method != CodexRequestMethod.TURN_START:
+            return await super().request(
+                method, params, retry_on_overload=retry_on_overload
+            )
+        self.started.set()
+        try:
+            await asyncio.Future[None]()
+        finally:
+            self.cleaning.set()
+            await self.release.wait()
+            self.cleanups += 1
+        raise AssertionError("The cancelled turn cannot start")
+
+
+@dataclass
+class CleaningTurn:
+    """A room whose cancelled turn is still running its worker cleanup."""
+
+    room: CodexRoom
+    client: CleaningTurnClient
+
+    async def stop_twice(self) -> None:
+        """Deliver two concurrent room STOP callbacks."""
+        await asyncio.gather(
+            *(
+                self.room.adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+                for _ in range(2)
+            )
         )
 
 

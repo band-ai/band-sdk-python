@@ -16,7 +16,6 @@ from band.adapters.codex import (
     CodexContinuityError,
 )
 from band.core.protocols import TurnResultAlreadyReported
-from band.core.retention import Residency
 from band.integrations.codex import (
     DYNAMIC_TOOL_CALL_METHOD,
     TRANSPORT_CLOSED,
@@ -24,7 +23,6 @@ from band.integrations.codex import (
     RpcEvent,
 )
 from band.integrations.codex.types import (
-    CodexApprovalMethod,
     CodexItemType,
     CodexRequestMethod,
 )
@@ -35,21 +33,26 @@ from band.testing import (
 )
 from tests.adapters.codex.kit import (
     PROCESS_EXITED,
+    REFUSED_AUTONOMOUS_TURN,
     ROOM_ID,
     CodexRoom,
     CompletesWhileRefusingClient,
+    CountingCloseClient,
     ExitsWhileAskedClient,
     SlowTurnStartClient,
     StopsReadingAfterTurnClient,
     ToolSchemaFakeTools,
     answer_to,
+    asked_by_autonomous_turn,
     asked_by_sub_agent,
     delegated_to,
     parked_on_approval,
+    refusals_of_autonomous_turn,
     send_bootstrap,
     started_sub_agent,
 )
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     FakeCodexClient,
     event_notification,
     event_request,
@@ -88,28 +91,9 @@ class TestNativeTurnOwnership:
             tool_call_request(1, BandTool.NO_REPLY), turn_completed()
         )
         await room.send("hello")
-        autonomous = {"threadId": "thr-1", "turnId": "autonomous"}
+        room.client.emit(*asked_by_autonomous_turn())
 
-        room.client.emit(
-            event_request(
-                41,
-                DYNAMIC_TOOL_CALL_METHOD,
-                {
-                    **autonomous,
-                    "callId": "c-41",
-                    "tool": BandTool.SEND_MESSAGE,
-                    "arguments": {"content": "unasked", "mentions": ["@a"]},
-                },
-            ),
-            event_request(
-                42,
-                CodexApprovalMethod.COMMAND_EXECUTION,
-                {**autonomous, "command": "x"},
-            ),
-        )
-
-        assert (await answer_to(room.client, 41))["success"] is False
-        assert await answer_to(room.client, 42) == {"decision": "decline"}
+        assert await refusals_of_autonomous_turn(room.client) == REFUSED_AUTONOMOUS_TURN
         assert [call["tool_name"] for call in room.deliveries[0].tool_calls] == [
             BandTool.NO_REPLY
         ]
@@ -122,23 +106,9 @@ class TestNativeTurnOwnership:
             *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
         )
         await room.send("run tests")
-        autonomous = {"threadId": "thr-1", "turnId": "autonomous"}
+        room.client.emit(*asked_by_autonomous_turn())
 
-        room.client.emit(
-            event_request(
-                41,
-                DYNAMIC_TOOL_CALL_METHOD,
-                {**autonomous, "callId": "c-41", "tool": BandTool.SEND_MESSAGE},
-            ),
-            event_request(
-                42,
-                CodexApprovalMethod.COMMAND_EXECUTION,
-                {**autonomous, "command": "x"},
-            ),
-        )
-
-        assert (await answer_to(room.client, 41))["success"] is False
-        assert await answer_to(room.client, 42) == {"decision": "decline"}
+        assert await refusals_of_autonomous_turn(room.client) == REFUSED_AUTONOMOUS_TURN
         assert room.deliveries[0].tool_calls == []
 
     @pytest.mark.asyncio
@@ -208,7 +178,7 @@ class TestNativeTurnOwnership:
             event_notification(
                 "item/completed",
                 {
-                    "threadId": "thr-1",
+                    "threadId": FIRST_THREAD_ID,
                     "turnId": "turn-1",
                     "item": {
                         "type": CodexItemType.COMMAND_EXECUTION,
@@ -275,15 +245,18 @@ class TestNativeTurnOwnership:
     async def test_a_process_that_stops_reading_cannot_hold_a_finished_turn(
         self,
     ) -> None:
-        client = StopsReadingAfterTurnClient(events=[turn_completed()])
+        client = StopsReadingAfterTurnClient(
+            events=[turn_completed(), turn_completed("turn-2")]
+        )
         adapter = make_codex_adapter(
             client, config=CodexAdapterConfig(turn_settle_timeout_s=0.01)
         )
         await adapter.on_started("Codex Agent", "A coding agent")
 
         await asyncio.wait_for(send_bootstrap(adapter), timeout=5)
+        await asyncio.wait_for(send_bootstrap(adapter), timeout=5)
 
-        assert adapter._room_clients[ROOM_ID].turn is None
+        assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
     @pytest.mark.asyncio
     async def test_a_request_from_a_process_that_exited_is_never_put_to_the_room(
@@ -327,11 +300,26 @@ class TestNativeTurnOwnership:
         ]
 
     @pytest.mark.asyncio
+    async def test_an_answer_a_live_process_cannot_read_fails_the_turn(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        unreadable = ExitsWhileAskedClient(
+            events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()]
+        )
+        room = await codex_room(client=unreadable)
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await room.send("hello")
+
+        assert len(reported_failures(room.deliveries[0])) == 1
+
+    @pytest.mark.asyncio
     async def test_a_stale_process_loss_cannot_retire_its_replacement(self) -> None:
-        client = FakeCodexClient(
+        client = CountingCloseClient(
             events=[
                 PROCESS_EXITED,
                 turn_completed("turn-2"),
+                turn_completed("turn-3"),
             ]
         )
         adapter = make_codex_adapter(client)
@@ -342,12 +330,17 @@ class TestNativeTurnOwnership:
         lost = room.generation
         await send_bootstrap(adapter)
 
+        # Releasing a process stops its reader first, so no real event can
+        # arrive this late; the loss is delivered as that reader would.
         adapter._lose_process(
             room, lost, event_notification(TRANSPORT_CLOSED, {"reason": "late"})
         )
+        tools = ToolSchemaFakeTools()
+        await send_bootstrap(adapter, tools=tools)
 
-        assert room.generation == lost + 1
-        assert room.residency.snapshot.state == Residency.RESIDENT
+        assert reported_failures(tools) == []
+        # Only the lost process was replaced; its replacement kept serving.
+        assert (client.starts, client.closes) == (2, 1)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -392,6 +385,6 @@ class TestNativeTurnOwnership:
         with pytest.raises(error, match=refusal):
             await send_bootstrap(adapter, tools=tools)
 
-        assert adapter._room_threads[ROOM_ID] == "thr-1"
+        assert adapter._room_threads[ROOM_ID] == FIRST_THREAD_ID
         assert client.request_methods.count(CodexRequestMethod.THREAD_START) == 1
         assert refusal in reported_failures(tools)[0]["message"]

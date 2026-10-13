@@ -612,7 +612,6 @@ class RoomCodexClient:
     residency: RetainedRoom = dataclass_field(init=False)
     client: CodexClientProtocol | None = None
     reader: asyncio.Task[None] | None = None
-    generation: int = 0
     turn: NativeTurn | None = None
     model_override: str | None = None
     selected_model: str | None = None
@@ -628,6 +627,11 @@ class RoomCodexClient:
     # turn parked on a manual approval blocks only this room. Approval
     # replies are handled without it so they can resolve that wait.
     rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+
+    @property
+    def generation(self) -> int:
+        """The residency the room's current process belongs to."""
+        return self.residency.snapshot.generation
 
     def bind_thread(
         self, *, registration: list[dict[str, Any]] | None, settings: ThreadSettings
@@ -1914,7 +1918,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ``resume`` changes nothing: a retained thread is always restored.
         The reader runs before ``thread/resume``, which can start native work.
         """
-        room.generation = generation
         room.client = client = self._build_client(room.workspace)
         await client.connect()
         room.reader = spawn_owned(
@@ -2135,9 +2138,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return ReleaseOutcome.BUSY
         await room.stop_reader()
         if room.client is not None:
-            await asyncio.wait_for(
-                room.client.close(), timeout=self.config.client_close_timeout_s
-            )
+            timeout = self.config.client_close_timeout_s
+            try:
+                await asyncio.wait_for(room.client.close(), timeout=timeout)
+            except TimeoutError as error:
+                # This becomes the leave's error, so it names what overran.
+                raise TimeoutError(
+                    f"Codex process for room {room.room_id} did not close "
+                    f"within {timeout}s"
+                ) from error
         room.client = None
         room.selected_model = None
         room.restored = False

@@ -50,6 +50,10 @@ async def await_released_turn(
 # Ready work settles within a few loop turns; this bounds a wait for work
 # that never would.
 MAX_LOOP_POLLS = 200
+#: The model FakeCodexClient's model/list offers.
+LISTED_MODEL = "gpt-5.5"
+#: The id of the first thread a FakeCodexClient starts.
+FIRST_THREAD_ID = "thr-1"
 
 
 class FakeCodexClient(RecordedRequests):
@@ -133,7 +137,7 @@ class FakeCodexClient(RecordedRequests):
                     raise self._model_list_error
                 if self._model_list_result is not None:
                     return self._model_list_result
-                return {"data": [{"id": "gpt-5.5", "hidden": False}]}
+                return {"data": [{"id": LISTED_MODEL, "hidden": False}]}
             case CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET:
                 if self._skill_roots_error is not None:
                     raise self._skill_roots_error
@@ -289,7 +293,7 @@ def agent_message_started(
     return event_notification(
         "item/started",
         {
-            "threadId": "thr-1",
+            "threadId": FIRST_THREAD_ID,
             "startedAtMs": 1,
             "item": {"type": "agentMessage", "id": item_id, "text": "", "phase": phase},
         },
@@ -299,7 +303,7 @@ def agent_message_started(
 def agent_message_delta(text: str, item_id: str = "m") -> RpcEvent:
     return event_notification(
         "item/agentMessage/delta",
-        {"threadId": "thr-1", "itemId": item_id, "delta": text},
+        {"threadId": FIRST_THREAD_ID, "itemId": item_id, "delta": text},
     )
 
 
@@ -309,7 +313,7 @@ def agent_message_completed(
     return event_notification(
         "item/completed",
         {
-            "threadId": "thr-1",
+            "threadId": FIRST_THREAD_ID,
             "completedAtMs": 2,
             "item": {
                 "type": "agentMessage",
