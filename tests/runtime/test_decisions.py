@@ -50,12 +50,11 @@ class Room:
         name: str,
         *,
         key: str | None = None,
-        room_id: str | None = None,
         timeout_s: float = DEADLINE_S,
     ) -> DecisionEntry[Ask] | None:
         ask = Ask(name)
         registration = (
-            self.registry.register_minted(ask, room_id=room_id)
+            self.registry.register_minted(ask)
             if key is None
             else self.registry.register_keyed(ask, key=key)
         )
@@ -91,8 +90,8 @@ class Room:
         asker.cancel()
         await asyncio.wait([asker])
 
-    def tear_down(self, room_id: str) -> None:
-        for entry in self.registry.cancel_room(room_id):
+    def tear_down(self) -> None:
+        for entry in self.registry.cancel_all():
             entry.payload.future.set_result("cancelled")
 
     async def outcomes(self) -> dict[str, Outcome]:
@@ -167,33 +166,25 @@ async def test_a_busy_room_gives_every_asker_exactly_one_outcome(
     assert room.reply("c", "accept") is False
 
 
-async def test_tearing_down_a_room_resolves_only_its_open_asks(
+async def test_tearing_down_a_room_resolves_its_open_asks(
     open_room: Callable[..., Room],
 ) -> None:
-    """Teardown resolves the room's open asks, leaves a claimed one to its
-    claimant, and never touches another room; an asker cancelled with its
-    turn drops its ask without cancelling the answer's future."""
+    """Teardown resolves the room's open asks and leaves a claimed one to its
+    claimant; an asker cancelled with its turn drops its ask without
+    cancelling the answer's future."""
     room = open_room()
-    await room.ask("open", room_id="room-1")
-    claimed_ask = await room.ask("claimed", room_id="room-1")
-    await room.ask("elsewhere", room_id="room-2")
-    abandoned = await room.ask("abandoned", room_id="room-2")
+    await room.ask("open")
+    claimed_ask = await room.ask("claimed")
+    abandoned = await room.ask("abandoned")
     assert claimed_ask is not None and abandoned is not None
     claimed = room.registry.try_claim(claimed_ask.token)
     assert claimed is not None
-
-    room.tear_down("room-1")
-    claimed.payload.future.set_result("accept")
     await room.abandon("abandoned")
 
-    [survivor] = room.registry.unclaimed_in_room("room-2")
-    assert survivor.payload.name == "elsewhere"
-    assert room.reply(survivor.token, "decline")
-    assert await room.outcomes() == {
-        "open": "cancelled",
-        "claimed": "accept",
-        "elsewhere": "decline",
-    }
+    room.tear_down()
+    claimed.payload.future.set_result("accept")
+
+    assert await room.outcomes() == {"open": "cancelled", "claimed": "accept"}
     assert not abandoned.payload.future.cancelled()
     assert not room.registry
 
@@ -292,10 +283,10 @@ async def test_a_turn_cancelled_as_its_ask_resolves_still_unwinds(
     swallows the cancel lets it carry on into a connection already closing,
     and the shutdown awaiting it never returns."""
     room = open_room()
-    await room.ask("parked", room_id="room-1")
+    await room.ask("parked")
     asker = room.askers.pop("parked")
 
-    room.tear_down("room-1")
+    room.tear_down()
     asker.cancel()
     await asyncio.wait([asker])
 

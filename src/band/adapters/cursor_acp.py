@@ -618,7 +618,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             multi_select=multi_select,
         )
         decisions = self._room_decisions(turn.room.room_id)
-        registration = decisions.register_minted(pending, room_id=turn.room.room_id)
+        registration = decisions.register_minted(pending)
         if registration.evicted is not None:
             self._resolve_evicted_decision(registration.evicted)
         entry = registration.entry
