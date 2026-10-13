@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -221,3 +221,33 @@ class RetentionHost:
     @property
     def exited(self) -> list[bool]:
         return [child.exited for child in self.children]
+
+
+@asynccontextmanager
+async def hosted(
+    profile: LifecycleProfile, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[RetentionHost]:
+    """A started ``profile`` adapter whose children are released and closed on exit."""
+    host = RetentionHost(
+        profile=profile,
+        root=root,
+        fail_startup=root / "fail-startup",
+        hold_startup=root / "hold-startup",
+    )
+    host.bridge = profile.install(host, monkeypatch)
+    await host.adapter.on_started("Peer", "A subprocess under test")
+    try:
+        yield host
+    finally:
+        host.fail_startup.unlink(missing_ok=True)
+        host.hold_startup.unlink(missing_ok=True)
+        for child in host.children:
+            child.refuse_close = False
+            for barrier in (child.starting, child.closing):
+                if barrier is not None:
+                    barrier.released.set()
+        try:
+            await host.adapter.cleanup_all()
+        finally:
+            for child in host.children:
+                await child.close()

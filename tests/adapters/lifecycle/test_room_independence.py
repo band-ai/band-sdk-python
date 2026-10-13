@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.roompeer import PeerCommand, write_instruction
@@ -14,7 +12,6 @@ from tests.adapters.roompeer import PeerCommand, write_instruction
 class TestRoomIndependence:
     """One room starting or closing never blocks another room."""
 
-    @pytest.mark.parametrize("host", ["codex"], indirect=True)
     async def test_rooms_progress_while_another_room_starts_or_closes(
         self,
         host: RetentionHost,

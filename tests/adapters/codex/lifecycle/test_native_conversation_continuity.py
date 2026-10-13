@@ -17,7 +17,6 @@ from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.roompeer import PeerCommand, memo_instruction
 
 
-@pytest.mark.parametrize("host", ["codex"], indirect=True)
 class TestNativeConversationContinuity:
     """A replacement process continues the room native conversation or refuses to run."""
 
