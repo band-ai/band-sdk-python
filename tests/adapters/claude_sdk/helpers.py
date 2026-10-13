@@ -235,6 +235,8 @@ class ClaudeRoom:
         history: tuple[dict[str, Any], ...] = (),
         session_id: str | None = None,
         tools: FakeAgentTools | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> None:
         """Deliver one room message through the runtime's entry point, so the
         turn is judged as in production; returns once the adapter hands the
@@ -242,7 +244,8 @@ class ClaudeRoom:
 
         ``history`` is the room's raw history, ``session_id`` a Claude session
         it persisted, and ``tools`` the message's own tools (``fresh_tools()``
-        by default, as the runtime builds per message).
+        by default, as the runtime builds per message). ``participants_msg``
+        and ``contacts_msg`` are the runtime's pending room updates.
         """
         bootstrap, self._bootstrapped = not self._bootstrapped, True
         raw_history = [*history]
@@ -264,8 +267,8 @@ class ClaudeRoom:
                 ),
                 tools=tools or self.fresh_tools(),
                 history=HistoryProvider(raw=raw_history),
-                participants_msg=None,
-                contacts_msg=None,
+                participants_msg=participants_msg,
+                contacts_msg=contacts_msg,
                 is_session_bootstrap=bootstrap,
                 room_id=self.room_id,
             ),
