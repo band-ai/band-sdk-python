@@ -24,6 +24,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.turn import report_unsettled_turn
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -108,6 +109,9 @@ class SimpleAdapter(ABC, Generic[H]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+    # Set by an adapter that drives an external backend, so an interrupt, a
+    # cancelled turn and teardown stop that backend's turn too.
+    backend_turns: BackendTurns[Any] | None = None
 
     def __init__(
         self,
@@ -291,14 +295,18 @@ class SimpleAdapter(ABC, Generic[H]):
         """Override for session cleanup."""
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
-        """Override to abort per-room work still running after ``on_message``/
-        ``on_event`` returned early (e.g. a turn parked on a human decision).
+        """Stop the room's work that outlives the runtime's own interrupt/stop.
 
-        The runtime's own interrupt/stop only cancels the task that invoked
-        the handler; once that task has returned, this is the only signal
-        that still reaches work the adapter kept running detached. No-op by
-        default -- an adapter that never returns early needs no override.
+        The runtime cancels only the task that invoked the handler. This is
+        the signal that still reaches the room's backend turn and any work the
+        adapter kept running detached (e.g. a turn parked on a human decision).
+
+        By default it starts stopping the room's ``backend_turns`` entry,
+        without waiting: this runs on the control-processing task, so it must
+        never await a backend call. An override calls ``super()`` first.
         """
+        if self.backend_turns is not None:
+            self.backend_turns.cancel(room_id)
 
     async def cleanup_all(self) -> None:
         """Override to release adapter-wide resources (clients, servers).

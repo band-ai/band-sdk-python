@@ -1,9 +1,10 @@
-"""One cancellation owner per concrete turn task.
+"""One cancellation owner per concrete turn task, and per backend turn.
 
 ``TurnTask`` delivers cancellation and drains one handler or SDK-managed worker
 within a single absolute cleanup grace. Adapters whose manual-approval turn runs
 detached bind that worker to the originating turn scope and share
-``ApprovalInterruptMixin`` for interrupts and room retirement.
+``ApprovalInterruptMixin`` for interrupts and room retirement. ``BackendTurns``
+is the remote half: it stops the turn an external backend is still running.
 """
 
 from __future__ import annotations
@@ -11,13 +12,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.retention import task_failure
+from band.core.retention.cleanup import spawn_owned
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
+# How long one backend cancel call may run before it is abandoned.
+BACKEND_CANCEL_TIMEOUT_SECONDS = 5.0
+
+H = TypeVar("H")
 
 
 def terminal_deadline() -> float:
@@ -144,6 +151,105 @@ def bind_turn_task(tools: object, task: asyncio.Task[None]) -> TurnTask:
     return owner
 
 
+@dataclass(eq=False)
+class BackendTurn(Generic[H]):
+    """One room's backend turn: its handle once known, and whether to stop it."""
+
+    handle: H | None = None
+    stop_requested: bool = False
+
+
+class BackendTurns(Generic[H]):
+    """Each room's in-flight backend turn, and the one way to stop it.
+
+    The adapter supplies only the cancel call for its handle; the rules live
+    here. A turn is stopped at most once, never by awaiting on the caller, and
+    within ``BACKEND_CANCEL_TIMEOUT_SECONDS``. The room's next turn and its
+    teardown wait for that stop.
+
+    Placement:
+
+    - The task that owns the backend call holds ``running``, so a turn that
+      outlives ``on_message`` (released for approval) stays registered.
+    - ``running`` wraps outside any timeout scope: a timeout reaches it as
+      ``TimeoutError``, and the adapter's timeout branch calls ``cancel`` then
+      awaits ``settled`` before its own cleanup.
+    - Where the backend is acquired before the owning task enters ``running``,
+      the adapter awaits ``settled`` first.
+    - The handle carries everything the cancel needs; the cancel reads no
+      ambient context.
+    """
+
+    def __init__(
+        self, cancel: Callable[[H], Awaitable[None]], *, provider: str
+    ) -> None:
+        self._cancel = cancel
+        self._provider = provider
+        self._turns: dict[str, BackendTurn[H]] = {}
+        self._stopping: dict[str, asyncio.Task[None]] = {}
+
+    @asynccontextmanager
+    async def running(
+        self, room_id: str, handle: H | None = None
+    ) -> AsyncIterator[None]:
+        """Register the room's turn; a cancelled exit stops its backend."""
+        await self.settled(room_id)
+        turn = BackendTurn(handle)
+        self._turns[room_id] = turn
+        try:
+            yield
+        except asyncio.CancelledError:
+            self.cancel(room_id)
+            raise
+        finally:
+            if self._turns.get(room_id) is turn:
+                del self._turns[room_id]
+
+    def bind(self, room_id: str, handle: H) -> None:
+        """Attach the handle the backend revealed; a stop already asked for runs now."""
+        turn = self._turns.get(room_id)
+        if turn is None or turn.handle is not None:
+            return
+        turn.handle = handle
+        if turn.stop_requested:
+            self._stop(room_id, handle)
+
+    def cancel(self, room_id: str) -> None:
+        """Start stopping the room's backend turn, once, without waiting for it."""
+        turn = self._turns.get(room_id)
+        if turn is None or turn.stop_requested:
+            return
+        turn.stop_requested = True
+        if turn.handle is not None:
+            self._stop(room_id, turn.handle)
+
+    async def settled(self, room_id: str) -> None:
+        """Wait until the room's backend stop has been sent or timed out."""
+        if (task := self._stopping.get(room_id)) is not None:
+            await asyncio.wait({task})
+
+    async def drain(self) -> None:
+        """Wait until every room's backend stop has been sent or timed out."""
+        if self._stopping:
+            await asyncio.wait(set(self._stopping.values()))
+
+    def _stop(self, room_id: str, handle: H) -> None:
+        task = spawn_owned(
+            asyncio.wait_for(self._cancel(handle), BACKEND_CANCEL_TIMEOUT_SECONDS),
+            label=(
+                f"{self._provider} backend stop for room {room_id} "
+                f"(limit {BACKEND_CANCEL_TIMEOUT_SECONDS}s)"
+            ),
+        )
+        # The only strong reference until the stop finishes.
+        self._stopping[room_id] = task
+        task.add_done_callback(lambda done: self._forget_stop(room_id, done))
+
+    def _forget_stop(self, room_id: str, task: asyncio.Task[None]) -> None:
+        if self._stopping.get(room_id) is task:
+            del self._stopping[room_id]
+
+
 class ApprovalInterruptMixin:
     """Clear approvals, terminate the handler's worker, and retire its room."""
 
@@ -205,5 +311,6 @@ class ApprovalInterruptMixin:
         self._closing_rooms.discard(room_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        await super().on_interrupt(room_id, mode)  # type: ignore[misc]  # SimpleAdapter follows in the MRO
         self._clear_pending_approvals_for_room(room_id)
         await self._cancel_turn(room_id)
