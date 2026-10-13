@@ -10,7 +10,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from http import HTTPStatus
 from typing import Any, TypeVar
 
@@ -23,6 +22,7 @@ from pydantic import ValidationError as ModelValidationError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
+from band.core.settlement import SettlementResult
 from band.core.types import metadata_to_dict
 from band.runtime.types import ACTIONABLE_PAGE_SIZE, PlatformMessage
 
@@ -36,15 +36,6 @@ ResponseData = TypeVar("ResponseData")
 # JSON Pointer (the agent API's `ValidationError` schema).
 VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
-
-
-class SettlementResult(StrEnum):
-    """What a terminal (processed/failed) write established about the platform."""
-
-    ACCEPTED = "accepted"
-    UNCONFIRMED = "unconfirmed"
-    NOT_FOUND = "not_found"
-    REJECTED = "rejected"
 
 
 def _accepted_response(

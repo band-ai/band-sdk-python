@@ -14,6 +14,7 @@ from band.core.types import MessageType
 from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.runtime.types import SessionConfig
 from tests.integrations.acp.conftest import (
     deliver_server_message,
     failure_event,
@@ -425,6 +426,7 @@ async def test_agent_stop_fails_pending_prompt(mock_rest_client: MagicMock) -> N
     runtime.agent_name = "TestBot"
     runtime.agent_description = "ACP test agent"
     runtime.feature_flags = None
+    runtime.session_config = SessionConfig()
     runtime.initialize = AsyncMock()
     runtime.start = AsyncMock()
     runtime.stop = AsyncMock(return_value=True)

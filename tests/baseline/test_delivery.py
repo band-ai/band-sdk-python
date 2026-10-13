@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.execution import ExecutionContext
-from tests.conftest import make_message_event
+from tests.conftest import make_message_event, mirror_settlement_results
 
 
 def delivery_link() -> MagicMock:
@@ -17,7 +17,7 @@ def delivery_link() -> MagicMock:
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
-    return link
+    return mirror_settlement_results(link)
 
 
 @pytest.mark.asyncio

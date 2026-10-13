@@ -14,10 +14,16 @@ from typing import TYPE_CHECKING, Protocol
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import ControlMode
+from band.core.exceptions import BandConfigError
 from band.platform.event import PlatformEvent
 from band.runtime.control import ControlDeduplicator, apply_control, control_targets
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
+from band.runtime.execution import (
+    BatchExecutionHandler,
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
+)
 from band.runtime.presence import RoomPresence
 from band.runtime.rooms import RoomExecutions, request_resync
 from band.runtime.types import (
@@ -106,6 +112,7 @@ class AgentRuntime:
         | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
+        on_execute_batch: BatchExecutionHandler | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -124,12 +131,23 @@ class AgentRuntime:
                 adapter work that keeps running after those return early
             on_participant_added: Optional callback for participant_added events
             on_participant_removed: Optional callback for participant_removed events
+            on_execute_batch: Optional callback running one turn over several
+                originals; required for ``SessionConfig.consume_all_queued``
+
+        Raises:
+            BandConfigError: ``consume_all_queued`` with a custom execution
+                factory (it cannot be validated) or without a batch callback.
         """
         self.link = link
         self.agent_id = agent_id
         self._on_execute = on_execute
         self._execution_factory = execution_factory
         self._session_config = session_config or SessionConfig()
+        if self._session_config.consume_all_queued and execution_factory is not None:
+            raise BandConfigError(
+                "consume_all_queued cannot be used with a custom execution_factory"
+            )
+        self._on_execute_batch = on_execute_batch
         self._on_session_cleanup = on_session_cleanup
         self._on_control = on_control
         self._on_message_control = on_message_control
@@ -358,6 +376,7 @@ class AgentRuntime:
             link=self.link,
             on_execute=self._on_execute,
             on_message_control=self._on_message_control,
+            on_execute_batch=self._on_execute_batch,
             config=self._session_config,
             agent_id=self.agent_id,
             on_participant_added=self._on_participant_added,

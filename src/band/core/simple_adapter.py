@@ -108,6 +108,9 @@ class SimpleAdapter(ABC, Generic[H]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+    # An adapter sets this only after ``on_messages`` runs a turn over several
+    # originals; ``consume_all_queued`` refuses every adapter that leaves it off.
+    supports_batch_input: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -385,6 +388,21 @@ class SimpleAdapter(ABC, Generic[H]):
     ) -> bool:
         """Consume an active-turn control without starting or rebinding work."""
         return False
+
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        """Whether ``try_handle_control`` would treat ``msg`` as a control.
+
+        Read-only: it may read existing pending-request state but never
+        creates state, claims a request, posts or consumes context. A
+        recognized message is handled on its own even if it turns out invalid
+        or unauthorized.
+        """
+        return False
+
+    async def on_messages(self, inp: AgentInput) -> None:
+        """Run one turn over ``inp.messages``; adapters declaring
+        ``supports_batch_input`` override this."""
+        raise BandConfigError(f"{type(self).__name__} does not support batch input")
 
     async def on_event(self, inp: AgentInput) -> None:
         """Implements FrameworkAdapter.on_event().

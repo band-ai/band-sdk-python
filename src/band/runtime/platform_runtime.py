@@ -16,7 +16,7 @@ from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import BatchExecutionHandler, ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import (
@@ -88,6 +88,10 @@ class PlatformRuntime:
         self._pending_hub_room_id: str | None = (
             None  # Hub room waiting for ExecutionContext
         )
+
+    @property
+    def session_config(self) -> SessionConfig:
+        return self._session_config
 
     @property
     def agent_id(self) -> str:
@@ -185,6 +189,7 @@ class PlatformRuntime:
         on_control: Callable[[str, ControlMode], Awaitable[None]] | None = None,
         on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
         | None = None,
+        on_execute_batch: BatchExecutionHandler | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -194,6 +199,8 @@ class PlatformRuntime:
 
         Args:
             on_execute: Callback for message execution
+            on_execute_batch: Callback for a turn over several originals;
+                required when ``SessionConfig.consume_all_queued`` is set
             on_cleanup: Callback for session cleanup
             on_control: Callback for an interrupt/stop control signal, for
                 adapter work that outlives the message cycle it started in
@@ -226,6 +233,7 @@ class PlatformRuntime:
                 on_session_cleanup=on_cleanup or self._noop_cleanup,
                 on_control=on_control,
                 on_message_control=on_message_control,
+                on_execute_batch=on_execute_batch,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
             )

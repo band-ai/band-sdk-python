@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from band_rest.core import ParsingError
 
+from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
-from band.platform.message_lifecycle import SettlementResult
 from tests.platform.settlement.kit import (
     Reply,
     SettlementPeer,

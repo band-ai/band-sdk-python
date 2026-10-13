@@ -14,7 +14,7 @@ from band.client.streaming import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.platform.event import MessageEvent
-from band.runtime.types import ConversationContext
+from band.runtime.types import ConversationContext, SessionConfig
 from band.testing.platform import platform_connection_stub
 
 
@@ -72,6 +72,7 @@ class TestStartupRaceCondition:
             agent_id = "agent-123"
             connection = platform_connection_stub(agent_id="agent-123")
             feature_flags = None
+            session_config = SessionConfig()
             _on_execute = None
 
             async def initialize(self) -> None:
@@ -89,6 +90,7 @@ class TestStartupRaceCondition:
                 on_cleanup=None,
                 on_control=None,
                 on_message_control=None,
+                on_execute_batch=None,
             ):
                 self._on_execute = on_execute
 

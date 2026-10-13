@@ -46,6 +46,7 @@ from band.client.streaming import (
     MessageMetadata,
 )
 from band.core.exceptions import (
+    BandConfigError,
     CleanupIncompleteError,
     InputNotAccepted,
     RoomExecutionStoppedError,
@@ -56,6 +57,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.retention import task_failure
+from band.core.settlement import SettlementResult
 from band.core.turn_lifecycle import (
     TurnTask,
     finished_within_grace,
@@ -74,7 +76,6 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
-from band.platform.message_lifecycle import SettlementResult
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.formatters import build_participants_message, format_history_for_llm
@@ -260,6 +261,9 @@ class Execution(Protocol):
 
 # Type for execution callback
 ExecutionHandler = Callable[["ExecutionContext", PlatformEvent], Awaitable[None]]
+BatchExecutionHandler = Callable[
+    ["ExecutionContext", tuple[MessageEvent, ...]], Awaitable[None]
+]
 
 
 class ExecutionContext:
@@ -300,6 +304,7 @@ class ExecutionContext:
         | None = None,
         on_platform_stop: Callable[[ExecutionContext, TurnScope], Awaitable[None]]
         | None = None,
+        on_execute_batch: BatchExecutionHandler | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -319,10 +324,21 @@ class ExecutionContext:
                 passes one registry to its default contexts so a room/message
                 pair executes at most once per runtime. Defaults to a private
                 instance for standalone contexts.
+            on_execute_batch: Callback running one turn over several originals.
+                Required when ``config.consume_all_queued`` is set.
+
+        Raises:
+            BandConfigError: ``config.consume_all_queued`` without a batch host.
         """
+        if (config or SessionConfig()).consume_all_queued and on_execute_batch is None:
+            raise BandConfigError(
+                "consume_all_queued needs a host that runs a turn over several "
+                "originals (on_execute_batch)"
+            )
         self.room_id = room_id
         self.link = link
         self._on_execute = on_execute
+        self._on_execute_batch = on_execute_batch
         self._on_message_control = on_message_control
         self.config = config or SessionConfig()
         self._agent_id = agent_id
@@ -1958,7 +1974,11 @@ class ExecutionContext:
             raise asyncio.CancelledError
         self._resync_handled_work = True
         self._reset_resync_interval()
-        await self._on_execute(self, event)
+        originals = scope.originals if scope is not None else ()
+        if len(originals) > 1 and self._on_execute_batch is not None:
+            await self._on_execute_batch(self, originals)
+        else:
+            await self._on_execute(self, event)
 
     def _retain_detached_cycle_task(
         self, task: asyncio.Task[None], *, owner: TurnTask | None = None

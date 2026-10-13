@@ -12,8 +12,17 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
-from band.core.protocols import FrameworkAdapter, Preprocessor
+from band.core.exceptions import (
+    BandConfigError,
+    CleanupIncompleteError,
+    InputNotAccepted,
+)
+from band.core.protocols import (
+    BatchFrameworkAdapter,
+    BatchPreprocessor,
+    FrameworkAdapter,
+    Preprocessor,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.platform_runtime import PlatformRuntime
@@ -28,7 +37,7 @@ from band.runtime.types import (
 
 if TYPE_CHECKING:
     from band.core.types import AgentInput
-    from band.platform.event import PlatformEvent
+    from band.platform.event import MessageEvent, PlatformEvent
     from band.runtime.execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -136,6 +145,24 @@ class Agent:
         # Tracks shutdown_timeout from run() for use in __aexit__
         # Uses sentinel to distinguish "not set" from "explicitly set to None"
         self._shutdown_timeout: _ShutdownTimeout = _TIMEOUT_NOT_SET
+
+    def _batch_hosts(self) -> tuple[BatchFrameworkAdapter, BatchPreprocessor]:
+        """The adapter and preprocessor, if both can run a turn over several originals."""
+        adapter, preprocessor = self._adapter, self._preprocessor
+        if not (
+            isinstance(adapter, BatchFrameworkAdapter) and adapter.supports_batch_input
+        ):
+            raise BandConfigError(
+                f"{type(adapter).__name__} does not support batch input; "
+                "consume_all_queued needs an adapter declaring supports_batch_input"
+            )
+        if not isinstance(preprocessor, BatchPreprocessor):
+            raise BandConfigError(
+                f"{type(preprocessor).__name__} has no process_batch; "
+                "consume_all_queued needs a preprocessor that builds one input "
+                "over several deliveries"
+            )
+        return adapter, preprocessor
 
     def _clear_pending_stop(self) -> None:
         self._stop_requested = False
@@ -293,6 +320,8 @@ class Agent:
             raise CleanupIncompleteError(
                 "Agent cleanup is incomplete; call stop() to retry it"
             )
+        if self._runtime.session_config.consume_all_queued:
+            self._batch_hosts()
 
         self._starting = True
         self._stop_graceful = True
@@ -321,6 +350,7 @@ class Agent:
                 self._cleanup_pending.add(CleanupPhase.RUNTIME)
                 await self._runtime.start(
                     on_execute=self._on_execute,
+                    on_execute_batch=self._on_execute_batch,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
                     # A bare FrameworkAdapter predates on_interrupt and needn't
@@ -548,6 +578,27 @@ class Agent:
         rejected = False
         try:
             await self._adapter.on_event(inp)
+        except InputNotAccepted:
+            rejected = True
+            raise
+        finally:
+            if not rejected and inp.commit_context is not None:
+                inp.commit_context()
+
+    async def _on_execute_batch(
+        self, ctx: ExecutionContext, events: tuple[MessageEvent, ...]
+    ) -> None:
+        """Run one turn over several originals through the batch entry points."""
+        adapter, preprocessor = self._batch_hosts()
+        inp = await preprocessor.process_batch(
+            ctx=ctx, events=events, agent_id=self._runtime.agent_id
+        )
+        if inp is None:
+            return
+
+        rejected = False
+        try:
+            await adapter.on_messages(inp)
         except InputNotAccepted:
             rejected = True
             raise

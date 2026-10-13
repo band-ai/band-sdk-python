@@ -17,11 +17,11 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from band.client.rest import AsyncRestClient
+from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
 from band.platform.message_lifecycle import (
     PROCESSING_ATTEMPT_POINTER,
     VALIDATION_ERROR_CODE,
-    SettlementResult,
 )
 
 ROOM_ID = "room-1"

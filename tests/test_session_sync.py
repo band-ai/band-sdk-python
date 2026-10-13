@@ -19,7 +19,11 @@ from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.types import PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
-from tests.conftest import make_message_event, make_participant_added_event
+from tests.conftest import (
+    make_message_event,
+    make_participant_added_event,
+    mirror_settlement_results,
+)
 
 
 def make_message(msg_id: str, room_id: str = "room-123") -> PlatformMessage:
@@ -55,7 +59,7 @@ def mock_link():
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
     link.get_stale_processing_messages = AsyncMock(return_value=[])
-    return link
+    return mirror_settlement_results(link)
 
 
 class TestFirstWsMessageIdMarker:

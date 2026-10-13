@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.runtime.types import SessionConfig
+
 
 @pytest.fixture
 def mock_adapter():
@@ -31,6 +33,7 @@ def mock_runtime():
     runtime.stop = AsyncMock()
     runtime.run_forever = AsyncMock()
     runtime.cleanup_pending = False
+    runtime.session_config = SessionConfig()
     return runtime
 
 

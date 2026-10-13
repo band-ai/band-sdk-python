@@ -73,6 +73,7 @@ ADAPTERS = [
     for c in SOURCE_CLASSES
     if c.node.name in ADAPTER_NAMES - {ADAPTER_BASE}
     and c.base_names & (ADAPTER_NAMES | {ADAPTER_BASE})
+    and "Protocol" not in c.base_names
 ]
 ADAPTER_CONFIGS = [
     c

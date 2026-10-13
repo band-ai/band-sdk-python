@@ -22,6 +22,7 @@ from band.client.streaming import (
 )
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
+from band.core.settlement import SettlementResult
 from band.core.types import ConflictPolicy, PlatformConnection
 from band.platform.event import (
     ContactAddedEvent,
@@ -41,7 +42,6 @@ from band.platform.event import (
 from band.platform.message_lifecycle import (
     ActionablePage,
     MessageLifecycle,
-    SettlementResult,
 )
 from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage

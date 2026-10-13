@@ -527,7 +527,10 @@ class AgentInput:
     """
     Input to framework adapter.
 
-    Contains everything an adapter needs to process a message.
+    Contains everything an adapter needs to process one turn. ``messages`` are
+    the turn's original deliveries in arrival order, each with its own sender,
+    timestamp and metadata; ``msg`` is the first of them, never a composite.
+    A turn of one is the singleton case, and ``messages`` then defaults to it.
     History is provided via HistoryProvider for lazy conversion.
     Custom preprocessors that consume context can supply ``commit_context``;
     the host calls it after model attempts except proven non-acceptance.
@@ -542,6 +545,27 @@ class AgentInput:
     is_session_bootstrap: bool
     room_id: str
     commit_context: Callable[[], None] | None = None
+    messages: tuple[PlatformMessage, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.messages:
+            object.__setattr__(self, "messages", (self.msg,))
+
+    @property
+    def sender_ids(self) -> tuple[str, ...]:
+        """The distinct nonempty sender IDs of the originals, in arrival order."""
+        return distinct_sender_ids(self.messages)
+
+
+def distinct_sender_ids(messages: Iterable[PlatformMessage]) -> tuple[str, ...]:
+    """Each nonempty sender ID once, in first-appearance order.
+
+    The one projection from a turn's originals to the audience of an automatic
+    reply or notice; it never invents an ID for a message that has none.
+    """
+    return tuple(
+        dict.fromkeys(message.sender_id for message in messages if message.sender_id)
+    )
 
 
 def delivery_status_for_agent(metadata: Any, agent_id: str | None) -> str | None:

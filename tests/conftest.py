@@ -50,6 +50,7 @@ from band.client.streaming import (
     RoomDeletedPayload,
     RoomRemovedPayload,
 )
+from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -63,7 +64,6 @@ from band.platform.event import (
     RoomRemovedEvent,
 )
 from band.platform.link import BandLink
-from band.platform.message_lifecycle import SettlementResult
 from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import PlatformMessage
 from tests.paths import ENV_TEST_FILE

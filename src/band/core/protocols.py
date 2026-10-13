@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
 
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
         TaskListState,
     )
     from band.core.turn import Turn
-    from band.core.types import AgentInput, Capability
+    from band.core.types import AgentInput, Capability, PlatformMessage
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
     from band.runtime.tools import (
@@ -525,3 +526,46 @@ class Preprocessor(Protocol):
             AgentInput if event should be processed, None to skip
         """
         ...
+
+
+@runtime_checkable
+class BatchFrameworkAdapter(FrameworkAdapter, Protocol):
+    """A framework adapter that can run one turn over several original messages.
+
+    ``supports_batch_input`` is the explicit declaration: a legacy adapter
+    without it is never handed a batch, and enabling batching with one is a
+    configuration error rather than a silent fallback.
+    """
+
+    supports_batch_input: bool
+
+    async def on_messages(self, inp: AgentInput) -> None:
+        """Process the turn's ``inp.messages``, oldest first, as one turn."""
+        ...
+
+
+@runtime_checkable
+class BatchPreprocessor(Preprocessor, Protocol):
+    """A preprocessor that can build one ``AgentInput`` from several deliveries."""
+
+    async def process_batch(
+        self,
+        ctx: ExecutionContext,
+        events: Sequence[PlatformEvent],
+        agent_id: str,
+    ) -> AgentInput | None:
+        """Build one input over ``events``' messages, sharing one context and tools."""
+        ...
+
+
+@runtime_checkable
+class ControlRecognizer(Protocol):
+    """Read-only recognition of a message the adapter would handle as a control.
+
+    Recognition may read existing pending-request state (a free-text answer to
+    a pending question is a control) but never creates state, claims a request,
+    posts, consumes context or writes delivery status; the adapter's control
+    handler remains the authority for authorization and consumption.
+    """
+
+    def is_control_message(self, msg: PlatformMessage) -> bool: ...

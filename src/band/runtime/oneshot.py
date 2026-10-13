@@ -59,6 +59,7 @@ from band_sdk_core import (
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import DeliveryStatus
 from band.core.exceptions import (
+    BandConfigError,
     BandConnectionError,
     CleanupIncompleteError,
     InputNotAccepted,
@@ -88,6 +89,7 @@ from band.runtime.tools import AgentTools
 # BandLink.get_next_message returns this dataclass, not band.core.types'
 # same-named one that _build_platform_message below constructs.
 from band.runtime.types import PlatformMessage as RestPlatformMessage
+from band.runtime.types import SessionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,11 @@ class OneShotInvoker:
         drain_cap: Defensive ceiling on the drain loop. Default 50.
         history_page_cap: How many of the most recent pages of history to
             retain per invocation. Default 20.
+        session_config: Accepted only to refuse ``consume_all_queued``: a
+            one-shot drain runs one event per invocation and never batches.
+
+    Raises:
+        BandConfigError: ``session_config.consume_all_queued`` is set.
     """
 
     def __init__(
@@ -167,7 +174,12 @@ class OneShotInvoker:
         agent_id: str,
         drain_cap: int = DEFAULT_DRAIN_CAP,
         history_page_cap: int = DEFAULT_HISTORY_PAGE_CAP,
+        session_config: SessionConfig | None = None,
     ) -> None:
+        if session_config is not None and session_config.consume_all_queued:
+            raise BandConfigError(
+                "consume_all_queued is not supported by one-shot invocation"
+            )
         self._claims = ClaimRegistry()
         self._link = link
         self._adapter = adapter
