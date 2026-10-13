@@ -163,21 +163,21 @@ class Launch:
     client_capabilities: object | None
 
 
-class LostThenSlowFailureReports(TranscriptTools):
-    """Room tools whose first failure post is lost, as in a REST outage, and
-    whose next one lands only once ``reporting`` is released."""
+class SlowFailureReports(TranscriptTools):
+    """Room tools whose first ``lost`` failure posts are lost, as in a REST
+    outage, and whose next one lands only once ``reporting`` is released."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, lost: int) -> None:
         super().__init__()
         self.reporting = Gate()
-        self._failure_posts = 0
+        self._lost = lost
 
     async def send_event(
         self, content: str, message_type: str, metadata: dict[str, Any] | None = None
     ) -> Any:
         if message_type == MessageType.ERROR:
-            self._failure_posts += 1
-            if self._failure_posts == 1:
+            if self._lost:
+                self._lost -= 1
                 raise ConnectionError("Band REST unavailable")
             await self.reporting.hold()
         return await super().send_event(content, message_type, metadata)

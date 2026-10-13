@@ -455,8 +455,10 @@ class ACPClientAdapter(
     ) -> None:
         """Switch ``room_id``'s live ACP session, checked against its catalog.
 
-        Raises ``BandConfigError`` (an ``ACPConfigError`` naming what the
-        session offers, when it rejects ``selection``). Only a switch that
+        The switch queues behind the room's running and queued prompts, as one
+        more turn would; other rooms never wait on it. Raises
+        ``BandConfigError`` (an ``ACPConfigError`` naming what the session
+        offers, when it rejects ``selection``). Only a switch that
         returns counts: the room then keeps what its session runs for the
         adapter's lifetime, and every later session for it starts there
         until one refuses it. A switch that raises may leave the live session
@@ -494,7 +496,8 @@ class ACPClientAdapter(
             if room.live_session is None:
                 raise _no_live_session(room.room_id)
 
-        async with room.retained.use(prepare=require_live_session):
+        # Settings take the room in turn with its prompts.
+        async with room.reservation, room.retained.use(prepare=require_live_session):
             session = room.live_session
             if session is None:
                 raise _no_live_session(room.room_id)
@@ -1646,7 +1649,8 @@ class ACPClientAdapter(
         ``final`` distinguishes real process shutdown (the default: no future turn
         can arrive, so a still-parked one must fail rather than start resources
         nothing will ever stop) from a teardown after which later turns start
-        afresh, which ``final=False`` keeps open.
+        afresh. Both close the MCP server the same way; ``final=False`` reopens
+        it, and the residency owner, only once that close is confirmed.
 
         Raises:
             CleanupIncompleteError: A room or the MCP server is still closing.
@@ -1656,21 +1660,18 @@ class ACPClientAdapter(
             + self.config.retention.transition_timeout_s
         )
         await self._retention.stop()
-        await self._close_mcp(final=final, deadline=deadline)
+        await self._close_mcp(deadline=deadline)
         if not final:
+            await self._mcp.reopen()
             self._renew_retention()
         logger.info("ACP client adapter stopped")
 
-    async def _close_mcp(self, *, final: bool, deadline: float) -> None:
+    async def _close_mcp(self, *, deadline: float) -> None:
         """Stop the shared MCP server within what remains of ``deadline``.
 
-        A final stop is owned by the backend, so the bounded wait leaves it
-        running for a retry to join. A non-final detach hands its backend to
-        this caller, so that stop is awaited to completion.
+        The backend owns the stop, so a bounded or cancelled wait leaves it
+        running for a retry to join, and nothing reopens the server meanwhile.
         """
-        if not final:
-            await self._mcp.close(final=False)
-            return
         try:
             async with asyncio.timeout_at(deadline):
                 await self._mcp.close(final=True)

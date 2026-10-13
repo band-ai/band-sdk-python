@@ -338,7 +338,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 # A failed or cancelled turn never gets here.
                 await judge_detached_turn(turn.tools, room_id=room.room_id)
         except Exception as error:
-            await _report_unreported_failure(turn.tools, error)
+            # A turn that took the room answered for its failure in its lease.
+            if turn.generation is None:
+                await _report_unreported_failure(turn.tools, error)
             raise
         finally:
             _close_turn(turn)
