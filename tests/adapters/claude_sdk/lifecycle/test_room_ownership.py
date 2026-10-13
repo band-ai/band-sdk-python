@@ -151,16 +151,15 @@ async def test_shutdown_steps_share_one_budget(
         await asyncio.sleep(step_s)
         await close_mcp(final=final)
 
-    monkeypatch.setattr(mcp, "close", slow_mcp_close)
-    shutdown = asyncio.create_task(room.adapter.cleanup_all())
-    async with closing:
-        await asyncio.sleep(step_s)
-
-    with pytest.raises(CleanupIncompleteError):
-        await shutdown
+    with monkeypatch.context() as patch:
+        patch.setattr(mcp, "close", slow_mcp_close)
+        shutdown = asyncio.create_task(room.adapter.cleanup_all())
+        async with closing:
+            await asyncio.sleep(step_s)
+        with pytest.raises(CleanupIncompleteError):
+            await shutdown
     [cli] = room.claude.sessions
     room_closed_first = not cli.alive
-    monkeypatch.undo()
     await room.adapter.cleanup_all()
 
     assert room_closed_first

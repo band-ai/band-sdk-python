@@ -1017,7 +1017,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # that recovery runs only while no operation leases the room.
             await self._mcp.ensure()
             session.retire_outdated()
-            prepare = self._turn_binder(session, tools, resume_from)
+            prepare = partial(self._bind_turn, session, tools, resume_from)
             async with session.using(prepare) as client:
                 started = True
                 yield client
@@ -1029,21 +1029,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 )
             raise
 
-    def _turn_binder(
+    async def _bind_turn(
         self,
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
         resume_from: str | None,
-    ) -> Callable[[], Awaitable[None]]:
+    ) -> None:
         """Bind a leased turn before the CLI that will call its tools starts."""
-
-        async def bind() -> None:
-            session.adopt(resume_from)
-            # The running turn's approvals and MCP calls keep their original tools.
-            self._room_tools[session.room_id] = tools
-            await self._bind_mcp_tools(session.room_id, tools)
-
-        return bind
+        session.adopt(resume_from)
+        # The running turn's approvals and MCP calls keep their original tools.
+        self._room_tools[session.room_id] = tools
+        await self._bind_mcp_tools(session.room_id, tools)
 
     async def _converse(
         self,
@@ -1712,17 +1708,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 )
                 if session.speaks_for(generation):
                     return decision
-                logger.warning(
-                    "Room %s: denied %s, decided after its Claude session retired",
-                    session.room_id,
-                    tool_name,
-                )
+                why = "decided after its Claude session retired"
             else:
-                logger.warning(
-                    "Room %s: denied %s requested by a retired Claude session",
-                    session.room_id,
-                    tool_name,
-                )
+                why = "requested by a retired Claude session"
+            logger.warning("Room %s: denied %s, %s", session.room_id, tool_name, why)
             return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
 
         return _can_use_tool
