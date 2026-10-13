@@ -22,6 +22,7 @@ __all__ = [
     "GeminiOutputAdapter",
     "GoogleADKOutputAdapter",
     "LangChainOutputAdapter",
+    "NooaOutputAdapter",
     "OutputAdapter",
     "PydanticAIOutputAdapter",
     "SenderDictListAdapter",
@@ -620,6 +621,51 @@ class ClaudeSDKOutputAdapter(OutputAdapter):
         sender_type: str | None = None,
     ) -> None:
         self._inner.assert_sender_metadata(result.text, index, sender_name, sender_type)
+
+
+class NooaOutputAdapter(OutputAdapter):
+    """Adapter for NOOA converter output (one ``[sender]: content`` line per message).
+
+    Joins the lines and delegates all assertions to :class:`StringOutputAdapter`.
+    """
+
+    def __init__(self) -> None:
+        self._inner = StringOutputAdapter()
+
+    def assert_result_type(self, result: Any) -> None:
+        assert isinstance(result, list), f"Expected list, got {type(result).__name__}"
+        assert all(isinstance(line, str) for line in result), result
+
+    def result_length(self, result: list[str]) -> int:
+        return self._inner.result_length("\n".join(result))
+
+    def get_content(self, result: list[str], index: int) -> str:
+        return self._inner.get_content("\n".join(result), index)
+
+    def get_role(self, result: list[str], index: int) -> str:
+        return self._inner.get_role("\n".join(result), index)
+
+    def is_empty(self, result: list[str]) -> bool:
+        return not result
+
+    def content_contains(self, result: list[str], substring: str) -> bool:
+        return self._inner.content_contains("\n".join(result), substring)
+
+    def assert_element_type(
+        self, result: list[str], index: int, expected_role: str
+    ) -> None:
+        self._inner.assert_element_type("\n".join(result), index, expected_role)
+
+    def assert_sender_metadata(
+        self,
+        result: list[str],
+        index: int,
+        sender_name: str,
+        sender_type: str | None = None,
+    ) -> None:
+        self._inner.assert_sender_metadata(
+            "\n".join(result), index, sender_name, sender_type
+        )
 
 
 class CopilotSDKOutputAdapter(ClaudeSDKOutputAdapter):

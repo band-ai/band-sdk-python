@@ -38,6 +38,18 @@ STOP, PLAY or INTERRUPT controls invalidate obsolete recovery results. A 204
 response preserves the local pause because it cannot distinguish stopped from
 empty rooms.
 
+While working-state reporting is active, its existing activity keep-alive also
+recovers a missed STOP: the platform answers a `working: true` report with
+`working: false` when the room execution is stopped. The runtime cancels the
+originating turn through the same platform-stop path as a refused claim or post,
+leaving its message PROCESSING for later replay. Responses from before PLAY,
+a replacement turn, or shutdown cannot stop newer work. Request failures never
+count as STOP, and the public activity-report boolean still means request success.
+
+This recovery ends when working-state reporting is disabled, capped, or excluded
+for a hub room. It does not recover INTERRUPT or a STOP cleared before the next
+report. Native control pushes remain the immediate cancellation path.
+
 Failed requests, refused claims and pending acknowledgements retain the base
 retry cadence. A completed or skipped head that cannot advance ends the pass
 without spinning; retryable handler failures retain their normal attempt budget.
@@ -63,3 +75,18 @@ Controls use the same duplicate checks and accepted processing gate before an
 adapter handles them. A control consumed behind pending work acknowledges only
 its own delivery; an ordinary candidate is left outstanding. Runtime recovery
 never interprets approval syntax or drains model context for a control.
+
+## Control settlement
+
+Room admission and control revisions belong to the execution context; a turn
+scope owns termination intent and delivery disposition. Each concrete task has
+one cancellation owner, including explicitly bound Codex/Claude workers.
+Shutdown takes precedence; otherwise the latest accepted native STOP/INTERRUPT
+before settlement determines delivery. An observed REST refusal cannot replace
+an accepted native disposition. PLAY advances admission without reviving an
+aborted scope, and observer callbacks remain fenced by request-time revision.
+
+The supervisor finishes the old turn's authoritative idle report before the next
+working report. Cleanup surviving its bounded grace cannot later stop a newer
+turn's activity reporter. Durable completion still retries only its ACK, never
+handler effects.

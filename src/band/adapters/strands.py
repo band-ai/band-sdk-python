@@ -48,7 +48,6 @@ from band.core.protocols import (
 )
 from band.core.redaction import redact_credentials_deep
 from band.core.simple_adapter import SimpleAdapter
-from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import Turn
 from band.core.types import (
     Capability,
@@ -66,19 +65,18 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     reject_conflicting_tool_names,
 )
-from band.runtime.prompts import render_system_prompt
+from band.runtime.prompts import render_system_prompt, with_system_updates
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     ToolCallOutcome,
     ToolDefinition,
     TurnEffect,
     band_tool_errored,
-    decode_image_block,
-    get_band_tool_category,
+    decode_image_blocks,
     image_block_placeholder,
     is_image_passthrough_result,
-    iter_tool_definitions,
     redact_tool_call_args,
+    selected_tool_definitions,
     serialize_tool_result,
     turn_effect,
     validate_tool_arguments,
@@ -108,8 +106,7 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
     if ok and is_image_passthrough_result(tool_use["name"], value):
         try:
             content = []
-            for block in cast(dict[str, Any], value)["content"]:
-                data, mime_type = decode_image_block(block)
+            for data, mime_type in decode_image_blocks(cast(dict[str, Any], value)):
                 content.append(
                     {
                         "image": {
@@ -579,17 +576,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         the features exclude must never reach the model, since reaching it is
         enough to execute it.
         """
-        definitions = filter_tool_schemas(
-            list(
-                iter_tool_definitions(
-                    capabilities=self.features.capabilities,
-                )
-            ),
-            self.features,
-            get_name=lambda definition: definition.name,
-            get_category=lambda definition: get_band_tool_category(definition.name),
-        )
-        return [PlatformToolBridge(definition, tools) for definition in definitions]
+        return [
+            PlatformToolBridge(definition, tools)
+            for definition in selected_tool_definitions(self.features)
+        ]
 
     def _history_for_turn(
         self,
@@ -606,25 +596,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             if history:
                 logger.debug("Room %s: rehydrated %s message(s)", room_id, len(history))
         return self._message_history.setdefault(room_id, [])
-
-    @staticmethod
-    def _with_system_context(
-        user_message: str,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-    ) -> str:
-        """Lead the turn's prompt with any changed platform context.
-
-        Strands appends the prompt as its own user message, so context posted
-        as a separate message would leave two user turns in a row — which
-        Bedrock's Converse rejects.
-        """
-        notices = [
-            f"[System]: {message}"
-            for message in (participants_msg, contacts_msg)
-            if message
-        ]
-        return "\n\n".join([*notices, user_message])
 
     async def _run_turn(
         self,
@@ -682,7 +653,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         room_history = self._history_for_turn(
             room_id, history, is_session_bootstrap=is_session_bootstrap
         )
-        user_message = self._with_system_context(
+        # Strands appends the prompt as its own user message, so context posted
+        # as a separate message would leave two user turns in a row, which
+        # Bedrock's Converse rejects.
+        user_message = with_system_updates(
             msg.format_for_llm(), participants_msg, contacts_msg
         )
         logger.debug(

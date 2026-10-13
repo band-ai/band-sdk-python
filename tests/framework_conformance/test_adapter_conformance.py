@@ -303,6 +303,7 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
 #   langgraph     test_langchain_tools.py (langchain_core ImageContentBlock)
 #   agno          tests/adapters/agno/test_adapter.py (agno.media.Image)
 #   strands       test_strands_adapter.py (ToolResultContent image block)
+#   nooa          tests/adapters/nooa/ (nooa.Image the model can show())
 #   copilot_sdk   copilot_sdk/test_tool_bridging.py (ToolBinaryResult)
 #   codex         test_codex_adapter.py ("inputImage" content item -- wire-shape
 #                 verified against codex-cli's generated schema; whether
