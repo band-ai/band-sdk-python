@@ -38,7 +38,11 @@ from band.platform.event import (
     RoomRemovedEvent,
     WebSocketDisconnectedEvent,
 )
-from band.platform.message_lifecycle import ActionablePage, MessageLifecycle
+from band.platform.message_lifecycle import (
+    ActionablePage,
+    MessageLifecycle,
+    SettlementResult,
+)
 from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage
 
@@ -578,6 +582,20 @@ class BandLink:
 
     async def mark_failed(self, room_id: str, message_id: str, error: str) -> bool:
         return await self._messages.mark_failed(self.rest, room_id, message_id, error)
+
+    async def mark_processed_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        return await self._messages.mark_processed_result(
+            self.rest, room_id, message_id
+        )
+
+    async def mark_failed_result(
+        self, room_id: str, message_id: str, error: str
+    ) -> SettlementResult:
+        return await self._messages.mark_failed_result(
+            self.rest, room_id, message_id, error
+        )
 
     async def report_activity(
         self,

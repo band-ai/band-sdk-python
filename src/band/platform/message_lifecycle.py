@@ -7,15 +7,19 @@ of WebSocket connection or subscription state.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from http import HTTPStatus
 from typing import Any, TypeVar
 
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
+from band_rest.core.parse_error import ParsingError
 from band_rest.types.chat_message import ChatMessage
+from band_rest.types.validation_error import ValidationError as ErrorEnvelope
+from pydantic import ValidationError as ModelValidationError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
@@ -26,6 +30,21 @@ logger = logging.getLogger(__name__)
 
 
 ResponseData = TypeVar("ResponseData")
+
+# The platform renders a terminal write against a message with no current
+# processing attempt as HTTP 422 with this code and one detail under this
+# JSON Pointer (the agent API's `ValidationError` schema).
+VALIDATION_ERROR_CODE = "validation_error"
+PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
+
+
+class SettlementResult(StrEnum):
+    """What a terminal (processed/failed) write established about the platform."""
+
+    ACCEPTED = "accepted"
+    UNCONFIRMED = "unconfirmed"
+    NOT_FOUND = "not_found"
+    REJECTED = "rejected"
 
 
 def _accepted_response(
@@ -49,6 +68,36 @@ def _accepted_response(
             body="Lifecycle response did not confirm acceptance",
         )
     return data
+
+
+def _names_missing_attempt(body: object) -> bool:
+    try:
+        error = ErrorEnvelope.model_validate(body).error
+    except ModelValidationError:
+        return False
+    return error.code == VALIDATION_ERROR_CODE and bool(
+        error.details.get(PROCESSING_ATTEMPT_POINTER)
+    )
+
+
+def _failure_result(error: Exception) -> SettlementResult:
+    """Classify a failed terminal write from the public status and error body.
+
+    ``ParsingError`` is not an ``ApiError``: the generated client raises it for
+    an error body that misses its schema, but it still carries the status.
+    """
+    match error:
+        case (
+            ApiError(status_code=HTTPStatus.NOT_FOUND)
+            | ParsingError(status_code=HTTPStatus.NOT_FOUND)
+        ):
+            return SettlementResult.NOT_FOUND
+        case (
+            ApiError(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, body=body)
+            | ParsingError(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, body=body)
+        ) if _names_missing_attempt(body):
+            return SettlementResult.REJECTED
+    return SettlementResult.UNCONFIRMED
 
 
 def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
@@ -113,50 +162,70 @@ class MessageLifecycle:
     async def mark_processed(
         self, rest: AsyncRestClient, room_id: str, message_id: str
     ) -> bool:
-        """
-        Mark message as successfully processed on the server.
-
-        Clears the message from unprocessed queue.
-        """
-        logger.debug("Marking message %s as processed", message_id)
-        try:
-            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_processed(
-                chat_id=room_id,
-                id=message_id,
-                request_options=DEFAULT_REQUEST_OPTIONS,
-            )
-            _accepted_response(response, stopped_room_id=room_id)
-        except RoomExecutionStoppedError:
-            raise
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Failed to mark message %s as processed: %s", message_id, e)
-            return False
-        return True
+        """Mark message as processed, clearing it from the unprocessed queue."""
+        result = await self.mark_processed_result(rest, room_id, message_id)
+        return result is SettlementResult.ACCEPTED
 
     async def mark_failed(
         self, rest: AsyncRestClient, room_id: str, message_id: str, error: str
     ) -> bool:
-        """
-        Mark message as failed on the server.
+        """Mark message as failed, recording the error for server-side retry logic."""
+        result = await self.mark_failed_result(rest, room_id, message_id, error)
+        return result is SettlementResult.ACCEPTED
 
-        Records the error and may trigger retry logic on the server side.
-        """
+    async def mark_processed_result(
+        self, rest: AsyncRestClient, room_id: str, message_id: str
+    ) -> SettlementResult:
+        """Write the processed mark once and report what it established."""
+        logger.debug("Marking message %s as processed", message_id)
+        return await self._settle(
+            rest.agent_api_messages.with_raw_response.mark_agent_message_processed(
+                chat_id=room_id,
+                id=message_id,
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            ),
+            room_id=room_id,
+            message_id=message_id,
+            action="processed",
+        )
+
+    async def mark_failed_result(
+        self, rest: AsyncRestClient, room_id: str, message_id: str, error: str
+    ) -> SettlementResult:
+        """Write the failed mark once and report what it established."""
         error = error.strip() or "Unknown error"
         logger.warning("Marking message %s as failed: %s", message_id, error)
-        try:
-            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
+        return await self._settle(
+            rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
                 chat_id=room_id,
                 id=message_id,
                 error=error,
                 request_options=DEFAULT_REQUEST_OPTIONS,
-            )
-            _accepted_response(response, stopped_room_id=room_id)
+            ),
+            room_id=room_id,
+            message_id=message_id,
+            action="failed",
+        )
+
+    async def _settle(
+        self,
+        write: Awaitable[AsyncHttpResponse[Any]],
+        *,
+        room_id: str,
+        message_id: str,
+        action: str,
+    ) -> SettlementResult:
+        try:
+            _accepted_response(await write, stopped_room_id=room_id)
         except RoomExecutionStoppedError:
             raise
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Failed to mark message %s as failed: %s", message_id, e)
-            return False
-        return True
+        except Exception as e:  # noqa: BLE001 -- a failed write is an outcome, never a crash of the turn/link
+            result = _failure_result(e)
+            logger.warning(
+                "Marking message %s as %s ended %s: %s", message_id, action, result, e
+            )
+            return result
+        return SettlementResult.ACCEPTED
 
     async def report_activity(
         self,
