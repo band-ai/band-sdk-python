@@ -43,8 +43,8 @@ class TestSetupTimeControls:
         assert platform.marked("processed") == []
 
         await ctx.resume_room()
-        await wait_for_condition(lambda: adapter.completed == ["B"])
-        assert platform.marked("processed") == ["B"]
+        await wait_for_condition(lambda: platform.marked("processed") == ["B"])
+        assert adapter.completed == ["B"]
 
     async def test_interrupt_during_synthetic_setup_consumes_the_turn(
         self,
