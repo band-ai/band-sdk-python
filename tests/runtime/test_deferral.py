@@ -211,7 +211,7 @@ async def test_synthetic_work_survives_stop_and_rejection_in_receive_order() -> 
         )
         ctx.stop_room()
         for message_id in ["local-B", "local-D"]:
-            await ctx._process_event(
+            ctx._enqueue_synthetic(
                 make_message_event(
                     room_id=ROOM_ID,
                     msg_id=message_id,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from tests.conftest import BlockingHandler, make_message_event
 
 
@@ -20,7 +20,7 @@ class TestStopInFlightCycle:
         ctx.interrupt(kind="stop")
         result = await proc
 
-        assert result is True
+        assert result is TurnOutcome.PAUSED
         mock_link.mark_processed.assert_not_awaited()
         assert "s1" not in ctx.claims.completed_ids(ctx.room_id)
         # Local in-flight claim released so it can be reprocessed on play.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
@@ -38,7 +38,9 @@ class TestCycleWatchdog:
 
         result = await ctx._process_event(make_message_event(msg_id="watchdog-1"))
 
-        assert result is True  # loop continues; the watchdog is a handled error
+        assert (
+            result is TurnOutcome.ADVANCED
+        )  # loop continues; the watchdog is a handled error
         assert handler.cancelled.is_set()  # the stuck cycle was actually cancelled
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
@@ -52,7 +54,7 @@ class TestCycleWatchdog:
         handler2 = BlockingHandler(block=False)
         ctx._on_execute = handler2
         result2 = await ctx._process_event(make_message_event(msg_id="watchdog-2"))
-        assert result2 is True
+        assert result2 is TurnOutcome.ADVANCED
         assert handler2.completed == ["watchdog-2"]
 
     async def test_unset_max_cycle_seconds_never_cancels_a_slow_handler(
@@ -64,7 +66,7 @@ class TestCycleWatchdog:
 
         result = await ctx._process_event(make_message_event(msg_id="no-watchdog"))
 
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         assert not handler.cancelled.is_set()
         mock_link.mark_processed.assert_awaited_once_with("room-123", "no-watchdog")
         mock_link.mark_failed.assert_not_awaited()
@@ -88,7 +90,7 @@ class TestCycleWatchdog:
 
         result = await ctx._process_event(make_message_event(msg_id="own-timeout"))
 
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "own-timeout")
@@ -117,7 +119,9 @@ class TestCycleWatchdog:
 
         result = await ctx._process_event(make_message_event(msg_id="swallowed"))
 
-        assert result is True  # loop continues; the watchdog is a handled error
+        assert (
+            result is TurnOutcome.ADVANCED
+        )  # loop continues; the watchdog is a handled error
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
@@ -155,7 +159,7 @@ class TestCycleWatchdog:
         ctx._on_execute = interrupted_cleanup
         result = await ctx._process_event(make_message_event(msg_id="race-1"))
 
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         # The interrupt won, not the watchdog: consumed/acked, not failed.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "race-1")
         mock_link.mark_failed.assert_not_awaited()
@@ -177,7 +181,10 @@ class TestCycleWatchdog:
             agent_id="agent-123",
             config=SessionConfig(max_cycle_seconds=1e-9),
         )
-        assert await ctx._process_event(make_message_event(msg_id="boundary"))
+        assert (
+            await ctx._process_event(make_message_event(msg_id="boundary"))
+            is TurnOutcome.ADVANCED
+        )
         assert completed == ["reply"]
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
         mock_link.mark_failed.assert_not_awaited()
@@ -212,7 +219,7 @@ class TestCycleWatchdog:
                 timeout=0.2,
             )
 
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         assert cleanup_started.is_set()
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()

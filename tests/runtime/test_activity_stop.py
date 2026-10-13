@@ -14,7 +14,7 @@ from band.client.streaming import ControlMode
 from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.runtime import AgentRuntime
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import SessionConfig
@@ -103,7 +103,10 @@ async def test_heartbeat_stop_during_watchdog_cleanup_keeps_stop_disposition() -
     async with activity_context(
         peer, handler, observer, max_cycle_seconds=keep_alive - 0.5
     ) as ctx:
-        assert not await ctx._process_event(make_message_event(msg_id="trigger"))
+        assert (
+            await ctx._process_event(make_message_event(msg_id="trigger"))
+            is TurnOutcome.RETRY_LATER
+        )
 
         assert peer.activity_reports == [KEEP_ALIVE, STOP_ECHO, IDLE]
         assert peer.marked("processing") == ["trigger"]

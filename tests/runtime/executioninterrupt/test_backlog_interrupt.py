@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import BacklogProcessResult, ExecutionContext, ResyncOutcome
+from band.runtime.execution import ExecutionContext, ResyncOutcome, TurnOutcome
 from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler
 from tests.runtime.executioninterrupt.kit import (
@@ -26,7 +26,7 @@ class TestBacklogInterrupt:
         ctx.interrupt()
         result = await proc
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         mock_link.mark_processed.assert_awaited_once_with("room-123", "bk1")
         assert "bk1" in ctx.claims.completed_ids(ctx.room_id)
 
@@ -39,7 +39,7 @@ class TestBacklogInterrupt:
         ctx.interrupt(kind="stop")
         result = await proc
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.PAUSED
         mock_link.mark_processed.assert_not_awaited()
         assert "bk2" not in ctx.claims.completed_ids(ctx.room_id)
 

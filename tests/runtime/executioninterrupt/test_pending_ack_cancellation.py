@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.runtime.execution import BacklogProcessResult, ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
@@ -89,7 +89,7 @@ class TestPendingAckCancellationGap:
         mock_link.mark_processed = AsyncMock(return_value=True)
         result = await ctx._process_event(make_message_event(msg_id="ws-cancel-ack"))
 
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         assert handler.invocations == 1
         assert ctx.claims.is_completed("room-123", "ws-cancel-ack")
         assert not ctx.claims.is_ack_pending("room-123", "ws-cancel-ack")
@@ -118,7 +118,7 @@ class TestPendingAckCancellationGap:
         mock_link.mark_processed = AsyncMock(return_value=True)
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         assert handler.invocations == 1
         assert ctx.claims.is_completed("room-123", "bk-cancel-ack")
         assert not ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
