@@ -69,6 +69,16 @@ class AgentConfig:
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
 
+# The platform's list endpoint serves at most this many messages per page.
+ACTIONABLE_PAGE_SIZE = 100
+
+# Model attempts per message when batching is off; batching allows only this.
+DEFAULT_MAX_MESSAGE_RETRIES = 1
+
+# How many queued messages one turn consumes when batching is on.
+DEFAULT_MAX_QUEUED_MESSAGES = 10
+
+
 def _require_positive_when_set(name: str, value: float | None) -> None:
     """Shared guard for the optional-timeout fields below: unset (None) means
     unbounded and is always valid; a set value must be strictly positive."""
@@ -85,7 +95,7 @@ class SessionConfig:
     max_context_messages: int = 100
     # Max attempts per message before permanently failing. band_sdk_core.RetryTracker's
     # constructor validates this range itself -- no second Python-side check.
-    max_message_retries: int = 1
+    max_message_retries: int = DEFAULT_MAX_MESSAGE_RETRIES
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
     # Base reconciliation interval, also used for stopped probes and retries.
     # Queue traffic cannot postpone a check; active handlers remain serial.
@@ -125,6 +135,12 @@ class SessionConfig:
     # periodic check is spread within the base interval. Equal caps disable growth.
     idle_resync_max_seconds: float = 120.0
 
+    # Opt in to one turn consuming the ordinary messages already queued in a
+    # room, oldest first, up to ``max_queued_messages``. The ceiling bounds a
+    # turn; it is never a target to wait for.
+    consume_all_queued: bool = False
+    max_queued_messages: int = DEFAULT_MAX_QUEUED_MESSAGES
+
     def __post_init__(self) -> None:
         for name in ("idle_resync_seconds", "idle_resync_max_seconds"):
             value = getattr(self, name)
@@ -157,6 +173,25 @@ class SessionConfig:
             )
 
         _require_positive_when_set("max_cycle_seconds", self.max_cycle_seconds)
+
+        if (
+            isinstance(self.max_queued_messages, bool)
+            or not isinstance(self.max_queued_messages, int)
+            or not 1 <= self.max_queued_messages <= ACTIONABLE_PAGE_SIZE
+        ):
+            raise ValueError(
+                f"max_queued_messages must be an integer from 1 to "
+                f"{ACTIONABLE_PAGE_SIZE} (got {self.max_queued_messages!r})"
+            )
+        if (
+            self.consume_all_queued
+            and self.max_message_retries != DEFAULT_MAX_MESSAGE_RETRIES
+        ):
+            raise ValueError(
+                "consume_all_queued runs one model attempt per batch; "
+                f"max_message_retries must stay {DEFAULT_MAX_MESSAGE_RETRIES} "
+                f"(got {self.max_message_retries})"
+            )
 
 
 @dataclass

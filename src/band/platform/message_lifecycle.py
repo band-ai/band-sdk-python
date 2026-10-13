@@ -20,7 +20,7 @@ from band_rest.types.chat_message import ChatMessage
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.types import metadata_to_dict
-from band.runtime.types import PlatformMessage
+from band.runtime.types import ACTIONABLE_PAGE_SIZE, PlatformMessage
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,6 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
         metadata=metadata_to_dict(item.metadata, exclude_none=True),
         created_at=item.inserted_at or datetime.now(UTC),
     )
-
-
-ACTIONABLE_PAGE_SIZE = 100
 
 
 @dataclass(frozen=True)
