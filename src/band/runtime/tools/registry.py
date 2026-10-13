@@ -10,12 +10,14 @@ rather than hardcoding their own tool lists.
 from __future__ import annotations
 
 import base64
-from collections.abc import Collection
-from typing import Any
+from collections.abc import Collection, Mapping
+from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel
 
-from band.core.types import Capability
+from band.core.tool_filter import filter_tool_schemas
+from band.core.types import AdapterFeatures, Capability
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.tools.inputs import (
     AddContactInput,
     AddMyChatParticipantInput,
@@ -817,6 +819,20 @@ def iter_tool_definitions(
     return results
 
 
+class ImageContentBlock(TypedDict):
+    """One MCP image content block: base64 ``data`` and its ``mimeType``."""
+
+    type: Literal["image"]
+    data: str
+    mimeType: str
+
+
+class ImageContentResult(TypedDict):
+    """``band_read_room_file``'s result for a previewable image."""
+
+    content: list[ImageContentBlock]
+
+
 def is_mcp_content_result(data: Any) -> bool:
     """True when ``data`` is ``read_room_file``'s image-content-block shape.
 
@@ -853,6 +869,17 @@ def is_image_passthrough_result(tool_name: str, result: Any) -> bool:
     return tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result)
 
 
+def image_passthrough_result(tool_name: str, result: Any) -> ImageContentResult | None:
+    """``result`` typed as an image-file read, or ``None`` when it is not one.
+
+    The typed form of ``is_image_passthrough_result``: the shape check and the
+    static type come from one place, so callers need no cast.
+    """
+    if not is_image_passthrough_result(tool_name, result):
+        return None
+    return cast(ImageContentResult, result)
+
+
 def image_block_placeholder(block_count: int) -> str:
     """The text an adapter emits alongside image content it passes separately."""
     return f"<{block_count} image content block(s)>"
@@ -883,6 +910,30 @@ def redact_tool_call_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any
     }
 
 
-def decode_image_block(block: dict[str, Any]) -> tuple[bytes, str]:
+def decode_image_block(block: Mapping[str, Any]) -> tuple[bytes, str]:
     """Decode one MCP image content block into (raw bytes, mime type)."""
     return base64.b64decode(block["data"]), block["mimeType"]
+
+
+def decode_image_blocks(result: Mapping[str, Any]) -> list[tuple[bytes, str]]:
+    """Decode every block of an image-file read into (raw bytes, mime type)."""
+    return [decode_image_block(block) for block in result["content"]]
+
+
+def selected_tool_definitions(
+    features: AdapterFeatures, *, is_hub_room: bool = False
+) -> list[ToolDefinition]:
+    """The agent-surface tools *features* allow, after the capability gate and filters.
+
+    The contacts hub room always gets the contact tools, since its prompt tells
+    the model to use them whatever the adapter negotiated.
+    """
+    capabilities = with_hub_room_contacts(
+        features.capabilities, is_hub_room=is_hub_room
+    )
+    return filter_tool_schemas(
+        iter_tool_definitions(capabilities=capabilities),
+        features,
+        get_name=lambda definition: definition.name,
+        get_category=lambda definition: get_band_tool_category(definition.name),
+    )

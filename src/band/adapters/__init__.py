@@ -18,6 +18,7 @@ Install the extra you need::
     uv add band-sdk[opencode]
     uv add band-sdk[slack]
     uv add band-sdk[strands]
+    uv add band-sdk[nooa]
 """
 
 from __future__ import annotations
@@ -116,6 +117,9 @@ if TYPE_CHECKING:
     from band.adapters.letta import (
         LettaAdapterConfig as LettaAdapterConfig,
     )
+    from band.adapters.nooa import NooaAdapter as NooaAdapter
+    from band.adapters.nooa import NooaAdapterConfig as NooaAdapterConfig
+    from band.adapters.nooa import NooaRoomAgent as NooaRoomAgent
     from band.adapters.omp_acp import (
         OmpACPAdapter as OmpACPAdapter,
     )
@@ -187,6 +191,7 @@ __all__, __getattr__ = lazy_exports(
     google_adk=["GoogleADKAdapter", "GoogleADKAdapterConfig"],
     opencode=["OpencodeAdapter", "OpencodeAdapterConfig"],
     letta=["LettaAdapter", "LettaAdapterConfig"],
+    nooa=["NooaAdapter", "NooaAdapterConfig", "NooaRoomAgent"],
     slack=["SlackAdapter", "SlackAdapterConfig", "SlackApp", "SlackSessionState"],
     strands=["StrandsAdapter", "StrandsAdapterConfig"],
 )

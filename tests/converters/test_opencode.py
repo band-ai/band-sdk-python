@@ -91,3 +91,11 @@ class TestOpencodeHistoryConverter:
             "[Alice]: hello",
             "[OpenCode Agent]: hi there",
         ]
+
+    def test_convert_replays_a_message_without_a_type_as_text(self) -> None:
+        converter = OpencodeHistoryConverter()
+        state = converter.convert(
+            [{"content": "hello", "sender_name": "Alice", "sender_type": "User"}]
+        )
+
+        assert state.replay_messages == ["[Alice]: hello"]
