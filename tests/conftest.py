@@ -22,6 +22,9 @@ import os
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 
 import asyncio
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cache
 from itertools import count
@@ -268,6 +271,27 @@ def assert_no_leaked_adapter_config_env() -> None:
     """
     leaked = [k for k in os.environ if k.startswith(_ADAPTER_CONFIG_ENV_PREFIXES)]
     assert leaked == [], f"leaked adapter-config env vars: {leaked}"
+
+
+# =============================================================================
+# Eager task factory (host-selected, Python 3.12+)
+# =============================================================================
+
+requires_eager_tasks = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="eager task factories need Python 3.12"
+)
+
+
+@contextmanager
+def eager_tasks() -> Iterator[None]:
+    """Run new tasks' first step inside ``create_task``, as a host may choose."""
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        yield
+    finally:
+        loop.set_task_factory(previous)
 
 
 # =============================================================================

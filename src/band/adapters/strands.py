@@ -58,10 +58,10 @@ from band.runtime.custom_tools import (
     declared_effects,
     execute_custom_tool,
     get_custom_tool_name,
+    reject_conflicting_tool_names,
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    ALL_TOOL_NAMES,
     ToolCallOutcome,
     ToolDefinition,
     TurnEffect,
@@ -226,11 +226,8 @@ def _custom_tool_effects(
     ``execute_custom_tool``.
     """
     names = [_registered_name(tool) for tool in custom_tools]
-    # Strands' registry is last-wins, so a collision would silently replace the
-    # platform tool the room depends on.
-    shadowed = sorted(set(names) & ALL_TOOL_NAMES)
-    if shadowed:
-        raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
+    # Strands' registry is last-wins.
+    reject_conflicting_tool_names(names)
 
     return declared_effects(
         (name, tool)

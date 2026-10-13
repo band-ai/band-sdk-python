@@ -27,13 +27,7 @@ from band.integrations.acp.client_profiles import (
     CursorQuestion,
     parse_cursor_questions,
 )
-from band.integrations.acp.client_runtime import (
-    ALLOW_ALWAYS_KIND,
-    ACPRuntime,
-    option_id_of_kind,
-    permission_option_ids,
-    select_allow_option_id,
-)
+from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.cursor import (
     CURSOR_CLI_BINARY,
@@ -45,6 +39,15 @@ from band.integrations.acp.cursor import (
     PLAN_REQUESTED_TEMPLATE,
     ROOM_COMMAND,
     CursorCommandWord,
+    canonicalize_cursor_tool_name,
+    is_cursor_band_tool,
+)
+from band.integrations.acp.permissions import (
+    ALLOW_ALWAYS_KIND,
+    ALLOW_ONCE_KIND,
+    option_id_of_kind,
+    permission_option_ids,
+    select_allow_option_id,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
@@ -54,6 +57,7 @@ from band.runtime.decisions import (
     Timeout,
 )
 from band.runtime.formatters import strip_leading_mentions
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -79,8 +83,10 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
         api_key: Sets ``CURSOR_API_KEY`` unless ``env`` already does;
             exclusive with ``auth_token``.
         auth_token: Sets ``CURSOR_AUTH_TOKEN`` unless ``env`` already does.
-        approval_mode: How Cursor's permission requests are decided;
-            ``"manual"`` asks the room.
+        approval_mode: How Cursor's own tools are decided; ``"manual"`` asks
+            the room. Band tools, including additional_tools, are approved
+            once per call in every mode while the turn is active. If Cursor
+            offers no allow-once option, the configured policy applies.
         question_mode: How Cursor's questions are answered; ``"manual"`` asks
             the room.
         plan_mode: How Cursor's plans are settled; ``"manual"`` asks the room.
@@ -130,6 +136,7 @@ class CursorTurn:
     requester_id: str | None
     release: asyncio.Future[None]
     session_id: str | None = None
+    closed: bool = False
     # Cursor sends parallel tool calls' permission requests together and does
     # not apply an "allow always" to one already outstanding, so the room is
     # asked one at a time and a granted tool settles its queued repeats.
@@ -192,6 +199,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             "CURSOR_AUTH_TOKEN": self.config.auth_token,
         }
         return {name: value for name, value in credentials.items() if value}
+
+    def _canonical_tool_name(self, name: str) -> str:
+        return canonicalize_cursor_tool_name(name, self._own_tool_names)
 
     async def on_message(
         self,
@@ -309,6 +319,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         )
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
+            if turn.closed:
+                raise asyncio.CancelledError
             turn.session_id = session_id
             self._cursor_profile.bind_session(session_id)
         return session_id, created
@@ -323,6 +335,11 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         # Wakes any decision _run_turn is parked on; the task itself keeps
         # running detached and winds down on its own (via _on_background_task_done)
         # once the runtime this stops out from under it closes the connection.
+        turn = self._active_turn
+        if turn is not None and turn.room_id == room_id:
+            turn.closed = True
+            turn.session_id = None
+            self._cursor_profile.bind_session(None)
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id, expected_runtime=expected_runtime)
 
@@ -339,6 +356,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         missing reply."""
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
+            turn.closed = True
+            turn.session_id = None
+            self._cursor_profile.bind_session(None)
             turn.tools.turn.settle()
         self._cancel_room_decisions(room_id)
 
@@ -350,6 +370,20 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
+        call = request.tool_call
+        is_band = (
+            call.mcp_server == BAND_MCP_SERVER_NAME
+            and call.name in self._own_tool_names
+        ) or (
+            call.mcp_server is None
+            and is_cursor_band_tool(call.title or "", self._own_tool_names)
+        )
+        if is_band:
+            if self._active_turn_for(request.room_id, request.session_id) is None:
+                return None
+            once = option_id_of_kind(request.options, ALLOW_ONCE_KIND)
+            if once is not None:
+                return once
         match self.config.approval_mode:
             case "auto_accept":
                 return select_allow_option_id(request.options)
@@ -649,7 +683,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn = self._active_turn
         return (
             turn
-            if turn and (turn.room_id, turn.session_id) == (room_id, session_id)
+            if turn
+            and not turn.closed
+            and (turn.room_id, turn.session_id) == (room_id, session_id)
             else None
         )
 
