@@ -32,6 +32,8 @@ from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    HANG_GUARD_S,
+    PATIENT_APPROVAL_S,
     PROCESS_EXITED,
     REFUSED_AUTONOMOUS_TURN,
     ROOM_ID,
@@ -74,7 +76,8 @@ class TestNativeTurnOwnership:
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         room = await codex_room(
-            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+            *parked_on_approval(turn_completed()),
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
         await room.send("run tests")
         residency = room.adapter._room_clients[ROOM_ID].retained
@@ -104,7 +107,8 @@ class TestNativeTurnOwnership:
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         room = await codex_room(
-            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+            *parked_on_approval(turn_completed()),
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
         await room.send("run tests")
         room.client.emit(*asked_by_autonomous_turn())
@@ -132,7 +136,7 @@ class TestNativeTurnOwnership:
             *delegation,
             tool_call_request(1, BandTool.NO_REPLY),
             turn_completed(),
-            approval_wait_timeout_s=3600,
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
         await room.send("delegate the cleanup")
 
@@ -254,8 +258,8 @@ class TestNativeTurnOwnership:
         )
         await adapter.on_started("Codex Agent", "A coding agent")
 
-        await asyncio.wait_for(send_bootstrap(adapter), timeout=5)
-        await asyncio.wait_for(send_bootstrap(adapter), timeout=5)
+        await asyncio.wait_for(send_bootstrap(adapter), timeout=HANG_GUARD_S)
+        await asyncio.wait_for(send_bootstrap(adapter), timeout=HANG_GUARD_S)
 
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
@@ -266,7 +270,7 @@ class TestNativeTurnOwnership:
         room = await codex_room(*parked_on_approval(PROCESS_EXITED))
 
         with pytest.raises(TurnResultAlreadyReported):
-            await asyncio.wait_for(room.send("run tests"), timeout=5)
+            await asyncio.wait_for(room.send("run tests"), timeout=HANG_GUARD_S)
 
         assert room.chat == []
         assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
@@ -289,12 +293,14 @@ class TestNativeTurnOwnership:
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         exits = ExitsWhileAskedClient(events=list(parked_on_approval()))
-        room = await codex_room(client=exits, approval_wait_timeout_s=3600)
+        room = await codex_room(
+            client=exits, approval_wait_timeout_s=PATIENT_APPROVAL_S
+        )
         await room.send("run tests")
 
         exits.emit(PROCESS_EXITED)
         with pytest.raises(TurnResultAlreadyReported):
-            await asyncio.wait_for(room.settled(), timeout=5)
+            await asyncio.wait_for(room.settled(), timeout=HANG_GUARD_S)
 
         assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
             TRANSPORT_LOST_ERROR

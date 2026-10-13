@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -11,6 +12,7 @@ from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.retention import RoomRetentionConfig
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
+    CLOSE_BOUND_S,
     ROOM_ID,
     CleaningTurn,
     CountingCloseClient,
@@ -114,13 +116,14 @@ class TestRoomRetirement:
     async def test_a_close_past_its_bound_names_the_room_and_bound(self) -> None:
         client = CountingCloseClient(events=[turn_completed()], hold=True)
         adapter = make_codex_adapter(
-            client, config=CodexAdapterConfig(client_close_timeout_s=0.5)
+            client, config=CodexAdapterConfig(client_close_timeout_s=CLOSE_BOUND_S)
         )
         await adapter.on_started("Codex Agent", "A coding agent")
         await send_bootstrap(adapter)
 
         with pytest.raises(
-            TimeoutError, match=f"room {ROOM_ID} did not close within 0.5s"
+            TimeoutError,
+            match=re.escape(f"room {ROOM_ID} did not close within {CLOSE_BOUND_S}s"),
         ):
             await adapter.on_cleanup(ROOM_ID)
         client.finish_close.set()

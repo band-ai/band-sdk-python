@@ -58,6 +58,12 @@ from tests.adapters.waiting import until
 from tests.paths import host_absolute_path
 
 ROOM_ID = "room-1"
+# An approval wait no test outlasts: the room's human decides first.
+PATIENT_APPROVAL_S = 3600
+# Bounds a step that would otherwise hang the test if the adapter regressed.
+HANG_GUARD_S = 5
+# A process close bound a held close overruns.
+CLOSE_BOUND_S = 0.5
 
 
 def make_platform_message(

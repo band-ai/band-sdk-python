@@ -11,6 +11,7 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from band.integrations.codex.types import CodexApprovalMethod, CodexRequestMethod
 from tests.adapters.codex.kit import (
+    PATIENT_APPROVAL_S,
     ROOM_ID,
     CodexRoom,
     ToolSchemaFakeTools,
@@ -35,7 +36,8 @@ class TestApprovalFromASequentialRoom:
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         room = await codex_room(
-            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+            *parked_on_approval(turn_completed()),
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
 
         await room.send("run tests")
@@ -56,7 +58,8 @@ class TestApprovalFromASequentialRoom:
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         room = await codex_room(
-            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+            *parked_on_approval(turn_completed()),
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
 
         await room.send("run tests")
@@ -79,7 +82,8 @@ class TestApprovalFromASequentialRoom:
         as a backstop; which of the two finishes it is an asyncio-scheduling
         detail, so this asserts only that the turn stops running."""
         room = await codex_room(
-            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+            *parked_on_approval(turn_completed()),
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
 
         await room.send("run tests")
@@ -105,7 +109,7 @@ class TestApprovalFromASequentialRoom:
                 ),
                 turn_completed(),
             ),
-            approval_wait_timeout_s=3600,
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
 
         await room.send("run tests")
@@ -128,7 +132,7 @@ class TestApprovalFromASequentialRoom:
         the settle timeout, then cancels Codex work that never ends."""
         room = await codex_room(
             client=FakeCodexClient(events=list(parked_on_approval())),
-            approval_wait_timeout_s=3600,
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
 
         await room.send("run tests")
@@ -150,7 +154,7 @@ class TestApprovalFromASequentialRoom:
                 {"approvalId": "ap-1", "command": ["git", "push"]},
             ),
             turn_completed(),
-            approval_wait_timeout_s=3600,
+            approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
 
         await room.send("run protected command")
