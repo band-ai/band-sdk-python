@@ -219,7 +219,7 @@ class TestRoomWorkspaces:
         marker = Path(claude.session_workspaces[0]) / "notes.txt"
         marker.write_text("keep me")
         await room.adapter.cleanup_all()
-        await room.adapter.on_started("Test Agent", "An agent under test")
+        await room.restart()
         await room.send("hi again")
         assert claude.session_workspaces == [str(marker.parent), str(marker.parent)]
         assert marker.read_text() == "keep me"
@@ -238,13 +238,13 @@ class TestRoomWorkspaces:
                 await room.adapter.cleanup_all()
             assert failed.group_contains(RuntimeError, match="cleanup failed")
             with pytest.raises(ExceptionGroup) as failed:
-                await room.adapter.on_started("Test Agent", "An agent under test")
+                await room.restart()
             assert failed.group_contains(RuntimeError, match="cleanup failed")
             assert len(claude.sessions) == 1
             assert claude.sessions[0].alive
         finally:
             claude.refuse_close = False
-        await room.adapter.on_started("Test Agent", "An agent under test")
+        await room.restart()
         await room.send("hi again")
         assert [session.alive for session in claude.sessions] == [False, True]
         assert len(set(claude.session_workspaces)) == 1

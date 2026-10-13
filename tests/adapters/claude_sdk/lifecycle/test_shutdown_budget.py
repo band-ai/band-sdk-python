@@ -24,14 +24,13 @@ class TestShutdownBudget:
         room = await claude_room(ClaudeSDKAdapterConfig(retention=REPORTING_BUDGET))
         room.claude.script([room.model_reply("hi")])
         await room.send("hi")
-        backend = room.adapter._mcp.current
-        assert backend is not None
+        backend = room.mcp_backend
         closing = room.claude.closing = Hold()
 
         with pytest.raises(CleanupIncompleteError):
             await room.adapter.cleanup_all()
         [cli] = room.claude.sessions
-        still_serving = (room.adapter._mcp.current is backend, cli.close_calls)
+        still_serving = (backend.is_running, cli.close_calls)
         closing.released.set()
         await room.adapter.cleanup_all()
 
@@ -48,8 +47,7 @@ class TestShutdownBudget:
         room = await claude_room(ClaudeSDKAdapterConfig(retention=REPORTING_BUDGET))
         room.claude.script([room.model_reply("hi")])
         await room.send("hi")
-        backend = room.adapter._mcp.current
-        assert backend is not None
+        backend = room.mcp_backend
         step_s = REPORTING_BUDGET.transition_timeout_s * 0.7
         closing = room.claude.closing = Hold()
         mcp = room.adapter._mcp

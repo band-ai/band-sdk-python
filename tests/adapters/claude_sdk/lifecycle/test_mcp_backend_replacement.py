@@ -68,8 +68,7 @@ class TestMcpBackendReplacement:
         """Shutdown closes admission and the backend for good: a late message is
         refused before it could start a server or CLI nothing would stop."""
         room = await claude_room()
-        backend = room.adapter._mcp.current
-        assert backend is not None
+        backend = room.mcp_backend
         await room.adapter.cleanup_all()
 
         with pytest.raises(ClaudeSessionManagerStoppedError):
@@ -86,9 +85,7 @@ class TestMcpBackendReplacement:
         stopped is refused, not retried as a failed resume that would bring the
         stopped manager back to life and report a failure mid-shutdown."""
         room = await claude_room()
-        manager = room.adapter._session_manager
-        assert manager is not None
-        await manager.stop()
+        await room.session_manager.stop()
 
         with pytest.raises(ClaudeSessionManagerStoppedError):
             await room.send("hi", session_id="sess-earlier")
@@ -110,7 +107,6 @@ class TestMcpBackendReplacement:
 
         async with connecting:
             stopping = asyncio.create_task(room.adapter.cleanup_all())
-            await asyncio.sleep(0)  # cleanup_all reaches the manager's stop()
 
         with pytest.raises(asyncio.CancelledError):
             await sending
@@ -127,7 +123,7 @@ class TestMcpBackendReplacement:
         room.claude.script([room.model_reply("back again")])
         await room.adapter.cleanup_all()
 
-        await room.adapter.on_started("Test Agent", "An agent under test")
+        await room.restart()
         await room.send("hi")
 
         assert room.chat == ["back again"]

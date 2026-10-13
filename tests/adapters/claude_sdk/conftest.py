@@ -14,7 +14,7 @@ import pytest_asyncio
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.fakecli import FakeClaude
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import AGENT_DESCRIPTION, AGENT_NAME, ClaudeRoom
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ async def claude_room(
         **adapter_kwargs: Any,
     ) -> ClaudeRoom:
         adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
-        await adapter.on_started("Test Agent", "An agent under test")
+        await adapter.on_started(AGENT_NAME, AGENT_DESCRIPTION)
         loop = asyncio.get_running_loop()
         cleanup_clock = (
             looptime.enabled(strict=True)

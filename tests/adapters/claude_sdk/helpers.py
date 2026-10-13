@@ -40,6 +40,9 @@ from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
 from tests.mcpclient import crash_backend
 
+# The agent metadata every test adapter is started with.
+AGENT_NAME = "Test Agent"
+AGENT_DESCRIPTION = "An agent under test"
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 # What the runtime reports for a turn that ended without completing.
@@ -197,6 +200,10 @@ class ClaudeRoom:
     async def crash_band_server(self) -> None:
         """The adapter's Band MCP server dies on its own, between turns."""
         await crash_backend(self.adapter._mcp)
+
+    async def restart(self) -> None:
+        """Start the room's adapter again, as the runtime does after a stop."""
+        await self.adapter.on_started(AGENT_NAME, AGENT_DESCRIPTION)
 
     def beside(self, room_id: str) -> ClaudeRoom:
         """Another room served by the same adapter."""
