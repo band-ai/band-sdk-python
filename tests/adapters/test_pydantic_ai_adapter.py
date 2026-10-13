@@ -105,7 +105,6 @@ from band.testing import (
     failure_reports,
     reported_failures,
 )
-from band.testing.fake_tools import events_of_type
 from tests.adapters.usage_events import recorded_usage_payloads, sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 from tests.framework_conformance.turnprobes import (
