@@ -135,6 +135,7 @@ from band.runtime.tools.registry import (
 from band.runtime.tools.schema import (
     ToolCallOutcome,
     ToolFunc,
+    docstring_with_args,
     format_arg_doc,
     format_tool_validation_error,
     get_tool_description,
@@ -265,6 +266,7 @@ __all__ = [
     "canonicalize_mcp_tool_name",
     "classify_room_binding",
     "decode_image_block",
+    "docstring_with_args",
     "file_content_placeholder",
     "format_arg_doc",
     "format_tool_validation_error",

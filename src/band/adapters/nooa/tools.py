@@ -35,7 +35,7 @@ except ModuleNotFoundError as error:
     ) from error
 
 from band.core.exceptions import BandToolError
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.core.types import MessageType, ToolEventKey
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -47,6 +47,7 @@ from band.runtime.tools import (
     ImageContentResult,
     ToolDefinition,
     decode_image_block,
+    docstring_with_args,
     image_block_placeholder,
     image_passthrough_result,
     redact_tool_call_args,
@@ -213,13 +214,7 @@ class RoomTools:
     ) -> None:
         if not self._emit_tool_calls:
             return
-        try:
-            await tools.send_event(
-                content=json.dumps(payload, default=str),
-                message_type=message_type,
-            )
-        except Exception as error:  # noqa: BLE001 -- event emission is best-effort and must not fail the tool call
-            logger.warning("Failed to send %s event: %s", message_type, error)
+        await send_event_safe(tools, json.dumps(payload, default=str), message_type)
 
 
 def images_from_result(result: ImageContentResult) -> list[Image]:
@@ -233,16 +228,7 @@ def images_from_result(result: ImageContentResult) -> list[Image]:
 
 def tool_method_doc(input_model: type[BaseModel]) -> str:
     """The docstring the model reads: the tool description plus its arguments."""
-    description = inspect.cleandoc(input_model.__doc__ or "")
-    arguments = [
-        f"    {name}: {model_field.description}"
-        if model_field.description
-        else f"    {name}"
-        for name, model_field in input_model.model_fields.items()
-    ]
-    if not arguments:
-        return description
-    return "\n".join([description, "", "Args:", *arguments])
+    return docstring_with_args(inspect.cleandoc(input_model.__doc__ or ""), input_model)
 
 
 class ComputedDefault:

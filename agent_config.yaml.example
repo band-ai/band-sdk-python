@@ -215,7 +215,7 @@ strands_agent:
 # NOOA Examples
 # =============================================================================
 
-# 01_basic_agent.py
+# 01_basic_agent.py, 04_custom_tools.py
 nooa_agent:
   agent_id: ""
   api_key: ""

@@ -102,6 +102,66 @@ class Gate:
         return "done"
 
 
+class LeftoverReply:
+    """A reply the model leaves running in one turn and releases in the next.
+
+    Turn one starts a task that waits for ``release`` and then replies; turn
+    two opens the gate, awaits that task, and records how it ended. The
+    coordination lives on the agent, so the model's code reaches it as
+    ``self.leftover``.
+    """
+
+    FIRST_TURN = (
+        "async def reply_later():\n"
+        "    await self.leftover.release.wait()\n"
+        f"    {room_call('band_send_message', {'content': 'late', 'mentions': ['Alice']})}\n"
+        "self.leftover.task = asyncio.create_task(reply_later())\n"
+        f"{room_call('band_no_reply')}"
+    )
+    SECOND_TURN = (
+        "self.leftover.release.set()\n"
+        "try:\n"
+        "    await self.leftover.task\n"
+        "    self.leftover.outcome = 'replied'\n"
+        "except Exception as error:\n"
+        "    self.leftover.outcome = f'{type(error).__name__}: {error}'\n"
+        f"{room_call('band_no_reply')}"
+    )
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.task: asyncio.Task[Any] | None = None
+        self.outcome: str | None = None
+
+    def room_agent(self) -> type[NooaRoomAgent]:
+        """A room agent class whose instances carry this scenario."""
+        llm = FakeLLMClient(
+            [
+                code_turn(self.FIRST_TURN),
+                result_turn(),
+                code_turn(self.SECOND_TURN),
+                result_turn(),
+            ]
+        )
+        scenario = self
+
+        def __init__(agent: NooaRoomAgent) -> None:
+            NooaRoomAgent.__init__(agent)
+            agent.leftover = scenario  # type: ignore[attr-defined]
+
+        return type(NooaRoomAgent)(
+            "LeftoverAgent",
+            (NooaRoomAgent,),
+            {
+                "__doc__": "You are a scripted test agent.",
+                "__module__": __name__,
+                "__init__": __init__,
+                "__annotations__": {"leftover": LeftoverReply},
+            },
+            llm=llm,
+        )
+
+
 CHILD_USAGE = {"prompt_tokens": 100, "completion_tokens": 15}
 
 

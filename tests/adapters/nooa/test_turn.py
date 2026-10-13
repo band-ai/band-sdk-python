@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from nooa import GenerationError
@@ -17,6 +18,7 @@ from band.testing import FakeAgentTools, events_of_type, failure_reports
 from band.testing.nooa import code_turn, result_turn, room_call, scripted_llm
 from tests.adapters.nooa.kit import (
     Gate,
+    LeftoverReply,
     SlowInput,
     delegating_room_agent,
     failing_llm,
@@ -28,6 +30,7 @@ from tests.adapters.nooa.kit import (
     tool_events,
     tool_results,
 )
+from tests.adapters.usage_events import recorded_usage_payloads
 
 REPLY = {"content": "Hi Alice", "mentions": ["Alice"]}
 
@@ -102,15 +105,14 @@ class TestRoomTurn:
 
         await run_turn(adapter, tools)
 
-        [usage_event] = [
-            event for event in events_of_type(tools, "task") if event.get("metadata")
+        assert recorded_usage_payloads(tools) == [
+            {
+                "input_tokens": 220,
+                "output_tokens": 15,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
         ]
-        assert usage_event["metadata"]["band_usage"] == {
-            "input_tokens": 220,
-            "output_tokens": 15,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-        }
 
     async def test_a_model_failure_is_reported_once_and_raised(
         self, tools: FakeAgentTools
@@ -140,21 +142,9 @@ class TestRoomTurn:
             await getattr(room, BandTool.NO_REPLY)()
 
     async def test_work_left_running_by_one_turn_cannot_act_in_the_next(self) -> None:
-        llm = FakeLLMClient(
-            [
-                code_turn(
-                    "async def later():\n"
-                    "    await asyncio.sleep(0.05)\n"
-                    f"    {room_call('band_send_message', {'content': 'late', 'mentions': ['Alice']})}\n"
-                    "leftover = asyncio.create_task(later())\n"
-                    f"{room_call('band_no_reply')}"
-                ),
-                result_turn(),
-                code_turn(f"await asyncio.sleep(0.2)\n{room_call('band_no_reply')}"),
-                result_turn(),
-            ]
-        )
-        adapter = await started_adapter(llm)
+        leftover = LeftoverReply()
+        adapter = NooaAdapter(agent=leftover.room_agent())
+        await adapter.on_started("Agent", "A test agent")
         second_turn = FakeAgentTools()
 
         await run_turn(adapter, FakeAgentTools(), message=room_message("first"))
@@ -165,6 +155,10 @@ class TestRoomTurn:
             is_session_bootstrap=False,
         )
 
+        assert leftover.outcome == (
+            "BandToolError: band_send_message is only available while a Band "
+            "room message is being handled"
+        )
         assert second_turn.chat == []
 
     async def test_a_delegating_turn_reports_its_child_agents_usage(
@@ -175,15 +169,14 @@ class TestRoomTurn:
 
         await run_turn(adapter, tools)
 
-        [usage_event] = [
-            event for event in events_of_type(tools, "task") if event.get("metadata")
+        assert recorded_usage_payloads(tools) == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 15,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
         ]
-        assert usage_event["metadata"]["band_usage"] == {
-            "input_tokens": 100,
-            "output_tokens": 15,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-        }
 
     async def test_a_tool_call_still_running_when_the_turn_ends_is_cancelled(
         self, tools: FakeAgentTools
@@ -239,3 +232,17 @@ class TestRoomTurn:
         await run_turn(adapter, tools)
 
         assert events_of_type(tools, "thought") == []
+
+    async def test_the_turn_observer_answers_every_hook_nooa_calls(
+        self, tools: FakeAgentTools, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        adapter = await started_adapter(scripted_llm(room_call("band_no_reply")))
+
+        with caplog.at_level(logging.WARNING, logger="nooa.runtime.hooks"):
+            await run_turn(adapter, tools)
+
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "nooa.runtime.hooks"
+        ] == []

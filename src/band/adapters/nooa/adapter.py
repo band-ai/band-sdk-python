@@ -45,6 +45,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
+    send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -123,6 +124,13 @@ def with_room_tools(
     )
 
 
+# Every hook NOOA may call on an InstrumentationHooks object. Anything else,
+# such as the optional activate_agent_call extension, must stay absent.
+HOOK_NAMES = frozenset(
+    name for name in vars(InstrumentationHooks) if not name.startswith("_")
+)
+
+
 class TurnObserver:
     """NOOA instrumentation hooks that record every model call of one turn.
 
@@ -163,7 +171,7 @@ class TurnObserver:
         """Forward every other hook; without wrapped hooks, the rest are no-ops."""
         if self._wrapped is not None:
             return getattr(self._wrapped, name)
-        if name.startswith(("before_", "after_")):
+        if name in HOOK_NAMES:
             return ignore_hook
         raise AttributeError(name)
 
@@ -212,10 +220,7 @@ async def report_failure(tools: AgentToolsProtocol) -> None:
 async def report_thoughts(tools: AgentToolsProtocol, reasoning: list[str]) -> None:
     """Post each model call's reasoning as a thought event, in order."""
     for text in reasoning:
-        try:
-            await tools.send_event(content=text, message_type=MessageType.THOUGHT)
-        except Exception as error:  # noqa: BLE001 -- thought events are best-effort telemetry
-            logger.warning("Failed to send thought event: %s", error)
+        await send_event_safe(tools, text, MessageType.THOUGHT)
 
 
 def with_system_context(

@@ -20,6 +20,34 @@ See [docs/adapters/nooa.md](../../docs/adapters/nooa.md) for how the adapter wor
 The model writes and runs Python inside the agent process. Run these examples in
 a container or VM, never on a machine whose files or credentials matter.
 
+`Dockerfile` here builds an image with Python 3.12, the SDK from this checkout,
+the examples and the shared character prompts. Inside it the model's code runs
+as an unprivileged user that cannot write the app directory. Each example still
+sees its own Band and model credentials, because it needs them. From the repo
+root, with `agent_config.yaml` filled in:
+
+```bash
+docker build -f examples/nooa/Dockerfile -t band-nooa-examples .
+
+# Pass the platform URLs and model key by name: docker's --env-file keeps
+# quotes, and .env.test quotes some values.
+set -a; . ./.env.test; set +a
+export ANTHROPIC_API_KEY=...
+
+nooa_example() {
+  docker run --rm -it \
+    -e BAND_REST_URL -e BAND_WS_URL -e ANTHROPIC_API_KEY \
+    --mount type=bind,src="$PWD/agent_config.yaml",dst=/app/agent_config.yaml,readonly \
+    band-nooa-examples "examples/nooa/$1"
+}
+
+nooa_example 01_basic_agent.py
+```
+
+For the character pair, run `nooa_example 02_tom_agent.py` and
+`nooa_example 03_jerry_agent.py` in two terminals. Then add both agents to a
+room and ask Tom to find Jerry.
+
 ## Examples
 
 | File | Shows |
@@ -27,3 +55,4 @@ a container or VM, never on a machine whose files or credentials matter.
 | `01_basic_agent.py` | A `NooaRoomAgent` subclass with per-room state and a plain-Python tool; tool calls only, no usage events |
 | `02_tom_agent.py` | Tom the cat, from the shared character prompts; run with `03_jerry_agent.py` |
 | `03_jerry_agent.py` | Jerry the mouse, Tom's counterpart; the two NOOA agents talk in one room |
+| `04_custom_tools.py` | A typed `(InputModel, handler)` custom tool on `self.room`; a validation error comes back as `BandToolError` and the model retries |

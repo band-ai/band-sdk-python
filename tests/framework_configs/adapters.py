@@ -183,9 +183,13 @@ def _docstring_arg_text(docstring: str) -> dict[str, str | None]:
     """The ``Args:`` entries of a Google-style docstring, by argument name."""
     _, _, args_section = docstring.partition("\nArgs:\n")
     entries: dict[str, str | None] = {}
+    name = ""
     for line in args_section.splitlines():
-        name, separator, description = line.strip().partition(": ")
-        entries[name] = description if separator else None
+        if line.startswith(" " * 8) and name:
+            entries[name] = f"{entries[name]}\n{line.strip()}"
+            continue
+        name, _, description = line.strip().partition(": ")
+        entries[name] = description
     return entries
 
 
