@@ -27,10 +27,15 @@ from tests.framework_conformance.stopprobes import (
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
 LOOPBACK = "127.0.0.1"
-# Real engine work (startup aside) settles well within this.
-ENGINE_WAIT_SECONDS = 30.0
+# Real engine work (startup aside) settles well within this, and it stays
+# under the suite's 30s test timeout so a turn that never stops fails here.
+ENGINE_WAIT_SECONDS = 15.0
 STATUS_POLL_SECONDS = 0.05
+CANCELLED_STATUS = "cancelled"
 READY_STATUS = "ready"
+# Parlant's preamble task records its own statuses alongside the stopped
+# turn's, so only the statuses a stop decides are compared.
+STOP_STATUSES = (CANCELLED_STATUS, READY_STATUS)
 TAG_IS_LIVE = "process_session_tag names the engine's running task"
 
 
@@ -89,17 +94,24 @@ async def statuses(adapter: ParlantAdapter, session_id: str) -> list[str]:
     return [event.data.get("status") for event in events]
 
 
-async def statuses_after(
+async def stop_statuses_after(
     adapter: ParlantAdapter, session_id: str, seen: int
 ) -> list[str]:
-    """The statuses Parlant records after the first ``seen``, once it is ready."""
+    """The stopped turn's wind-down Parlant records after the first ``seen``:
+    from its cancellation to the session being ready again."""
 
-    async def until_ready() -> list[str]:
-        while READY_STATUS not in (new := (await statuses(adapter, session_id))[seen:]):
+    async def until_settled() -> list[str]:
+        while True:
+            new = [
+                status
+                for status in (await statuses(adapter, session_id))[seen:]
+                if status in STOP_STATUSES
+            ]
+            if CANCELLED_STATUS in new and new[-1] == READY_STATUS:
+                return new[new.index(CANCELLED_STATUS) :]
             await asyncio.sleep(STATUS_POLL_SECONDS)
-        return new
 
-    return await asyncio.wait_for(until_ready(), ENGINE_WAIT_SECONDS)
+    return await asyncio.wait_for(until_settled(), ENGINE_WAIT_SECONDS)
 
 
 async def end_running_turn(mode: ControlMode) -> list[str]:
@@ -108,7 +120,7 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
         turn, session_id = await processing_turn(adapter, nlp, tools)
         seen = len(await statuses(adapter, session_id))
         await end_turn(adapter, turn, ROOM_ID, mode)
-        after = await statuses_after(adapter, session_id, seen)
+        after = await stop_statuses_after(adapter, session_id, seen)
         return [*after, *(f"posted {sent}" for sent in tools.messages_sent)]
 
 
@@ -145,7 +157,7 @@ CASES: dict[str, StopCase] = {
     **{
         f"{mode}-mid-turn": StopCase(
             run=lambda mode=mode: end_running_turn(mode),
-            expected=["cancelled", READY_STATUS],
+            expected=list(STOP_STATUSES),
         )
         for mode in ENDING_CONTROLS
     },
