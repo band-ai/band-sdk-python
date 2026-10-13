@@ -59,7 +59,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import report_owned, spawn_owned, task_failure
+from band.core.retention.cleanup import rejoin_owned, report_owned, spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
@@ -1892,11 +1892,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._closing_rooms.update(rooms)
         for room_id in rooms:
             self._clear_pending_approvals_for_room(room_id)
-        shutdown = self._shutdown
-        if shutdown is None or (shutdown.done() and task_failure(shutdown) is not None):
-            shutdown = spawn_owned(self._shut_down(), label="Codex adapter shutdown")
-            self._shutdown = shutdown
-        await report_owned(shutdown, self.config.retention.transition_timeout_s)
+        self._shutdown = rejoin_owned(
+            self._shutdown, self._shut_down, label="Codex adapter shutdown"
+        )
+        await report_owned(self._shutdown, self.config.retention.transition_timeout_s)
 
     async def _shut_down(self) -> None:
         await asyncio.gather(

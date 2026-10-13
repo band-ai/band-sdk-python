@@ -27,6 +27,9 @@ from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
+#: The shared backend's final close, as cleanup reports name it.
+MCP_FINAL_CLOSE = "Band MCP backend final close"
+
 
 class BandMCPTransport(StrEnum):
     """The wire transports every Band MCP server serves."""
@@ -226,7 +229,7 @@ class SharedBandMCPBackend:
                 return None
             if self._stopping is None or self._stopping.done():
                 self._stopping = spawn_owned(
-                    self._stop_closing(closing), label="Band MCP final close"
+                    self._stop_closing(closing), label=MCP_FINAL_CLOSE
                 )
             return self._stopping
 
@@ -250,9 +253,7 @@ class SharedBandMCPBackend:
         """
         async with self._lock:
             if self._closing is not None:
-                raise CleanupIncompleteError(
-                    "Band MCP backend final close is still pending"
-                )
+                raise CleanupIncompleteError(f"{MCP_FINAL_CLOSE} is still pending")
             self._closed = False
 
     async def _start(self, *, replacing: BandMCPBackend | None) -> BandMCPBackend:

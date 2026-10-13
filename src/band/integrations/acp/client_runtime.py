@@ -13,8 +13,7 @@ from acp.schema import (
     ClientCapabilities,
 )
 
-from band.core.retention import task_failure
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import rejoin_owned
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -200,12 +199,10 @@ class ACPRuntime(ACPSessionOperations):
         await self._closed()
 
     async def _closed(self) -> None:
-        closure = self._closure
-        if closure is None or (closure.done() and task_failure(closure) is not None):
-            closure = self._closure = spawn_owned(
-                self._close(), label="ACP runtime closure"
-            )
-        await asyncio.shield(closure)
+        self._closure = rejoin_owned(
+            self._closure, self._close, label="ACP runtime closure"
+        )
+        await asyncio.shield(self._closure)
 
     async def _close(self) -> None:
         try:

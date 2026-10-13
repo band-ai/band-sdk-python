@@ -93,7 +93,8 @@ only when the next start has confirmed it.
 | Adapter | Ownership integration | Idle release |
 | --- | --- | --- |
 | Codex | Each room's process, thread and workspace compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A lost process goes through `recover()`; the next process strictly restores the same thread and verifies its provider, workspace and tools. One reader per process routes each native callback by its `turnId` to the Band turn that started it and refuses work no Band turn started. | Refused: the release callback returns `BUSY` for `IDLE` because every examined Codex shutdown cancels background work; activity stays `UNKNOWN`. |
-| Claude SDK, OMP, Cursor and Copilot ACP | Pending their adapter rewrites. | Rejected by configuration. |
+| Claude SDK | Each room's CLI session, workspace and native session id compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A crashed CLI goes through `recover()`; callbacks act only for the residency generation that registered them. | Rejected by configuration; the release callback also returns `BUSY` for `IDLE`. |
+| OMP, Cursor and Copilot ACP | Each room's process, connection and session compose one `RetainedRoom`. Detached work is owned before it runs; a prompt or model switch takes the room's reservation. A failed turn recovers its room, and a deliberate wake strictly reloads the same session. | Rejected by configuration; activity stays `UNKNOWN` and the release callback returns `BUSY` for `IDLE`. |
 
 The shared mechanics do not certify a provider's release callback. Production
 integration still needs authoritative native inactivity or a demonstrated

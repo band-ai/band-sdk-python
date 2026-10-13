@@ -126,7 +126,7 @@ class RetainedRoom:
         reason: str = "",
     ) -> bool:
         """Accept authoritative provider observations from this residency only."""
-        if not self._has_authority(generation):
+        if not self.has_authority(generation):
             return False
         changed = self._activity != activity
         self._activity = activity
@@ -136,7 +136,9 @@ class RetainedRoom:
         self._schedule(reset=changed)
         return True
 
-    def _has_authority(self, generation: int) -> bool:
+    def has_authority(self, generation: int) -> bool:
+        """Whether residency ``generation`` may still observe or act: the
+        current one, not closing, and not retired by recovery or final close."""
         return (
             generation == self._generation
             and not self._closing
@@ -171,7 +173,7 @@ class RetainedRoom:
         stays with the provider until a ``RECOVERY`` release confirms closure,
         which starts once no operation holds an active I/O lease.
         """
-        if not self._has_authority(generation):
+        if not self.has_authority(generation):
             return False
         self._request(ReleaseCause.RECOVERY)
         self._recover_when_unleased = True

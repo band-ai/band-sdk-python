@@ -23,7 +23,6 @@ from band.core.exceptions import RoomClosingError
 from band.core.retention import (
     ReleaseCause,
     ReleaseOutcome,
-    Residency,
     RetainedRoom,
     RoomRetention,
     RoomRetentionConfig,
@@ -145,12 +144,7 @@ class ClaudeRoomSession:
         Room id plus generation alone would collide after a rejoin, so the
         callback also holds this session object, which a rejoin replaces.
         """
-        snapshot = self.retained.snapshot
-        return (
-            snapshot.generation == generation
-            and snapshot.state == Residency.RESIDENT
-            and snapshot.pending_release is None
-        )
+        return self.retained.has_authority(generation)
 
     @asynccontextmanager
     async def using(

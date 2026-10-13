@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
-from band.core.retention.cleanup import report_owned, spawn_owned, task_failure
+from band.core.retention.cleanup import rejoin_owned, report_owned, task_failure
 from band.core.retention.clock import Cancellable, MonotonicClock, RetentionClock
 from band.core.retention.config import RoomRetentionConfig
 from band.core.retention.room import RetainedRoom
@@ -97,11 +97,10 @@ class RoomRetention:
 
     def _owned_shutdown(self) -> asyncio.Task[None]:
         """Join the running or settled shutdown; restart one that failed."""
-        shutdown = self._shutdown
-        if shutdown is None or (shutdown.done() and task_failure(shutdown) is not None):
-            shutdown = spawn_owned(self._run_stop(), label="Room retention shutdown")
-            self._shutdown = shutdown
-        return shutdown
+        self._shutdown = rejoin_owned(
+            self._shutdown, self._run_stop, label="Room retention shutdown"
+        )
+        return self._shutdown
 
     async def _run_stop(self) -> None:
         pending = [

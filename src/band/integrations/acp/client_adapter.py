@@ -58,7 +58,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import cleanup_deadline, finish_by, spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -111,6 +111,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
+from band.integrations.mcp.backends import MCP_FINAL_CLOSE
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
@@ -1650,30 +1651,13 @@ class ACPClientAdapter(
         Raises:
             CleanupIncompleteError: A room or the MCP server is still closing.
         """
-        deadline = (
-            asyncio.get_running_loop().time()
-            + self.config.retention.transition_timeout_s
-        )
+        deadline = cleanup_deadline(self.config.retention)
         await self._retention.stop()
-        await self._close_mcp(deadline=deadline)
+        await finish_by(deadline, self._mcp.close(final=True), what=MCP_FINAL_CLOSE)
         if not final:
             await self._mcp.reopen()
             self._renew_retention()
         logger.info("ACP client adapter stopped")
-
-    async def _close_mcp(self, *, deadline: float) -> None:
-        """Stop the shared MCP server within what remains of ``deadline``.
-
-        The backend owns the stop, so a bounded or cancelled wait leaves it
-        running for a retry to join, and nothing reopens the server meanwhile.
-        """
-        try:
-            async with asyncio.timeout_at(deadline):
-                await self._mcp.close(final=True)
-        except TimeoutError as error:
-            raise CleanupIncompleteError(
-                "Band MCP backend is still stopping"
-            ) from error
 
     async def stop(self) -> None:
         """Tear down every room and the MCP server; later turns start afresh."""

@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -84,7 +84,7 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -92,6 +92,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
+from band.core.retention.cleanup import cleanup_deadline, finish_by
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
@@ -121,6 +122,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
+from band.integrations.mcp.backends import MCP_FINAL_CLOSE
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_effects,
@@ -538,21 +540,6 @@ class PendingApproval:
     created_at: datetime
     future: asyncio.Future[ApprovalReply | None]
     requester: dict[str, str]
-
-
-async def _finish_by(deadline: float, cleanup: Awaitable[None]) -> None:
-    """Await ``cleanup`` until ``deadline``; an unfinished one stays owned by
-    its owner, and a retry joins it."""
-    budget = asyncio.timeout_at(deadline)
-    try:
-        async with budget:
-            await cleanup
-    except TimeoutError as error:
-        if not budget.expired():
-            raise
-        raise CleanupIncompleteError(
-            "Claude adapter cleanup still running after its transition budget"
-        ) from error
 
 
 def __getattr__(name: str) -> Any:
@@ -1633,16 +1620,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         close; an unfinished or failed step stays owned for a retry.
         """
         self._closing_all = True
-        deadline = (
-            asyncio.get_running_loop().time()
-            + self.config.retention.transition_timeout_s
-        )
+        deadline = cleanup_deadline(self.config.retention)
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        await _finish_by(deadline, self._close_rooms())
+        await finish_by(deadline, self._close_rooms(), what="Claude room cleanup")
         if self._session_manager:
-            await _finish_by(deadline, self._session_manager.stop())
-        await _finish_by(deadline, self._mcp.close(final=True))
+            await finish_by(
+                deadline, self._session_manager.stop(), what="Claude session shutdown"
+            )
+        await finish_by(deadline, self._mcp.close(final=True), what=MCP_FINAL_CLOSE)
         self._room_tools.clear()
         self._mcp_room_tools.clear()
         self._recorded_session_ids.clear()
