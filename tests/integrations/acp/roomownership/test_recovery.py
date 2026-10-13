@@ -6,7 +6,7 @@ import pytest
 from acp import RequestError
 
 from band.core.model_catalog import ModelSelection
-from band.core.retention import ReleaseCause, ReleaseOutcome, Residency
+from band.core.retention import Residency
 from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
@@ -19,20 +19,6 @@ from tests.integrations.acp.roomownership.kit import model_select, models, recov
 
 class TestRecovery:
     """A failed turn retires its process through the owner and keeps the session."""
-
-    @pytest.mark.asyncio
-    async def test_an_idle_release_is_refused_and_keeps_the_process(self) -> None:
-        agent = FakeACPAgent().will_say("ok")
-        async with acp_adapter(agent) as session:
-            await session.send("hello")
-            room = session.room()
-            runtime = session.runtime()
-
-            outcome = await session.adapter._release_room(room, ReleaseCause.IDLE)
-
-            assert outcome == ReleaseOutcome.BUSY
-            assert room.runtime is runtime and not runtime.closed
-            assert room.live_session == (session.session_id(DEFAULT_ROOM), runtime)
 
     @pytest.mark.asyncio
     async def test_the_next_turn_reloads_the_recovered_session(self) -> None:

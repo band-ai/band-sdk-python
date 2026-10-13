@@ -2086,13 +2086,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _release(
         self, room: RoomCodexClient, cause: ReleaseCause
     ) -> ReleaseOutcome:
-        """Close the room's process; its thread id stays for the next process.
-
-        Every examined Codex shutdown cancels background terminals, hooks and
-        child threads, so an idle release is refused before anything closes.
-        """
-        if cause == ReleaseCause.IDLE:
-            return ReleaseOutcome.BUSY
+        """Close the room's process; its thread id stays for the next process."""
         await room.stop_reader()
         if room.client is not None:
             timeout = self.config.client_close_timeout_s

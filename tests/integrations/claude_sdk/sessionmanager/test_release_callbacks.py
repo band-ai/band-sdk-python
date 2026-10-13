@@ -39,28 +39,6 @@ class TestReleaseCallbacks:
 
         assert [cli.alive for cli in claude.sessions] == [False, False]
 
-    async def test_an_idle_release_is_refused_with_the_cli_intact(
-        self,
-        claude: FakeClaude,
-    ) -> None:
-        """Claude idle release is unqualified, so the callback refuses before any
-        teardown: the next turn reads its answer through the same CLI, reader and
-        conversation. The callback is called directly because the adapter never
-        enables idle retention."""
-        manager = new_manager()
-        session = manager.room("room-a")
-        session.adopt("sess-1")
-        claude.script(thinking("one"), thinking("two"))
-        await exchange(session, "one")
-
-        outcome = await session.release(ReleaseCause.IDLE)
-        second = await exchange(session, "two")
-        await manager.stop()
-
-        assert outcome is ReleaseOutcome.BUSY
-        assert thoughts(second) == ["two"]
-        assert claude.resumed == ["sess-1"]
-
     @pytest.mark.parametrize("cause", [ReleaseCause.RECOVERY, ReleaseCause.FINAL])
     async def test_recovery_and_final_releases_close_or_keep_the_cli_for_a_retry(
         self, claude: FakeClaude, cause: ReleaseCause

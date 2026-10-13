@@ -249,14 +249,7 @@ class ClaudeRoomSession:
         )
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
-        """Close the room's CLI for recovery or final cleanup.
-
-        Disconnect can cancel async managed hooks and background tasks the
-        CLI does not report, so an idle release is refused before anything
-        closes.
-        """
-        if cause == ReleaseCause.IDLE:
-            return ReleaseOutcome.BUSY
+        """Close the room's CLI for recovery or final cleanup."""
         await self._close()
         if self._forget_session:
             self.session_id = None

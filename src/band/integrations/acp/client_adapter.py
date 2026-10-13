@@ -702,13 +702,7 @@ class ACPClientAdapter(
             raise TimeoutError(f"ACP agent did not start within {timeout}s") from error
 
     async def _release_room(self, room: ACPRoom, cause: ReleaseCause) -> ReleaseOutcome:
-        """Close the room's process and keep its session identity.
-
-        No ACP signal proves a session idle, so an idle release is refused
-        before anything is torn down.
-        """
-        if cause == ReleaseCause.IDLE:
-            return ReleaseOutcome.BUSY
+        """Close the room's process and keep its session identity."""
         await asyncio.gather(*room.session_closes, return_exceptions=True)
         if (runtime := room.runtime) is not None:
             await runtime.stop()
