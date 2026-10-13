@@ -1,16 +1,16 @@
 """Backend-stop probes for the Parlant adapter on the real in-process engine;
 see ``stopprobes``.
 
-The engine answers a session from its own background task, so the evidence is
-what Parlant itself records: the session's status events after the stop, and
-whether that task is the one ``process_session_tag`` names. Every case skips
-outside the dev-parlant venv.
+The engine answers a session from its own background task, and the stub model
+never answers, so that task ends only when it is stopped. The evidence is that
+the task ``process_session_tag`` names finishes after the stop, with nothing
+posted. Every case skips outside the dev-parlant venv.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -30,12 +30,7 @@ LOOPBACK = "127.0.0.1"
 # Real engine work (startup aside) settles well within this, and it stays
 # under the suite's 30s test timeout so a turn that never stops fails here.
 ENGINE_WAIT_SECONDS = 15.0
-STATUS_POLL_SECONDS = 0.05
-CANCELLED_STATUS = "cancelled"
-READY_STATUS = "ready"
-# Parlant's preamble task records its own statuses alongside the stopped
-# turn's, so only the statuses a stop decides are compared.
-STOP_STATUSES = (CANCELLED_STATUS, READY_STATUS)
+ENGINE_STOPPED = "engine stopped processing the session"
 TAG_IS_LIVE = "process_session_tag names the engine's running task"
 
 
@@ -80,48 +75,17 @@ async def processing_turn(
     return turn, str(session_id)
 
 
-async def statuses(adapter: ParlantAdapter, session_id: str) -> list[str]:
-    from parlant.core.sessions import EventKind  # noqa: PLC0415 -- dev-parlant extra
-
-    assert adapter._rooms is not None
-    events: Sequence[Any] = await adapter._rooms.app.sessions.find_events(
-        session_id=session_id,
-        min_offset=0,
-        kinds=[EventKind.STATUS],
-        source=None,
-        trace_id=None,
-    )
-    return [event.data.get("status") for event in events]
-
-
-async def stop_statuses_after(
-    adapter: ParlantAdapter, session_id: str, seen: int
-) -> list[str]:
-    """The stopped turn's wind-down Parlant records after the first ``seen``:
-    from its cancellation to the session being ready again."""
-
-    async def until_settled() -> list[str]:
-        while True:
-            new = [
-                status
-                for status in (await statuses(adapter, session_id))[seen:]
-                if status in STOP_STATUSES
-            ]
-            if CANCELLED_STATUS in new and new[-1] == READY_STATUS:
-                return new[new.index(CANCELLED_STATUS) :]
-            await asyncio.sleep(STATUS_POLL_SECONDS)
-
-    return await asyncio.wait_for(until_settled(), ENGINE_WAIT_SECONDS)
-
-
 async def end_running_turn(mode: ControlMode) -> list[str]:
     async with started() as (adapter, nlp):
         tools = FakeAgentTools()
         turn, session_id = await processing_turn(adapter, nlp, tools)
-        seen = len(await statuses(adapter, session_id))
+        engine = background_tasks(adapter)._tasks[process_session_tag(session_id)]
         await end_turn(adapter, turn, ROOM_ID, mode)
-        after = await stop_statuses_after(adapter, session_id, seen)
-        return [*after, *(f"posted {sent}" for sent in tools.messages_sent)]
+        stopped, _ = await asyncio.wait({engine}, timeout=ENGINE_WAIT_SECONDS)
+        return [
+            *([ENGINE_STOPPED] if stopped else []),
+            *(f"posted {sent}" for sent in tools.messages_sent),
+        ]
 
 
 async def tag_parity() -> list[str]:
@@ -157,7 +121,7 @@ CASES: dict[str, StopCase] = {
     **{
         f"{mode}-mid-turn": StopCase(
             run=lambda mode=mode: end_running_turn(mode),
-            expected=list(STOP_STATUSES),
+            expected=[ENGINE_STOPPED],
         )
         for mode in ENDING_CONTROLS
     },
