@@ -7,6 +7,7 @@ import sys
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from band.runtime.tools import BAND_MCP_SERVER_NAME
+from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.paths import REPO_ROOT
 
 PROBE = """
@@ -28,7 +29,7 @@ class WorkspaceProcess(SubprocessCLITransport):
 
     async def close(self) -> None:
         if self.refuse_close:
-            raise RuntimeError("subprocess cleanup failed")
+            raise RuntimeError(CLEANUP_FAILURE)
         await super().close()
 
     async def _check_claude_version(self) -> None:

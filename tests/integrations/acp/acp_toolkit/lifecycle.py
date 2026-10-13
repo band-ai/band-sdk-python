@@ -26,6 +26,7 @@ from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.omp import OMP_ACP_SUBCOMMAND
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import LifecycleBridge, RetentionHost, pause_at
+from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.paths import REPO_ROOT
 
 ACPProfile = Literal["omp_acp", "cursor_acp", "copilot_acp"]
@@ -33,7 +34,6 @@ ACPProfile = Literal["omp_acp", "cursor_acp", "copilot_acp"]
 PEER_MODULE = "tests.integrations.acp.acp_toolkit.workspacepeer"
 # OMP's flag for the room workspace, which it gets instead of a launch cwd.
 OMP_CWD_FLAG = "--cwd="
-CLEANUP_FAILURE = "subprocess cleanup failed"
 
 
 class LifecycleChild:

@@ -15,11 +15,18 @@ from acp.schema import InitializeResponse
 
 from band.runtime.tools import BandTool
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
-from tests.adapters.roompeer import PeerCommand, file_request, perform, reply_text
+from tests.adapters.roompeer import (
+    HOLD_POLL_S,
+    STARTUP_FAILURE,
+    PeerCommand,
+    begin_startup,
+    file_request,
+    perform,
+    reply_text,
+    startup_held,
+    startup_refused,
+)
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
-
-# How often a held start checks whether its hold file is gone.
-HOLD_POLL_S = 0.01
 
 
 class WorkspacePeer(FakeACPAgent):
@@ -35,11 +42,11 @@ class WorkspacePeer(FakeACPAgent):
     async def initialize(
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
     ) -> InitializeResponse:
-        Path("starting.txt").touch()
-        while self.hold is not None and self.hold.exists():
+        begin_startup()
+        while startup_held(self.hold):
             await asyncio.sleep(HOLD_POLL_S)
-        if self.failure is not None and self.failure.exists():
-            raise RequestError(-32000, "startup failed")
+        if startup_refused(self.failure):
+            raise RequestError(-32000, STARTUP_FAILURE)
         return await super().initialize(protocol_version, client_capabilities, **kwargs)
 
     async def answer(self, peer: FakeACPAgent, session_id: str) -> None:

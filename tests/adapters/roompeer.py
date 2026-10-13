@@ -23,6 +23,13 @@ from band.runtime.tools import BandTool
 WRITE_PREFIX = "WRITE="
 MEMO_PREFIX = "MEMO="
 PEER_PROVIDER = "peer"
+# The peer's protocol with the suite: it marks its workspace when a start
+# begins, refuses a failed start, and a peer's refused close says so.
+STARTING_MARKER = "starting.txt"
+STARTUP_FAILURE = "startup failed"
+CLEANUP_FAILURE = "subprocess cleanup failed"
+# How often a held start checks whether its hold file is gone.
+HOLD_POLL_S = 0.01
 
 
 class PeerCommand(StrEnum):
@@ -91,11 +98,24 @@ def lose_transport() -> None:
     threading.Event().wait()
 
 
-def initialize(failure: Path | None, hold: Path | None) -> bool:
-    Path("starting.txt").touch()
-    while hold is not None and hold.exists():
-        time.sleep(0.01)
+def begin_startup() -> None:
+    Path(STARTING_MARKER).touch()
+
+
+def startup_held(hold: Path | None) -> bool:
+    return hold is not None and hold.exists()
+
+
+def startup_refused(failure: Path | None) -> bool:
     return failure is not None and failure.exists()
+
+
+def initialize(failure: Path | None, hold: Path | None) -> bool:
+    """Start, waiting while ``hold`` exists; whether ``failure`` refuses it."""
+    begin_startup()
+    while startup_held(hold):
+        time.sleep(HOLD_POLL_S)
+    return startup_refused(failure)
 
 
 class AppServer:
@@ -140,7 +160,7 @@ class AppServer:
             case "initialize":
                 failed = initialize(self.failure, self.hold)
                 answer = (
-                    {"error": {"code": -32000, "message": "startup failed"}}
+                    {"error": {"code": -32000, "message": STARTUP_FAILURE}}
                     if failed
                     else {"result": {}}
                 )
@@ -274,7 +294,7 @@ def main() -> None:
                     options.fail_startup, options.hold_startup
                 )
                 answer = (
-                    {"subtype": "error", "error": "startup failed"}
+                    {"subtype": "error", "error": STARTUP_FAILURE}
                     if failed
                     else {"subtype": "success", "response": {}}
                 )
