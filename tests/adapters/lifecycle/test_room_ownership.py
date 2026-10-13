@@ -144,6 +144,28 @@ class TestRoomOwnership:
         assert host.exited == [True]
         assert await host.send("room-b", write_instruction("bravo")) == ["bravo"]
 
+    async def test_concurrent_leaves_join_one_held_close(
+        self,
+        host: RetentionHost,
+    ) -> None:
+        assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
+        barrier = host.children[0].closing = Hold()
+        first = asyncio.create_task(host.leave("room-a"))
+        await barrier.reached.wait()
+        second = asyncio.create_task(host.leave("room-a"))
+        done, _ = await asyncio.wait({second}, timeout=0.05)
+        assert not done
+        with pytest.raises(InputNotAccepted, match="is closing"):
+            await host.send("room-a", write_instruction("changed"))
+        with pytest.raises(ValueError, match="both"):
+            await host.send("room-b", write_instruction("bravo"))
+        assert host.exited == [False]
+        barrier.released.set()
+        await asyncio.gather(first, second)
+        assert host.exited == [True]
+        assert await host.send("room-b", write_instruction("bravo")) == ["bravo"]
+        assert host.overlaps == 0
+
     async def test_shutdown_attempts_every_room_and_retains_failed_children(
         self,
         host: RetentionHost,
@@ -156,13 +178,14 @@ class TestRoomOwnership:
             await host.shutdown()
         assert failed.group_contains(RuntimeError, match="cleanup failed", depth=None)
         assert host.exited == [False, True]
-        with pytest.raises(ExceptionGroup):
-            await host.adapter.on_started("Peer", "Restarting after failed cleanup")
-        assert host.exited == [False, True]
+        with pytest.raises(InputNotAccepted):
+            await host.send("room-a", PeerCommand.READ)
+        assert len(host.children) == 2
         host.children[0].refuse_close = False
-        await host.adapter.on_started("Peer", "Restarting after successful cleanup")
+        await host.adapter.on_started("Peer", "Restarting after failed cleanup")
         assert host.exited == [True, True]
         assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        assert host.overlaps == 0
 
     async def test_failed_startup_cleanup_blocks_replacement_until_retry(
         self,
@@ -175,19 +198,19 @@ class TestRoomOwnership:
             await asyncio.sleep(0.01)
         host.children[0].refuse_close = True
         host.hold_startup.unlink()
-        # The opening turn reports its own failure; Codex reports the failed
-        # cleanup that follows to the next operation.
-        with pytest.raises(RuntimeError, match="startup failed|cleanup failed"):
+        # The opening turn reports its own failure in the provider's own
+        # error; Codex reports the failed cleanup that follows to the next
+        # operation.
+        with pytest.raises(Exception, match="startup failed|cleanup failed"):
             await opening
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))
-        host.fail_startup.unlink()
-        with pytest.raises(RuntimeError, match="cleanup failed"):
-            await host.send("room-a", write_instruction("alpha"))
         assert host.exited == [False]
+        host.fail_startup.unlink()
         host.children[0].refuse_close = False
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         assert host.exited == [True, False]
+        assert host.overlaps == 0
 
     @pytest.mark.parametrize("host", ["codex"], indirect=True)
     async def test_close_timeout_retains_ownership_until_retry(

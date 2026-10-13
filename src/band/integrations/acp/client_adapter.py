@@ -649,9 +649,8 @@ class ACPClientAdapter(
         return self._profile
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        # Agent.start() reuses this instance after cleanup_all(final=True); a
-        # stop is terminal for its owner, so a restart first finishes that
-        # stop, retrying whatever it left unclosed.
+        # Agent.start() reuses this instance after cleanup_all(); a stop is
+        # terminal for its owner, so a restart first finishes it.
         if self._retention.stopping:
             await self.cleanup_all(final=False)
         await super().on_started(agent_name, agent_description)

@@ -41,7 +41,12 @@ async def pause_at(hold: Hold | None) -> None:
 
 class LifecyclePeer(Protocol):
     """A provider's real child process with a held start or a failed or held
-    close injected at its transport."""
+    close injected at its transport.
+
+    ``refuse_close`` fails a close attempt and leaves the process running.
+    Tests allow the close before the room retries it: a provider may retry by
+    escalating past the refused seam, as ACP kills the process it still holds.
+    """
 
     refuse_close: bool
     starting: Hold | None

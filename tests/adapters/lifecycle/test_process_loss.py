@@ -52,8 +52,6 @@ class TestProcessLoss:
 
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))
-        with pytest.raises(RuntimeError, match="cleanup failed"):
-            await host.send("room-a", PeerCommand.READ)
         assert host.state("room-a") == Residency.CLEANUP_PENDING
         assert (len(host.children), host.overlaps) == (1, 0)
 

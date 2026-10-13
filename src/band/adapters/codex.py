@@ -968,9 +968,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 release=partial(self._release, room),
                 dispose=partial(self._dispose, room),
             )
-        except RuntimeError as refused:
+        except InputNotAccepted:
             self._workspaces.release(room_id, room.workspace)
-            raise InputNotAccepted(str(refused)) from refused
+            raise
         self._room_clients[room_id] = room
         return room
 
@@ -1186,10 +1186,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 command=command,
             )
         )
-        try:
-            room.residency.own(turn)
-        except RuntimeError as refused:
-            raise InputNotAccepted(str(refused)) from refused
+        room.residency.own(turn)
         self._turn_release[room_id] = release
         self._turn_tasks[room_id] = bind_turn_task(tools, turn)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))

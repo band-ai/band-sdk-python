@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from band.core.exceptions import RoomClosingError
 from band.core.retention import (
     ReleaseCause,
     ReleaseOutcome,
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 CLI_STARTUP_TIMEOUT_S = 60.0
 
 
-class ClaudeSessionManagerStoppedError(RuntimeError):
+class ClaudeSessionManagerStoppedError(RoomClosingError):
     """A session was requested from a manager that ``stop()`` shut down."""
 
 
