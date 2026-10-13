@@ -33,6 +33,7 @@ from band.core.exceptions import BandConfigError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_safe
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, MessageType, ToolEventKey, TurnUsage
 from band.integrations.copilot_sdk import CopilotSessionManager
 from band.integrations.copilot_sdk.prompts import TURN_COMPLETION_GUIDANCE
@@ -319,6 +320,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._session_ids: dict[str, RoomSessionIds] = {}
         self._turn_state: dict[str, TurnState] = {}
+        self._backend_turns: BackendTurns[CopilotSession] = BackendTurns(
+            self._abort_turn, provider=_PROVIDER
+        )
         self._system_prompt: str = ""
 
     # --- Lifecycle -------------------------------------------------------
@@ -395,6 +399,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         rooms); ``cleanup_all`` stops it at shutdown (unless it was borrowed
         via ``client=`` — then its owner stops it).
         """
+        await self.backend_turns.settled(room_id)
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         self._room_tools.pop(room_id, None)
@@ -403,6 +408,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
     async def cleanup_all(self) -> None:
         """Stop all sessions and, if adapter-owned, the Copilot client."""
+        await self.backend_turns.drain()
         if self._session_manager:
             await self._session_manager.stop()
         self._room_tools.clear()
@@ -410,6 +416,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         self._turn_state.clear()
 
     # --- Message handling --------------------------------------------------
+
+    @property
+    def backend_turns(self) -> BackendTurns[CopilotSession]:
+        return self._backend_turns
 
     async def on_message(
         self,
@@ -436,49 +446,56 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             # Bound only once this message holds the room, so a queued
             # message never redirects the running turn's tool calls.
             self._room_tools[room_id] = tools
-            try:
-                session, inject_text = await self._obtain_session(
-                    room_id, history, tools, is_session_bootstrap=is_session_bootstrap
+            # Abort is what stops the runtime's work for a cancelled turn; the
+            # session stays valid for the next message.
+            async with self.backend_turns.running(room_id):
+                try:
+                    session, inject_text = await self._obtain_session(
+                        room_id,
+                        history,
+                        tools,
+                        is_session_bootstrap=is_session_bootstrap,
+                    )
+                except Exception:
+                    logger.exception("Room %s: Copilot session setup failed", room_id)
+                    await tools.send_failure(
+                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    raise
+                self.backend_turns.bind(room_id, session)
+                prompt = self._compose_prompt(
+                    msg,
+                    participants_msg,
+                    contacts_msg,
+                    inject_text=inject_text,
                 )
-            except Exception:
-                logger.exception("Room %s: Copilot session setup failed", room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
-            prompt = self._compose_prompt(
-                msg,
-                participants_msg,
-                contacts_msg,
-                inject_text=inject_text,
-            )
 
-            # The session's ask_user handler reads this slot; safe because the
-            # turn lock serializes turns per room.
-            turn = TurnState(
-                sender_mention={
-                    "id": msg.sender_id,
-                    "name": msg.sender_name or msg.sender_type,
-                }
-            )
-            self._turn_state[room_id] = turn
-            try:
-                final_text = await self._run_turn(session, prompt, turn)
-            except Exception:
-                logger.exception("Room %s: Copilot turn failed", room_id)
-                # Abort any work the runtime is still doing for this turn and
-                # drop the session; the next message resumes it fresh by id.
-                await self._session_manager.evict_session(room_id)
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                # The session's ask_user handler reads this slot; safe because the
+                # turn lock serializes turns per room.
+                turn = TurnState(
+                    sender_mention={
+                        "id": msg.sender_id,
+                        "name": msg.sender_name or msg.sender_type,
+                    }
                 )
-                raise
-            finally:
-                self._turn_state.pop(room_id, None)
-                # No-op unless Emit.USAGE is on / usage is non-empty; best-effort,
-                # never raises. In the finally so a turn that errors or times out
-                # AFTER a model call still reports the tokens it spent.
-                await self.emit_usage(tools, turn.usage)
+                self._turn_state[room_id] = turn
+                try:
+                    final_text = await self._run_turn(session, prompt, turn)
+                except Exception:
+                    logger.exception("Room %s: Copilot turn failed", room_id)
+                    # Abort any work the runtime is still doing for this turn and
+                    # drop the session; the next message resumes it fresh by id.
+                    await self._session_manager.evict_session(room_id)
+                    await tools.send_failure(
+                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    raise
+                finally:
+                    self._turn_state.pop(room_id, None)
+                    # No-op unless Emit.USAGE is on / usage is non-empty; best-effort,
+                    # never raises. In the finally so a turn that errors or times out
+                    # AFTER a model call still reports the tokens it spent.
+                    await self.emit_usage(tools, turn.usage)
 
             await self._emit_thoughts(turn, tools)
 
@@ -888,6 +905,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             parts.append(f"[System]: {contacts_msg}")
         parts.append(msg.format_for_llm())
         return "\n\n".join(parts)
+
+    @staticmethod
+    async def _abort_turn(session: CopilotSession) -> None:
+        await session.abort()
 
     async def _run_turn(
         self, session: CopilotSession, prompt: str, turn: TurnState

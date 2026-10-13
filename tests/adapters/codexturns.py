@@ -60,6 +60,7 @@ class FakeCodexClient(RecordedRequests):
         model_list_result: dict[str, Any] | None = None,
         model_list_error: Exception | None = None,
         skill_roots_error: Exception | None = None,
+        hold_when_drained: bool = False,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -76,6 +77,12 @@ class FakeCodexClient(RecordedRequests):
         self._skill_roots_error = skill_roots_error
         self._thread_counter = 0
         self._turn_counter = 0
+        # Keeps a turn running once its scripted events are spent, instead of
+        # ending the event stream.
+        self._hold_when_drained = hold_when_drained
+        # While cleared, a turn/interrupt request stays in flight.
+        self.interrupt_released = asyncio.Event()
+        self.interrupt_released.set()
 
     async def connect(self) -> None:
         self.connected = True
@@ -103,6 +110,8 @@ class FakeCodexClient(RecordedRequests):
         self.requests.append((method, dict(payload)))
 
         match method:
+            case CodexRequestMethod.TURN_INTERRUPT:
+                await self.interrupt_released.wait()
             case CodexRequestMethod.MODEL_LIST:
                 if self._model_list_error is not None:
                     raise self._model_list_error
@@ -138,6 +147,8 @@ class FakeCodexClient(RecordedRequests):
         return {}
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+        if not self._events and self._hold_when_drained:
+            await asyncio.Future[None]()
         if not self._events:
             raise TimeoutError
         return self._events.popleft()

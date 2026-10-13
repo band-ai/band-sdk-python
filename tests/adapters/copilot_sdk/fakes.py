@@ -101,6 +101,8 @@ class FakeCopilotSession:
         self.handlers: list[Any] = []
         self.aborted = False
         self.disconnected = False
+        # Every prompt, abort and disconnect, in the order the session saw them.
+        self.journal: list[str] = []
 
     def on(self, handler: Any) -> Any:
         self.handlers.append(handler)
@@ -113,6 +115,7 @@ class FakeCopilotSession:
         self, prompt: str, *, timeout: float = 60.0, **_: Any
     ) -> Any:
         self.prompts.append(prompt)
+        self.journal.append("prompt")
         if self.send_error:
             raise self.send_error
         for data in self.turn_events:
@@ -136,9 +139,11 @@ class FakeCopilotSession:
 
     async def abort(self) -> None:
         self.aborted = True
+        self.journal.append("abort")
 
     async def disconnect(self) -> None:
         self.disconnected = True
+        self.journal.append("disconnect")
 
 
 class FakeCopilotClient:

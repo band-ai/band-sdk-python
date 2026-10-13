@@ -249,9 +249,15 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         )
         self._background_tasks.add(turn_task)
         turn_task.add_done_callback(lambda task: self._on_turn_task_done(task, room_id))
-        done, _ = await asyncio.wait(
-            {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
-        )
+        try:
+            done, _ = await asyncio.wait(
+                {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            # The turn still prompting belongs to this handler; ending it
+            # stops the agent's prompt.
+            turn_task.cancel()
+            raise
         if turn_task in done:
             # No decision ever opened -- surface completion/failure exactly
             # as before this turn body ran detached.
@@ -354,6 +360,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         pending decision is enough for it to wind down on its own. The
         interrupt ends that turn, so it is settled and never reported as a
         missing reply."""
+        await super().on_interrupt(room_id, mode)
         turn = self._active_turn
         if turn is not None and turn.room_id == room_id:
             turn.closed = True

@@ -23,6 +23,7 @@ from tests.adapters.parlant.helpers import (
     MESSAGE_KIND,
     SENDER_NAME,
     SESSION_ID,
+    RecordingBackgroundTasks,
 )
 from tests.integrations.parlant.sessions import (
     clear_session_tools,  # noqa: F401 -- autouse fixture
@@ -78,6 +79,27 @@ def application_class(mock_app: MagicMock) -> Iterator[MagicMock]:
 
 
 @pytest.fixture
+def background_tasks() -> RecordingBackgroundTasks:
+    """The engine's background-task service, recording what it cancels."""
+    return RecordingBackgroundTasks()
+
+
+@pytest.fixture
+def background_task_service_class() -> Iterator[MagicMock]:
+    """Fake ``parlant.core.background_tasks`` so on_started's import resolves."""
+    service_class = MagicMock(name="BackgroundTaskService")
+    with patch.dict(
+        sys.modules,
+        {
+            "parlant.core.background_tasks": MagicMock(
+                BackgroundTaskService=service_class
+            )
+        },
+    ):
+        yield service_class
+
+
+@pytest.fixture
 def parlant_sessions() -> Iterator[None]:
     """Fake the Parlant session modules a turn imports."""
     with patch.dict(
@@ -97,10 +119,19 @@ def parlant_sessions() -> Iterator[None]:
 
 
 @pytest.fixture
-def mock_parlant_server(mock_app: MagicMock, application_class: MagicMock) -> MagicMock:
-    """A Parlant server whose container holds ``mock_app``."""
+def mock_parlant_server(
+    mock_app: MagicMock,
+    application_class: MagicMock,
+    background_tasks: RecordingBackgroundTasks,
+    background_task_service_class: MagicMock,
+) -> MagicMock:
+    """A Parlant server whose container holds ``mock_app`` and the recording
+    background-task service."""
     server = MagicMock()
-    server.container = {application_class: mock_app}
+    server.container = {
+        application_class: mock_app,
+        background_task_service_class: background_tasks,
+    }
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
     created_agent = MagicMock()
     created_agent.id = "parlant-agent-created"

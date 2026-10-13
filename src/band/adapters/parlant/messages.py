@@ -26,6 +26,15 @@ def compose_user_message(
     return user_message
 
 
+def process_session_tag(session_id: SessionId | str) -> str:
+    """The tag Parlant runs a session's response under in its background tasks.
+
+    Mirrors Parlant's own tag (pinned by a parity test against the engine), so
+    cancelling it stops the engine's work on the session.
+    """
+    return f"process-session({session_id})"
+
+
 async def post_user_message(
     *, app: Application, session_id: SessionId, message: str
 ) -> int:

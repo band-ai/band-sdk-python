@@ -53,7 +53,12 @@ from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    ApprovalInterruptMixin,
+    BackendTurns,
+    TurnTask,
+    bind_turn_task,
+)
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -366,6 +371,15 @@ class NativeMessage:
         return text
 
 
+@dataclass(frozen=True)
+class CodexTurn:
+    """What interrupting one room's running app-server turn needs."""
+
+    client: CodexClientProtocol
+    thread_id: str
+    turn_id: str
+
+
 @dataclass
 class TurnResult:
     """Aggregated result from processing a single Codex turn's event stream."""
@@ -673,6 +687,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
         self._room_cleanup: dict[str, asyncio.Task[None]] = {}
+        self._backend_turns = BackendTurns[CodexTurn](
+            self._interrupt_turn, provider=CODEX_PROVIDER
+        )
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -909,6 +926,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return True
         return False
 
+    @property
+    def backend_turns(self) -> BackendTurns[CodexTurn]:
+        return self._backend_turns
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -1009,128 +1030,139 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 }
                 self._apply_turn_overrides(turn_params, room_id=room_id)
 
-                turn_started = await self._start_turn(turn_params)
-                if has_pending_prompt_injection:
-                    self._prompt_injected_rooms.add(room_id)
-                turn = (
-                    turn_started.get("turn") if isinstance(turn_started, dict) else {}
-                )
-                turn_id = str((turn or {}).get("id") or "")
+                # turn/interrupt is what stops the app-server's turn; cancelling
+                # this worker alone leaves it running.
+                async with self.backend_turns.running(room_id):
+                    turn_started = await self._start_turn(turn_params)
+                    if has_pending_prompt_injection:
+                        self._prompt_injected_rooms.add(room_id)
+                    turn = (
+                        turn_started.get("turn")
+                        if isinstance(turn_started, dict)
+                        else {}
+                    )
+                    turn_id = str((turn or {}).get("id") or "")
+                    if turn_id:
+                        self.backend_turns.bind(
+                            room_id, CodexTurn(self._client, thread_id, turn_id)
+                        )
 
-                if (
-                    Emit.TASK_EVENTS in self.features.emit
-                    and self.config.emit_turn_task_markers
-                ):
-                    await send_event_safe(
-                        tools,
-                        content=self._build_task_event_content(
-                            task_id=turn_id or None,
-                            task="Codex turn",
-                            status="started",
-                            summary=f"Thread: {thread_id}",
-                        ),
-                        message_type="task",
-                        metadata={
-                            "codex_thread_id": thread_id,
-                            "codex_turn_id": turn_id or None,
-                            "codex_room_id": room_id,
-                        },
-                        log_label="turn started task event",
-                        log_level=logging.DEBUG,
-                    )
+                    if (
+                        Emit.TASK_EVENTS in self.features.emit
+                        and self.config.emit_turn_task_markers
+                    ):
+                        await send_event_safe(
+                            tools,
+                            content=self._build_task_event_content(
+                                task_id=turn_id or None,
+                                task="Codex turn",
+                                status="started",
+                                summary=f"Thread: {thread_id}",
+                            ),
+                            message_type="task",
+                            metadata={
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id or None,
+                                "codex_room_id": room_id,
+                            },
+                            log_label="turn started task event",
+                            log_level=logging.DEBUG,
+                        )
 
-                # Phase 2: Turn STARTED lifecycle event with input summary
-                if (
-                    self.config.emit_turn_lifecycle_events
-                    and Emit.TASK_EVENTS in self.features.emit
-                ):
-                    input_summary = (msg.content or "")[:200]
-                    await send_event_safe(
-                        tools,
-                        content=self._build_task_event_content(
-                            task_id=turn_id or None,
-                            task="Codex turn lifecycle",
-                            status="started",
-                            summary=f"Thread: {thread_id}",
-                        ),
-                        message_type="task",
-                        metadata={
-                            "codex_event_type": "turn_lifecycle",
-                            "codex_room_id": room_id,
-                            "codex_thread_id": thread_id,
-                            "codex_turn_id": turn_id or None,
-                            "codex_turn_status": "started",
-                            "codex_input_summary": input_summary,
-                        },
-                        log_label="turn started lifecycle event",
-                        log_level=logging.DEBUG,
-                    )
+                    # Phase 2: Turn STARTED lifecycle event with input summary
+                    if (
+                        self.config.emit_turn_lifecycle_events
+                        and Emit.TASK_EVENTS in self.features.emit
+                    ):
+                        input_summary = (msg.content or "")[:200]
+                        await send_event_safe(
+                            tools,
+                            content=self._build_task_event_content(
+                                task_id=turn_id or None,
+                                task="Codex turn lifecycle",
+                                status="started",
+                                summary=f"Thread: {thread_id}",
+                            ),
+                            message_type="task",
+                            metadata={
+                                "codex_event_type": "turn_lifecycle",
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id or None,
+                                "codex_turn_status": "started",
+                                "codex_input_summary": input_summary,
+                            },
+                            log_label="turn started lifecycle event",
+                            log_level=logging.DEBUG,
+                        )
 
-                # Reset per-turn token deltas for the new turn.
-                usage_obj = self._token_usage.get(thread_id)
-                if usage_obj is not None:
-                    usage_obj.reset_turn_deltas()
+                    # Reset per-turn token deltas for the new turn.
+                    usage_obj = self._token_usage.get(thread_id)
+                    if usage_obj is not None:
+                        usage_obj.reset_turn_deltas()
 
-                # perf_counter (not monotonic): highest-resolution clock, so a fast
-                # turn still measures a non-zero duration on Windows, where
-                # monotonic()'s coarse tick can round an instant turn to 0.0.
-                _turn_start = _time.perf_counter()
-                try:
-                    result = await self._process_turn_events(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        turn_start=_turn_start,
-                    )
-                except TurnResultAlreadyReported:
-                    # A nested handler (e.g. the turn-timeout branch) already
-                    # reported this failure via send_failure; propagate it
-                    # without emitting a friendly _emit_turn_outcome reply or
-                    # a generic "Internal error" fallback.
-                    raise
-                except CodexJsonRpcError as error:
-                    result = TurnResult(
-                        turn_status="failed",
-                        turn_error=str(error),
-                    )
-                    await self._emit_failed_turn_outcome(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        result=result,
-                        turn_start=_turn_start,
-                    )
-                    raise
-                except Exception:
-                    logger.exception(
-                        "Unexpected error during Codex turn event processing "
-                        "(thread=%s, turn=%s)",
-                        thread_id,
-                        turn_id,
-                    )
-                    result = TurnResult(
-                        turn_status="failed",
-                        turn_error="Internal error during turn processing",
-                    )
-                    await tools.send_failure(
-                        AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    await self._emit_failed_turn_outcome(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        result=result,
-                        turn_start=_turn_start,
-                    )
-                    raise TurnResultAlreadyReported(
-                        "Internal error during turn processing"
-                    ) from None
+                    # perf_counter (not monotonic): highest-resolution clock, so a fast
+                    # turn still measures a non-zero duration on Windows, where
+                    # monotonic()'s coarse tick can round an instant turn to 0.0.
+                    _turn_start = _time.perf_counter()
+                    try:
+                        result = await self._process_turn_events(
+                            tools=tools,
+                            msg=msg,
+                            room_id=room_id,
+                            thread_id=thread_id,
+                            turn_id=turn_id or None,
+                            turn_start=_turn_start,
+                        )
+                    except TurnResultAlreadyReported:
+                        # A nested handler (e.g. the turn-timeout branch) already
+                        # reported this failure via send_failure; propagate it
+                        # without emitting a friendly _emit_turn_outcome reply or
+                        # a generic "Internal error" fallback.
+                        raise
+                    except CodexJsonRpcError as error:
+                        result = TurnResult(
+                            turn_status="failed",
+                            turn_error=str(error),
+                        )
+                        await self._emit_failed_turn_outcome(
+                            tools=tools,
+                            msg=msg,
+                            room_id=room_id,
+                            thread_id=thread_id,
+                            turn_id=turn_id or None,
+                            result=result,
+                            turn_start=_turn_start,
+                        )
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "Unexpected error during Codex turn event processing "
+                            "(thread=%s, turn=%s)",
+                            thread_id,
+                            turn_id,
+                        )
+                        result = TurnResult(
+                            turn_status="failed",
+                            turn_error="Internal error during turn processing",
+                        )
+                        await tools.send_failure(
+                            AgentFailure(
+                                CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE
+                            )
+                        )
+                        await self._emit_failed_turn_outcome(
+                            tools=tools,
+                            msg=msg,
+                            room_id=room_id,
+                            thread_id=thread_id,
+                            turn_id=turn_id or None,
+                            result=result,
+                            turn_start=_turn_start,
+                        )
+                        raise TurnResultAlreadyReported(
+                            "Internal error during turn processing"
+                        ) from None
 
                 _turn_duration_s = _time.perf_counter() - _turn_start
                 await self._emit_turn_outcome(
@@ -1532,17 +1564,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 thread_id,
                 turn_id,
             )
-            if turn_id:
-                try:
-                    await self._client.request(
-                        CodexRequestMethod.TURN_INTERRUPT,
-                        {"threadId": thread_id, "turnId": turn_id},
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to send turn/interrupt after timeout",
-                        exc_info=True,
-                    )
+            self.backend_turns.cancel(room_id)
+            await self.backend_turns.settled(room_id)
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
@@ -3553,6 +3576,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if state.reasoning_summary or self.config.reasoning_summary:
             params["summary"] = state.reasoning_summary or self.config.reasoning_summary
         self._apply_turn_sandbox(params, room_id=room_id)
+
+    @staticmethod
+    async def _interrupt_turn(turn: CodexTurn) -> None:
+        await turn.client.request(
+            CodexRequestMethod.TURN_INTERRUPT,
+            {"threadId": turn.thread_id, "turnId": turn.turn_id},
+        )
 
     async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._client is None:

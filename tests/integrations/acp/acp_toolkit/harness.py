@@ -26,7 +26,7 @@ from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import EXIT_RECORD, FakeACPAgent
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
@@ -429,7 +429,9 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
             reader_a,
             use_unstable_protocol=True,
         )
-        conn = connect_to_agent(client, writer_c, reader_c)
+        conn = connect_to_agent(
+            client, writer_c, reader_c, observers=[agent.record_client_send]
+        )
         agent.hang_up = writer_a.close
         try:
             yield conn, agent_conn
@@ -449,6 +451,7 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
 
 
 async def _exit(agent: FakeACPAgent) -> None:
+    agent.lifecycle.append(EXIT_RECORD)
     if (gate := agent.exit_gate) is not None:
         gate.received.set()
         await gate.release.wait()

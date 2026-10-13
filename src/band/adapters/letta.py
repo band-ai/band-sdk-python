@@ -26,6 +26,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -62,6 +63,16 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "letta"
+
+
+@dataclass(frozen=True)
+class LettaRun:
+    """What cancelling one room's runs needs: the room's conversation in
+    shared mode, its own agent otherwise."""
+
+    client: Any
+    agent_id: str
+    conversation_id: str | None
 
 
 @dataclass
@@ -163,6 +174,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         # Per-room state
         self._rooms: dict[str, RoomContext] = {}
+        self._backend_turns = BackendTurns[LettaRun](
+            self._cancel_runs, provider=_PROVIDER
+        )
 
         # Shared mode: single agent ID used across all rooms
         self._shared_agent_id: str | None = None
@@ -276,6 +290,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     # ------------------------------------------------------------------
     # Message handling
     # ------------------------------------------------------------------
+
+    @property
+    def backend_turns(self) -> BackendTurns[LettaRun]:
+        return self._backend_turns
 
     async def on_message(
         self,
@@ -483,15 +501,22 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # Emitted on every exit via the finally.
         turn_usage = TurnUsage()
 
+        run = LettaRun(self._client, agent_id, self._shared_conversation(room_ctx))
         try:
             try:
                 # turn_timeout_s bounds only the round-trip to Letta -- response
                 # processing (including deliver_reply, below) runs unbounded so a
                 # slow Band-side delivery is never mislabeled as a Letta timeout.
-                response_messages, turn_usage = await asyncio.wait_for(
-                    self._call_provider(agent_id, messages, room_ctx),
-                    timeout=self.config.turn_timeout_s,
-                )
+                async with self.backend_turns.running(room_id, run):
+                    try:
+                        response_messages, turn_usage = await asyncio.wait_for(
+                            self._call_provider(run, messages),
+                            timeout=self.config.turn_timeout_s,
+                        )
+                    except TimeoutError:
+                        self.backend_turns.cancel(room_id)
+                        await self.backend_turns.settled(room_id)
+                        raise
                 room_ctx.pending_seed = []
                 room_ctx.last_interaction = datetime.now(UTC)
             except TimeoutError:
@@ -527,27 +552,35 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
 
+    def _shared_conversation(self, room_ctx: RoomContext) -> str | None:
+        """The room's conversation when turns go through the Conversations API."""
+        return room_ctx.conversation_id if self.config.mode == "shared" else None
+
     async def _call_provider(
-        self,
-        agent_id: str,
-        messages: list[dict[str, str]],
-        room_ctx: RoomContext,
+        self, run: LettaRun, messages: list[dict[str, str]]
     ) -> tuple[list[Any], TurnUsage]:
         """Round-trip to the Letta API -- no response processing or delivery."""
-        # Use Conversations API in shared mode, direct agent API in per_room mode
-        if self.config.mode == "shared" and room_ctx.conversation_id:
-            conversation_stream = await self._client.conversations.messages.create(
-                conversation_id=room_ctx.conversation_id,
+        if run.conversation_id:
+            conversation_stream = await run.client.conversations.messages.create(
+                conversation_id=run.conversation_id,
                 messages=messages,
             )
             response_messages = [resp_msg async for resp_msg in conversation_stream]
             return response_messages, TurnUsage()
 
-        response = await self._client.agents.messages.create(
-            agent_id=agent_id,
+        response = await run.client.agents.messages.create(
+            agent_id=run.agent_id,
             messages=messages,
         )
         return list(response.messages), self._usage_from_response(response)
+
+    @staticmethod
+    async def _cancel_runs(run: LettaRun) -> None:
+        """Cancel the room's in-flight runs; the server needs Redis for this."""
+        if run.conversation_id:
+            await run.client.conversations.cancel(run.conversation_id)
+        else:
+            await run.client.agents.messages.cancel(run.agent_id)
 
     async def _process_response_messages(
         self,
@@ -1110,6 +1143,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         """
         async with self._rpc_lock:
             room_ctx = self._rooms.pop(room_id, None)
+        await self.backend_turns.settled(room_id)
 
         if room_ctx and self._client:
             if self.config.delete_agents_on_cleanup and self.config.mode == "per_room":
@@ -1133,6 +1167,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         marking needed here.  (A runtime re-registration triggered by a stale
         404 is what marks rooms stale; see ``_reregister_and_mark_stale``.)
         """
+        await self.backend_turns.drain()
         await self._mcp.release(self._client)
 
     async def _delete_agent(self, agent_id: str, room_id: str) -> None:

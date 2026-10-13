@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 from band_sdk_core import AgentFailure
@@ -18,13 +19,18 @@ from band.adapters.parlant.config import ConfigureCallback, ParlantAdapterConfig
 from band.adapters.parlant.guidelines import GuidelineLedger, GuidelineSpec
 from band.adapters.parlant.history import inject_history
 from band.adapters.parlant.lifecycle import ServerLifecycle
-from band.adapters.parlant.messages import compose_user_message, post_user_message
+from band.adapters.parlant.messages import (
+    compose_user_message,
+    post_user_message,
+    process_session_tag,
+)
 from band.adapters.parlant.responses import relay_agent_response
 from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.parlant.customschema import check_parlant_custom_tools
 from band.integrations.parlant.sessiontools import bound_session_tools
@@ -34,6 +40,7 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 if TYPE_CHECKING:
     import parlant.sdk as p
     from parlant.core.application import Application
+    from parlant.core.background_tasks import BackgroundTaskService
     from parlant.core.sessions import SessionId
 
 logger = logging.getLogger(__name__)
@@ -48,6 +55,17 @@ UNREACHABLE_CUSTOM_TOOLS_WARNING = (
     "tools. Declare one with add_guideline(), or attach them from adapter.tools "
     "in configure=."
 )
+
+# Recorded by Parlant on the cancelled session task.
+STOP_REASON = "Band turn stopped"
+
+
+@dataclass(frozen=True)
+class ParlantSessionTurn:
+    """The engine's background processing of one session's response."""
+
+    background_tasks: BackgroundTaskService
+    session_id: SessionId
 
 
 class ParlantAdapter(SimpleAdapter[ParlantMessages]):
@@ -165,7 +183,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._guidelines = GuidelineLedger()
         self._tools: list[Any] = []
         self._rooms: RoomSessions | None = None
+        self._background_tasks: BackgroundTaskService | None = None
         self._started = False
+        self._backend_turns = BackendTurns[ParlantSessionTurn](
+            self._cancel_processing, provider=PROVIDER
+        )
 
     def add_guideline(
         self,
@@ -277,7 +299,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             await self._configure(server, agent)
 
         from parlant.core.application import Application  # noqa: PLC0415
+        from parlant.core.background_tasks import (  # noqa: PLC0415
+            BackgroundTaskService,
+        )
 
+        self._background_tasks = server.container[BackgroundTaskService]
         return agent, server.container[Application]
 
     def _warn_if_custom_tools_unreachable(self) -> None:
@@ -297,6 +323,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         """The applied-guideline count belongs to the agent it was applied to."""
         if self._lifecycle.agent is None:
             self._guidelines.forget_applied()
+
+    @property
+    def backend_turns(self) -> BackendTurns[ParlantSessionTurn]:
+        return self._backend_turns
 
     async def on_message(
         self,
@@ -385,30 +415,52 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         tools: AgentToolsProtocol,
         sender_name: str,
     ) -> None:
-        """Post *user_message* as the customer, then relay the engine's reply."""
-        offset = await post_user_message(
-            app=app, session_id=session_id, message=user_message
+        """Post *user_message* as the customer, then relay the engine's reply.
+
+        The engine answers in its own background task, so ending this turn
+        early cancels that task too.
+        """
+        handle = (
+            None
+            if self._background_tasks is None
+            else ParlantSessionTurn(self._background_tasks, session_id)
         )
-        await relay_agent_response(
-            app=app,
-            session_id=session_id,
-            room_id=room_id,
-            min_offset=offset,
-            tools=tools,
-            sender_name=sender_name,
-            timeout=self.config.response_timeout,
-            poll=self.config.response_poll,
+        async with self.backend_turns.running(room_id, handle):
+            offset = await post_user_message(
+                app=app, session_id=session_id, message=user_message
+            )
+            gave_up = await relay_agent_response(
+                app=app,
+                session_id=session_id,
+                room_id=room_id,
+                min_offset=offset,
+                tools=tools,
+                sender_name=sender_name,
+                timeout=self.config.response_timeout,
+                poll=self.config.response_poll,
+            )
+            if gave_up:
+                self.backend_turns.cancel(room_id)
+                await self.backend_turns.settled(room_id)
+
+    @staticmethod
+    async def _cancel_processing(turn: ParlantSessionTurn) -> None:
+        await turn.background_tasks.cancel(
+            tag=process_session_tag(turn.session_id), reason=STOP_REASON
         )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Forget the room's Parlant session when the agent leaves it."""
+        await self.backend_turns.settled(room_id)
         if self._rooms is not None:
             self._rooms.forget(room_id)
         logger.debug("Room %s: Cleaned up Parlant session", room_id)
 
     async def cleanup_all(self) -> None:
         """Release all sessions and the owned Parlant server (call on stop)."""
+        await self.backend_turns.drain()
         self._rooms = None
+        self._background_tasks = None
         await self._lifecycle.release()
         self._forget_guidelines_if_agent_gone()
         self._started = False
