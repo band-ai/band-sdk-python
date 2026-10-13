@@ -13,10 +13,10 @@ import json
 import logging
 import re
 import uuid
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 import httpx
-from pydantic import NonNegativeInt, PositiveInt, ValidationError
+from pydantic import Field, PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
@@ -56,6 +56,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "band"
+
+# Extra HTTP attempts per generation request (total attempts = max_retries + 1).
+GOOGLE_ADK_MAX_GENERATION_RETRIES: Final[int] = 10
 
 # Candidate method names that google-adk BaseTool may use to expose tool
 # declarations.  The bridge overrides every match found on the installed
@@ -353,7 +356,8 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
         system_prompt: Replaces the rendered Band system prompt entirely.
         custom_section: Extra instructions appended to the rendered prompt.
         max_retries: Extra HTTP attempts per provider generation request;
-            never retries a tool or turn. Zero disables recovery.
+            never retries a tool or turn. Zero disables recovery. Capped at
+            :data:`GOOGLE_ADK_MAX_GENERATION_RETRIES`.
         max_history_messages: Most recent room messages replayed as a
             transcript at the start of each turn.
         max_transcript_chars: Character cap on that transcript; older lines
@@ -363,7 +367,11 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
-    max_retries: NonNegativeInt = 2
+    max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=GOOGLE_ADK_MAX_GENERATION_RETRIES,
+    )
     max_history_messages: PositiveInt = 50
     max_transcript_chars: PositiveInt = 100_000
 

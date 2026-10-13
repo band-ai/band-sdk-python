@@ -310,6 +310,17 @@ class TestInitialization:
         ):
             GoogleADKAdapterConfig(**{field: 0})
 
+    @pytest.mark.parametrize(
+        ("value", "match"),
+        [
+            (-1, "max_retries\n  Input should be greater than or equal to 0"),
+            (11, "max_retries\n  Input should be less than or equal to 10"),
+        ],
+    )
+    def test_max_retries_rejects_out_of_range_budgets(self, value: int, match: str):
+        with pytest.raises(ValueError, match=match):
+            GoogleADKAdapterConfig(max_retries=value)
+
     def test_execution_reporting_default(self):
         """Should default emit to everything the adapter supports."""
         adapter = GoogleADKAdapter()
