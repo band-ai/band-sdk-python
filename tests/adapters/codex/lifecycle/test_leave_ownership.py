@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from band.adapters.codex import CodexAdapter
 from band.core.exceptions import InputNotAccepted
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
@@ -49,13 +48,10 @@ class TestLifecycleLeave:
 
     async def test_close_timeout_retains_ownership_until_retry(
         self,
-        host: RetentionHost,
+        close_bound_host: RetentionHost,
     ) -> None:
-        assert isinstance(host.adapter, CodexAdapter)
+        host = close_bound_host
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
-        host.adapter.config = host.adapter.config.model_copy(
-            update={"client_close_timeout_s": 0.05}
-        )
         barrier = host.children[0].closing = Hold()
         with pytest.raises(TimeoutError):
             await host.leave("room-a")
@@ -66,9 +62,6 @@ class TestLifecycleLeave:
         with pytest.raises(InputNotAccepted, match="is closing"):
             await host.send("room-a", write_instruction("changed"))
         assert host.exited == [False]
-        host.adapter.config = host.adapter.config.model_copy(
-            update={"client_close_timeout_s": None}
-        )
         barrier.released.set()
         await host.leave("room-a")
         assert host.exited == [True]
