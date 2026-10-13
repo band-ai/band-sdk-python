@@ -145,6 +145,12 @@ the model to call it when the latest message needs no answer: it was addressed
 to someone else, it is an FYI or an acknowledgement, or someone already answered
 it. The call is local only; its `reason` goes to the agent log.
 
+Pydantic AI ends its native model loop after a successful current-run decline
+whose other tool results in that response also succeeded. Tool results, history
+and usage finish through the normal run lifecycle. A failed decline, or a failed
+tool in the same batch, leaves the loop running so the model can continue.
+Central turn judgment remains in `SimpleAdapter`.
+
 ## Custom tools: `@declares_turn_effect`
 
 An undeclared custom tool counts as `observe`: the SDK cannot tell a lookup from
