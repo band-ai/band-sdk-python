@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 import pytest
-from claude_agent_sdk import ClaudeSDKError
 
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from tests.adapters.claude_sdk.fakecli import Raw
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -27,7 +29,7 @@ async def test_a_turn_the_sdk_cannot_parse_never_leaks_into_the_next(
     )
 
     await room.send("hello")
-    with pytest.raises(ClaudeSDKError, match="Missing required field"):
+    with pytest.raises(TurnResultAlreadyReported, match="Missing required field"):
         await room.send("and now?")
     await room.send("still there?")
 

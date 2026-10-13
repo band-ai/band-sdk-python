@@ -107,9 +107,12 @@ async def test_collision_is_rejected_until_owner_leaves(
     assert [session.alive for session in claude.sessions] == [False, True]
 
 
-async def test_cancelled_startup_keeps_claim_and_reuses_client(
+async def test_cancelled_startup_keeps_claim_and_is_recovered_before_reuse(
     claude_room: OpenRoom, claude: FakeClaude, tmp_path: Path
 ) -> None:
+    """The abandoned connect keeps the workspace claim and finishes on its own;
+    the next message closes it and starts its own CLI instead of adopting one
+    bound to a turn that no longer exists."""
     room = await claude_room(workspace_for_room=lambda _: str(tmp_path / "shared"))
     hold = claude.connecting = Hold()
     opening = room.send_in_background("hi")
@@ -121,8 +124,8 @@ async def test_cancelled_startup_keeps_claim_and_reuses_client(
         await room.beside("room-2").send("hi")
     claude.script([room.model_reply("Connected.")])
     await room.send("again")
-    assert len(claude.sessions) == 1
-    assert claude.sessions[0].alive
+    assert [session.alive for session in claude.sessions] == [False, True]
+    assert len(set(claude.session_workspaces)) == 1
     assert room.chat == ["Connected."]
     assert room.failures == []
 
@@ -206,8 +209,9 @@ async def test_stop_attempts_all_rooms_and_retries_failed_cleanup(
     await second.send("hi")
     claude.sessions[0].refuse_close = True
     try:
-        with pytest.raises(ExceptionGroup, match="cleanup failed"):
+        with pytest.raises(ExceptionGroup) as failed:
             await room.adapter.cleanup_all()
+        assert failed.group_contains(RuntimeError, match="cleanup failed")
         assert [session.alive for session in claude.sessions] == [True, False]
     finally:
         claude.sessions[0].refuse_close = False
@@ -242,10 +246,12 @@ async def test_restart_cannot_replace_a_manager_with_failed_cleanup(
     await room.send("hi")
     claude.refuse_close = True
     try:
-        with pytest.raises(ExceptionGroup, match="cleanup failed"):
+        with pytest.raises(ExceptionGroup) as failed:
             await room.adapter.cleanup_all()
-        with pytest.raises(ExceptionGroup, match="cleanup failed"):
+        assert failed.group_contains(RuntimeError, match="cleanup failed")
+        with pytest.raises(ExceptionGroup) as failed:
             await room.adapter.on_started("Test Agent", "An agent under test")
+        assert failed.group_contains(RuntimeError, match="cleanup failed")
         assert len(claude.sessions) == 1
         assert claude.sessions[0].alive
     finally:

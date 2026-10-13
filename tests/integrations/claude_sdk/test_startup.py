@@ -14,6 +14,11 @@ from band.workspaces import RoomWorkspaces
 from tests.adapters.claude_sdk.process import WorkspaceProcess
 
 
+async def start(manager: ClaudeSessionManager, room_id: str) -> None:
+    async with manager.room(room_id).using():
+        pass
+
+
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_pre_query_startup_failure_reaps_real_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
@@ -35,15 +40,15 @@ async def test_pre_query_startup_failure_reaps_real_child(
     try:
         expected_error = RuntimeError if cleanup_fails else ValueError
         with pytest.raises(expected_error):
-            await manager.get_or_create_session("room-a")
+            await start(manager, "room-a")
         assert len(children) == 1
         if cleanup_fails:
             assert not children[0].exited
             assert manager.has_session("room-a")
             with pytest.raises(ValueError, match="both"):
-                await manager.get_or_create_session("room-b")
+                await start(manager, "room-b")
             with pytest.raises(RuntimeError, match="cleanup failed"):
-                await manager.get_or_create_session("room-a")
+                await start(manager, "room-a")
             assert len(children) == 1
             children[0].refuse_close = False
             await manager.cleanup_session("room-a")

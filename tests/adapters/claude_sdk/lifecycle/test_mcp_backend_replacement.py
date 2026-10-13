@@ -12,7 +12,6 @@ import pytest
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
-from band.integrations.mcp import BandMCPBackendStoppedError
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 
@@ -66,14 +65,14 @@ async def test_an_open_room_after_a_crash_resumes_on_the_new_endpoint(
 
 
 async def test_a_message_after_shutdown_is_refused(claude_room: OpenRoom) -> None:
-    """Shutdown closes the backend for good: a late message can't start a
-    server nothing would stop."""
+    """Shutdown closes admission and the backend for good: a late message is
+    refused before it could start a server or CLI nothing would stop."""
     room = await claude_room()
     backend = room.adapter._mcp.current
     assert backend is not None
     await room.adapter.cleanup_all()
 
-    with pytest.raises(BandMCPBackendStoppedError):
+    with pytest.raises(ClaudeSessionManagerStoppedError):
         await room.send("hi")
 
     assert backend.is_running is False
@@ -101,8 +100,9 @@ async def test_a_message_caught_by_shutdown_restarts_nothing(
 async def test_a_resume_cut_short_by_shutdown_reports_nothing(
     claude_room: OpenRoom,
 ) -> None:
-    """The shutdown lands while a resume is connecting and the resume fails;
-    the fresh-session fallback must meet the stopped manager quietly."""
+    """The shutdown lands while a resume is connecting: it cancels the turn
+    and the connect, so no fresh-session fallback starts and nothing is
+    reported mid-shutdown."""
     room = await claude_room()
     room.claude.unresumable.add("sess-earlier")
     room.claude.connecting = connecting = Hold()
@@ -112,12 +112,13 @@ async def test_a_resume_cut_short_by_shutdown_reports_nothing(
         stopping = asyncio.create_task(room.adapter.cleanup_all())
         await asyncio.sleep(0)  # cleanup_all reaches the manager's stop()
 
-    with pytest.raises(ClaudeSessionManagerStoppedError):
+    with pytest.raises(asyncio.CancelledError):
         await sending
     await stopping
 
     assert room.reported_failures == []
     assert room.claude.resumed == ["sess-earlier"]
+    assert [session.alive for session in room.claude.sessions] == [False]
 
 
 async def test_a_restarted_agent_serves_band_tools_again(claude_room: OpenRoom) -> None:

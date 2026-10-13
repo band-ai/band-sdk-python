@@ -12,7 +12,7 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.fakecli import Hold, StreamFails
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, ClaudeRoom
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -88,7 +88,7 @@ async def test_a_timeout_from_the_cli_stream_is_an_ordinary_failure(
         [room.model_reply("Back on a fresh process.")],
     )
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TurnResultAlreadyReported, match="read timed out"):
         await room.send("first")
     await room.send("second")
 
@@ -100,7 +100,11 @@ async def test_a_timeout_from_the_cli_stream_is_an_ordinary_failure(
 async def test_stop_retains_worker_until_session_cleanup_finishes(
     claude_room: OpenRoom,
 ) -> None:
-    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+    room = await claude_room(
+        ClaudeSDKAdapterConfig(
+            turn_timeout_s=TURN_TIMEOUT_S, retention=REPORTING_BUDGET
+        )
+    )
     work, closing = Hold(), Hold()
     room.claude.script([work])
     room.claude.closing = closing
@@ -129,3 +133,25 @@ async def test_stop_retains_worker_until_session_cleanup_finishes(
         closing.released.set()
         work.released.set()
         await asyncio.gather(sending, return_exceptions=True)
+
+
+async def test_a_cli_that_exits_when_interrupted_is_replaced(
+    claude_room: OpenRoom,
+) -> None:
+    """The interrupted CLI exits without the turn's result; draining that end
+    retires it as a crash, so the next message starts a new conversation
+    instead of writing to a dead process."""
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+    room.claude.exit_on_interrupt = True
+    room.claude.script(
+        [room.model_reply("Hello.")], [Hold()], [room.model_reply("Fresh start.")]
+    )
+
+    await room.send("hi")
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("take forever")
+    await room.send("and now?")
+
+    assert room.failures == [f"Claude turn timed out after {TURN_TIMEOUT_S}s"]
+    assert room.chat == ["Hello.", "Fresh start."]
+    assert room.claude.resumed == [None, None]
