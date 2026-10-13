@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+import pytest_asyncio
 from pydantic import BaseModel
 
 from band.adapters.codex import (
@@ -19,6 +20,7 @@ from band.adapters.codex import (
     CodexCommand,
     PendingApproval,
 )
+from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
     AgentInput,
     HistoryProvider,
@@ -30,6 +32,7 @@ from band.integrations.codex import (
     RpcEvent,
 )
 from band.integrations.codex.types import (
+    CodexItemType,
     CodexRequestMethod,
     CodexSessionState,
 )
@@ -37,6 +40,7 @@ from band.runtime.decisions import DecisionRegistry
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from tests.adapters.codexturns import (
+    MAX_LOOP_POLLS,
     FakeCodexClient,
     await_released_turn,
     event_notification,
@@ -267,6 +271,31 @@ class CodexRoom:
         await await_released_turn(self.adapter, ROOM_ID)
 
 
+def delegated_to(thread_id: str) -> RpcEvent:
+    """The turn's collab item naming the sub-agent thread it spawned."""
+    return event_notification(
+        "item/completed",
+        {
+            "item": {
+                "type": CodexItemType.COLLAB_AGENT_TOOL_CALL,
+                "id": f"spawn-{thread_id}",
+                "tool": "spawnAgent",
+                "status": "completed",
+                "receiverThreadIds": [thread_id],
+            }
+        },
+    )
+
+
+def asked_by_sub_agent(request_id: int, thread_id: str) -> RpcEvent:
+    """An approval a sub-agent asks under its own thread and turn."""
+    return event_request(
+        request_id,
+        "item/commandExecution/requestApproval",
+        {"threadId": thread_id, "turnId": f"{thread_id}-turn", "command": "make"},
+    )
+
+
 def parked_on_approval(*then: RpcEvent) -> tuple[RpcEvent, ...]:
     """A turn that asks the room to approve one command, then plays ``then``."""
     return (
@@ -346,15 +375,12 @@ class StayQuietInput(BaseModel):
 
 async def answer_to(client: FakeCodexClient, request_id: int | str) -> dict[str, Any]:
     """The response the adapter sent ``request_id``, once it has."""
-    for _ in range(MAX_ANSWER_POLLS):
+    for _ in range(MAX_LOOP_POLLS):
         for answered, result in client.responses:
             if answered == request_id:
                 return result
         await asyncio.sleep(0)
     raise AssertionError(f"Request {request_id} was never answered")
-
-
-MAX_ANSWER_POLLS = 200
 
 
 class SlowTurnStartClient(FakeCodexClient):
@@ -371,8 +397,7 @@ class SlowTurnStartClient(FakeCodexClient):
             method, params, retry_on_overload=retry_on_overload
         )
         if method == CodexRequestMethod.TURN_START:
-            for _ in range(5):
-                await asyncio.sleep(0)
+            await self.read_by_adapter()
         return result
 
 
@@ -383,8 +408,7 @@ class CompletesWhileRefusingClient(SlowTurnStartClient):
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
         await super().respond(request_id, result)
         self.emit(turn_completed())
-        for _ in range(5):
-            await asyncio.sleep(0)
+        await self.read_by_adapter()
 
 
 class StopsReadingAfterTurnClient(SlowTurnStartClient):
@@ -435,3 +459,50 @@ class CountingCloseClient(FakeCodexClient):
         await self.finish_close.wait()
         await super().close()
         self.close_finished.set()
+
+
+class HeldStartClient(FakeCodexClient):
+    """An app-server whose initialize handshake waits until released."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.starting = asyncio.Event()
+        self.finish_start = asyncio.Event()
+
+    async def initialize(self, **kwargs: Any) -> dict[str, Any]:
+        self.starting.set()
+        await self.finish_start.wait()
+        return await super().initialize(**kwargs)
+
+
+# Adapters run their turns on the loop that started them, so setup, the test
+# and teardown share the test's own loop.
+@pytest_asyncio.fixture(loop_scope="function")
+async def codex_room() -> AsyncIterator[Callable[..., Awaitable[CodexRoom]]]:
+    """Open a room on a started manual-approval Codex adapter whose server
+    plays ``events``; every room is cleaned up at the end."""
+    rooms: list[CodexRoom] = []
+
+    async def open_room(
+        *events: RpcEvent, client: FakeCodexClient | None = None, **config: Any
+    ) -> CodexRoom:
+        client = client or FakeCodexClient(events=list(events))
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(**{"approval_mode": "manual", **config})
+        )
+        await adapter.on_started("Agent", "A coding agent")
+        rooms.append(room := CodexRoom(adapter, client))
+        return room
+
+    yield open_room
+    for room in rooms:
+        await room.adapter.on_cleanup(ROOM_ID)
+
+
+async def disposed(residency: RetainedRoom) -> None:
+    """Wait until an owned disposal that outlived its caller has finished."""
+    for _ in range(MAX_LOOP_POLLS):
+        if residency.snapshot.state == Residency.CLOSED:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("The room's disposal never finished")

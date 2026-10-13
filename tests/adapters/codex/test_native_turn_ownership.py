@@ -17,7 +17,12 @@ from band.adapters.codex import (
 )
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import Residency
-from band.integrations.codex import TRANSPORT_CLOSED, CodexJsonRpcError
+from band.integrations.codex import (
+    DYNAMIC_TOOL_CALL_METHOD,
+    TRANSPORT_CLOSED,
+    CodexJsonRpcError,
+    RpcEvent,
+)
 from band.integrations.codex.types import CodexRequestMethod
 from band.runtime.tools import BandTool
 from band.testing import (
@@ -34,6 +39,8 @@ from tests.adapters.codex.kit import (
     StopsReadingAfterTurnClient,
     ToolSchemaFakeTools,
     answer_to,
+    asked_by_sub_agent,
+    delegated_to,
     parked_on_approval,
     send_bootstrap,
 )
@@ -101,6 +108,75 @@ class TestNativeTurnOwnership:
         assert [call["tool_name"] for call in room.deliveries[0].tool_calls] == [
             BandTool.NO_REPLY
         ]
+
+    @pytest.mark.asyncio
+    async def test_a_running_turn_refuses_requests_from_another_native_turn(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
+        )
+        await room.send("run tests")
+        autonomous = {"threadId": "thr-1", "turnId": "autonomous"}
+
+        room.client.emit(
+            event_request(
+                41,
+                DYNAMIC_TOOL_CALL_METHOD,
+                {**autonomous, "callId": "c-41", "tool": BandTool.SEND_MESSAGE},
+            ),
+            event_request(
+                42,
+                "item/commandExecution/requestApproval",
+                {**autonomous, "command": "x"},
+            ),
+        )
+
+        assert (await answer_to(room.client, 41))["success"] is False
+        assert await answer_to(room.client, 42) == {"decision": "decline"}
+        assert room.deliveries[0].tool_calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "delegation",
+        [
+            (delegated_to("thr-child"), asked_by_sub_agent(77, "thr-child")),
+            (asked_by_sub_agent(77, "thr-child"), delegated_to("thr-child")),
+        ],
+        ids=["named-first", "asked-first"],
+    )
+    async def test_a_sub_agent_the_turn_delegated_to_asks_its_room(
+        self,
+        codex_room: Callable[..., Awaitable[CodexRoom]],
+        delegation: tuple[RpcEvent, RpcEvent],
+    ) -> None:
+        room = await codex_room(
+            *delegation,
+            tool_call_request(1, BandTool.NO_REPLY),
+            turn_completed(),
+            approval_wait_timeout_s=3600,
+        )
+        await room.send("delegate the cleanup")
+
+        await room.send(f"/{CodexCommand.APPROVE} req-77")
+        await room.settled()
+
+        assert await answer_to(room.client, 77) == {"decision": "accept"}
+
+    @pytest.mark.asyncio
+    async def test_a_sub_agent_the_turn_never_named_is_refused_when_it_ends(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            asked_by_sub_agent(77, "thr-elsewhere"),
+            tool_call_request(1, BandTool.NO_REPLY),
+            turn_completed(),
+        )
+
+        await room.send("work")
+
+        assert await answer_to(room.client, 77) == {"decision": "decline"}
+        assert room.chat == []
 
     @pytest.mark.asyncio
     async def test_a_late_item_is_not_charged_to_the_next_turn(
@@ -249,23 +325,32 @@ class TestNativeTurnOwnership:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("restore", "refusal"),
+        ("restore", "error", "refusal"),
         [
-            ({"resumed_settings": {"modelProvider": "other"}}, "model_provider"),
-            ({"resumed_thread_id": "thr-elsewhere"}, "thr-elsewhere"),
+            (
+                {"resumed_settings": {"modelProvider": "other"}},
+                CodexContinuityError,
+                "model_provider",
+            ),
+            (
+                {"resumed_thread_id": "thr-elsewhere"},
+                CodexContinuityError,
+                "thr-elsewhere",
+            ),
             (
                 {
                     "resume_error": CodexJsonRpcError(
                         code=-32600, message="no rollout found for thread id thr-1"
                     )
                 },
+                CodexJsonRpcError,
                 "no rollout found",
             ),
         ],
         ids=["changed-settings", "other-thread", "no-rollout"],
     )
     async def test_a_refused_restore_keeps_the_thread_and_starts_no_other(
-        self, restore: dict[str, Any], refusal: str
+        self, restore: dict[str, Any], error: type[Exception], refusal: str
     ) -> None:
         client = FakeCodexClient(
             events=[PROCESS_EXITED],
@@ -278,7 +363,7 @@ class TestNativeTurnOwnership:
             await send_bootstrap(adapter)
         tools = ToolSchemaFakeTools()
 
-        with pytest.raises((CodexContinuityError, CodexJsonRpcError), match=refusal):
+        with pytest.raises(error, match=refusal):
             await send_bootstrap(adapter, tools=tools)
 
         assert adapter._room_threads[ROOM_ID] == "thr-1"

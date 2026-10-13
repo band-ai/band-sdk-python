@@ -7,13 +7,16 @@ from typing import Any
 
 import pytest
 
+from band.adapters.codex import CodexAdapterConfig
 from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.retention import RoomRetentionConfig
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
     CountingCloseClient,
+    disposed,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
@@ -81,6 +84,33 @@ class TestRoomRetirement:
 
         await adapter.on_cleanup(ROOM_ID)
         await send_bootstrap(adapter)
+        assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
+
+    @pytest.mark.looptime
+    async def test_a_leave_reported_unfinished_readmits_the_room_once_retried(
+        self,
+    ) -> None:
+        client = CountingCloseClient(
+            events=[turn_completed(), turn_completed("turn-2")], hold=True
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=CodexAdapterConfig(
+                client_close_timeout_s=None,
+                retention=RoomRetentionConfig(transition_timeout_s=1),
+            ),
+        )
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await send_bootstrap(adapter)
+        residency = adapter._room_clients[ROOM_ID].residency
+        with pytest.raises(CleanupIncompleteError):
+            await adapter.on_cleanup(ROOM_ID)
+        client.finish_close.set()
+        await disposed(residency)
+
+        await adapter.on_cleanup(ROOM_ID)
+        await send_bootstrap(adapter)
+
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
 
     @pytest.mark.parametrize("retain", [False, True])

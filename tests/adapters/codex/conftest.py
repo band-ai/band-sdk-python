@@ -8,40 +8,14 @@ from typing import Any
 import pytest_asyncio
 
 from band.adapters.codex import CodexAdapterConfig
-from band.integrations.codex import RpcEvent
-from tests.adapters.codex.kit import (
-    ROOM_ID,
+from tests.adapters.codex.kit import (  # noqa: F401
     CodexApprovalRoom,
-    CodexRoom,
+    codex_room,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
 )
-
-
-# Adapters run their turns on the loop that started them, so setup, the test
-# and teardown share the test's own loop.
-@pytest_asyncio.fixture(loop_scope="function")
-async def codex_room() -> AsyncIterator[Callable[..., Awaitable[CodexRoom]]]:
-    """Open a room on a started manual-approval Codex adapter whose server
-    plays ``events``; every room is cleaned up at the end."""
-    rooms: list[CodexRoom] = []
-
-    async def open_room(
-        *events: RpcEvent, client: FakeCodexClient | None = None, **config: Any
-    ) -> CodexRoom:
-        client = client or FakeCodexClient(events=list(events))
-        adapter = make_codex_adapter(
-            client, config=CodexAdapterConfig(**{"approval_mode": "manual", **config})
-        )
-        await adapter.on_started("Agent", "A coding agent")
-        rooms.append(room := CodexRoom(adapter, client))
-        return room
-
-    yield open_room
-    for room in rooms:
-        await room.adapter.on_cleanup(ROOM_ID)
 
 
 @pytest_asyncio.fixture(loop_scope="function")

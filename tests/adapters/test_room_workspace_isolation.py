@@ -10,15 +10,22 @@ from typing import cast
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
-from band.core.protocols import AgentToolsProtocol
-from band.core.retention import ReleaseCause
+from band.core.protocols import AgentToolsProtocol, TurnResultAlreadyReported
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
 )
 from band.integrations.codex import CodexRequestMethod
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from band.workspaces import is_host_absolute, resolve_room_workspace
+from tests.adapters.codex.kit import PROCESS_EXITED, CodexRoom
+from tests.adapters.codexturns import (
+    FakeCodexClient,
+    make_codex_adapter,
+    tool_call_request,
+    turn_completed,
+)
 
 
 def test_default_workspace_is_created_per_room(
@@ -112,43 +119,23 @@ async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
 
 @pytest.mark.asyncio
 async def test_model_override_survives_codex_client_rebuild() -> None:
-    class Client:
-        def __init__(self, model: str) -> None:
-            self.model = model
-            self.model_list_calls = 0
+    lost = FakeCodexClient(events=[PROCESS_EXITED])
+    replacement = FakeCodexClient(
+        events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()]
+    )
+    adapter = make_codex_adapter(lost, config=CodexAdapterConfig(model=None))
+    processes = iter([lost, replacement])
+    adapter._build_client = lambda _workspace: next(processes)  # type: ignore[method-assign]
+    await adapter.on_started("Codex Agent", "A coding agent")
+    room = CodexRoom(adapter, lost)
 
-        async def connect(self) -> None:
-            return None
+    await room.send("/model room-model")
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("work")
+    await room.send("more work")
 
-        async def initialize(self, **_kwargs: object) -> None:
-            return None
-
-        async def request(
-            self, method: str, _params: dict[str, object]
-        ) -> dict[str, object]:
-            assert method == CodexRequestMethod.MODEL_LIST
-            self.model_list_calls += 1
-            return {"data": [{"id": self.model, "hidden": False}]}
-
-        async def close(self) -> None:
-            return None
-
-    clients = [Client("auto-model-a"), Client("auto-model-b")]
-
-    def build_client(_workspace: str) -> Client:
-        return clients.pop(0)
-
-    adapter = CodexAdapter(CodexAdapterConfig(model=None))
-    adapter._build_client = build_client  # type: ignore[method-assign]
-    room = adapter._room_client("room-a")
-    room.model_override = "room-model"
-
-    await adapter._acquire(room, 1, False)
-    await adapter._release(room, ReleaseCause.RECOVERY)
-    await adapter._acquire(room, 2, False)
-
-    assert room.selected_model == "room-model"
-    assert clients == []
+    (turn,) = replacement.params_of(CodexRequestMethod.TURN_START)
+    assert turn["model"] == "room-model"
 
 
 def test_codex_rejects_the_former_shared_cwd_option() -> None:

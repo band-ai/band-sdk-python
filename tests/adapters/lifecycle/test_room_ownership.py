@@ -72,7 +72,7 @@ class TestRoomOwnership:
         self,
         host: RetentionHost,
     ) -> None:
-        """Pre-ownership behavior; superseded by the Codex cell below."""
+        """A retried leave frees the room to rejoin its workspace."""
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         host.children[0].refuse_close = True
         with pytest.raises(RuntimeError, match="cleanup failed"):
@@ -89,6 +89,7 @@ class TestRoomOwnership:
         self,
         host: RetentionHost,
     ) -> None:
+        assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         assert await host.send("room-a", memo_instruction("kept")) == ["Noted."]
         left_thread = host.native_id("room-a")
         host.children[0].refuse_close = True
@@ -102,6 +103,9 @@ class TestRoomOwnership:
         assert host.native_id("room-a") is None
         assert await host.send("room-a", PeerCommand.RECALL) == ["Recalled: None"]
         assert host.native_id("room-a") not in (None, left_thread)
+        assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        with pytest.raises(ValueError, match="both"):
+            await host.send("room-b", write_instruction("bravo"))
         assert host.exited == [True, False]
         assert host.overlaps == 0
 

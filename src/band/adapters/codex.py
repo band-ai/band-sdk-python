@@ -59,6 +59,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
+from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
@@ -362,14 +363,33 @@ class CodexContinuityError(RuntimeError):
 _METHOD_NOT_FOUND = -32601
 # How a turn whose Codex process was lost reports its failure.
 TRANSPORT_LOST_ERROR = "Codex transport closed unexpectedly"
+# How a turn reports a room process that did not start or stop within
+# ``retention.transition_timeout_s``.
+PROCESS_NOT_READY_ERROR = "Codex process did not become ready in time"
+# One acquisition starts the process, refreshes ``model/list`` online and
+# strictly resumes the thread's whole rollout.
+CODEX_TRANSITION_TIMEOUT_S = 60.0
 _UNOWNED_TOOL_CALL_TEXT = (
     "No Band turn started this Codex turn, so Band tools are unavailable to it."
 )
 
 
+def _text_item(text: str) -> dict[str, Any]:
+    return {"type": "inputText", "text": text}
+
+
+def _tool_response(items: list[dict[str, Any]], *, success: bool) -> dict[str, Any]:
+    """A dynamic tool call's response."""
+    return {"contentItems": items, "success": success}
+
+
 def _tool_result(text: str, *, success: bool) -> dict[str, Any]:
     """A dynamic tool call's response carrying one text item."""
-    return {"contentItems": [{"type": "inputText", "text": text}], "success": success}
+    return _tool_response([_text_item(text)], success=success)
+
+
+def _approval_response(decision: ApprovalDecision) -> dict[str, Any]:
+    return {"decision": decision}
 
 
 async def _refuse_unhandled_request(
@@ -417,14 +437,43 @@ class TurnResult:
     turn_error: str = ""
 
 
+def _event_params(event: RpcEvent) -> dict[str, Any]:
+    return event.params if isinstance(event.params, dict) else {}
+
+
 def _native_turn_id(event: RpcEvent) -> str | None:
     """The native turn ``event`` belongs to: its ``turnId``, or the ``turn.id``
     that ``turn/started`` and ``turn/completed`` carry instead."""
-    params = event.params if isinstance(event.params, dict) else {}
+    params = _event_params(event)
     turn_id = params.get("turnId")
     if turn_id is None and isinstance(turn := params.get("turn"), dict):
         turn_id = turn.get("id")
     return str(turn_id) if turn_id else None
+
+
+def _loss_reason(cause: RpcEvent | Exception) -> str:
+    """Why a process's events stopped: the transport's stated reason, if any."""
+    if isinstance(cause, Exception):
+        return repr(cause)
+    params = _event_params(cause)
+    return str(params.get("reason") or cause.method)
+
+
+def _thread_id(event: RpcEvent) -> str | None:
+    params = _event_params(event)
+    thread_id = params.get("threadId")
+    return str(thread_id) if thread_id else None
+
+
+def _collab_receivers(event: RpcEvent) -> set[str]:
+    """Sub-agent threads a collab tool call item addresses, spawned ones included."""
+    params = _event_params(event)
+    item = params.get("item")
+    if not isinstance(item, dict) or (
+        item.get("type") != CodexItemType.COLLAB_AGENT_TOOL_CALL
+    ):
+        return set()
+    return {str(thread) for thread in item.get("receiverThreadIds") or () if thread}
 
 
 @dataclass
@@ -432,26 +481,62 @@ class NativeTurn:
     """The Band turn that started one native turn, and the events addressed to it.
 
     Codex names the turn only when ``turn/start`` answers, so events that
-    arrive first wait in ``early`` until ``turn_id`` is known.
+    arrive first wait in ``early`` until ``turn_id`` is known. Sub-agents
+    the turn delegates to ask under their own thread and turn, and Codex
+    names their thread only in the turn's collab item, so their requests
+    wait in ``unattributed`` until it does.
     """
 
     client: CodexClientProtocol
     generation: int
+    thread_id: str | None = None
     turn_id: str | None = None
     # An exception is the reader's own failure, which ends the turn.
     events: asyncio.Queue[RpcEvent | Exception] = dataclass_field(
         default_factory=asyncio.Queue
     )
     early: list[RpcEvent] = dataclass_field(default_factory=list)
+    sub_agents: set[str] = dataclass_field(default_factory=set)
+    unattributed: list[RpcEvent] = dataclass_field(default_factory=list)
     # The process stopped: its closing notice is queued behind its requests.
     lost: bool = False
 
     def owns(self, event: RpcEvent) -> bool:
-        native = _native_turn_id(event)
-        if native is None:
-            # Thread-scoped notifications name no turn; requests always do.
-            return event.kind == "notification"
-        return native == self.turn_id
+        # Every event a turn handles names its turn; thread-scoped ones do not.
+        if _native_turn_id(event) == self.turn_id:
+            return True
+        # Only a sub-agent's requests: its own turn/completed must not end this turn.
+        return event.kind == "request" and _thread_id(event) in self.sub_agents
+
+    def may_own(self, event: RpcEvent) -> bool:
+        """A request from another thread, which a later collab item may name."""
+        return event.kind == "request" and _thread_id(event) not in (
+            None,
+            self.thread_id,
+        )
+
+    def deliver(self, event: RpcEvent) -> None:
+        """Queue an owned event, then the held requests it names a sub-agent for."""
+        self.events.put_nowait(event)
+        if not (receivers := _collab_receivers(event) - self.sub_agents):
+            return
+        self.sub_agents |= receivers
+        held, self.unattributed = self.unattributed, []
+        for request in held:
+            if self.owns(request):
+                self.events.put_nowait(request)
+            else:
+                self.unattributed.append(request)
+
+    def claim(self, event: RpcEvent) -> bool:
+        """Deliver or hold ``event``; False when this turn can never own it."""
+        if self.owns(event):
+            self.deliver(event)
+        elif self.may_own(event):
+            self.unattributed.append(event)
+        else:
+            return False
+        return True
 
 
 def _result_id(result: Any, key: str) -> str:
@@ -463,7 +548,11 @@ def _result_id(result: Any, key: str) -> str:
 def _undelivered(native: NativeTurn) -> list[RpcEvent]:
     """Events still waiting for the native turn when its Band turn ends."""
     queued = [native.events.get_nowait() for _ in range(native.events.qsize())]
-    return [*native.early, *(item for item in queued if isinstance(item, RpcEvent))]
+    return [
+        *native.early,
+        *(item for item in queued if isinstance(item, RpcEvent)),
+        *native.unattributed,
+    ]
 
 
 def _tools_by_name(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -527,6 +616,17 @@ class RoomCodexClient:
     # replies are handled without it so they can resolve that wait.
     rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
 
+    def bind_thread(
+        self, *, registration: list[dict[str, Any]] | None, settings: ThreadSettings
+    ) -> None:
+        """Record what the thread this process now runs was started with."""
+        self.registration = registration
+        self.settings = settings
+        self.restored = False
+
+    def forget_thread(self) -> None:
+        self.bind_thread(registration=None, settings=ThreadSettings())
+
 
 class _WithoutCwdBinding(PydanticBaseSettingsSource):
     """Drops ``cwd``'s implicit env binding from a settings source.
@@ -589,7 +689,11 @@ class CodexAdapterConfig(EnvAdapterConfig):
     )
 
     transport: TransportKind = "stdio"
-    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
+    retention: RoomRetentionConfig = Field(
+        default_factory=lambda: RoomRetentionConfig(
+            transition_timeout_s=CODEX_TRANSITION_TIMEOUT_S
+        )
+    )
     model: str | None = None
     # Not validated here: the supported efforts vary by model and Codex CLI
     # version (model/list reports them), and the backend rejects unknown ones.
@@ -1015,7 +1119,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return handled
         if command[0] != CodexCommand.STATUS:
             return False
-        self._room_client(room_id)
         self._active_room.set(room_id)
         await self._handle_local_command(
             tools=tools,
@@ -1114,6 +1217,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 # available") or a refused restore is safe, curated text --
                 # unlike an arbitrary caught exception, worth showing verbatim.
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
+                raise
+            except TimeoutError:
+                # Only waiting on the room's process start or stop raises
+                # this; an abandoned start stays owned until recovery closes it.
+                logger.warning(
+                    "Room %s: Codex process not ready within %ss",
+                    room.room_id,
+                    self.config.retention.transition_timeout_s,
+                )
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, PROCESS_NOT_READY_ERROR)
+                )
                 raise
             except Exception:
                 logger.exception(
@@ -1403,7 +1518,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     )
                     continue
 
-                params = event.params if isinstance(event.params, dict) else {}
+                params = _event_params(event)
 
                 if event.method in {
                     "codex/event/task_started",
@@ -1608,15 +1723,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 if event.method == TRANSPORT_CLOSED:
                     result.turn_status = "failed"
                     result.turn_error = TRANSPORT_LOST_ERROR
-                    logger.warning(
-                        "Room %s: %s (thread=%s turn=%s)",
-                        room_id,
-                        result.turn_error,
-                        thread_id,
-                        turn_id,
-                    )
-                    # The reader handed the lost process to recovery, which
-                    # closes it once this turn releases its lease.
+                    # The reader logged the loss and handed the process to
+                    # recovery, which closes it once this turn releases its lease.
+
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
                     # twice -- but the turn still fails either way.
@@ -1742,8 +1851,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         await self._retire_room(
-            room_id, settle=self._settle_turn, close=room.residency.dispose
+            room_id, settle=self._settle_turn, close=partial(self._close_room, room)
         )
+
+    async def _close_room(self, room: RoomCodexClient) -> None:
+        """Dispose ``room``, keeping it registered until disposal is confirmed.
+
+        A disposal that outlives its reporting bound finishes later as owned
+        work; the retried leave must still find the room to lift its fence.
+        """
+        await room.residency.dispose()
+        if self._room_clients.get(room.room_id) is room:
+            del self._room_clients[room.room_id]
 
     async def cleanup_all(self) -> None:
         """Dispose every room under one reporting deadline; failures stay owned.
@@ -1760,6 +1879,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             await self._retention.stop()
         finally:
             self._closing_rooms.difference_update(rooms)
+        # Every registered room belonged to the stopped owner and is disposed.
+        self._room_clients.clear()
         self._retention = RoomRetention(self.config.retention)
 
     async def _acquire(
@@ -1774,8 +1895,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         room.generation = generation
         room.client = client = self._build_client(room.workspace)
         await client.connect()
-        room.reader = asyncio.create_task(
-            self._read_native_events(room, client, generation)
+        room.reader = spawn_owned(
+            self._read_native_events(room, client, generation),
+            label=f"Room {room.room_id} Codex event reader",
         )
         await client.initialize(
             client_name=self.config.client_name,
@@ -1862,10 +1984,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if native.turn_id is None:
             native.early.append(event)
             return None
-        if not native.owns(event):
-            return event
-        native.events.put_nowait(event)
-        return None
+        return None if native.claim(event) else event
 
     def _lose_process(
         self, room: RoomCodexClient, generation: int, cause: RpcEvent | Exception
@@ -1874,7 +1993,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         waiting on them with ``cause``: the transport's closing notice, or the
         reader's own failure. Recovery closes the process once that turn unwinds.
         """
-        stopped = cause.method if isinstance(cause, RpcEvent) else repr(cause)
+        stopped = _loss_reason(cause)
+        logger.warning(
+            "Room %s: Codex process generation %s stopped (%s); recovering",
+            room.room_id,
+            generation,
+            stopped,
+        )
         room.residency.recover(
             generation=generation, reason=f"Codex events stopped: {stopped}"
         )
@@ -1909,7 +2034,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         event.id, _tool_result(_UNOWNED_TOOL_CALL_TEXT, success=False)
                     )
                 case method if method in CODEX_APPROVAL_METHODS:
-                    await client.respond(event.id, {"decision": "decline"})
+                    await client.respond(event.id, _approval_response("decline"))
                 case method:
                     await _refuse_unhandled_request(
                         client, request_id=event.id, method=method
@@ -1956,20 +2081,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self, room: RoomCodexClient, native: NativeTurn, params: dict[str, Any]
     ) -> None:
         """Start the native turn and claim the events that arrived before its id."""
+        native.thread_id = params["threadId"]
         started = await native.client.request(CodexRequestMethod.TURN_START, params)
         turn_id = _result_id(started, "turn")
         if not turn_id:
             raise RuntimeError("Codex turn/start returned no turn id")
         native.turn_id = turn_id
         early, native.early = native.early, []
-        # Queue owned events before any await, or the reader could queue
-        # newer ones ahead of them.
-        for event in early:
-            if native.owns(event):
-                native.events.put_nowait(event)
-        for event in early:
-            if not native.owns(event):
-                await self._refuse_unowned(room, native.client, event)
+        # Claim every early event before any await, or the reader could
+        # queue newer ones ahead of them.
+        refused = [event for event in early if not native.claim(event)]
+        for event in refused:
+            await self._refuse_unowned(room, native.client, event)
 
     async def _release(
         self, room: RoomCodexClient, cause: ReleaseCause
@@ -2012,8 +2135,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._session_approved.pop(room_id, None)
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
-        if self._room_clients.get(room_id) is room:
-            del self._room_clients[room_id]
         self._workspaces.release(room_id, room.workspace)
 
     @staticmethod
@@ -2137,8 +2258,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         thread_id = _result_id(result, "thread") or named
         self._room_threads[room_id] = thread_id
         # Band history does not record which tools the thread was started with.
-        room.registration = None
-        room.settings = ThreadSettings.reported_by(result)
+        room.bind_thread(registration=None, settings=ThreadSettings.reported_by(result))
         self._raw_history_by_room.pop(room_id, None)
         if Emit.TASK_EVENTS in self.features.emit:
             await send_event_safe(
@@ -2185,8 +2305,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         # Recorded at once: a process lost from here on restores this thread.
         self._room_threads[room_id] = thread_id
-        room.registration = dynamic_tools
-        room.settings = ThreadSettings.reported_by(started)
+        room.bind_thread(
+            registration=dynamic_tools, settings=ThreadSettings.reported_by(started)
+        )
 
         if Emit.TASK_EVENTS in self.features.emit:
             await send_event_safe(
@@ -2361,7 +2482,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if event.id is None:
             return
 
-        params = event.params if isinstance(event.params, dict) else {}
+        params = _event_params(event)
 
         if event.method == DYNAMIC_TOOL_CALL_METHOD:
             tool_name = str(params.get("tool") or "")
@@ -2416,13 +2537,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         if isinstance(result, str)
                         else json.dumps(result, default=str)
                     )
-                    content_items = [{"type": "inputText", "text": text_result}]
+                    content_items = [_text_item(text_result)]
                 await client.respond(
-                    event.id,
-                    {
-                        "contentItems": content_items,
-                        "success": success,
-                    },
+                    event.id, _tool_response(content_items, success=success)
                 )
                 if should_report:
                     await tools.send_event(
@@ -2538,7 +2655,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             decided_by = f"policy:{self.config.approval_mode}"
 
-        await client.respond(event.id, {"decision": decision})
+        await client.respond(event.id, _approval_response(decision))
 
         audit_entry = self._record_approval_audit(
             room_id=room_id,
@@ -3535,10 +3652,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 usage.format_summary() if usage and usage.total_tokens > 0 else "none"
             )
             session_approvals = len(self._session_approved.get(room_id) or ())
+            room = self._room_clients.get(room_id)
+            selected_model = room.selected_model if room is not None else None
             status_text = (
                 "Codex status:\n"
                 f"- transport: {self.config.transport}\n"
-                f"- selected_model: {self._selected_model or 'unknown'}\n"
+                f"- selected_model: {selected_model or 'unknown'}\n"
                 f"- configured_model: {self.config.model or 'auto'}\n"
                 f"- room_id: {room_id}\n"
                 f"- thread_id: {mapped_thread or 'not mapped'}\n"
@@ -3766,10 +3885,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
             if subcommand == CodexSubcommand.ARCHIVE:
                 mapped_thread = self._room_threads.pop(room_id, None)
-                room = self._require_active_client_state()
-                room.registration = None
-                room.settings = ThreadSettings()
-                room.restored = False
+                self._require_active_client_state().forget_thread()
                 self._prompt_injected_rooms.discard(room_id)
                 self._token_usage.pop(mapped_thread or "", None)
                 self._raw_history_by_room.pop(room_id, None)

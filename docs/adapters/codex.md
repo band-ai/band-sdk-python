@@ -46,11 +46,19 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   resume (for example "no rollout found" for a thread that never ran a turn),
   the turn fails and the thread is kept: the adapter never starts a different
   thread in its place. Send `/thread archive` to start a new thread instead.
+- **Starting a process has its own budget.** Starting a room's process,
+  refreshing `model/list` and resuming its thread must finish within
+  `retention.transition_timeout_s`, which defaults to 60 seconds for Codex.
+  A start that runs over fails the turn with "Codex process did not become
+  ready in time" and is closed once it finishes; raise the bound for slow
+  starts.
 - **Native work answers to the turn that started it.** Each tool call or
   approval request is handled for the Band turn whose native turn sent it, on
-  the process that sent it. A request from a native turn no Band turn started
-  gets a failed tool result or a declined approval, and late events of a
-  finished turn are dropped rather than reaching the next turn.
+  the process that sent it. Requests from a sub-agent the turn delegated to
+  belong to that turn once its collab tool call names the sub-agent's thread.
+  A request from a native turn no Band turn started gets a failed tool result
+  or a declined approval, and late events of a finished turn are dropped
+  rather than reaching the next turn.
 - **Band tools own replies and declines.** Native completed text is optional
   thought telemetry without mentions; it never settles a turn. A native-only
   turn fails the shared missing-reply verdict. `Emit.THOUGHTS` controls visibility.

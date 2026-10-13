@@ -1107,7 +1107,7 @@ class TestCodexAdapter:
         failures = reported_failures(tools)
         assert any("transport closed" in f["message"].lower() for f in failures)
         (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert "transport closed" in warning.getMessage()
+        assert "Codex process exited unexpectedly" in warning.getMessage()
 
     @pytest.mark.asyncio
     async def test_a_lost_process_is_retired_and_its_thread_restored_exactly(

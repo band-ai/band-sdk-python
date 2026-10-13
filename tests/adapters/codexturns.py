@@ -47,6 +47,11 @@ async def await_released_turn(
         await asyncio.wait_for(asyncio.shield(turn.task), timeout=timeout_s)
 
 
+# Ready work settles within a few loop turns; this bounds a wait for work
+# that never would.
+MAX_LOOP_POLLS = 200
+
+
 class FakeCodexClient(RecordedRequests):
     """Minimal fake transport client for adapter tests.
 
@@ -178,6 +183,18 @@ class FakeCodexClient(RecordedRequests):
         """Send events now, outside any scripted turn."""
         self._released.extend(events)
         self._emitted.set()
+
+    async def read_by_adapter(self) -> None:
+        """Wait until the adapter's reader has taken every event sent so far.
+
+        The reader routes an event in the same step that takes it, so this
+        also means every taken event has been routed.
+        """
+        for _ in range(MAX_LOOP_POLLS):
+            if not self._released:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("The adapter never read the events sent to it")
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         while not self._released:
