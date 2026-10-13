@@ -43,11 +43,10 @@ async def wait_for_condition(
 ) -> None:
     """Wait until a predicate becomes true, failing fast on timeout."""
     deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate():
-            return
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            pytest.fail("Timed out waiting for condition")
         await asyncio.sleep(interval)
-    pytest.fail("Timed out waiting for condition")
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:

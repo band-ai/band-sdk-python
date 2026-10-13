@@ -170,6 +170,14 @@ outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
 non-package code is never collected by CI's bare `uv run pytest`; address the code
 under test through an anchor in `tests/paths.py` instead.
 
+**One test class per file, one concern per class.** Each `test_*.py` holds
+exactly one `class Test...` named for the behavior it covers — no
+module-level test functions and no helper classes beside it. When a suite
+outgrows one file, make it a package: `conftest.py` for its fixtures, a plain
+helper module (e.g. `kit.py`) for shared doubles and helpers, and one test file
+per concern. Apply this to every test file you add, and split a file you
+touch that breaks it.
+
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
 capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
@@ -503,6 +511,16 @@ PR titles MUST use the same conventional commits format as commit messages
 - `feat: Add custom tools support to all adapters`
 - `fix: Handle validation errors in execute_tool_call`
 - `docs: Update README with new adapter examples`
+
+### Pull Request Descriptions
+
+Use only three sections: **Why**, **What**, and **Scope**. Explain why the
+change is needed, what the final implementation does, and its boundaries.
+Keep the description concise and write it for a reviewer without chat context.
+Do not append testing sections, checklists, progress updates, investigation
+history, or repeated addenda. Keep validation evidence and unresolved failures
+in the linked Linear issue or evidence attachments. The PR template follows
+this format.
 
 ### Pre-Commit Checklist
 
