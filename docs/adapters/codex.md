@@ -48,10 +48,10 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   thread in its place. Send `/thread archive` to start a new thread instead.
 - **Starting a process has its own budget.** Starting a room's process,
   refreshing `model/list` and resuming its thread must finish within
-  `retention.transition_timeout_s`, which defaults to 60 seconds for Codex.
-  A start that runs over fails the turn with "Codex process did not become
-  ready in time" and is cancelled and closed; raise the bound for slow
-  starts.
+  `retention.transition_timeout_s`, which Codex defaults to
+  `CODEX_TRANSITION_TIMEOUT_S` (60 s). A start that runs over fails the turn
+  with `PROCESS_NOT_READY_ERROR` and is cancelled and closed; raise the bound
+  for slow starts.
 - **Native work answers to the turn that started it.** Each tool call or
   approval request is handled for the Band turn whose native turn sent it, on
   the process that sent it. Requests from a sub-agent the turn delegated to
@@ -79,6 +79,21 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   with `skills/extraRoots/set` before the room's thread starts. An older CLI
   rejects the request, and the room fails to start rather than running without
   the skills. Roots must be absolute paths; Codex accepts ones that don't exist.
+
+```python
+from band.adapters.codex import (
+    CODEX_TRANSITION_TIMEOUT_S,
+    PROCESS_NOT_READY_ERROR,
+    CodexAdapterConfig,
+)
+
+assert (
+    CodexAdapterConfig().retention.transition_timeout_s
+    == CODEX_TRANSITION_TIMEOUT_S
+    == 60
+)
+assert PROCESS_NOT_READY_ERROR == "Codex process did not become ready in time"
+```
 
 While an accepted turn awaits approval, newer ordinary room work remains
 outstanding. The runtime can deliver approval and status controls ahead of that
