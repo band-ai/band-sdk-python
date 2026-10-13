@@ -785,19 +785,27 @@ class ExecutionContext:
         if revision is None:
             revision = self._control_revision
         scope = await self._begin_scope()
-        if scope is None or revision != self._control_revision:
+        if scope is None:
+            return None
+        if revision != self._control_revision:
+            logger.debug(
+                "ExecutionContext %s: control arrived before the turn began; deferring",
+                self.room_id,
+            )
             return None
         scope.admitted = True
         return scope
 
     @staticmethod
     def _aborted_outcome(scope: TurnScope) -> TurnOutcome:
-        if scope.kind is ControlMode.INTERRUPT:
-            return TurnOutcome.ADVANCED
-        if scope.stop_observed:
-            # No STOP push arrived; reconciliation learns the room's state.
-            return TurnOutcome.RETRY_LATER
-        return TurnOutcome.PAUSED
+        match scope:
+            case TurnScope(kind=ControlMode.INTERRUPT):
+                return TurnOutcome.ADVANCED
+            case TurnScope(stop_observed=True):
+                # No STOP push arrived; reconciliation learns the room's state.
+                return TurnOutcome.RETRY_LATER
+            case _:
+                return TurnOutcome.PAUSED
 
     async def _stop_retained_tasks(self, deadline: float) -> None:
         owners = tuple(self._detached_cycle_tasks.values())
@@ -1251,9 +1259,8 @@ class ExecutionContext:
     async def _drain_synthetic(self) -> ResyncOutcome | None:
         """Run queued synthetic turns in receive order; None once the queue is empty.
 
-        This is ``_process_event``'s only synthetic caller. The head stays
-        queued until its turn advances, so an unfinished turn never needs
-        putting back.
+        This is ``_process_event``'s only synthetic caller; the head stays
+        queued until its turn advances.
         """
         while self._pending_synthetic:
             match await self._process_event(self._pending_synthetic[0]):
@@ -1261,7 +1268,7 @@ class ExecutionContext:
                     self._pending_synthetic.popleft()
                 case TurnOutcome.PAUSED:
                     return ResyncOutcome.STOPPED
-                case TurnOutcome.RETRY_LATER | TurnOutcome.NOT_ACCEPTED:
+                case _:
                     return ResyncOutcome.BLOCKED
         return None
 
@@ -1554,11 +1561,14 @@ class ExecutionContext:
                     return ResyncOutcome.STOPPED
                 if revision != self._control_revision:
                     return ResyncOutcome.BLOCKED
-                if result is TurnOutcome.NOT_ACCEPTED:
-                    return ResyncOutcome.BLOCKED
-                if result is TurnOutcome.RETRY_LATER:
-                    self._set_deferred_head(next_msg.id)
-                    return ResyncOutcome.RETRY
+                match result:
+                    case TurnOutcome.NOT_ACCEPTED:
+                        return ResyncOutcome.BLOCKED
+                    case TurnOutcome.RETRY_LATER:
+                        self._set_deferred_head(next_msg.id)
+                        return ResyncOutcome.RETRY
+                    case TurnOutcome.ADVANCED | TurnOutcome.PAUSED:
+                        pass
                 if next_msg.id == self._deferred_message_id:
                     self._set_deferred_head(None)
                 if self._pending_synthetic:

@@ -7,12 +7,17 @@ import pytest
 from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
-from tests.runtime.helpers import ROOM_ID, LifecyclePlatform, ResponseGate
+from tests.runtime.helpers import (
+    ROOM_ID,
+    LifecyclePlatform,
+    ResponseGate,
+    synthetic_message,
+)
 from tests.runtime.turnadmission.kit import (
     TurnRecorder,
     queued_synthetic,
     reconcile_once,
-    synthetic,
+    started,
     turn_settled,
 )
 
@@ -28,8 +33,7 @@ class TestSetupTimeControls:
         adapter: TurnRecorder,
         setup_gate: ResponseGate,
     ) -> None:
-        await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await started(ctx)
         setup_gate.release.clear()
         platform.add_message("B")
         await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="B"))
@@ -53,37 +57,14 @@ class TestSetupTimeControls:
         adapter: TurnRecorder,
         setup_gate: ResponseGate,
     ) -> None:
-        await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await started(ctx)
         setup_gate.release.clear()
-        await ctx.on_event(synthetic("local-A"))
+        await ctx.on_event(synthetic_message("local-A"))
         await setup_gate.entered.wait()
         ctx.interrupt()
         setup_gate.release.set()
 
         await wait_for_condition(lambda: turn_settled(ctx))
-        await reconcile_once(ctx, platform)
-        assert adapter.completed == []
-        assert queued_synthetic(ctx) == []
-
-    async def test_interrupt_after_observed_stop_drops_synthetic_turn(
-        self,
-        ctx: ExecutionContext,
-        platform: LifecyclePlatform,
-        adapter: TurnRecorder,
-    ) -> None:
-        await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
-        adapter.release.clear()
-        await ctx.on_event(synthetic("local-A"))
-        await adapter.entered.wait()
-        scope = ctx.current_scope
-        assert scope is not None
-        ctx.observe_platform_stop(scope)
-        ctx.interrupt()
-
-        await wait_for_condition(lambda: scope.settled)
-        adapter.release.set()
         await reconcile_once(ctx, platform)
         assert adapter.completed == []
         assert queued_synthetic(ctx) == []

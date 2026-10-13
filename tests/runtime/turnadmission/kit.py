@@ -6,15 +6,9 @@ import asyncio
 from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import (
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-    SYNTHETIC_SENDER_TYPE,
-)
-from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
-from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
-from tests.runtime.helpers import ROOM_ID, LifecyclePlatform
+from tests.runtime.helpers import LifecyclePlatform, synthetic_message
 
 APPROVAL = "approve"
 
@@ -43,30 +37,29 @@ class TurnRecorder(SimpleAdapter[Any]):
         tools.turn.settle()
 
 
-def synthetic(message_id: str) -> MessageEvent:
-    """A contact-hub message: it exists only in the room's local queue."""
-    return make_message_event(
-        room_id=ROOM_ID,
-        msg_id=message_id,
-        sender_type=SYNTHETIC_SENDER_TYPE,
-        sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-    )
-
-
 def queued_synthetic(ctx: ExecutionContext) -> list[str]:
     return [event.payload.id for event in ctx._pending_synthetic if event.payload]
+
+
+async def started(ctx: ExecutionContext) -> None:
+    """Start the room loop and wait out its startup /next synchronization."""
+    await ctx.start()
+    await wait_for_condition(lambda: ctx._sync_complete)
 
 
 async def queue_while_stopped(
     ctx: ExecutionContext, platform: LifecyclePlatform, *message_ids: str
 ) -> None:
     """Stop a started room and let its loop queue synthetic work for PLAY."""
-    await wait_for_condition(lambda: ctx._sync_complete)
+    stop_room(ctx, platform)
+    for message_id in message_ids:
+        await ctx.on_event(synthetic_message(message_id))
+    await wait_for_condition(lambda: queued_synthetic(ctx) == list(message_ids))
+
+
+def stop_room(ctx: ExecutionContext, platform: LifecyclePlatform) -> None:
     platform.stopped = True
     ctx.stop_room()
-    for message_id in message_ids:
-        await ctx.on_event(synthetic(message_id))
-    await wait_for_condition(lambda: queued_synthetic(ctx) == list(message_ids))
 
 
 async def play(ctx: ExecutionContext, platform: LifecyclePlatform) -> None:

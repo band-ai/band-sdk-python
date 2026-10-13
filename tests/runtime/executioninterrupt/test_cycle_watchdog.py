@@ -38,9 +38,8 @@ class TestCycleWatchdog:
 
         result = await ctx._process_event(make_message_event(msg_id="watchdog-1"))
 
-        assert (
-            result is TurnOutcome.ADVANCED
-        )  # loop continues; the watchdog is a handled error
+        # Loop continues; the watchdog is a handled error.
+        assert result is TurnOutcome.ADVANCED
         assert handler.cancelled.is_set()  # the stuck cycle was actually cancelled
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
@@ -119,9 +118,8 @@ class TestCycleWatchdog:
 
         result = await ctx._process_event(make_message_event(msg_id="swallowed"))
 
-        assert (
-            result is TurnOutcome.ADVANCED
-        )  # loop continues; the watchdog is a handled error
+        # Loop continues; the watchdog is a handled error.
+        assert result is TurnOutcome.ADVANCED
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args

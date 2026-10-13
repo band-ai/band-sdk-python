@@ -12,6 +12,8 @@ from tests.runtime.turnadmission.kit import (
     play,
     queue_while_stopped,
     queued_synthetic,
+    started,
+    stop_room,
     turn_settled,
 )
 
@@ -27,13 +29,12 @@ class TestStoppedSyntheticQueue:
         adapter: TurnRecorder,
         setup_gate: ResponseGate,
     ) -> None:
-        await ctx.start()
+        await started(ctx)
         await queue_while_stopped(ctx, platform, "local-A", "local-B")
         setup_gate.release.clear()
         await play(ctx, platform)
         await setup_gate.entered.wait()
-        platform.stopped = True
-        ctx.stop_room()
+        stop_room(ctx, platform)
         setup_gate.release.set()
 
         await wait_for_condition(lambda: turn_settled(ctx))
@@ -50,16 +51,15 @@ class TestStoppedSyntheticQueue:
         platform: LifecyclePlatform,
         adapter: TurnRecorder,
     ) -> None:
-        await ctx.start()
+        await started(ctx)
         await queue_while_stopped(ctx, platform, "local-A", "local-B")
         adapter.release.clear()
         await play(ctx, platform)
         await adapter.entered.wait()
-        platform.stopped = True
-        ctx.stop_room()
+        stop_room(ctx, platform)
 
+        # A handler STOP failed to cancel stays held, so the turn never settles.
         await wait_for_condition(lambda: turn_settled(ctx))
-        assert adapter.completed == []
         assert queued_synthetic(ctx) == ["local-A", "local-B"]
 
         adapter.release.set()

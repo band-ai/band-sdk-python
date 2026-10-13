@@ -10,13 +10,14 @@ from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS
 from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
-from tests.runtime.helpers import ROOM_ID, LifecyclePlatform
+from tests.runtime.helpers import ROOM_ID, LifecyclePlatform, synthetic_message
 from tests.runtime.turnadmission.kit import (
     APPROVAL,
     TurnRecorder,
     play,
     queued_synthetic,
-    synthetic,
+    started,
+    stop_room,
 )
 
 # Inside the begin grace, so the observer finishing still lets the turn begin.
@@ -58,11 +59,10 @@ class TestGraceControls:
         adapter: TurnRecorder,
         stop_observer: asyncio.Event,
     ) -> None:
-        await ctx.start()
-        await ctx.on_event(synthetic("local-A"))
+        await started(ctx)
+        await ctx.on_event(synthetic_message("local-A"))
         await asyncio.sleep(WITHIN_GRACE)
-        platform.stopped = True
-        ctx.stop_room()
+        stop_room(ctx, platform)
         stop_observer.set()
         await asyncio.sleep(CYCLE_CANCEL_GRACE_SECONDS)
 

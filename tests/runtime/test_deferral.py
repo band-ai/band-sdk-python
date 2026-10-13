@@ -26,6 +26,7 @@ from tests.runtime.helpers import (
     LifecyclePlatform,
     rest_client_over,
     run_through,
+    synthetic_message,
 )
 
 
@@ -211,14 +212,7 @@ async def test_synthetic_work_survives_stop_and_rejection_in_receive_order() -> 
         )
         ctx.stop_room()
         for message_id in ["local-B", "local-D"]:
-            ctx._enqueue_synthetic(
-                make_message_event(
-                    room_id=ROOM_ID,
-                    msg_id=message_id,
-                    sender_type=SYNTHETIC_SENDER_TYPE,
-                    sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-                )
-            )
+            ctx._enqueue_synthetic(synthetic_message(message_id))
         assert adapter.completed == []
         peer.stopped = False
         await ctx.resume_room()
