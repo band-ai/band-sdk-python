@@ -30,7 +30,7 @@ from band.core.types import (
 from band.integrations.claude_sdk.session_manager import ClaudeRoomSession
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
-from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
 from tests.mcpclient import crash_backend
@@ -275,3 +275,20 @@ class ClaudeRoom:
         """Wait for a turn still running after ``send`` returned."""
         if (turn := self.adapter._turn_tasks.get(self.room_id)) is not None:
             await asyncio.wait([turn.task])
+
+
+async def band_server_replaced(room: ClaudeRoom) -> None:
+    """Retire the room's CLI by crashing the Band MCP server it dials."""
+    await room.crash_band_server()
+
+
+async def turn_cancelled(room: ClaudeRoom) -> None:
+    """Retire the room's CLI by cancelling the turn that holds it."""
+    abandoned = Hold()
+    room.claude.script([abandoned, room.model_reply("never sent")])
+    message = room.send_in_background("long job")
+    async with abandoned:
+        message.cancel()
+    await asyncio.wait({message})
+    if not message.cancelled():
+        raise AssertionError("the abandoned message was not cancelled")
