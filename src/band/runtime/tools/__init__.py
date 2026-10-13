@@ -119,6 +119,7 @@ from band.runtime.tools.registry import (
     canonicalize_mcp_tool_name,
     classify_room_binding,
     decode_image_block,
+    decode_image_blocks,
     file_content_placeholder,
     get_band_tool_category,
     image_block_placeholder,
@@ -130,6 +131,7 @@ from band.runtime.tools.registry import (
     mcp_tool_spelling,
     redact_tool_call_args,
     resolve_capabilities,
+    selected_tool_definitions,
     withheld_tool_names,
 )
 from band.runtime.tools.schema import (
@@ -266,6 +268,7 @@ __all__ = [
     "canonicalize_mcp_tool_name",
     "classify_room_binding",
     "decode_image_block",
+    "decode_image_blocks",
     "docstring_with_args",
     "file_content_placeholder",
     "format_arg_doc",
@@ -287,6 +290,7 @@ __all__ = [
     "redact_tool_call_args",
     "resolve_capabilities",
     "resolve_tool_model",
+    "selected_tool_definitions",
     "serialize_tool_result",
     "strip_handle_prefix",
     "tool_result_text",

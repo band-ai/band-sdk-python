@@ -297,7 +297,7 @@ async def _probe_strands() -> bool:
 
 
 async def _probe_nooa() -> bool:
-    from band.adapters.nooa.tools import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.adapters.nooa.tools import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         RoomToolSpec,
         room_tools_class,
     )

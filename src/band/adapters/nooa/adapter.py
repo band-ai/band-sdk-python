@@ -11,29 +11,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
-from band_sdk_core import AgentFailure
-
-try:
-    from nooa import Agent, Context
-    from nooa.context_blocks import EventBase
-    from nooa.events import LLMComplete
-    from nooa.runtime.hooks import InstrumentationHooks, get_hooks, set_hooks
-except ModuleNotFoundError as error:
-    # ModuleNotFoundError keeps the missing module's name, so a venv without the
-    # extra can still tell "absent optional dependency" from a broken import.
-    raise ModuleNotFoundError(
-        "NOOA dependencies not installed (NOOA supports Python 3.12 and 3.13 on "
-        "Linux and macOS). Install with: uv add band-sdk[nooa]",
-        name=error.name,
-    ) from error
-
+from nooa import Agent, Context
+from nooa.context_blocks import EventBase
+from nooa.events import LLMComplete
+from nooa.runtime.hooks import InstrumentationHooks, get_hooks, set_hooks
 from typing_extensions import Unpack
 
+from band.adapters.nooa.agent import NooaRoomAgent
 from band.adapters.nooa.tools import (
     RoomTools,
-    RoomToolSpec,
     custom_tool_spec,
     platform_tool_spec,
     room_tools_class,
@@ -43,12 +32,11 @@ from band.adapters.nooa.tools import (
 from band.converters.nooa import NooaHistoryConverter, NooaTranscript
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
-    GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
+    generic_provider_failure,
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
-from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
     Capability,
     Emit,
@@ -58,8 +46,8 @@ from band.core.types import (
     TurnUsage,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category, iter_tool_definitions
+from band.runtime.prompts import render_system_prompt, with_system_updates
+from band.runtime.tools import BandTool, selected_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -69,32 +57,14 @@ INSTRUCTIONS_BLOCK = "band_instructions"
 TOOLS_BLOCK = "band_tools"
 TRANSCRIPT_BLOCK = "band_room_transcript"
 
-ROOM_TOOLS_SECTION = """\
+ROOM_TOOLS_SECTION = f"""\
 ## Band tools in Python
 Every Band tool named in these instructions is an async method on `self.room`,
 called from `execute_python` with keyword arguments, for example
-`await self.room.band_send_message(content="...", mentions=["..."])`.
+`await self.room.{BandTool.SEND_MESSAGE}(content="...", mentions=["..."])`.
 A failed call raises `BandToolError` with the reason. An image file read with
-`band_read_room_file` comes back as a list of `Image` objects; `show(image)`
+`{BandTool.READ_ROOM_FILE}` comes back as a list of `Image` objects; `show(image)`
 lets you see one. After you reply or decline, finish with `return_result(None)`."""
-
-
-class NooaRoomAgent(Agent):
-    """You are a participant in a Band chat room.
-
-    Handle each incoming room message with the Band tools on `self.room`.
-    """
-
-    room: RoomTools
-
-    async def respond(self, message: str) -> None:
-        """Handle one incoming Band room message.
-
-        Reply with `await self.room.band_send_message(...)`, or decline with
-        `await self.room.band_no_reply(...)` when no reply is needed. Call other
-        tools on `self.room` first when the reply needs them.
-        """
-        ...  # noqa: PIE790 -- NOOA hands an ellipsis-bodied method to the model
 
 
 def with_room_tools(
@@ -122,6 +92,15 @@ def with_room_tools(
             execution=agent_class._execution_config,
         ),
     )
+
+
+@dataclass(frozen=True)
+class RoomSurface:
+    """The tools one kind of room offers, and the agent class documenting them."""
+
+    tools_class: type[RoomTools]
+    agent_class: type[NooaRoomAgent]
+    reference: str
 
 
 # Every hook NOOA may call on an InstrumentationHooks object. Anything else,
@@ -207,30 +186,10 @@ def observing_turn(agent: NooaRoomAgent) -> Iterator[TurnObserver]:
         observer.close()
 
 
-async def report_failure(tools: AgentToolsProtocol) -> None:
-    """Report a failed turn without letting the report replace its cause."""
-    try:
-        await tools.send_failure(
-            AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-        )
-    except Exception:
-        logger.exception("Failed to report the NOOA turn failure")
-
-
 async def report_thoughts(tools: AgentToolsProtocol, reasoning: list[str]) -> None:
     """Post each model call's reasoning as a thought event, in order."""
     for text in reasoning:
         await send_event_safe(tools, text, MessageType.THOUGHT)
-
-
-def with_system_context(
-    message: str, participants_msg: str | None, contacts_msg: str | None
-) -> str:
-    """Lead the message with any platform context that changed since last turn."""
-    notices = [
-        f"[System]: {notice}" for notice in (participants_msg, contacts_msg) if notice
-    ]
-    return "\n\n".join([*notices, message])
 
 
 class NooaAdapterConfig(BaseAdapterConfig):
@@ -290,13 +249,14 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
         self._custom_tools = additional_tools or []
         validate_custom_tool_names(self._custom_tools)
         self._agent_class = agent
-        self._room_agent_class: type[NooaRoomAgent] | None = None
-        self._room_tools_class: type[RoomTools] = RoomTools
+        # Keyed by whether the room is the contacts hub, which always gets the
+        # contact tools; filled in on_started, once the features are final.
+        self._surfaces: dict[bool, RoomSurface] = {}
         self._instructions = ""
         self._agents: dict[str, NooaRoomAgent] = {}
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Build the room tool surface once the effective features are known."""
+        """Build the room tool surfaces once the effective features are known."""
         await super().on_started(agent_name, agent_description)
         self._instructions = render_system_prompt(
             agent_name=self.agent_name,
@@ -305,42 +265,46 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
             features=self.features,
             extra_sections=(ROOM_TOOLS_SECTION,),
         )
-        self._room_tools_class = room_tools_class(self._tool_specs())
-        self._room_agent_class = with_room_tools(
-            self._agent_class, self._room_tools_class
-        )
+        self._surfaces = {
+            is_hub_room: self._room_surface(is_hub_room=is_hub_room)
+            for is_hub_room in (False, True)
+        }
         logger.info("NOOA adapter started for agent: %s", agent_name)
 
-    def _tool_specs(self) -> list[RoomToolSpec]:
-        """Band tools the features allow, then the custom tools.
+    def _room_surface(self, *, is_hub_room: bool) -> RoomSurface:
+        """The tools the features allow in this kind of room, then the custom tools.
 
         This controls what the model is told about and what ``self.room``
         offers. It is not an access boundary: generated code runs in-process
         and can reach the turn's tools object directly.
         """
-        definitions = filter_tool_schemas(
-            list(iter_tool_definitions(capabilities=self.features.capabilities)),
-            self.features,
-            get_name=lambda definition: definition.name,
-            get_category=lambda definition: get_band_tool_category(definition.name),
+        specs = [
+            platform_tool_spec(definition)
+            for definition in selected_tool_definitions(
+                self.features, is_hub_room=is_hub_room
+            )
+        ] + [custom_tool_spec(tool_def) for tool_def in self._custom_tools]
+        tools_class = room_tools_class(specs)
+        return RoomSurface(
+            tools_class=tools_class,
+            agent_class=with_room_tools(self._agent_class, tools_class),
+            reference=room_tools_reference(tools_class),
         )
-        return [platform_tool_spec(definition) for definition in definitions] + [
-            custom_tool_spec(tool_def) for tool_def in self._custom_tools
-        ]
 
-    def _new_room_agent(self, transcript: NooaTranscript) -> NooaRoomAgent:
-        if self._room_agent_class is None:
+    def _new_room_agent(
+        self, transcript: NooaTranscript, *, is_hub_room: bool
+    ) -> NooaRoomAgent:
+        if not self._surfaces:
             raise RuntimeError("NooaAdapter.on_started must run before any message")
-        agent = self._room_agent_class()
-        agent.room = self._room_tools_class(
+        surface = self._surfaces[is_hub_room]
+        agent = surface.agent_class()
+        agent.room = surface.tools_class(
             emit_tool_calls=Emit.TOOL_CALLS in self.features.emit
         )
         agent.context[INSTRUCTIONS_BLOCK] = Context(
             value=self._instructions, prefix=True
         )
-        agent.context[TOOLS_BLOCK] = Context(
-            value=room_tools_reference(self._room_tools_class), prefix=True
-        )
+        agent.context[TOOLS_BLOCK] = Context(value=surface.reference, prefix=True)
         if transcript:
             agent.context[TRANSCRIPT_BLOCK] = Context(
                 value="\n".join(transcript), prefix=True
@@ -348,11 +312,18 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
         return agent
 
     def _room_agent(
-        self, room_id: str, transcript: NooaTranscript, *, is_session_bootstrap: bool
+        self,
+        room_id: str,
+        transcript: NooaTranscript,
+        *,
+        is_session_bootstrap: bool,
+        is_hub_room: bool,
     ) -> NooaRoomAgent:
         """The room's agent, recreated from platform history at session start."""
         if is_session_bootstrap or room_id not in self._agents:
-            self._agents[room_id] = self._new_room_agent(transcript)
+            self._agents[room_id] = self._new_room_agent(
+                transcript, is_hub_room=is_hub_room
+            )
             if transcript:
                 logger.debug(
                     "Room %s: seeded %s transcript line(s)", room_id, len(transcript)
@@ -372,18 +343,30 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
     ) -> None:
         """Run one room message through the agent's ``respond`` method."""
         agent = self._room_agent(
-            room_id, history, is_session_bootstrap=is_session_bootstrap
+            room_id,
+            history,
+            is_session_bootstrap=is_session_bootstrap,
+            is_hub_room=tools.is_hub_room,
         )
-        message = with_system_context(
+        message = with_system_updates(
             msg.format_for_llm(), participants_msg, contacts_msg
         )
         with observing_turn(agent) as observer:
             try:
                 async with agent.room.bound_to(tools):
                     await agent.respond(message)
-            except Exception:
+            except Exception as error:
+                if tools.turn.complete:
+                    # The reply or decline already reached the room; failing the
+                    # turn now would post an error after it and invite a redelivery.
+                    logger.warning(
+                        "Room %s: NOOA failed after the turn was settled: %s",
+                        room_id,
+                        error,
+                    )
+                    return
                 logger.exception("Room %s: NOOA turn failed", room_id)
-                await report_failure(tools)
+                await tools.send_failure(generic_provider_failure(_PROVIDER, error))
                 raise
             finally:
                 if Emit.THOUGHTS in self.features.emit:

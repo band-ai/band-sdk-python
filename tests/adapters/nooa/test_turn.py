@@ -1,118 +1,57 @@
-"""One room message through the agent's ``respond`` method."""
+"""One room message through the agent's ``respond`` method, and how it ends."""
 
 from __future__ import annotations
 
-import asyncio
-import logging
-
 import pytest
 from nooa import GenerationError
-from nooa.unifiedllm import FakeLLMClient
 
-from band.adapters.nooa import NooaAdapter
-from band.adapters.nooa.tools import platform_tool_spec, room_tools_class
-from band.core.exceptions import BandToolError
-from band.core.types import Emit
-from band.runtime.tools import TOOL_DEFINITIONS, BandTool
-from band.testing import FakeAgentTools, events_of_type, failure_reports
-from band.testing.nooa import code_turn, result_turn, room_call, scripted_llm
+from band.runtime.tools import BandTool
+from band.testing import FakeAgentTools, failure_reports
+from band.testing.nooa import code_turn, room_call, scripted_llm
 from tests.adapters.nooa.kit import (
-    Gate,
-    LeftoverReply,
-    SlowInput,
-    delegating_room_agent,
+    dispatched,
     failing_llm,
-    failing_report,
     prompt_text,
-    room_message,
+    rejecting_send_tools,
     run_turn,
     started_adapter,
-    tool_events,
-    tool_results,
 )
-from tests.adapters.usage_events import recorded_usage_payloads
 
 REPLY = {"content": "Hi Alice", "mentions": ["Alice"]}
 
 
 class TestRoomTurn:
-    async def test_a_room_tool_call_in_generated_code_replies_to_the_room(
+    async def test_a_room_tool_call_in_generated_code_is_dispatched(
         self, tools: FakeAgentTools
     ) -> None:
         adapter = await started_adapter(
-            scripted_llm(room_call("band_send_message", REPLY))
+            scripted_llm(room_call(BandTool.SEND_MESSAGE, REPLY))
         )
 
         await run_turn(adapter, tools)
 
-        assert tools.chat == ["Hi Alice"]
-
-    async def test_tool_calls_are_reported_as_events_when_enabled(
-        self, tools: FakeAgentTools
-    ) -> None:
-        adapter = await started_adapter(
-            scripted_llm(room_call("band_send_message", REPLY)), emit={Emit.TOOL_CALLS}
-        )
-
-        await run_turn(adapter, tools)
-
-        assert tool_events(tools) == [
-            "tool_call band_send_message",
-            "tool_result band_send_message",
+        assert tools.tool_calls == [
+            {"tool_name": BandTool.SEND_MESSAGE, "arguments": REPLY}
         ]
 
-    async def test_tool_calls_are_not_reported_when_disabled(
-        self, tools: FakeAgentTools
-    ) -> None:
-        adapter = await started_adapter(
-            scripted_llm(room_call("band_send_message", REPLY)), emit=set()
-        )
-
-        await run_turn(adapter, tools)
-
-        assert tool_events(tools) == []
-
-    async def test_a_failed_tool_call_raises_into_the_model_session(
-        self, tools: FakeAgentTools
-    ) -> None:
+    async def test_a_failed_tool_call_raises_into_the_model_session(self) -> None:
+        tools = rejecting_send_tools("the platform rejected the message")
         llm = scripted_llm(
             "try:\n"
-            f"    {room_call('band_send_message', {'content': 'hi', 'mentions': []})}\n"
+            f"    {room_call(BandTool.SEND_MESSAGE, REPLY)}\n"
             "except Exception as error:\n"
             "    print(type(error).__name__, error)\n"
-            f"{room_call('band_no_reply')}"
+            f"{room_call(BandTool.NO_REPLY)}"
         )
-        adapter = await started_adapter(llm, emit={Emit.TOOL_CALLS})
+        adapter = await started_adapter(llm)
 
         await run_turn(adapter, tools)
 
-        assert [result["is_error"] for result in tool_results(tools)] == [True, False]
-        assert "BandToolError band_send_message failed" in prompt_text(llm)
-
-    async def test_usage_is_summed_across_the_turns_model_calls(
-        self, tools: FakeAgentTools
-    ) -> None:
-        llm = FakeLLMClient(
-            [
-                code_turn(
-                    room_call("band_send_message", REPLY),
-                    usage={"prompt_tokens": 100, "completion_tokens": 10},
-                ),
-                result_turn(usage={"prompt_tokens": 120, "completion_tokens": 5}),
-            ]
+        assert (
+            "BandToolError band_send_message failed: the platform rejected the message"
+            in prompt_text(llm)
         )
-        adapter = await started_adapter(llm, emit={Emit.USAGE})
-
-        await run_turn(adapter, tools)
-
-        assert recorded_usage_payloads(tools) == [
-            {
-                "input_tokens": 220,
-                "output_tokens": 15,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-            }
-        ]
+        assert dispatched(tools) == [BandTool.SEND_MESSAGE, BandTool.NO_REPLY]
 
     async def test_a_model_failure_is_reported_once_and_raised(
         self, tools: FakeAgentTools
@@ -123,126 +62,28 @@ class TestRoomTurn:
             await run_turn(adapter, tools)
 
         assert [provider for provider, _ in failure_reports(tools)] == ["nooa"]
-        assert tools.chat == []
+        assert dispatched(tools) == []
 
-    async def test_a_failing_failure_report_keeps_the_models_error(
+    async def test_a_failure_after_the_reply_leaves_the_turn_settled(
         self, tools: FakeAgentTools
     ) -> None:
-        tools.send_failure = failing_report  # type: ignore[method-assign]
-        adapter = await started_adapter(failing_llm("provider down"))
-
-        with pytest.raises(GenerationError, match="provider down"):
-            await run_turn(adapter, tools)
-
-    async def test_a_tool_called_outside_a_turn_is_refused(self) -> None:
-        spec = platform_tool_spec(TOOL_DEFINITIONS[BandTool.NO_REPLY])
-        room = room_tools_class([spec])(emit_tool_calls=False)
-
-        with pytest.raises(BandToolError, match="only available while"):
-            await getattr(room, BandTool.NO_REPLY)()
-
-    async def test_work_left_running_by_one_turn_cannot_act_in_the_next(self) -> None:
-        leftover = LeftoverReply()
-        adapter = NooaAdapter(agent=leftover.room_agent())
-        await adapter.on_started("Agent", "A test agent")
-        second_turn = FakeAgentTools()
-
-        await run_turn(adapter, FakeAgentTools(), message=room_message("first"))
-        await run_turn(
-            adapter,
-            second_turn,
-            message=room_message("second"),
-            is_session_bootstrap=False,
+        llm = failing_llm(
+            "provider down", code_turn(room_call(BandTool.SEND_MESSAGE, REPLY))
         )
-
-        assert leftover.outcome == (
-            "BandToolError: band_send_message is only available while a Band "
-            "room message is being handled"
-        )
-        assert second_turn.chat == []
-
-    async def test_a_delegating_turn_reports_its_child_agents_usage(
-        self, tools: FakeAgentTools
-    ) -> None:
-        adapter = NooaAdapter(agent=delegating_room_agent(), emit={Emit.USAGE})
-        await adapter.on_started("Agent", "A test agent")
+        adapter = await started_adapter(llm)
 
         await run_turn(adapter, tools)
 
-        assert recorded_usage_payloads(tools) == [
-            {
-                "input_tokens": 100,
-                "output_tokens": 15,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-            }
-        ]
+        assert failure_reports(tools) == []
+        assert dispatched(tools) == [BandTool.SEND_MESSAGE]
 
-    async def test_a_tool_call_still_running_when_the_turn_ends_is_cancelled(
+    async def test_a_platform_update_leads_the_message(
         self, tools: FakeAgentTools
     ) -> None:
-        gate = Gate()
-        llm = scripted_llm(
-            f"pending = asyncio.create_task({room_call('slow')[len('await ') :]})\n"
-            "await asyncio.sleep(0.05)\n"
-            f"{room_call('band_no_reply')}"
-        )
-        adapter = await started_adapter(
-            llm, additional_tools=[(SlowInput, gate.handler)], emit={Emit.TOOL_CALLS}
-        )
+        llm = scripted_llm(room_call(BandTool.NO_REPLY))
+        adapter = await started_adapter(llm)
 
-        await run_turn(adapter, tools)
-        gate.opened.set()
-        await asyncio.sleep(0.05)
+        await run_turn(adapter, tools, participants_msg="Bob joined the room")
 
-        assert gate.entered.is_set()
-        assert gate.committed == []
-        assert {
-            result["name"]: result["is_error"] for result in tool_results(tools)
-        } == {"slow": True, "band_no_reply": False}
-
-    async def test_reasoning_is_posted_as_thoughts_when_enabled(
-        self, tools: FakeAgentTools
-    ) -> None:
-        llm = FakeLLMClient(
-            [
-                code_turn(room_call("band_no_reply"), reasoning="Alice only said hi."),
-                result_turn(),
-            ]
-        )
-        adapter = await started_adapter(llm, emit={Emit.THOUGHTS})
-
-        await run_turn(adapter, tools)
-
-        assert [event["content"] for event in events_of_type(tools, "thought")] == [
-            "Alice only said hi."
-        ]
-
-    async def test_reasoning_stays_out_of_the_room_without_thoughts(
-        self, tools: FakeAgentTools
-    ) -> None:
-        llm = FakeLLMClient(
-            [
-                code_turn(room_call("band_no_reply"), reasoning="Alice only said hi."),
-                result_turn(),
-            ]
-        )
-        adapter = await started_adapter(llm, emit={Emit.TOOL_CALLS})
-
-        await run_turn(adapter, tools)
-
-        assert events_of_type(tools, "thought") == []
-
-    async def test_the_turn_observer_answers_every_hook_nooa_calls(
-        self, tools: FakeAgentTools, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        adapter = await started_adapter(scripted_llm(room_call("band_no_reply")))
-
-        with caplog.at_level(logging.WARNING, logger="nooa.runtime.hooks"):
-            await run_turn(adapter, tools)
-
-        assert [
-            record.getMessage()
-            for record in caplog.records
-            if record.name == "nooa.runtime.hooks"
-        ] == []
+        prompt = prompt_text(llm)
+        assert "[System]: Bob joined the room\n\n[Alice]: @Agent hello" in prompt

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12,<3.14"
-# dependencies = ["band-sdk[nooa]>=4.0.0"]
+# dependencies = ["band-sdk[nooa]>=5.1.0"]
 # ///
 """
 NOOA agent with a portable custom tool.
@@ -19,8 +19,9 @@ The model writes and runs Python inside this process, so run it in a container
 or VM (see README.md). NOOA routes models through LiteLLM; this one reads
 ANTHROPIC_API_KEY.
 
-Run with:
-    uv run examples/nooa/04_custom_tools.py
+Run with (from the repo root):
+    uv run --extra nooa python examples/nooa/04_custom_tools.py   # this checkout
+    uv run examples/nooa/04_custom_tools.py                       # released band-sdk >= 5.1.0
 """
 
 from __future__ import annotations

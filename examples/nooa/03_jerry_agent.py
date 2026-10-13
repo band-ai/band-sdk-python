@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12,<3.14"
-# dependencies = ["band-sdk[nooa]>=4.0.0"]
+# dependencies = ["band-sdk[nooa]>=5.1.0"]
 # ///
 """
 Jerry the mouse agent - outsmarts Tom!
@@ -13,8 +13,9 @@ The character prompt comes from the shared prompts module, so the same persona
 runs across every adapter. The model writes and runs Python inside this
 process, so run it in a container or VM.
 
-Run with (from repo root):
-    uv run examples/nooa/03_jerry_agent.py
+Run with (from the repo root):
+    uv run --extra nooa python examples/nooa/03_jerry_agent.py   # this checkout
+    uv run examples/nooa/03_jerry_agent.py                       # released band-sdk >= 5.1.0
 
 Note: Must be run from the repo as it imports prompts/characters.py
 """

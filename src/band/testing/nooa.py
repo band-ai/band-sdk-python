@@ -8,19 +8,12 @@ and ``return_result``. These helpers script those calls on NOOA's own
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any, cast
 from uuid import uuid4
 
-try:
-    from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall
-except ModuleNotFoundError as error:
-    # ModuleNotFoundError keeps the missing module's name, so a venv without the
-    # extra can still tell "absent optional dependency" from a broken import.
-    raise ModuleNotFoundError(
-        "NOOA dependencies not installed (NOOA supports Python 3.12 and 3.13 on "
-        "Linux and macOS). Install with: uv add band-sdk[nooa]",
-        name=error.name,
-    ) from error
+from nooa import Agent
+from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall, UnifiedLLM
 
 from band.adapters.nooa import NooaRoomAgent
 
@@ -90,14 +83,23 @@ def scripted_llm(*cells: str) -> FakeLLMClient:
     return FakeLLMClient([*(code_turn(cell) for cell in cells), result_turn()])
 
 
-def scripted_room_agent(llm: FakeLLMClient) -> type[NooaRoomAgent]:
-    """A ``NooaRoomAgent`` subclass driven by a scripted *llm*."""
+def room_agent_class(
+    llm: UnifiedLLM,
+    *,
+    base: type[Agent] = NooaRoomAgent,
+    name: str = "ScriptedRoomAgent",
+    doc: str = "You are a scripted test agent.",
+    namespace: Mapping[str, Any] | None = None,
+    **settings: Any,
+) -> type[NooaRoomAgent]:
+    """A subclass of *base* (a room agent by default) that runs on *llm*.
+
+    *namespace* adds class attributes and methods; *settings* are NOOA's class
+    keywords, such as ``execution=``. The class lives in the room agent's own
+    module, so the model's execution context lists nothing from test code.
+    """
+    body = {"__doc__": doc, "__module__": NooaRoomAgent.__module__, **(namespace or {})}
     return cast(
         type[NooaRoomAgent],
-        type(NooaRoomAgent)(
-            "ScriptedRoomAgent",
-            (NooaRoomAgent,),
-            {"__doc__": "You are a scripted test agent.", "__module__": __name__},
-            llm=llm,
-        ),
+        type(base)(name, (base,), body, llm=llm, **settings),
     )

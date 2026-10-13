@@ -19,20 +19,10 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 from uuid import uuid4
 
+from nooa import Image, hidden
+from nooa.agentdoc import doc
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-
-try:
-    from nooa import Image, hidden
-    from nooa.agentdoc import doc
-except ModuleNotFoundError as error:
-    # ModuleNotFoundError keeps the missing module's name, so a venv without the
-    # extra can still tell "absent optional dependency" from a broken import.
-    raise ModuleNotFoundError(
-        "NOOA dependencies not installed (NOOA supports Python 3.12 and 3.13 on "
-        "Linux and macOS). Install with: uv add band-sdk[nooa]",
-        name=error.name,
-    ) from error
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol, send_event_safe
@@ -46,13 +36,12 @@ from band.runtime.custom_tools import (
 from band.runtime.tools import (
     ImageContentResult,
     ToolDefinition,
-    decode_image_block,
+    decode_image_blocks,
     docstring_with_args,
     image_block_placeholder,
     image_passthrough_result,
     redact_tool_call_args,
     serialize_tool_result,
-    validate_tool_arguments,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,11 +208,10 @@ class RoomTools:
 
 def images_from_result(result: ImageContentResult) -> list[Image]:
     """NOOA images for an image-file read, so the model can ``show()`` them."""
-    images: list[Image] = []
-    for block in result["content"]:
-        data, mime_type = decode_image_block(block)
-        images.append(cast(Image, Image.from_bytes(data, media_type=mime_type)))
-    return images
+    return [
+        cast(Image, Image.from_bytes(data, media_type=mime_type))
+        for data, mime_type in decode_image_blocks(result)
+    ]
 
 
 def tool_method_doc(input_model: type[BaseModel]) -> str:
@@ -299,16 +287,17 @@ def room_tools_reference(tools_class: type[RoomTools]) -> str:
 
 
 def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
-    """Dispatch to the typed ``AgentToolsProtocol`` method for a Band tool."""
+    """Dispatch a Band tool through the turn's tools, as every adapter does.
+
+    ``execute_tool_call_structured`` owns validation, dispatch and serialization,
+    including any tools implementation that customizes dispatch.
+    """
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        validated = validate_tool_arguments(
-            definition.name, definition.input_model, arguments
-        )
-        method = cast(
-            Callable[..., Awaitable[object]], getattr(tools, definition.method_name)
-        )
-        return await method(**validated)
+        outcome = await tools.execute_tool_call_structured(definition.name, arguments)
+        if not outcome.ok:
+            raise BandToolError(outcome.error_message or str(outcome.value))
+        return outcome.value
 
     return RoomToolSpec(definition.name, definition.input_model, run)
 
@@ -318,9 +307,25 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        return await execute_custom_tool(tool_def, arguments, turn=tools.turn)
+        return await execute_custom_tool(
+            tool_def, by_alias(input_model, arguments), turn=tools.turn
+        )
 
     return RoomToolSpec(get_custom_tool_name(input_model), input_model, run)
+
+
+def by_alias(input_model: type[BaseModel], arguments: dict[str, Any]) -> dict[str, Any]:
+    """Re-key keyword arguments from field names to the aliases validation expects.
+
+    The model calls a tool with Python keyword arguments, which are always field
+    names, while ``model_validate`` reads each field under its alias.
+    """
+    aliases = {
+        name: model_field.alias
+        for name, model_field in input_model.model_fields.items()
+        if model_field.alias
+    }
+    return {aliases.get(key, key): value for key, value in arguments.items()}
 
 
 def validate_custom_tool_names(custom_tools: list[CustomToolDef]) -> None:

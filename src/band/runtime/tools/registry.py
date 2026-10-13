@@ -15,7 +15,9 @@ from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel
 
-from band.core.types import Capability
+from band.core.tool_filter import filter_tool_schemas
+from band.core.types import AdapterFeatures, Capability
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.tools.inputs import (
     AddContactInput,
     AddMyChatParticipantInput,
@@ -911,3 +913,27 @@ def redact_tool_call_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any
 def decode_image_block(block: Mapping[str, Any]) -> tuple[bytes, str]:
     """Decode one MCP image content block into (raw bytes, mime type)."""
     return base64.b64decode(block["data"]), block["mimeType"]
+
+
+def decode_image_blocks(result: Mapping[str, Any]) -> list[tuple[bytes, str]]:
+    """Decode every block of an image-file read into (raw bytes, mime type)."""
+    return [decode_image_block(block) for block in result["content"]]
+
+
+def selected_tool_definitions(
+    features: AdapterFeatures, *, is_hub_room: bool = False
+) -> list[ToolDefinition]:
+    """The agent-surface tools *features* allow, after the capability gate and filters.
+
+    The contacts hub room always gets the contact tools, since its prompt tells
+    the model to use them whatever the adapter negotiated.
+    """
+    capabilities = with_hub_room_contacts(
+        features.capabilities, is_hub_room=is_hub_room
+    )
+    return filter_tool_schemas(
+        iter_tool_definitions(capabilities=capabilities),
+        features,
+        get_name=lambda definition: definition.name,
+        get_category=lambda definition: get_band_tool_category(definition.name),
+    )

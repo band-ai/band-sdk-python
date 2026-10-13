@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12,<3.14"
-# dependencies = ["band-sdk[nooa]>=4.0.0"]
+# dependencies = ["band-sdk[nooa]>=5.1.0"]
 # ///
 """
 Basic NOOA (NVIDIA-labs Object Oriented Agents) example.
@@ -15,8 +15,9 @@ container or VM, never on a machine whose files or credentials matter.
 
 NOOA routes models through LiteLLM; this one reads ANTHROPIC_API_KEY.
 
-Run with:
-    uv run examples/nooa/01_basic_agent.py
+Run with (from the repo root):
+    uv run --extra nooa python examples/nooa/01_basic_agent.py   # this checkout
+    uv run examples/nooa/01_basic_agent.py                       # released band-sdk >= 5.1.0
 """
 
 from __future__ import annotations

@@ -31,7 +31,7 @@ from band.core.types import (
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    decode_image_block,
+    decode_image_blocks,
     get_band_tool_category,
     image_block_placeholder,
     is_image_passthrough_result,
@@ -104,9 +104,7 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
             try:
                 images = [
                     Image(content=data, mime_type=mime_type)
-                    for data, mime_type in (
-                        decode_image_block(block) for block in result["content"]
-                    )
+                    for data, mime_type in decode_image_blocks(result)
                 ]
             except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 # A malformed or future-extended image block (see

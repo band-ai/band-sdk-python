@@ -60,6 +60,17 @@ These invariants are easy to break:
   (which NOOA scopes to a `ContextVar`) subscribe every agent the turn calls, so
   `Emit.USAGE` sums all of their model calls. `Emit.THOUGHTS` posts each call's
   raw `reasoning_content`; leave it out of `emit` to keep reasoning out of the room.
+- **The model sees only the room agent's own module.** NOOA lists the globals of
+  every module in an agent class's MRO as already in scope for the model's code,
+  so `NooaRoomAgent` lives in `band.adapters.nooa.agent`, which holds nothing
+  else. Adapter internals are never advertised to the model.
+- **The contacts hub room gets the contact tools.** Its prompt tells the model to
+  handle contact requests whatever the adapter negotiated, so the adapter keeps
+  a second tool surface for it, built with `selected_tool_definitions(...,
+  is_hub_room=True)`.
+- **A failure after the turn is settled is not a failed turn.** If NOOA raises
+  after the model already replied or declined, the adapter logs it and keeps the
+  turn, rather than posting an error after the reply and inviting a redelivery.
 - **The return value is never relayed.** `respond` returns `None`. A reply
   reaches the room only through `band_send_message`, and the shared turn
   judgment reports a turn that neither replied nor declined.

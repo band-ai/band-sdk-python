@@ -379,7 +379,9 @@ def _build_nooa(
     from band.adapters.nooa import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
         NooaAdapter,
         NooaAdapterConfig,
-        NooaRoomAgent,
+    )
+    from band.testing.nooa import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
+        room_agent_class,
     )
 
     api_key = s.llm_credentials.anthropic_api_key
@@ -387,11 +389,10 @@ def _build_nooa(
         f"anthropic/{s.llm_models.anthropic_model}",
         **({"api_key": api_key} if api_key else {}),
     )
-    agent = type(NooaRoomAgent)(
-        "BaselineAgent",
-        (NooaRoomAgent,),
-        {"__doc__": "You are a helpful participant in a Band chat room."},
-        llm=llm,
+    agent = room_agent_class(
+        llm,
+        name="BaselineAgent",
+        doc="You are a helpful participant in a Band chat room.",
     )
     return NooaAdapter(
         NooaAdapterConfig(custom_section=prompt),

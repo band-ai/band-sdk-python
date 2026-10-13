@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from band.core.types import Capability
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from band.testing.nooa import room_call, scripted_llm
 from tests.adapters.nooa.kit import (
+    LookupOrderInput,
     OrderInput,
     TaggedInput,
     advertised_tools,
     find_order,
+    lookup_order,
     prompt_text,
     run_turn,
     started_adapter,
@@ -85,3 +88,18 @@ class TestRoomToolSurface:
         assert "order" in advertised_tools(llm)
         assert "'status': 'shipped'" in prompt_text(llm)
         assert tools.turn.complete
+
+    async def test_an_aliased_custom_tool_is_called_by_its_field_names(
+        self, tools: FakeAgentTools
+    ) -> None:
+        llm = scripted_llm(
+            f"print({room_call('lookuporder', {'order_id': 'A-1'})})\n"
+            f"{room_call(BandTool.NO_REPLY)}"
+        )
+        adapter = await started_adapter(
+            llm, additional_tools=[(LookupOrderInput, lookup_order)]
+        )
+
+        await run_turn(adapter, tools)
+
+        assert "A-1 is shipped" in prompt_text(llm)

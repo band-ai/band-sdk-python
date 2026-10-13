@@ -8,7 +8,11 @@ See [docs/adapters/nooa.md](../../docs/adapters/nooa.md) for how the adapter wor
 
 1. **Python 3.12 or 3.13 on Linux or macOS**: NOOA does not support other
    versions or Windows.
-2. **Dependencies**: `uv sync --extra nooa` (or `pip install band-sdk[nooa]`).
+2. **Dependencies**: from this checkout, `uv sync --extra nooa` and run an example
+   with `uv run --extra nooa python examples/nooa/<file>`. Each file also carries
+   inline script metadata, so `uv run examples/nooa/<file>` works on its own once
+   a band-sdk release with NOOA support (5.1.0 or later) is published. Until then
+   that form installs a released SDK without the adapter.
 3. **Band platform**: a registered agent plus `BAND_WS_URL` / `BAND_REST_URL`.
 4. **Model credentials**: these examples use `ANTHROPIC_API_KEY`. NOOA routes
    models through LiteLLM, so any LiteLLM model string works.

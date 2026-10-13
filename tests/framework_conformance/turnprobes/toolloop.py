@@ -44,20 +44,20 @@ async def run_strands(script: TurnScript, tools: FakeAgentTools) -> None:
 
 async def run_nooa(script: TurnScript, tools: FakeAgentTools) -> None:
     pytest.importorskip("nooa")
-    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         NooaAdapter,
     )
-    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
+        room_agent_class,
         room_call,
         scripted_llm,
-        scripted_room_agent,
     )
 
     # NOOA returns a typed result rather than text, so final_text has no channel.
     llm = scripted_llm(
         *(room_call(call.name, call.arguments) for call in script.tool_calls)
     )
-    adapter = NooaAdapter(agent=scripted_room_agent(llm))
+    adapter = NooaAdapter(agent=room_agent_class(llm))
     await adapter.on_started("Agent", "A test agent")
     await adapter.on_event(turn_input(tools))
 

@@ -199,19 +199,19 @@ async def _nooa_advertised_arg_text() -> dict[str, dict[str, str | None]]:
     The docstring is rendered from the master model, so this reads back the
     ``Args:`` section the model actually sees.
     """
-    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         NooaAdapter,
     )
-    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
+        room_agent_class,
         scripted_llm,
-        scripted_room_agent,
     )
 
     adapter = NooaAdapter(
-        agent=scripted_room_agent(scripted_llm()), capabilities=ALL_CAPABILITIES
+        agent=room_agent_class(scripted_llm()), capabilities=ALL_CAPABILITIES
     )
     await adapter.on_started("Agent", "A test agent")
-    tools_class = adapter._room_tools_class
+    tools_class = adapter._surfaces[False].tools_class
     return {
         name: _docstring_arg_text(getattr(tools_class, name).__doc__ or "")
         for name in tools_class._specs
@@ -369,16 +369,16 @@ def _agno_factory(**kw: Any) -> Any:
 
 
 def _nooa_factory(**kw: Any) -> Any:
-    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         NooaAdapter,
     )
-    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
+        room_agent_class,
         scripted_llm,
-        scripted_room_agent,
     )
 
     if "agent" not in kw:
-        kw["agent"] = scripted_room_agent(scripted_llm())
+        kw["agent"] = room_agent_class(scripted_llm())
     return NooaAdapter(**kw)
 
 
@@ -750,7 +750,7 @@ def _build_nooa_config() -> AdapterConfig | None:
     if not _HAS_NOOA:
         return None  # optional dep not installed on this Python; skip
 
-    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         NooaAdapterConfig,
     )
 
@@ -761,9 +761,9 @@ def _build_nooa_config() -> AdapterConfig | None:
         adapter_factory=_nooa_factory,
         expected_initial_values={
             "config": NooaAdapterConfig(),
-            # The room tool surface depends on the effective features, so the
+            # The room tool surfaces depend on the effective features, so the
             # agent class is specialized in on_started, not before.
-            "_room_agent_class": None,
+            "_surfaces": {},
             "_agents": {},
         },
         custom_kwargs={"config": custom},

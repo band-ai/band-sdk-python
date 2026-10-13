@@ -13,18 +13,29 @@ from tests.adapters.nooa.kit import (
 
 
 class TestRoomAgents:
-    async def test_a_room_never_sees_another_rooms_conversation(self) -> None:
-        llm = declining_turns(2)
+    async def test_each_room_keeps_its_own_conversation(self) -> None:
+        llm = declining_turns(3)
         adapter = await started_adapter(llm)
 
         await run_turn(
             adapter, FakeAgentTools(), message=room_message("secret plan", room_id="a")
         )
         await run_turn(
-            adapter, FakeAgentTools(), message=room_message("hello", room_id="b")
+            adapter,
+            FakeAgentTools(),
+            message=room_message("hello", room_id="b"),
+            is_session_bootstrap=False,
+        )
+        room_b_prompt = prompt_text(llm)
+        await run_turn(
+            adapter,
+            FakeAgentTools(),
+            message=room_message("and again", room_id="a"),
+            is_session_bootstrap=False,
         )
 
-        assert "secret plan" not in prompt_text(llm)
+        assert "secret plan" not in room_b_prompt
+        assert "[Alice]: secret plan" in prompt_text(llm)
 
     async def test_a_room_remembers_its_earlier_messages(self) -> None:
         llm = declining_turns(2)
