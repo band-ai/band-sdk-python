@@ -18,6 +18,7 @@ from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, OpenRoom
 TURN_TIMEOUT_S = 2.0
 
 
+@pytest.mark.looptime
 class TestTurnTimeout:
     async def test_a_stuck_turn_is_interrupted_and_reported_as_a_timeout(
         self,
