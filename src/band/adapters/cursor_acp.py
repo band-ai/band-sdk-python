@@ -22,6 +22,7 @@ from band.core.protocols import (
     generic_provider_failure,
 )
 from band.core.turn import judge_detached_turn
+from band.core.turn_lifecycle import start_releasable_turn
 from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -275,7 +276,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             requester_id=msg.sender_id,
             release=release,
         )
-        turn_task = turn.task = room.retained.start_owned(
+        turn_task = turn.task = start_releasable_turn(
+            room.retained,
             partial(
                 self._run_turn,
                 turn,
@@ -284,7 +286,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 participants_msg,
                 contacts_msg,
                 is_session_bootstrap=is_session_bootstrap,
-            )
+            ),
+            tools=tools,
+            room_id=room_id,
         )
         # Registered before it runs, so an interrupt during startup reaches it.
         self._accept(turn)

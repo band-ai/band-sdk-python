@@ -66,7 +66,7 @@ class TestDetachedTurnOutcome:
         assert failure_reports(busy) == failure_reports(approval) == []
 
     @pytest.mark.asyncio
-    async def test_a_released_turn_ended_by_room_cleanup_posts_nothing(
+    async def test_a_released_turn_ended_by_room_cleanup_is_reported_once(
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         room = await codex_room(*parked_on_approval(turn_completed()))
@@ -75,4 +75,16 @@ class TestDetachedTurnOutcome:
         await room.adapter.on_cleanup(ROOM_ID)
 
         [turn] = room.deliveries
-        assert failure_reports(turn) == []
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
+
+    async def test_a_released_turn_cancelled_by_room_cleanup_is_reported_once(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        """With no settle grace, cleanup cancels the parked turn at once."""
+        room = await codex_room(*parked_on_approval(), turn_settle_timeout_s=0)
+
+        await room.send("run tests")
+        await room.adapter.on_cleanup(ROOM_ID)
+
+        [turn] = room.deliveries
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]

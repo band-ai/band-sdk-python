@@ -289,8 +289,10 @@ agent log. Agno, Google ADK and Gemini follow this rule.
 
 An adapter whose turn outlives `on_message` (one parked on a human approval)
 calls `tools.turn.detach()` when it releases the turn early. `run_judged_turn` then
-leaves the verdict to the adapter, which reports at the turn's normal end. A
-cancelled turn reports nothing:
+leaves the verdict to the adapter, which reports at the turn's normal end. Such a
+turn starts through `start_releasable_turn` from `band.core.turn_lifecycle`: if its
+room's leave or shutdown cancels it after the settle grace, it is judged then, since
+its message was already handed back. An interrupt that cancels it reports nothing:
 
 ```python
 import asyncio

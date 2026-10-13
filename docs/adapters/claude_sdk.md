@@ -135,7 +135,8 @@ so a slow CLI in one room never holds up another.
   manual approval. Leaving the room, or `cleanup_all`, closes admission at
   once, gives that turn `turn_settle_timeout_s` (`TURN_SETTLE_GRACE_S` by
   default) to finish on its own, then cancels and joins it, and only then
-  closes the CLI.
+  closes the CLI. A turn released for an approval and cancelled this way is
+  reported once as a missing reply.
 - **A CLI is held until its close succeeds.** A failed or cancelled startup, a
   crashed CLI, a turn that stopped before its result and a replaced Band MCP
   server all retire the CLI through the room's owner once the turn unwinds.

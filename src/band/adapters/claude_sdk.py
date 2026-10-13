@@ -98,6 +98,7 @@ from band.core.turn_lifecycle import (
     ApprovalInterruptMixin,
     TurnTask,
     bind_turn_task,
+    start_releasable_turn,
 )
 from band.core.types import (
     ApprovalMode,
@@ -895,7 +896,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         release_future: asyncio.Future[None] = loop.create_future()
         # The turn's own TurnTask exists only once its task does.
         owner_ready: asyncio.Future[TurnTask] = loop.create_future()
-        turn_task = session.retained.start_owned(
+        turn_task = start_releasable_turn(
+            session.retained,
             partial(
                 self._run_turn,
                 owner_ready,
@@ -905,7 +907,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 msg.id,
                 release_future,
                 resume_from=history.session_id if is_session_bootstrap else None,
-            )
+            ),
+            tools=tools,
+            room_id=room_id,
         )
         self._turn_release[room_id] = release_future
         self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn_task)

@@ -46,7 +46,6 @@ from tests.integrations.acp.acp_toolkit.agent import (
     allow_or_reject,
 )
 from tests.integrations.acp.acp_toolkit.harness import (
-    accepted_work,
     accepted_work_finished,
     decision_token,
     launch_for,
@@ -1398,23 +1397,24 @@ class TestCursorACPAdapterDetachedTurn:
         assert failure_reports(turn) == []
 
     @pytest.mark.asyncio
-    async def test_a_cancelled_detached_turn_posts_nothing(
+    async def test_a_detached_turn_cancelled_by_cleanup_is_reported_once(
         self, cursor_room: Callable[..., Awaitable[CursorRoom]]
     ) -> None:
+        """With no settle grace, cleanup cancels the parked turn at once; its
+        message was already handed back, so the turn reports it."""
         room = await cursor_room(
             FakeACPAgent().will_ask_permission(
                 title="shell", options=allow_or_reject("allow-once")
-            )
+            ),
+            turn_settle_timeout_s=0,
         )
         turn = await room.send("run it")
         [prompt] = said(turn)
 
-        for task in accepted_work(room.adapter._rooms["room-1"]):
-            task.cancel()
-        await room.turns_finished()
+        await room.adapter.on_cleanup("room-1")
 
         assert said(turn) == [prompt]
-        assert failure_reports(turn) == []
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
 
 
 class TestCursorACPAdapterControlMessages:

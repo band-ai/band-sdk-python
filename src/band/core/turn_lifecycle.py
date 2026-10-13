@@ -9,12 +9,15 @@ detached bind that worker to the originating turn scope and share
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
+from band.core.protocols import AgentToolsProtocol
+from band.core.retention import RetainedRoom
+from band.core.turn import judge_detached_turn
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
 # How long a room's final disposal lets its accepted turn wind down on its own
@@ -135,6 +138,30 @@ class TurnTask:
             self._cleanup_timer = False
             if self.deadline is not None:
                 raise asyncio.CancelledError
+
+
+def start_releasable_turn(
+    retained: RetainedRoom,
+    operation: Callable[[], Coroutine[Any, Any, None]],
+    *,
+    tools: AgentToolsProtocol,
+    room_id: str,
+) -> asyncio.Task[None]:
+    """Start a turn that may be released before it ends as the room's owned work.
+
+    A released turn cancelled by its room's final disposal is judged then,
+    since nothing else answers for its message; an interrupt ends it on purpose.
+    """
+
+    async def run() -> None:
+        try:
+            await operation()
+        except asyncio.CancelledError:
+            if retained.closing:
+                await judge_detached_turn(tools, room_id=room_id)
+            raise
+
+    return retained.start_owned(run)
 
 
 def bind_turn_task(tools: object, task: asyncio.Task[None]) -> TurnTask:

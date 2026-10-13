@@ -68,6 +68,7 @@ from band.core.turn_lifecycle import (
     ApprovalInterruptMixin,
     TurnTask,
     bind_turn_task,
+    start_releasable_turn,
 )
 from band.core.types import (
     AgentInput,
@@ -1175,7 +1176,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        turn = room.retained.start_owned(
+        turn = start_releasable_turn(
+            room.retained,
             partial(
                 self._run_turn,
                 room=room,
@@ -1186,7 +1188,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 contacts_msg=contacts_msg,
                 is_session_bootstrap=is_session_bootstrap,
                 command=command,
-            )
+            ),
+            tools=tools,
+            room_id=room_id,
         )
         self._turn_release[room_id] = release
         self._turn_tasks[room_id] = bind_turn_task(tools, turn)
@@ -1400,9 +1404,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             native_messages=result.native_messages,
             duration_s=_time.perf_counter() - turn_start,
         )
-        # A turn wound down by room cleanup was aborted, not missed.
-        if not room.retained.closing:
-            await judge_detached_turn(tools, room_id=room_id)
+        await judge_detached_turn(tools, room_id=room_id)
 
     async def _emit_turn_started(
         self,

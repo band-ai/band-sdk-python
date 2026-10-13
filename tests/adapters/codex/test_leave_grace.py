@@ -1,6 +1,6 @@
 """A leaving room's or shutting-down adapter's turn gets its settle grace
 with admission closed: what it still asks is declined instead of parking on
-a human."""
+a human, and the turn is judged at its end."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexApprovalMethod
-from band.testing import failure_reports
+from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.codex.kit import DECLINED, ROOM_ID, CodexRoom, parked_on_approval
 from tests.adapters.codexturns import event_request, turn_completed
 
@@ -43,4 +43,4 @@ class TestLeaveGrace:
 
         assert room.client.responses == [(10, DECLINED), (11, DECLINED)]
         [turn] = room.deliveries
-        assert failure_reports(turn) == []
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
