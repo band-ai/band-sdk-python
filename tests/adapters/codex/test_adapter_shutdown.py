@@ -4,74 +4,19 @@ stays closed until an explicit restart confirms it."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable
-from dataclasses import dataclass
 
 import pytest
-import pytest_asyncio
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
-from band.core.retention import RoomRetentionConfig
+from band.core.exceptions import CleanupIncompleteError
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
-    CountingCloseClient,
-    HeldTurnClient,
-    patch_codex_clients_by_room,
+    HELD_ROOM,
+    NEW_ROOM,
+    TwoRooms,
+    refused,
     send_bootstrap,
     start_room_process,
 )
-from tests.adapters.codexturns import turn_completed
-
-HELD_ROOM = "room-a"
-NEW_ROOM = "room-b"
-TRANSITION_TIMEOUT_S = 1.0
-
-
-@dataclass
-class TwoRooms:
-    """A started adapter whose held room has a turn parked in turn/start."""
-
-    adapter: CodexAdapter
-    held: HeldTurnClient
-    new: CountingCloseClient
-    held_turn: asyncio.Task[None]
-
-    async def finish(self) -> None:
-        self.held.finish_turn.set()
-        self.held.finish_close.set()
-        await asyncio.gather(self.held_turn, return_exceptions=True)
-
-
-@pytest_asyncio.fixture(loop_scope="function")
-async def two_rooms() -> AsyncIterator[TwoRooms]:
-    held = HeldTurnClient(
-        events=[turn_completed(), turn_completed("turn-2")], hold=True
-    )
-    new = CountingCloseClient(events=[turn_completed()])
-    adapter = CodexAdapter(
-        config=CodexAdapterConfig(
-            client_close_timeout_s=None,
-            turn_settle_timeout_s=30,
-            retention=RoomRetentionConfig(transition_timeout_s=TRANSITION_TIMEOUT_S),
-        )
-    )
-    patch_codex_clients_by_room(adapter, {HELD_ROOM: held, NEW_ROOM: new})
-    await adapter.on_started("Codex Agent", "A coding agent")
-    held_turn = asyncio.create_task(send_bootstrap(adapter, room_id=HELD_ROOM))
-    await held.turn_started.wait()
-    rooms = TwoRooms(adapter=adapter, held=held, new=new, held_turn=held_turn)
-    yield rooms
-    await rooms.finish()
-    await adapter.cleanup_all()
-
-
-async def refused(attempt: Awaitable[None]) -> bool:
-    try:
-        await attempt
-    except InputNotAccepted:
-        return True
-    return False
 
 
 class TestAdapterShutdown:

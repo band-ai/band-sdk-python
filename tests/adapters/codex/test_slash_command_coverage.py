@@ -167,3 +167,34 @@ class TestSlashCommandCoverage:
         assert any(
             "Reply delivery failed" in record.message for record in caplog.records
         )
+
+    @pytest.mark.asyncio
+    async def test_thread_archive_clears_raw_history(self) -> None:
+        """/thread archive also clears raw history and injection state."""
+        events = [
+            turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        await send_bootstrap(adapter, tools=tools)
+
+        # Seed raw history and injection flag
+        adapter._raw_history_by_room[ROOM_ID] = [{"role": "user", "content": "hi"}]
+        adapter._needs_history_injection.add(ROOM_ID)
+
+        await deliver_message(
+            adapter,
+            make_platform_message(content="/thread archive"),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id=ROOM_ID,
+        )
+
+        assert ROOM_ID not in adapter._raw_history_by_room
+        assert ROOM_ID not in adapter._needs_history_injection

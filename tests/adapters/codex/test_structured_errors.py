@@ -9,11 +9,13 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
+from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import CodexSessionState
 from band.testing import reported_failures
 from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -173,3 +175,25 @@ class TestStructuredErrors:
         assert failures[0]["provider"] == "codex"
         assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         assert "transport hiccup" not in failures[0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_rpc_error_from_event_loop_keeps_curated_failure(self) -> None:
+        """RPC errors raised while receiving events keep their provider message."""
+        rpc_error = CodexJsonRpcError(code=-32000, message="model unavailable")
+
+        class RpcErrorClient(FakeCodexClient):
+            async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+                await self.turn_started.wait()
+                raise rpc_error
+
+        rpc_error_client = RpcErrorClient()
+        adapter = make_codex_adapter(rpc_error_client, config=CodexAdapterConfig())
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(CodexJsonRpcError, match="model unavailable"):
+            await send_bootstrap(adapter, tools=tools)
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == str(rpc_error)

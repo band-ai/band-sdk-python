@@ -189,3 +189,22 @@ class TestCodexTypes:
 
         assert set().union(*buckets) == set(CodexItemType)
         assert sum(len(bucket) for bucket in buckets) == len(CodexItemType)
+
+    def test_token_usage_update_handles_zero_values(self) -> None:
+        """CodexTokenUsage.update() correctly handles explicit zero values."""
+
+        usage = CodexTokenUsage()
+        usage.update(
+            {
+                "usage": {
+                    "inputTokens": 0,
+                    "outputTokens": 100,
+                    "reasoningTokens": 0,
+                    "totalTokens": 100,
+                }
+            }
+        )
+        assert usage.input_tokens == 0
+        assert usage.output_tokens == 100
+        assert usage.reasoning_tokens == 0
+        assert usage.total_tokens == 100

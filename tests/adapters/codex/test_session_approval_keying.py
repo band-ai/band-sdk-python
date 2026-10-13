@@ -115,3 +115,11 @@ class TestSessionApprovalKeying:
         )
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
         assert "room-1" not in adapter._session_approved
+
+    def test_session_approval_key_empty_prevents_wildcard_match(self) -> None:
+        """Empty session key from missing command cannot match any session set."""
+        adapter = CodexAdapter(config=CodexAdapterConfig())
+        key = adapter._session_approval_key("item/commandExecution/requestApproval", {})
+        # Empty key is falsy, so `key and key in session_set` is always False
+        assert not key
+        assert not (key and key in {"commandExecution:npm"})

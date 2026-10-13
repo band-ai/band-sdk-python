@@ -21,6 +21,7 @@ from band.adapters.codex import (
     PendingApproval,
 )
 from band.client.streaming import ControlMode
+from band.core.exceptions import InputNotAccepted
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import (
     AgentInput,
@@ -613,6 +614,37 @@ class CleaningTurn:
                 for _ in range(2)
             )
         )
+
+
+#: The shutdown tests' room with a turn parked in turn/start, and a room
+#: that tries to start while shutdown runs.
+HELD_ROOM = "room-a"
+NEW_ROOM = "room-b"
+TRANSITION_TIMEOUT_S = 1.0
+
+
+@dataclass
+class TwoRooms:
+    """A started adapter whose held room has a turn parked in turn/start."""
+
+    adapter: CodexAdapter
+    held: HeldTurnClient
+    new: CountingCloseClient
+    held_turn: asyncio.Task[None]
+
+    async def finish(self) -> None:
+        self.held.finish_turn.set()
+        self.held.finish_close.set()
+        await asyncio.gather(self.held_turn, return_exceptions=True)
+
+
+async def refused(attempt: Awaitable[None]) -> bool:
+    """Whether ``attempt`` was refused as not-accepted input."""
+    try:
+        await attempt
+    except InputNotAccepted:
+        return True
+    return False
 
 
 # Adapters run their turns on the loop that started them, so setup, the test
