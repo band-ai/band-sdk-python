@@ -20,11 +20,8 @@ from tests.adapters.lifecycle.kit import (
     RetentionHost,
     pause_at,
 )
-from tests.adapters.roompeer import CLEANUP_FAILURE, STARTUP_FAILURE
+from tests.adapters.roompeer import CLEANUP_FAILURE, CODEX_HOME, STARTUP_FAILURE
 from tests.paths import REPO_ROOT
-
-# Where the Codex peer saves each thread's conversation, under the host root.
-CODEX_HOME = "codex-home"
 
 
 class CodexPeer(CodexStdioClient):

@@ -12,9 +12,13 @@ from band.adapters.codex import (
 )
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
-from tests.adapters.codex.lifecycleprofile import CODEX_HOME
 from tests.adapters.lifecycle.kit import RetentionHost
-from tests.adapters.roompeer import PeerCommand, memo_instruction
+from tests.adapters.roompeer import (
+    CODEX_HOME,
+    NO_ROLLOUT,
+    PeerCommand,
+    memo_instruction,
+)
 
 
 class TestNativeConversationContinuity:
@@ -53,7 +57,7 @@ class TestNativeConversationContinuity:
         saved.unlink()
 
         for _ in range(2):
-            with pytest.raises(CodexJsonRpcError, match="no rollout found"):
+            with pytest.raises(CodexJsonRpcError, match=NO_ROLLOUT):
                 await host.send("room-a", PeerCommand.RECALL)
             await host.settled("room-a")
             assert host.native_id("room-a") == thread
@@ -73,7 +77,7 @@ class TestNativeConversationContinuity:
             await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
         await host.settled("room-a")
         ((host.root / CODEX_HOME) / f"{thread}.json").unlink()
-        with pytest.raises(CodexJsonRpcError, match="no rollout found"):
+        with pytest.raises(CodexJsonRpcError, match=NO_ROLLOUT):
             await host.send("room-a", PeerCommand.RECALL)
         await host.settled("room-a")
 

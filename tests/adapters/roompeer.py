@@ -28,6 +28,10 @@ PEER_PROVIDER = "peer"
 STARTING_MARKER = "starting.txt"
 STARTUP_FAILURE = "startup failed"
 CLEANUP_FAILURE = "subprocess cleanup failed"
+# How the Codex peer refuses to resume a thread it never saved.
+NO_ROLLOUT = "no rollout found for thread id"
+# Where the Codex peer saves each thread's conversation, unless told otherwise.
+CODEX_HOME = "codex-home"
 # How often a held start checks whether its hold file is gone.
 HOLD_POLL_S = 0.01
 
@@ -178,7 +182,7 @@ class AppServer:
                             "id": message["id"],
                             "error": {
                                 "code": -32600,
-                                "message": f"no rollout found for thread id {thread_id}",
+                                "message": f"{NO_ROLLOUT} {thread_id}",
                             },
                         }
                     )
@@ -278,7 +282,7 @@ def main() -> None:
     parser.add_argument("--hold-startup", type=Path)
     parser.add_argument("--stay", action="store_true")
     parser.add_argument("--band-url")
-    parser.add_argument("--home", type=Path, default=Path("codex-home"))
+    parser.add_argument("--home", type=Path, default=Path(CODEX_HOME))
     options = parser.parse_args()
     tool_name = ""
     server = AppServer(options.home, options.fail_startup, options.hold_startup)

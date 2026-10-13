@@ -61,6 +61,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
+from tests.adapters.roompeer import NO_ROLLOUT
 
 
 class TestNativeTurnOwnership:
@@ -359,11 +360,11 @@ class TestNativeTurnOwnership:
             (
                 {
                     "resume_error": CodexJsonRpcError(
-                        code=-32600, message="no rollout found for thread id thr-1"
+                        code=-32600, message=f"{NO_ROLLOUT} {FIRST_THREAD_ID}"
                     )
                 },
                 CodexJsonRpcError,
-                "no rollout found",
+                NO_ROLLOUT,
             ),
         ],
         ids=["changed-settings", "other-thread", "no-rollout"],
