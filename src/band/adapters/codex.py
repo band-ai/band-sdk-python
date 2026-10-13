@@ -1874,8 +1874,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     ) -> None:
         """Start the room's process and strictly restore the thread it retains.
 
-        A crash keeps the thread id, so ``resume`` changes nothing: a
-        retained thread is always restored.
+        A crash keeps the thread id and the room's model, so ``resume``
+        changes nothing: a retained thread is always restored on its model.
         The reader runs before ``thread/resume``, which can start native work.
         """
         room.client = client = self._build_client(room.workspace)
@@ -1891,10 +1891,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             experimental_api=self.config.experimental_api,
         )
         await self._register_skill_roots(client)
-        room.selected_model = await self._select_model(room, client)
-        logger.info(
-            "Room %s: Codex model selected: %s", room.room_id, room.selected_model
-        )
+        if room.selected_model is None:
+            room.selected_model = await self._select_model(room, client)
+            logger.info(
+                "Room %s: Codex model selected: %s", room.room_id, room.selected_model
+            )
         if (thread_id := self._room_threads.get(room.room_id)) is not None:
             await self._restore_thread(room, client, thread_id)
 
@@ -2109,7 +2110,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     f"within {timeout}s"
                 ) from error
         room.client = None
-        room.selected_model = None
         room.restored = False
         return ReleaseOutcome.RELEASED
 
