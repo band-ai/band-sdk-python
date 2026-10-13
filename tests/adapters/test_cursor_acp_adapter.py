@@ -180,6 +180,21 @@ def activate(adapter: CursorACPAdapter, turn: CursorTurn) -> CursorTurn:
     return turn
 
 
+async def resident(open_room: Callable[..., Awaitable[CursorRoom]]) -> CursorACPAdapter:
+    """A Cursor adapter whose ``room-1`` has a live residency, so a turn
+    activated there speaks for it."""
+    room = await open_room(
+        FakeACPAgent().will_call_mcp_tool(
+            "reply",
+            BandTool.SEND_MESSAGE,
+            arguments={"content": "ready", "mentions": ["@user-1"]},
+        )
+    )
+    await room.send("start")
+    await room.turns_finished()
+    return room.adapter
+
+
 # The adapter's ACP runtime lives on the loop that started it, so setup, the
 # test and teardown share the test's own loop.
 @pytest_asyncio.fixture(loop_scope="function")
@@ -907,9 +922,11 @@ class TestCursorACPAdapterDecisions:
         ] == [{"questionId": "mode", "selectedOptionIds": ["agent"]}]
 
     @pytest.mark.asyncio
-    async def test_manual_permission_can_be_denied_from_the_room(self) -> None:
+    async def test_manual_permission_can_be_denied_from_the_room(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
         tools = DecisionTools()
-        adapter = CursorACPAdapter()
+        adapter = await resident(cursor_room)
         activate(adapter, _turn(adapter, "room-1", tools, "user-1", "session-1"))
         request = ACPPermissionRequest(
             room_id="room-1",
@@ -937,9 +954,11 @@ class TestCursorACPAdapterDecisions:
         assert await pending is None
 
     @pytest.mark.asyncio
-    async def test_manual_permission_can_select_an_advertised_option(self) -> None:
+    async def test_manual_permission_can_select_an_advertised_option(
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
+    ) -> None:
         tools = DecisionTools()
-        adapter = CursorACPAdapter()
+        adapter = await resident(cursor_room)
         activate(adapter, _turn(adapter, "room-1", tools, "user-1", "session-1"))
         request = ACPPermissionRequest(
             room_id="room-1",
@@ -970,10 +989,10 @@ class TestCursorACPAdapterDecisions:
 
     @pytest.mark.asyncio
     async def test_an_always_grant_settles_a_parallel_repeat_without_asking(
-        self,
+        self, cursor_room: Callable[..., Awaitable[CursorRoom]]
     ) -> None:
         tools = DecisionTools()
-        adapter = CursorACPAdapter()
+        adapter = await resident(cursor_room)
         activate(adapter, _turn(adapter, "room-1", tools, "user-1", "session-1"))
 
         def request(call_id: str) -> ACPPermissionRequest:

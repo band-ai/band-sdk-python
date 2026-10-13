@@ -772,10 +772,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         )
 
     def _active_turn_for(self, room_id: str, session_id: str) -> CursorTurn | None:
-        turn = self._holders.get(room_id)
-        return (
-            turn if turn and not turn.closed and turn.session_id == session_id else None
-        )
+        """The open prompt serving ``session_id`` in ``room_id``, as ``_turn_of``
+        judges its holder."""
+        holder = self._holders.get(room_id)
+        if holder is None or holder.generation is None:
+            return None
+        turn = self._turn_of(holder.room, holder.generation)
+        return turn if turn is not None and turn.session_id == session_id else None
 
     def _room_decisions(self, room_id: str) -> DecisionRegistry[PendingDecision]:
         return self._pending_decisions.setdefault(
