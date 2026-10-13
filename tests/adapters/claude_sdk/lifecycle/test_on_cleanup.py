@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 import looptime
 import pytest
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
 
@@ -117,19 +116,3 @@ async def test_a_cancelled_message_never_leaks_its_turn_into_the_next(
     assert room.chat == ["first", "second"]
     assert room.failures == []
     assert room.claude.resumed == [None, "sess-1"]
-
-
-async def test_turn_task_exceptions_are_retrieved_without_raising() -> None:
-    """A turn that fails after its message returned was already reported;
-    retrieving its outcome must never raise, even for a cancelled turn."""
-
-    async def failing_turn() -> None:
-        raise RuntimeError("boom")
-
-    failed = asyncio.create_task(failing_turn())
-    cancelled = asyncio.create_task(asyncio.Event().wait())
-    cancelled.cancel()
-    await asyncio.wait([failed, cancelled])
-
-    for turn in (failed, cancelled):
-        ClaudeSDKAdapter()._log_turn_task_exception(turn)

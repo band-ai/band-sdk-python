@@ -54,6 +54,7 @@ from band.core.task_types import (
 )
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.turn import Turn
+from band.core.turn_lifecycle import TurnTask
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
@@ -386,15 +387,19 @@ class AgentTools(AgentToolsProtocol):
         tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 
+    def register_turn_task(self, owner: TurnTask) -> None:
+        if self._scope is not None:
+            self._scope.bind(owner)
+
     def _abort_stopped_post(self, error: RoomExecutionStoppedError) -> None:
         if self._ctx is not None and self._scope is not None:
-            self._ctx.observe_platform_stop(self._scope)
+            self._ctx.observe_platform_stop(self._scope, cooperative=True)
             raise asyncio.CancelledError() from error
         raise error
 
     def _check_post_scope(self) -> None:
-        if self._scope is not None and self._scope.stop_observed:
-            self._abort_stopped_post(RoomExecutionStoppedError(self.room_id))
+        if self._scope is not None and self._scope.aborted:
+            raise asyncio.CancelledError
 
     # --- Tool methods ---
 
