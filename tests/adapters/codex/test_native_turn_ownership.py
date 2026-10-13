@@ -52,6 +52,7 @@ from tests.adapters.codex.kit import (
     delegated_to,
     parked_on_approval,
     refusals_of_autonomous_turn,
+    residency_of,
     send_bootstrap,
     started_sub_agent,
 )
@@ -82,7 +83,8 @@ class TestNativeTurnOwnership:
             approval_wait_timeout_s=PATIENT_APPROVAL_S,
         )
         await room.send("run tests")
-        residency = room.adapter._room_clients[ROOM_ID].retained
+        residency = residency_of(room.adapter, ROOM_ID)
+        assert residency is not None
         assert (residency.snapshot.leases, residency.snapshot.accepted) == (1, 1)
 
         await room.send(f"/{CodexCommand.APPROVE} req-10")

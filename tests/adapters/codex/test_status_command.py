@@ -17,6 +17,7 @@ from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
     ToolSchemaFakeTools,
+    residency_of,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
@@ -56,7 +57,7 @@ class TestStatusCommand:
         )
 
         await room.send("/status")
-        assert ROOM_ID not in room.adapter._room_clients
+        assert residency_of(room.adapter, ROOM_ID) is None
         await room.send("work")
         await room.send("/status")
 

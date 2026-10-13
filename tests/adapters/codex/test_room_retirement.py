@@ -17,6 +17,7 @@ from tests.adapters.codex.kit import (
     CleaningTurn,
     CountingCloseClient,
     disposed,
+    residency_of,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
@@ -101,7 +102,8 @@ class TestRoomRetirement:
         )
         await adapter.on_started("Codex Agent", "A coding agent")
         await send_bootstrap(adapter)
-        residency = adapter._room_clients[ROOM_ID].retained
+        residency = residency_of(adapter, ROOM_ID)
+        assert residency is not None
         with pytest.raises(CleanupIncompleteError):
             await adapter.on_cleanup(ROOM_ID)
         client.finish_close.set()

@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping, Sequence
+from functools import partial
 from typing import Any
 
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
-from band.core.retention import RetainedRoom
 from band.integrations.codex import CodexJsonRpcError, CodexStdioClient
+from tests.adapters.codex.kit import residency_of
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     ExpectedFailure,
@@ -81,12 +82,10 @@ def install(
 
     monkeypatch.setattr("band.adapters.codex.CodexStdioClient", child)
 
-    def residency(room_id: str) -> RetainedRoom | None:
-        room = adapter._room_clients.get(room_id)
-        return room.retained if room is not None else None
-
     return LifecycleBridge(
-        adapter=adapter, residency=residency, native_id=adapter._room_threads.get
+        adapter=adapter,
+        residency=partial(residency_of, adapter),
+        native_id=adapter._room_threads.get,
     )
 
 

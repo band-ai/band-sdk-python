@@ -170,6 +170,12 @@ def patch_codex_clients_by_room(
     adapter._build_client = _build  # type: ignore[method-assign]
 
 
+def residency_of(adapter: CodexAdapter, room_id: str) -> RetainedRoom | None:
+    """The room's residency owner handle, or None once the room is forgotten."""
+    room = adapter._room_clients.get(room_id)
+    return room.retained if room is not None else None
+
+
 def wire_codex_room(
     adapter: CodexAdapter,
     client: FakeCodexClient,
