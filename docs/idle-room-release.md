@@ -82,7 +82,10 @@ closed.
 These ownership rules hold with retention disabled. Room, execution, adapter and
 shared MCP cleanup that fails or is cancelled stays owned, with the agent's
 single-instance guard, and the next `stop()` or `shutdown()` retries it instead
-of reporting success.
+of reporting success. Adapter shutdown refuses new rooms and turns before its
+first wait, and settles running turns and closes rooms within one reporting
+deadline. Every caller joins that same shutdown. The adapter admits work again
+only when the next start has confirmed it.
 
 ## Provider integration
 

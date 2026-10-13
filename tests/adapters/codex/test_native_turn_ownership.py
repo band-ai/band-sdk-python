@@ -23,7 +23,11 @@ from band.integrations.codex import (
     CodexJsonRpcError,
     RpcEvent,
 )
-from band.integrations.codex.types import CodexApprovalMethod, CodexRequestMethod
+from band.integrations.codex.types import (
+    CodexApprovalMethod,
+    CodexItemType,
+    CodexRequestMethod,
+)
 from band.runtime.tools import BandTool
 from band.testing import (
     events_of_type,
@@ -89,7 +93,7 @@ class TestNativeTurnOwnership:
         room.client.emit(
             event_request(
                 41,
-                "item/tool/call",
+                DYNAMIC_TOOL_CALL_METHOD,
                 {
                     **autonomous,
                     "callId": "c-41",
@@ -207,7 +211,7 @@ class TestNativeTurnOwnership:
                     "threadId": "thr-1",
                     "turnId": "turn-1",
                     "item": {
-                        "type": "commandExecution",
+                        "type": CodexItemType.COMMAND_EXECUTION,
                         "id": "late",
                         "command": "make",
                         "aggregatedOutput": "late output",
@@ -229,7 +233,7 @@ class TestNativeTurnOwnership:
                 final_text("on time"),
                 event_request(
                     7,
-                    "item/tool/call",
+                    DYNAMIC_TOOL_CALL_METHOD,
                     {"turnId": "someone-else", "tool": BandTool.SEND_MESSAGE},
                 ),
                 turn_completed(),
@@ -253,7 +257,7 @@ class TestNativeTurnOwnership:
             events=[
                 event_request(
                     7,
-                    "item/tool/call",
+                    DYNAMIC_TOOL_CALL_METHOD,
                     {"turnId": "someone-else", "tool": BandTool.SEND_MESSAGE},
                 ),
                 final_text("on time"),

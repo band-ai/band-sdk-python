@@ -59,7 +59,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import report_owned, spawn_owned, task_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
@@ -640,6 +640,18 @@ class RoomCodexClient:
     def forget_thread(self) -> None:
         self.bind_thread(registration=None, settings=ThreadSettings())
 
+    def require_client(self) -> CodexClientProtocol:
+        if self.client is None:
+            raise RuntimeError(f"Room {self.room_id} has no Codex process")
+        return self.client
+
+    async def stop_reader(self) -> None:
+        if (reader := self.reader) is None:
+            return
+        reader.cancel()
+        await asyncio.wait({reader})
+        self.reader = None
+
 
 class _WithoutCwdBinding(PydanticBaseSettingsSource):
     """Drops ``cwd``'s implicit env binding from a settings source.
@@ -906,6 +918,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
         self._retention = RoomRetention(self.config.retention)
+        # Set from the first cleanup_all until on_started confirms it; while
+        # set, the adapter admits no new room or turn.
+        self._shutdown: asyncio.Task[None] | None = None
         self._workspaces = RoomWorkspaces(self.config.workspace_for_room)
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
@@ -977,13 +992,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         return self._room_task_titles.setdefault(room_id, OrderedDict())
 
     @property
-    def _client(self) -> CodexClientProtocol | None:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client requires a room context")
-        return state.client
-
-    @property
     def _selected_model(self) -> str | None:
         state = self._active_client_state()
         if state is None:
@@ -1053,8 +1061,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        if self._room_clients:
-            await self.cleanup_all()
+        # Only a confirmed shutdown of the previous owner opens a new one.
+        await self.cleanup_all()
+        self._shutdown = None
+        self._closing_rooms.clear()
+        self._retention = RoomRetention(self.config.retention)
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
         self._log_startup_config(agent_name)
@@ -1155,6 +1166,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        if self._shutdown is not None:
+            raise InputNotAccepted("Codex is shutting down")
         self._admit_turn(room_id, "Codex")
         room = self._room_client(room_id)
         self._active_room.set(room_id)
@@ -1316,7 +1329,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 turn_id=native.turn_id,
             )
 
-            # Reset per-turn token deltas for the new turn.
             usage_obj = self._token_usage.get(thread_id)
             if usage_obj is not None:
                 usage_obj.reset_turn_deltas()
@@ -1873,23 +1885,29 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             del self._room_clients[room.room_id]
 
     async def cleanup_all(self) -> None:
-        """Dispose every room under one reporting deadline; failures stay owned.
+        """Seal admission now, then report the one owned shutdown in time.
 
-        Rooms share no native resource, so room disposal is the whole budget.
-        Success leaves a fresh residency owner for the next start.
+        Callers join the same shutdown; one that failed is retried. An
+        unfinished or failed shutdown keeps every room fenced with its process,
+        thread and workspace. Success stays sealed until ``on_started``.
         """
         rooms = list(self._room_clients)
         self._closing_rooms.update(rooms)
-        try:
-            for room_id in rooms:
-                self._clear_pending_approvals_for_room(room_id)
-            await asyncio.gather(*(self._settle_turn(room_id) for room_id in rooms))
-            await self._retention.stop()
-        finally:
-            self._closing_rooms.difference_update(rooms)
+        for room_id in rooms:
+            self._clear_pending_approvals_for_room(room_id)
+        shutdown = self._shutdown
+        if shutdown is None or (shutdown.done() and task_failure(shutdown) is not None):
+            shutdown = spawn_owned(self._shut_down(), label="Codex adapter shutdown")
+            self._shutdown = shutdown
+        await report_owned(shutdown, self.config.retention.transition_timeout_s)
+
+    async def _shut_down(self) -> None:
+        await asyncio.gather(
+            *(self._settle_turn(room_id) for room_id in self._room_clients)
+        )
+        await self._retention.stop()
         # Every registered room belonged to the stopped owner and is disposed.
         self._room_clients.clear()
-        self._retention = RoomRetention(self.config.retention)
 
     async def _acquire(
         self, room: RoomCodexClient, generation: int, resume: bool
@@ -2066,7 +2084,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         Whatever is still undelivered then belongs to no Band turn.
         """
         room.turn = native = NativeTurn(
-            client=self._resident_client(room), generation=room.generation
+            client=room.require_client(), generation=room.generation
         )
         try:
             yield native
@@ -2119,7 +2137,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """
         if cause == ReleaseCause.IDLE:
             return ReleaseOutcome.BUSY
-        await self._stop_reader(room)
+        await room.stop_reader()
         if room.client is not None:
             await asyncio.wait_for(
                 room.client.close(), timeout=self.config.client_close_timeout_s
@@ -2128,14 +2146,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         room.selected_model = None
         room.restored = False
         return ReleaseOutcome.RELEASED
-
-    @staticmethod
-    async def _stop_reader(room: RoomCodexClient) -> None:
-        if (reader := room.reader) is None:
-            return
-        reader.cancel()
-        await asyncio.wait({reader})
-        room.reader = None
 
     async def _dispose(self, room: RoomCodexClient) -> None:
         """Erase what only a final leave ends: thread, settings, workspace claim."""
@@ -2151,12 +2161,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
         self._workspaces.release(room_id, room.workspace)
-
-    @staticmethod
-    def _resident_client(room: RoomCodexClient) -> CodexClientProtocol:
-        if room.client is None:
-            raise RuntimeError(f"Room {room.room_id} has no Codex process")
-        return room.client
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -2213,7 +2217,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             if room.restored:
                 self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
-        client = self._resident_client(room)
+        client = room.require_client()
         if is_session_bootstrap and (named := history.thread_id):
             resumed = await self._resume_from_history(
                 room=room, client=client, named=named, tools=tools
@@ -3704,9 +3708,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return True
 
             if model_arg.lower() in _MODEL_LIST_WORDS:
-                if self._client is None:
-                    raise RuntimeError("Codex client not initialized")
-                result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
+                client = self._require_active_client_state().require_client()
+                result = await client.request(CodexRequestMethod.MODEL_LIST, {})
                 models = self._visible_model_ids(result)
                 if models:
                     preview = ", ".join(models[:10])
@@ -4453,7 +4456,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _current_model_efforts(self) -> tuple[str, list[str]]:
         """The room's model and the efforts Codex reports for it (empty if unknown)."""
         room = self._require_active_client_state()
-        client = self._resident_client(room)
+        client = room.require_client()
         model_id = room.selected_model or await self._select_model(room, client)
         try:
             result = await client.request(CodexRequestMethod.MODEL_LIST, {})

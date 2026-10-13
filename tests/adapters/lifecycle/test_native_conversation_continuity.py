@@ -12,14 +12,15 @@ from band.adapters.codex import (
 )
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError
+from tests.adapters.codex.lifecycleprofile import CODEX_HOME
 from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.roompeer import PeerCommand, memo_instruction
 
 
+@pytest.mark.parametrize("host", ["codex"], indirect=True)
 class TestNativeConversationContinuity:
     """A replacement process continues the room native conversation or refuses to run."""
 
-    @pytest.mark.parametrize("host", ["codex"], indirect=True)
     @pytest.mark.parametrize(
         "loss", [PeerCommand.LOSE_TRANSPORT, PeerCommand.EXIT_PROCESS]
     )
@@ -39,7 +40,6 @@ class TestNativeConversationContinuity:
         assert host.exited == [True, False]
         assert host.overlaps == 0
 
-    @pytest.mark.parametrize("host", ["codex"], indirect=True)
     async def test_a_refused_restore_keeps_the_conversation_and_starts_no_other(
         self,
         host: RetentionHost,
@@ -49,7 +49,7 @@ class TestNativeConversationContinuity:
         with pytest.raises(TurnResultAlreadyReported):
             await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
         await host.settled("room-a")
-        saved = host.root / "codex-home" / f"{thread}.json"
+        saved = (host.root / CODEX_HOME) / f"{thread}.json"
         kept = saved.read_text()
         saved.unlink()
 
@@ -58,13 +58,12 @@ class TestNativeConversationContinuity:
                 await host.send("room-a", PeerCommand.RECALL)
             await host.settled("room-a")
             assert host.native_id("room-a") == thread
-        assert sorted(path.name for path in saved.parent.iterdir()) == []
+        assert not any(saved.parent.iterdir())
 
         saved.write_text(kept)
         assert await host.send("room-a", PeerCommand.RECALL) == ["Recalled: private-7"]
         assert host.overlaps == 0
 
-    @pytest.mark.parametrize("host", ["codex"], indirect=True)
     async def test_archiving_a_thread_codex_refuses_to_restore_starts_a_new_one(
         self,
         host: RetentionHost,
@@ -74,7 +73,7 @@ class TestNativeConversationContinuity:
         with pytest.raises(TurnResultAlreadyReported):
             await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
         await host.settled("room-a")
-        (host.root / "codex-home" / f"{thread}.json").unlink()
+        ((host.root / CODEX_HOME) / f"{thread}.json").unlink()
         with pytest.raises(CodexJsonRpcError, match="no rollout found"):
             await host.send("room-a", PeerCommand.RECALL)
         await host.settled("room-a")
@@ -84,7 +83,6 @@ class TestNativeConversationContinuity:
         assert await host.send("room-a", memo_instruction("fresh-1")) == ["Noted."]
         assert host.native_id("room-a") not in (None, thread)
 
-    @pytest.mark.parametrize("host", ["codex"], indirect=True)
     async def test_restored_threads_refuse_tools_they_were_not_started_with(
         self,
         host: RetentionHost,

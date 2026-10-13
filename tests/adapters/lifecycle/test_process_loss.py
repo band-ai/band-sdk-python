@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from claude_agent_sdk import CLIConnectionError
 
-from band.core.protocols import TurnResultAlreadyReported
+from band.core.retention import Residency
 from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.roompeer import PeerCommand, write_instruction
 
@@ -26,7 +25,7 @@ class TestProcessLoss:
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         original = Path(host.workspace("room-a"))
         host.root = host.root / "changed"
-        with pytest.raises((TurnResultAlreadyReported, CLIConnectionError)):
+        with pytest.raises(host.lost_turn):
             await host.send("room-a", loss)
         await host.settled("room-a")
         assert host.exited == [True]
@@ -46,14 +45,19 @@ class TestProcessLoss:
     ) -> None:
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         host.children[0].refuse_close = True
-        with pytest.raises((RuntimeError, TurnResultAlreadyReported)):
+        with pytest.raises(host.lost_turn):
             await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
         await host.settled("room-a")
+        assert host.state("room-a") == Residency.CLEANUP_PENDING
+
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))
         with pytest.raises(RuntimeError, match="cleanup failed"):
             await host.send("room-a", PeerCommand.READ)
-        assert len(host.children) == 1
+        assert host.state("room-a") == Residency.CLEANUP_PENDING
+        assert (len(host.children), host.overlaps) == (1, 0)
+
         host.children[0].refuse_close = False
         assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
         assert host.exited == [True, False]
+        assert host.overlaps == 0

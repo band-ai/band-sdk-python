@@ -16,7 +16,7 @@ from band.adapters.codex import (
 )
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import Emit
-from band.integrations.codex import TRANSPORT_CLOSED, CodexJsonRpcError
+from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import (
     CodexRequestMethod,
     CodexSessionState,
@@ -30,6 +30,7 @@ from band.testing import (
 )
 from tests.adapters.codex.kit import (
     LIVE_EFFORTS_MODEL_LIST,
+    PROCESS_EXITED,
     ROOM_ID,
     CodexRoom,
     ToolSchemaFakeTools,
@@ -1136,7 +1137,7 @@ class TestCodexAdapter:
         fresh one in its place."""
         client = FakeCodexClient(
             events=[
-                event_notification(TRANSPORT_CLOSED, {"reason": "process exited"}),
+                PROCESS_EXITED,
                 turn_completed("turn-2"),
             ]
         )
@@ -1165,7 +1166,7 @@ class TestCodexAdapter:
         it pins the room's workspace, so a later strict restore agrees."""
         client = FakeCodexClient(
             events=[
-                event_notification(TRANSPORT_CLOSED, {"reason": "process exited"}),
+                PROCESS_EXITED,
                 turn_completed("turn-2"),
             ],
             recorded_cwd="/where/it/first/ran",

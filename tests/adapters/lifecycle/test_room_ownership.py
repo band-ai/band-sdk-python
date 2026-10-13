@@ -67,7 +67,6 @@ class TestRoomOwnership:
         host.fail_startup.unlink()
         assert await host.send("room-b", write_instruction("bravo")) == ["bravo"]
 
-    @pytest.mark.parametrize("host", ["claude"], indirect=True)
     async def test_failed_room_cleanup_can_recover_in_the_same_workspace(
         self,
         host: RetentionHost,

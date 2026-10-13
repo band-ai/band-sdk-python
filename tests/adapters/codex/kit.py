@@ -458,42 +458,67 @@ class ExitsWhileAskedClient(FakeCodexClient):
 
 
 class CountingCloseClient(FakeCodexClient):
-    """Counts physical closes, optionally holding each one open."""
+    """Counts process starts and physical closes, optionally holding each
+    close open or refusing it."""
 
     def __init__(self, *, events: list[RpcEvent], hold: bool = False) -> None:
         super().__init__(events=events)
+        self.starts = 0
         self.closes = 0
+        self.refuse_close = False
         self.closing = asyncio.Event()
         self.finish_close = asyncio.Event()
         self.close_finished = asyncio.Event()
         if not hold:
             self.finish_close.set()
 
-    async def close(self) -> None:
-        self.closes += 1
-        self.closing.set()
-        await self.finish_close.wait()
-        await super().close()
-        self.close_finished.set()
-
-
-class HeldStartClient(FakeCodexClient):
-    """An app-server whose initialize handshake waits until released."""
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.finish_start = asyncio.Event()
-        self.starts = 0
-        self.closes = 0
-
     async def initialize(self, **kwargs: Any) -> dict[str, Any]:
         self.starts += 1
-        await self.finish_start.wait()
         return await super().initialize(**kwargs)
 
     async def close(self) -> None:
         self.closes += 1
+        self.closing.set()
+        await self.finish_close.wait()
+        if self.refuse_close:
+            raise RuntimeError("Codex process close failed")
         await super().close()
+        self.close_finished.set()
+
+
+class HeldStartClient(CountingCloseClient):
+    """An app-server whose initialize handshake waits until released."""
+
+    def __init__(self, *, events: list[RpcEvent]) -> None:
+        super().__init__(events=events)
+        self.finish_start = asyncio.Event()
+
+    async def initialize(self, **kwargs: Any) -> dict[str, Any]:
+        await self.finish_start.wait()
+        return await super().initialize(**kwargs)
+
+
+class HeldTurnClient(CountingCloseClient):
+    """An app-server whose turn/start waits until released."""
+
+    def __init__(self, *, events: list[RpcEvent], hold: bool = False) -> None:
+        super().__init__(events=events, hold=hold)
+        self.turn_started = asyncio.Event()
+        self.finish_turn = asyncio.Event()
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retry_on_overload: bool = True,
+    ) -> dict[str, Any]:
+        if method == CodexRequestMethod.TURN_START:
+            self.turn_started.set()
+            await self.finish_turn.wait()
+        return await super().request(
+            method, params, retry_on_overload=retry_on_overload
+        )
 
 
 # Adapters run their turns on the loop that started them, so setup, the test
