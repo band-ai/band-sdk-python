@@ -80,7 +80,8 @@ async def test_native_probe_denied_then_completion_accepted(
     form_mode: ElicitationFormSessionMode,
     tool: BandTool,
 ) -> None:
-    client = adapter._runtime_client_factory()
+    room = adapter._room("room")
+    client = adapter._runtime_client_factory(room, room.generation)
     handler = adapter._make_elicitation_handler(emitter, "room", "session")
     assert handler is not None
     client.set_elicitation_handler("session", handler)
