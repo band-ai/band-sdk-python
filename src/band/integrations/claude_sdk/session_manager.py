@@ -71,9 +71,13 @@ class TurnStream:
 
     def __init__(self) -> None:
         self._messages: asyncio.Queue[Message | StreamEnd] = asyncio.Queue()
+        self.completed = False
 
     def deliver(self, message: Message) -> None:
         self._messages.put_nowait(message)
+        if isinstance(message, ResultMessage):
+            # The turn reads nothing past its result, so it stops listening here.
+            self.completed = True
 
     def end(self, error: Exception | None) -> None:
         self._messages.put_nowait(StreamEnd(error))
@@ -118,6 +122,10 @@ class ClaudeRoomSession:
     @property
     def generation(self) -> int:
         return self.retained.snapshot.generation
+
+    @property
+    def holds_cli(self) -> bool:
+        return self.client is not None
 
     @property
     def closing(self) -> bool:
@@ -179,7 +187,10 @@ class ClaudeRoomSession:
         lose authority. ``forget_session`` is the crash policy: the next
         process starts a new conversation.
         """
-        if not self.retained.recover(generation=self.generation, reason=reason):
+        return self._retire(self.generation, reason, forget_session=forget_session)
+
+    def _retire(self, generation: int, reason: str, *, forget_session: bool) -> bool:
+        if not self.retained.recover(generation=generation, reason=reason):
             return False
         self._forget_session = self._forget_session or forget_session
         return True
@@ -198,10 +209,9 @@ class ClaudeRoomSession:
         strictly; otherwise an unresumable earlier session gives way to a new
         one, the bootstrap and crash policy, unless the room began closing."""
         try:
-            await self._connect(generation)
+            await self._connect(generation, resume=self.session_id)
         except Exception as error:
-            # A CLI whose failed startup did not close stays held for recovery.
-            if resume or self.session_id is None or self.closing or self.client:
+            if not self._may_start_fresh(resume):
                 raise
             logger.warning(
                 "Room %s: Session resume failed (session_id=%s): %s. "
@@ -210,8 +220,20 @@ class ClaudeRoomSession:
                 self.session_id,
                 error,
             )
+            # The conversation is dropped only once a new one is running.
+            await self._connect(generation, resume=None)
             self.session_id = None
-            await self._connect(generation)
+
+    def _may_start_fresh(self, resume: bool) -> bool:
+        """Whether a failed resume may give way to a new session: never on a
+        strict resume or once closing, and not while the failed CLI, which
+        could not be closed, is still held for recovery."""
+        return (
+            not resume
+            and self.session_id is not None
+            and not self.closing
+            and self.client is None
+        )
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
         await self._close()
@@ -226,8 +248,8 @@ class ClaudeRoomSession:
         self.session_id = None
         self._manager.discard(self)
 
-    async def _connect(self, generation: int) -> None:
-        options = self._manager.options_for(self, generation)
+    async def _connect(self, generation: int, *, resume: str | None) -> None:
+        options = self._manager.options_for(self, generation, resume=resume)
         transport = create_transport(options)
         client = ClaudeSDKClient(options=options, transport=transport)
         # Retain both before connect: SDK disconnect cannot close a subprocess
@@ -270,17 +292,24 @@ class ClaudeRoomSession:
                     )
         except Exception as failure:  # noqa: BLE001 -- the listening turn re-raises it
             error = failure
-        reason = f"CLI output ended outside a turn: {error}"
         if (turn := self._listener(generation)) is not None:
             turn.end(error)
-        elif self.retained.recover(generation=generation, reason=reason):
-            # No later turn would ever see this end, so retire the CLI now.
-            logger.warning("Room %s: %s; retiring its CLI", self.room_id, reason)
+            return
+        # No turn will read this end, and only the CLI itself ends its output
+        # while the room still speaks for it: a crash, so it gets the crash policy.
+        reason = "CLI output ended outside a turn" + (f": {error}" if error else "")
+        if self._retire(generation, reason, forget_session=True):
+            logger.warning(
+                "Room %s: %s; retiring its CLI", self.room_id, reason, exc_info=error
+            )
         else:
             logger.debug("Room %s: CLI output ended (%s)", self.room_id, error)
 
     def _listener(self, generation: int) -> TurnStream | None:
-        return self._turn if self.speaks_for(generation) else None
+        turn = self._turn
+        if turn is None or turn.completed or not self.speaks_for(generation):
+            return None
+        return turn
 
 
 class ClaudeSessionManager:
@@ -349,6 +378,7 @@ class ClaudeSessionManager:
         return session
 
     def session(self, room_id: str) -> ClaudeRoomSession | None:
+        """The room's session record, if any; never registers one."""
         return self._rooms.get(room_id)
 
     def mcp_servers(self, room_id: str) -> dict[str, McpServerConfig] | str | Path:
@@ -357,21 +387,19 @@ class ClaudeSessionManager:
         return self._mcp_servers_factory(room_id)
 
     def options_for(
-        self, session: ClaudeRoomSession, generation: int
+        self, session: ClaudeRoomSession, generation: int, *, resume: str | None
     ) -> ClaudeAgentOptions:
         """``base_options`` with one room session's overrides applied.
 
         ``dataclasses.replace()`` shallow-copies every base field.
         """
-        overrides: dict[str, Any] = {}
+        overrides: dict[str, Any] = {"mcp_servers": self.mcp_servers(session.room_id)}
         if self._workspaces is not None:
             overrides["cwd"] = self._workspaces.claim(session.room_id)
-        if session.session_id:
-            overrides["resume"] = session.session_id
+        if resume:
+            overrides["resume"] = resume
         if self._can_use_tool_factory:
             overrides["can_use_tool"] = self._can_use_tool_factory(session, generation)
-        if self._mcp_servers_factory:
-            overrides["mcp_servers"] = self._mcp_servers_factory(session.room_id)
         return dataclasses.replace(self.base_options, **overrides)
 
     def discard(self, session: ClaudeRoomSession) -> None:
@@ -398,7 +426,7 @@ class ClaudeSessionManager:
     def has_session(self, room_id: str) -> bool:
         """Whether the room has a CLI process held."""
         session = self._rooms.get(room_id)
-        return session is not None and session.client is not None
+        return session is not None and session.holds_cli
 
     def get_session_count(self) -> int:
         """Number of rooms holding a CLI process."""
@@ -406,4 +434,4 @@ class ClaudeSessionManager:
 
     def get_active_rooms(self) -> list[str]:
         """Room IDs holding a CLI process."""
-        return [room for room, s in self._rooms.items() if s.client is not None]
+        return [room for room, session in self._rooms.items() if session.holds_cli]

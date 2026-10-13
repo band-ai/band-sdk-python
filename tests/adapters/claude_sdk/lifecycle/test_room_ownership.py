@@ -16,14 +16,16 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from band.core.exceptions import CleanupIncompleteError
-from band.core.retention import RoomRetentionConfig
 from tests.adapters.claude_sdk.fakecli import Hold, Recall, Remember
-from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom, with_approvals
+from tests.adapters.claude_sdk.helpers import (
+    REPORTING_BUDGET,
+    WRITE_NOTE,
+    ClaudeRoom,
+    with_approvals,
+)
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
-# Room cleanup and the Band MCP server's real shutdown share this budget.
-SHUTDOWN_BUDGET_S = 1.0
 WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
     summary="Write: notes.md", token="a-1"
 )
@@ -39,10 +41,14 @@ async def test_a_parked_approval_keeps_its_turn_owned_until_the_room_leaves(
 
     await room.send("jot a note")
     await room.until_said("Approval requested")
-    parked = room.residency
-    await room.leave()
+    parked = room.turn_running
+    closing = room.claude.closing = Hold()
+    leaving = asyncio.create_task(room.leave())
+    async with closing:
+        running_at_close = room.turn_running
+    await leaving
 
-    assert (parked.leases, parked.accepted) == (1, 1)
+    assert (parked, running_at_close) == (True, False)
     assert [cli.alive for cli in room.claude.sessions] == [False]
     assert room.chat == [WRITE_PROMPT]
     assert room.failures == []
@@ -105,17 +111,11 @@ async def test_a_replacement_cli_recalls_what_the_retired_one_kept_private(
     assert room.failures == []
 
 
-async def test_shutdown_reports_within_one_budget_and_keeps_mcp_for_open_rooms(
-    claude_room: OpenRoom,
-) -> None:
-    """A CLI that is slow to close makes shutdown report incomplete cleanup
-    within the retention budget; the Band MCP server it dials stays up until
-    a retry confirms the room closed, and nothing is closed twice."""
-    room = await claude_room(
-        ClaudeSDKAdapterConfig(
-            retention=RoomRetentionConfig(transition_timeout_s=SHUTDOWN_BUDGET_S)
-        )
-    )
+async def test_shutdown_keeps_mcp_for_open_rooms(claude_room: OpenRoom) -> None:
+    """A CLI that is slow to close makes shutdown report incomplete cleanup;
+    the Band MCP server it dials stays up until a retry confirms the room
+    closed, and nothing is closed twice."""
+    room = await claude_room(ClaudeSDKAdapterConfig(retention=REPORTING_BUDGET))
     room.claude.script([room.model_reply("hi")])
     await room.send("hi")
     backend = room.adapter._mcp.current
@@ -131,3 +131,31 @@ async def test_shutdown_reports_within_one_budget_and_keeps_mcp_for_open_rooms(
 
     assert still_serving == (True, 1)
     assert (backend.is_running, cli.alive) == (False, False)
+
+
+async def test_shutdown_steps_share_one_budget(
+    claude_room: OpenRoom, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closing the room and then the Band MCP server each fit the budget on
+    their own but not together, so shutdown reports incomplete cleanup."""
+    room = await claude_room(ClaudeSDKAdapterConfig(retention=REPORTING_BUDGET))
+    room.claude.script([room.model_reply("hi")])
+    await room.send("hi")
+    step_s = REPORTING_BUDGET.transition_timeout_s * 0.7
+    closing = room.claude.closing = Hold()
+    mcp = room.adapter._mcp
+    close_mcp = mcp.close
+
+    # The server's real shutdown is quick; only its delay is staged here.
+    async def slow_mcp_close(*, final: bool) -> None:
+        await asyncio.sleep(step_s)
+        await close_mcp(final=final)
+
+    monkeypatch.setattr(mcp, "close", slow_mcp_close)
+    shutdown = asyncio.create_task(room.adapter.cleanup_all())
+    async with closing:
+        await asyncio.sleep(step_s)
+
+    with pytest.raises(CleanupIncompleteError):
+        await shutdown
+    await room.adapter.cleanup_all()

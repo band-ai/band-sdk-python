@@ -18,7 +18,7 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
-from band.core.retention import RetentionSnapshot
+from band.core.retention import RoomRetentionConfig
 from band.core.turn import Turn
 from band.core.types import (
     AgentInput,
@@ -41,6 +41,9 @@ SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 MISSING_REPLY_TEXT = MISSING_REPLY_FAILURE[1]
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
+# Short enough that a held transition reports quickly, long enough for a real
+# CLI child to start and the Band MCP server to shut down on a slow runner.
+REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
 
 
 async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
@@ -186,15 +189,6 @@ class ClaudeRoom:
         """The Band MCP port each CLI session (any room) was started with, in order."""
         return [urlsplit(url).port for url in self.session_band_urls]
 
-    @property
-    def residency(self) -> RetentionSnapshot:
-        """The room's residency as its owner reports it."""
-        manager = self.adapter._session_manager
-        session = manager.session(self.room_id) if manager else None
-        if session is None:
-            raise AssertionError(f"{self.room_id} has no Claude session")
-        return session.retained.snapshot
-
     async def crash_band_server(self) -> None:
         """The adapter's Band MCP server dies on its own, between turns."""
         await crash_backend(self.adapter._mcp)
@@ -271,6 +265,11 @@ class ClaudeRoom:
     async def until_said(self, fragment: str, *, times: int = 1) -> None:
         """Wait until ``times`` room messages contain ``fragment``."""
         await self.tools.until_said(fragment, times=times)
+
+    @property
+    def turn_running(self) -> bool:
+        """Whether the room's detached turn is still running."""
+        return self.adapter._turn_running(self.room_id)
 
     async def settled(self) -> None:
         """Wait for a turn still running after ``send`` returned."""

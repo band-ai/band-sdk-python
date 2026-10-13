@@ -28,46 +28,6 @@ behavior for callers who need it. It cannot be combined with `workspace_for_room
 Failed session cleanup retains ownership and can be retried; a new session cannot
 reuse the failed client or take another room's claimed directory.
 
-## Room ownership
-
-Each room's session is owned through that room's residency
-(`band.core.retention`): its connect, close and recovery run independently,
-so a slow CLI in one room never holds up another.
-
-- **A turn owns the room until it settles.** The message's turn is enrolled
-  before it starts and keeps the room leased through its query, tool calls,
-  approval waits and outcome, including after `on_message` returns early for a
-  manual approval. Leaving the room, or `cleanup_all`, closes admission at
-  once, cancels and joins that turn, and only then closes the CLI.
-- **A CLI is held until its close succeeds.** A failed or cancelled startup, a
-  crashed CLI, a turn that stopped before its result and a replaced Band MCP
-  server all retire the CLI through the room's owner once the turn unwinds.
-  The next message waits for that close, then resumes the session in the same
-  workspace; a crashed CLI starts a new one. A permission request from a
-  retired CLI is denied without reaching the room.
-- **One reader spans turns.** CLI output that arrives while no turn is
-  listening, such as background work finishing after a result, is logged and
-  dropped instead of being read by the next turn. Output read after the next
-  turn starts listening is attributed to that turn, because the CLI tags its
-  messages with neither the turn nor the work that produced them.
-- **Shutdown shares one budget.** `cleanup_all` closes every room, then the
-  shared Band MCP server, within one `retention.transition_timeout_s`. An
-  unfinished or failed step raises, stays owned, and a retry joins it; the
-  server stays up while any room's CLI may still dial it.
-
-```python
-import pytest
-
-from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
-from band.core.retention import RoomRetentionConfig
-
-config = ClaudeSDKAdapterConfig(retention=RoomRetentionConfig(transition_timeout_s=30))
-assert config.retention.idle_timeout_s is None
-
-with pytest.raises(ValueError, match="idle retention is unavailable"):
-    ClaudeSDKAdapterConfig(retention=RoomRetentionConfig(idle_timeout_s=60))
-```
-
 - **Two credentials.** `Agent.create(api_key=...)` is the Band key only. Claude
   Code authenticates itself (`claude auth login` or `ANTHROPIC_API_KEY`); the
   adapter never hands it a key.
@@ -162,3 +122,50 @@ its original tools; handling a control never rebinds them to the new message.
 Only a local rejection before `query()` qualifies as `InputNotAccepted`:
 transport errors and timeouts do not establish that Claude rejected the input.
 The shared room scheduler owns later attempts.
+
+## Room ownership
+
+Each room's session is owned through that room's residency
+(`band.core.retention`): its connect, close and recovery run independently,
+so a slow CLI in one room never holds up another.
+
+- **A turn owns the room until it settles.** The message's turn is enrolled
+  before it starts and keeps the room leased through its query, tool calls,
+  approval waits and outcome, including after `on_message` returns early for a
+  manual approval. Leaving the room, or `cleanup_all`, closes admission at
+  once, cancels and joins that turn, and only then closes the CLI.
+- **A CLI is held until its close succeeds.** A failed or cancelled startup, a
+  crashed CLI, a turn that stopped before its result and a replaced Band MCP
+  server all retire the CLI through the room's owner once the turn unwinds.
+  The next message waits for that close, then resumes the session in the same
+  workspace; a crashed CLI starts a new one. A permission request from a
+  retired CLI is denied without reaching the room.
+- **One reader spans turns.** CLI output that arrives while no turn is
+  listening, such as background work finishing after a result, is logged and
+  dropped instead of being read by the next turn. Output read after the next
+  turn starts listening is attributed to that turn, because the CLI tags its
+  messages with neither the turn nor the work that produced them.
+- **CLI startup and close are bounded.** A turn waits for its room's CLI to
+  start, and leaving waits for it to close, for at most
+  `retention.transition_timeout_s`. Claude defaults it to
+  `CLI_STARTUP_TIMEOUT_S` (60 s), the shortest startup the SDK itself allows;
+  a lower budget fails turns whose CLI starts slower and discards that start.
+- **Shutdown shares one budget.** `cleanup_all` closes every room, then the
+  shared Band MCP server, within one `retention.transition_timeout_s`. An
+  unfinished or failed step raises, stays owned, and a retry joins it; the
+  server stays up while any room's CLI may still dial it.
+
+```python
+import pytest
+
+from band.adapters.claude_sdk import CLI_STARTUP_TIMEOUT_S, ClaudeSDKAdapterConfig
+from band.core.retention import RoomRetentionConfig
+
+assert ClaudeSDKAdapterConfig().retention.transition_timeout_s == CLI_STARTUP_TIMEOUT_S
+
+config = ClaudeSDKAdapterConfig(retention=RoomRetentionConfig(transition_timeout_s=30))
+assert config.retention.idle_timeout_s is None
+
+with pytest.raises(ValueError, match="idle retention is unavailable"):
+    ClaudeSDKAdapterConfig(retention=RoomRetentionConfig(idle_timeout_s=60))
+```

@@ -15,6 +15,7 @@ import pytest
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     CLIConnectionError,
+    CLIJSONDecodeError,
     ResultMessage,
     ThinkingBlock,
 )
@@ -26,7 +27,7 @@ from claude_agent_sdk.types import (
 )
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.retention import ReleaseCause, RoomRetentionConfig
+from band.core.retention import ReleaseCause
 from band.integrations.claude_sdk import session_manager, transport
 from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
@@ -34,12 +35,9 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
 from tests.adapters.claude_sdk.fakecli import AfterResult, FakeClaude, Hold, Thinking
-from tests.adapters.claude_sdk.helpers import exchange
+from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, exchange
 from tests.adapters.claude_sdk.process import WorkspacePeer
 
-# Short enough that a held transition reports quickly, long enough for a
-# real subprocess to start on a slow runner.
-REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=0.2)
 # A result for work the CLI finished after the turn that started it ended.
 STRAY_RESULT = {
     "type": "result",
@@ -225,7 +223,7 @@ async def test_only_a_strict_wake_keeps_an_unresumable_session(
     identity; bootstrap and crash recovery start a new conversation."""
     manager = new_manager()
     session = manager.room("room-a")
-    session.session_id = "sess-gone"
+    session.adopt("sess-gone")
     claude.unresumable.add("sess-gone")
 
     if resume:
@@ -293,21 +291,77 @@ async def test_a_cli_that_exits_between_turns_is_retired_by_its_reader(
     claude: FakeClaude,
 ) -> None:
     """No turn is listening when the output ends, so the reader itself hands
-    the dead CLI to the room's owner, which closes it."""
+    the crashed CLI to the room's owner, which closes it; the next message
+    starts a new conversation, as a crash noticed inside a turn does."""
     manager = new_manager()
     session = manager.room("room-a")
-    claude.script(thinking("hi"))
+    session.adopt("sess-1")
+    claude.script(thinking("hi"), thinking("again"))
     await exchange(session, "hi")
     closing = claude.closing = Hold()
 
-    [cli] = claude.sessions
-    cli.die()
+    crashed, *_ = claude.sessions
+    crashed.die()
     async with closing:
         retired = session.speaks_for(1)
+    await exchange(session, "again")
     await manager.stop()
 
     assert retired is False
-    assert cli.close_calls >= 1
+    assert claude.resumed == ["sess-1", None]
+
+
+async def test_a_read_failure_after_a_result_retires_the_cli(
+    claude: FakeClaude,
+) -> None:
+    """The SDK ends its message stream on a malformed line while the CLI runs
+    on. The turn already has its result and reads no further, so the reader
+    retires the CLI instead of leaving the next turn on a stream nobody reads."""
+    manager = new_manager()
+    session = manager.room("room-a")
+    malformed = asyncio.Event()
+    unreadable = CLIJSONDecodeError("{", ValueError("Buffer size exceeds limit"))
+    claude.script(
+        [*thinking("one"), AfterResult(unreadable, gate=malformed)], thinking("two")
+    )
+    retired = Signal("retiring its CLI")
+    session_logger = logging.getLogger(session_manager.__name__)
+    session_logger.addHandler(retired)
+    try:
+        async with session.using() as client:
+            with session.listening() as stream:
+                await client.query("one")
+                [_ async for _ in stream.until_result()]
+                malformed.set()
+                await retired.seen.wait()
+        second = await exchange(session, "two")
+    finally:
+        session_logger.removeHandler(retired)
+        await manager.stop()
+
+    assert thoughts(second) == ["two"]
+    assert len(claude.sessions) == 2
+
+
+async def test_a_startup_that_fails_twice_keeps_the_conversation(
+    claude: FakeClaude,
+) -> None:
+    """The fresh-session fallback drops the conversation only once a new one
+    runs, so a startup failure unrelated to the resume leaves the next
+    message resuming it."""
+    manager = new_manager()
+    session = manager.room("room-a")
+    session.adopt("sess-1")
+    claude.refuse_connect = True
+
+    with pytest.raises(CLIConnectionError):
+        await exchange(session, "hi")
+    claude.refuse_connect = False
+    claude.script(thinking("back"))
+    await exchange(session, "hi")
+    await manager.stop()
+
+    assert claude.resumed == ["sess-1", None, "sess-1"]
 
 
 async def test_a_failed_resume_that_could_not_close_is_never_replaced(
@@ -317,16 +371,16 @@ async def test_a_failed_resume_that_could_not_close_is_never_replaced(
     closed; otherwise the failed CLI stays held for recovery."""
     manager = new_manager()
     session = manager.room("room-a")
-    session.session_id = "sess-gone"
+    session.adopt("sess-gone")
     claude.unresumable.add("sess-gone")
     claude.refuse_close = True
 
     with pytest.raises(RuntimeError, match="cleanup failed"):
-        await session.acquire(1, False)
+        await exchange(session, "hi")
     [cli] = claude.sessions
-    held = (session.client is not None, session.session_id)
+    held = (manager.has_session("room-a"), session.session_id)
     claude.refuse_close = False
-    await session.release(ReleaseCause.FINAL)
+    await manager.cleanup_session("room-a")
 
     assert held == (True, "sess-gone")
     assert claude.resumed == ["sess-gone"]

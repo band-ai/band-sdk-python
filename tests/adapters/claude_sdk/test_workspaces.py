@@ -165,7 +165,7 @@ async def test_failed_cleanup_blocks_reuse_and_can_be_retried(
             await room.leave()
         with pytest.raises(ValueError, match="both"):
             await second.send("hi")
-        with pytest.raises(InputNotAccepted):
+        with pytest.raises(InputNotAccepted, match="closing"):
             await room.send("again")
         assert len(claude.sessions) == 1
         assert claude.sessions[0].alive

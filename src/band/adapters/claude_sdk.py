@@ -269,6 +269,11 @@ class ClaudeCLIOptions(BaseAdapterConfig):
 # timeout, so the next turn on the same client does not read it as its own.
 _TIMEOUT_DRAIN_SECONDS = 10.0
 
+# A room's CLI starts as an owned acquisition that its turn waits on for at
+# most ``retention.transition_timeout_s``; the SDK allows its initialize
+# handshake at least this long, so a slower bound would discard healthy starts.
+CLI_STARTUP_TIMEOUT_S = 60.0
+
 
 ApprovalDecision = Literal["accept", "decline"]
 
@@ -332,6 +337,9 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
             ``"haiku"``, ``"inherit"``). ``None`` pins
             ``band.core.defaultmodels.ANTHROPIC_MODEL``.
         fallback_model: Model the CLI uses when ``model`` is unavailable.
+        retention: Room residency settings. Idle retention is unavailable;
+            ``transition_timeout_s`` bounds each CLI startup and close a caller
+            waits on, and defaults to ``CLI_STARTUP_TIMEOUT_S``.
         custom_section: Extra instructions appended to the system prompt.
         max_thinking_tokens: Extended-thinking budget; ``None`` disables it.
         effort: Response effort level; ``None`` uses the model default.
@@ -356,7 +364,11 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     model: str | None = None
     fallback_model: str | None = None
-    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
+    retention: RoomRetentionConfig = Field(
+        default_factory=lambda: RoomRetentionConfig(
+            transition_timeout_s=CLI_STARTUP_TIMEOUT_S
+        )
+    )
     custom_section: str | None = None
     max_thinking_tokens: PositiveInt | None = None
     effort: EffortLevel | None = None
@@ -677,7 +689,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         # {room_id: the owner of the current turn's background worker}, so
         # on_message can refuse to start a second concurrent turn on the same
-        # client. The room's RetainedRoom also owns the task until it finishes.
+        # client. The TurnTask cancels it for STOP and interrupts; leaving the
+        # room cancels it through the RetainedRoom, which fences admission first.
         self._turn_tasks: dict[str, TurnTask] = {}
         self._room_cleanup: dict[str, asyncio.Task[None]] = {}
         self._closing_rooms: set[str] = set()
@@ -857,8 +870,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         if self._closing_all:
             raise ClaudeSessionManagerStoppedError("Claude adapter is stopping")
-        session = self._session_manager.room(room_id)
         self._admit_turn(room_id, "Claude")
+        session = self._session_manager.room(room_id)
         if session.closing:
             raise InputNotAccepted("The room's Claude session is closing")
         if self.config.approvals is not None:
@@ -1155,10 +1168,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         try:
             async with owner.timed(_TIMEOUT_DRAIN_SECONDS, cleanup=True):
                 await client.interrupt()
-                last = None
-                async for last in stream.until_result():
+                async for _ in stream.until_result():
                     pass
-                if not isinstance(last, ResultMessage):
+                if not stream.completed:
                     raise CLIConnectionError(self._stream_ended_without_result_error())
         except CLIConnectionError:
             logger.warning(
@@ -1697,16 +1709,19 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
-            if not session.speaks_for(generation):
-                logger.warning(
-                    "Room %s: denied %s requested by a retired Claude session",
-                    session.room_id,
-                    tool_name,
+            # Checked again after deciding: the residency may retire meanwhile.
+            if session.speaks_for(generation):
+                decision = await self._resolve_tool_permission(
+                    session.room_id, tool_name, tool_input, context
                 )
-                return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
-            return await self._resolve_tool_permission(
-                session.room_id, tool_name, tool_input, context
+                if session.speaks_for(generation):
+                    return decision
+            logger.warning(
+                "Room %s: denied %s requested by a retired Claude session",
+                session.room_id,
+                tool_name,
             )
+            return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
 
         return _can_use_tool
 

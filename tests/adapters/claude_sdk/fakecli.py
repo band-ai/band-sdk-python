@@ -76,9 +76,10 @@ class Recall:
 @dataclass(frozen=True)
 class AfterResult:
     """A message the CLI emits after the turn's result, as background work
-    finishing between turns does; ``gate`` delays it until set."""
+    finishing between turns does; ``gate`` delays it until set. An exception
+    fails the read instead, as a malformed line does while the CLI runs on."""
 
-    message: dict[str, Any]
+    message: dict[str, Any] | Exception
     gate: asyncio.Event | None = None
 
 
