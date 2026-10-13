@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
+from band.core.exceptions import CleanupIncompleteError
 from band.core.retention import (
     ProviderActivity,
 )
@@ -55,9 +54,10 @@ class TestAuthority:
         resident = host.room()
         await resident.turn()
 
-        stopping = asyncio.create_task(host.owner.stop())
-        await asyncio.sleep(0)  # stop() ran; its shutdown task has not
-        assert host.owner.stopping
-        assert resident.room.snapshot.pending_release is None
-        assert not resident.room.has_authority(resident.room.generation)
-        await stopping
+        # Stop requested from inside a turn returns before its shutdown runs.
+        async with resident.room.use():
+            with pytest.raises(CleanupIncompleteError):
+                await host.owner.stop()
+            assert resident.room.snapshot.pending_release is None
+            assert not resident.room.has_authority(resident.room.generation)
+        await host.owner.stop()

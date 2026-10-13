@@ -11,6 +11,7 @@ from band.core.retention import (
     ReleaseCause,
     Residency,
 )
+from tests.adapters.waiting import until
 from tests.core.retention.kit import Barrier, ResidenceHost, Resident
 
 pytestmark = pytest.mark.timeout(10)
@@ -160,8 +161,10 @@ class TestRecovery:
         resident = host.room()
         wake, _ = await hung_start(resident)
         joiner = asyncio.create_task(resident.turn())
-        await asyncio.sleep(0)
-        assert resident.room.snapshot.accepted == 2
+        await until(
+            lambda: resident.room.snapshot.accepted == 2,
+            failure="the joining operation was never accepted",
+        )
         wake.cancel()
         with pytest.raises(asyncio.CancelledError):
             await wake
@@ -178,7 +181,7 @@ class TestRecovery:
         wake.cancel()
         with pytest.raises(asyncio.CancelledError):
             await wake
-        await asyncio.sleep(0)  # the start takes its cancellation and keeps going
+        await resident.resisted.wait()
         assert resident.releases == []
         assert resident.room.snapshot.state is Residency.ACQUIRING
         opening.released.set()

@@ -81,6 +81,8 @@ class Resident:
     fail_acquire: bool = False
     fail_dispose: bool = False
     resists_cancel: bool = False
+    # Set once a resistant start took its cancellation and parked to finish.
+    resisted: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def acquire(self, generation: int, resume: bool) -> None:
         assert not self.live, "replacement started before the previous handle closed"
@@ -100,6 +102,7 @@ class Resident:
         except asyncio.CancelledError:
             if not self.resists_cancel:
                 raise
+            self.resisted.set()
             await opening.released.wait()
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
