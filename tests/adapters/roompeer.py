@@ -253,7 +253,7 @@ class AppServer:
 
     def call_tool(
         self, thread_id: str, turn_id: str, tool: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> None:
         emit(
             {
                 "id": f"call-{turn_id}",
@@ -270,7 +270,6 @@ class AppServer:
         response = json.loads(sys.stdin.readline())
         if not response.get("result", {}).get("success"):
             raise RuntimeError(f"The Band tool {tool} failed: {response}")
-        return response
 
 
 def main() -> None:

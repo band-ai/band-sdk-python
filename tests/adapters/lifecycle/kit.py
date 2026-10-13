@@ -41,6 +41,15 @@ async def pause_at(hold: Hold | None) -> None:
         await hold.wait()
 
 
+async def until(done: Callable[[], bool], *, failure: str) -> None:
+    """Poll ``done`` until it holds, failing with ``failure`` if it never does."""
+    for _ in range(MAX_SETTLE_POLLS):
+        if done():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(failure)
+
+
 @dataclass(frozen=True)
 class ExpectedFailure:
     """The exact error a provider reports: its type and message."""
@@ -199,28 +208,24 @@ class RetentionHost:
 
     async def forgotten(self, room_id: str) -> None:
         """Wait until the adapter no longer holds the room, its disposal done."""
-        for _ in range(MAX_SETTLE_POLLS):
-            if self.bridge.residency(room_id) is None:
-                return
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"Room {room_id} was never forgotten")
+        await until(
+            lambda: self.bridge.residency(room_id) is None,
+            failure=f"Room {room_id} was never forgotten",
+        )
 
     async def settled(self, room_id: str) -> None:
         """Wait out the room's in-flight process transition, such as recovery."""
-        for _ in range(MAX_SETTLE_POLLS):
-            if self.state(room_id) not in IN_FLIGHT:
-                return
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"Room {room_id} never settled")
+        await until(
+            lambda: self.state(room_id) not in IN_FLIGHT,
+            failure=f"Room {room_id} never settled",
+        )
 
     async def start_reached(self, room_id: str) -> None:
         """Wait until the room's peer has begun starting in its workspace."""
         marker = Path(self.workspace(room_id)) / STARTING_MARKER
-        for _ in range(MAX_SETTLE_POLLS):
-            if marker.exists():
-                return
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"Room {room_id}'s peer never began starting")
+        await until(
+            marker.exists, failure=f"Room {room_id}'s peer never began starting"
+        )
 
     def native_id(self, room_id: str) -> str | None:
         return self.bridge.native_id(room_id)

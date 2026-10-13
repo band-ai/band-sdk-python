@@ -95,7 +95,9 @@ class RoomRetention:
         ]
         self.stopping = True
         self.reschedule()
-        shutdown = self._owned_shutdown()
+        self._shutdown = shutdown = rejoin_owned(
+            self._shutdown, self._run_stop, label="Room retention shutdown"
+        )
         if any(requested_from_inside):
             raise CleanupIncompleteError(
                 "Room retention shutdown waits for the calling work to finish"
@@ -121,13 +123,6 @@ class RoomRetention:
         return RoomRetention(
             self.config, clock=self.clock, settle_grace_s=self.settle_grace_s
         )
-
-    def _owned_shutdown(self) -> asyncio.Task[None]:
-        """Join the running or settled shutdown; restart one that failed."""
-        self._shutdown = rejoin_owned(
-            self._shutdown, self._run_stop, label="Room retention shutdown"
-        )
-        return self._shutdown
 
     async def _run_stop(self) -> None:
         pending = [

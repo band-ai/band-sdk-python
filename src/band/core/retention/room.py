@@ -573,7 +573,6 @@ class RetainedRoom:
         if not self._work_cancelled:
             await self._grace()
             self._work_cancelled = True
-            # Work already told to cancel keeps its own cleanup uninterrupted.
             for task in self._uncancelled_work():
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:

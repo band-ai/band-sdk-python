@@ -400,13 +400,9 @@ class ClaudeSessionManager:
         self._retention = RoomRetention(retention or default_claude_retention())
         self._rooms: dict[str, ClaudeRoomSession] = {}
 
-    @property
-    def stopping(self) -> bool:
-        return self._retention.stopping
-
     def room(self, room_id: str) -> ClaudeRoomSession:
         """The room's session record, registered on first use."""
-        if self.stopping:
+        if self._retention.stopping:
             raise ClaudeSessionManagerStoppedError()
         if (session := self._rooms.get(room_id)) is None:
             session = self._rooms[room_id] = ClaudeRoomSession(

@@ -478,10 +478,7 @@ class ACPClientAdapter(
         # Owned by the room, so its disposal cancels and joins the switch
         # instead of closing the process under it.
         try:
-            switch = room.retained.start_owned(
-                partial(self._switch_room, room, selection)
-            )
-            await switch
+            await room.retained.start_owned(partial(self._switch_room, room, selection))
         except (asyncio.CancelledError, RuntimeError):
             current = asyncio.current_task()
             if current is not None and current.cancelling():

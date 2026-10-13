@@ -1874,8 +1874,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     ) -> None:
         """Start the room's process and strictly restore the thread it retains.
 
-        A crash keeps the thread id just as an idle release would, so
-        ``resume`` changes nothing: a retained thread is always restored.
+        A crash keeps the thread id, so ``resume`` changes nothing: a
+        retained thread is always restored.
         The reader runs before ``thread/resume``, which can start native work.
         """
         room.client = client = self._build_client(room.workspace)
@@ -2466,9 +2466,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         there. Concurrency model: this coroutine mutates room-scoped adapter
         state (``_pending_approvals``, ``_session_approved``,
         ``_approval_audit``, ``_task_titles_by_id``) without an explicit lock.
-        It is safe because the only call site is the turn-processing loop in
-        ``_process_turn_events``, which already serializes this room's turns
-        via its room's ``rpc_lock`` -- and every structure it touches is
+        It is safe because it runs only inside a turn, which holds its room's
+        ``rpc_lock`` -- and every structure it touches is
         keyed (or routed via ``_active_room``) per room, so a concurrent
         turn in a different room never touches the same state.
         """

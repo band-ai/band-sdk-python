@@ -80,10 +80,15 @@ async def woken(adapter: ACPClientAdapter, room: ACPRoom) -> AsyncIterator[None]
         await adapter._release_room(room, ReleaseCause.RECOVERY)
 
 
+def questions(reply: Reply) -> list[str]:
+    """The Cursor question decisions ``reply`` has posted to the room."""
+    return [text for text in reply.texts if "Cursor needs input" in text]
+
+
 async def question_asked(reply: Reply) -> None:
     """Let a running turn post its question decision to ``reply``'s room."""
     for _ in range(RELEASE_TURNS):
-        if any("Cursor needs input" in text for text in reply.texts):
+        if questions(reply):
             return
         await asyncio.sleep(0)
     raise AssertionError(f"no question was asked: {reply.texts}")
@@ -91,7 +96,7 @@ async def question_asked(reply: Reply) -> None:
 
 def question_token(reply: Reply) -> str:
     """The token of the one question decision ``reply`` asked the room."""
-    [prompt] = [text for text in reply.texts if "Cursor needs input" in text]
+    [prompt] = questions(reply)
     return decision_token(prompt)
 
 
