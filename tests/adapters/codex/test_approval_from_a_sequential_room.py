@@ -9,7 +9,7 @@ import pytest
 from band.adapters.codex import CodexCommand
 from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
-from band.integrations.codex.types import CodexRequestMethod
+from band.integrations.codex.types import CodexApprovalMethod, CodexRequestMethod
 from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
@@ -138,3 +138,25 @@ class TestApprovalFromASequentialRoom:
 
         assert turn.cancelled()
         assert room.client.closed
+
+    @pytest.mark.asyncio
+    async def test_an_approval_codex_names_is_resolved_by_that_id(
+        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    ) -> None:
+        room = await codex_room(
+            event_request(
+                7,
+                CodexApprovalMethod.COMMAND_EXECUTION,
+                {"approvalId": "ap-1", "command": ["git", "push"]},
+            ),
+            turn_completed(),
+            approval_wait_timeout_s=3600,
+        )
+
+        await room.send("run protected command")
+        assert any("Approval id: `ap-1`" in message for message in room.chat)
+        await room.send(f"/{CodexCommand.APPROVE} ap-1")
+        await room.settled()
+
+        assert room.client.responses == [(7, {"decision": "accept"})]
+        assert "Approval `ap-1` resolved as `accept`." in room.chat

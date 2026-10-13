@@ -97,3 +97,21 @@ async def two_rooms() -> AsyncIterator[TwoRooms]:
     yield rooms
     await rooms.finish()
     await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def started_codex() -> AsyncIterator[
+    Callable[[FakeCodexClient], Awaitable[CodexAdapter]]
+]:
+    """Start Codex adapters over fake app-servers; each is shut down at the end."""
+    adapters: list[CodexAdapter] = []
+
+    async def start(client: FakeCodexClient) -> CodexAdapter:
+        adapter = make_codex_adapter(client)
+        await adapter.on_started("Codex Agent", "A coding agent")
+        adapters.append(adapter)
+        return adapter
+
+    yield start
+    for adapter in adapters:
+        await adapter.cleanup_all()

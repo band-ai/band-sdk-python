@@ -1,29 +1,32 @@
-"""Codex adapter flow: a room resumes its Codex thread from Band history, or rebuilds context when it cannot."""
+"""Codex adapter: a room resumes its Codex thread from Band history, or rebuilds context when it cannot."""
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
-import pytest
-
-from band.adapters.codex import CodexAdapterConfig
+from band.adapters.codex import CodexAdapter
 from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod
-from tests.adapters.codex.kit import ToolSchemaFakeTools, agent_input
+from tests.adapters.codex.kit import (
+    ROOM_ID,
+    ToolSchemaFakeTools,
+    agent_input,
+    answered_turn,
+)
 from tests.adapters.codexturns import (
     FakeCodexClient,
-    make_codex_adapter,
 )
-from tests.integrations.codex.kit import answered_turn
 
 
 class TestThreadResumption:
     """A room resumes its Codex thread from Band history, or rebuilds context when it cannot."""
 
-    async def test_on_event_uses_converter_history_to_resume_thread(self) -> None:
+    async def test_on_event_uses_converter_history_to_resume_thread(
+        self, started_codex: Callable[[FakeCodexClient], Awaitable[CodexAdapter]]
+    ) -> None:
         tools = ToolSchemaFakeTools()
         fake_client = FakeCodexClient(events=answered_turn())
-        adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
-        await adapter.on_started("Codex Agent", "Integration test agent")
+        adapter = await started_codex(fake_client)
 
         raw_history = [
             {
@@ -31,7 +34,7 @@ class TestThreadResumption:
                 "content": "historical mapping",
                 "metadata": {
                     "codex_thread_id": "thr-history",
-                    "codex_room_id": "room-1",
+                    "codex_room_id": ROOM_ID,
                     "codex_created_at": datetime.now(UTC).isoformat(),
                 },
             }
@@ -41,7 +44,7 @@ class TestThreadResumption:
                 "continue work",
                 tools,
                 raw_history=raw_history,
-                room_id="room-1",
+                room_id=ROOM_ID,
                 is_session_bootstrap=True,
             )
         )
@@ -51,14 +54,12 @@ class TestThreadResumption:
         assert CodexRequestMethod.THREAD_START not in methods
         assert any("Status: resumed" in event["content"] for event in tools.events_sent)
 
-    @pytest.mark.asyncio
-    async def test_restart_rehydrates_mapping_from_previous_task_events(self) -> None:
+    async def test_restart_rehydrates_mapping_from_previous_task_events(
+        self, started_codex: Callable[[FakeCodexClient], Awaitable[CodexAdapter]]
+    ) -> None:
         tools_first = ToolSchemaFakeTools()
         fake_client_first = FakeCodexClient(events=answered_turn())
-        adapter_first = make_codex_adapter(
-            fake_client_first, config=CodexAdapterConfig()
-        )
-        await adapter_first.on_started("Codex Agent", "Integration test agent")
+        adapter_first = await started_codex(fake_client_first)
         await adapter_first.on_event(
             agent_input(
                 "first turn",
@@ -72,10 +73,7 @@ class TestThreadResumption:
 
         tools_second = ToolSchemaFakeTools()
         fake_client_second = FakeCodexClient(events=answered_turn())
-        adapter_second = make_codex_adapter(
-            fake_client_second, config=CodexAdapterConfig()
-        )
-        await adapter_second.on_started("Codex Agent", "Integration test agent")
+        adapter_second = await started_codex(fake_client_second)
         await adapter_second.on_event(
             agent_input(
                 "second turn after restart",
@@ -90,17 +88,15 @@ class TestThreadResumption:
         assert CodexRequestMethod.THREAD_RESUME in methods_second
         assert CodexRequestMethod.THREAD_START not in methods_second
 
-    @pytest.mark.asyncio
-    async def test_resume_failure_injects_conversation_history(self) -> None:
+    async def test_resume_failure_injects_conversation_history(
+        self, started_codex: Callable[[FakeCodexClient], Awaitable[CodexAdapter]]
+    ) -> None:
         """Full lifecycle: first session produces history, second session resume fails,
         verify turn input contains history context."""
         # --- First session: produce some history ---
         tools_first = ToolSchemaFakeTools()
         fake_client_first = FakeCodexClient(events=answered_turn())
-        adapter_first = make_codex_adapter(
-            fake_client_first, config=CodexAdapterConfig()
-        )
-        await adapter_first.on_started("Codex Agent", "Integration test agent")
+        adapter_first = await started_codex(fake_client_first)
         await adapter_first.on_event(
             agent_input(
                 "refactor the auth module",
@@ -133,10 +129,7 @@ class TestThreadResumption:
             events=answered_turn(),
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
         )
-        adapter_second = make_codex_adapter(
-            fake_client_second, config=CodexAdapterConfig()
-        )
-        await adapter_second.on_started("Codex Agent", "Integration test agent")
+        adapter_second = await started_codex(fake_client_second)
         await adapter_second.on_event(
             agent_input(
                 "now add rate limiting",

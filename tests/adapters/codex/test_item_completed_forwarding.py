@@ -7,11 +7,14 @@ import json
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
+from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import Emit
+from band.integrations.codex.types import CodexItemType
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
+    agent_input,
     run_codex_turn,
     send_bootstrap,
 )
@@ -22,6 +25,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
+from tests.adapters.dispatch import deliver_event
 
 
 class TestItemCompletedForwarding:
@@ -727,3 +731,74 @@ class TestItemCompletedForwarding:
         assert meta["codex_room_id"] == ROOM_ID
         assert meta["codex_thread_id"] == "thr-1"
         assert meta["codex_turn_id"] == "turn-1"
+
+    async def test_a_turn_forwards_commands_file_changes_and_reasoning(self) -> None:
+        tools = ToolSchemaFakeTools()
+        client = FakeCodexClient(
+            events=[
+                event_notification(
+                    "item/completed",
+                    {
+                        "item": {
+                            "type": CodexItemType.COMMAND_EXECUTION,
+                            "id": "cmd-1",
+                            "command": "pytest tests/",
+                            "cwd": "/workspace",
+                            "aggregated_output": "5 passed",
+                            "exitCode": 0,
+                        }
+                    },
+                ),
+                event_notification(
+                    "item/completed",
+                    {
+                        "item": {
+                            "type": CodexItemType.FILE_CHANGE,
+                            "id": "fc-1",
+                            "changes": [{"path": "src/app.py"}],
+                            "status": "applied",
+                        }
+                    },
+                ),
+                event_notification(
+                    "item/completed",
+                    {
+                        "item": {
+                            "type": CodexItemType.REASONING,
+                            "id": "reason-1",
+                            "summary": ["Tests pass, applying fix"],
+                        }
+                    },
+                ),
+                event_notification(
+                    "item/completed",
+                    {
+                        "item": {
+                            "type": CodexItemType.AGENT_MESSAGE,
+                            "id": "msg-1",
+                            "text": "Fixed the bug and all tests pass.",
+                        }
+                    },
+                ),
+                turn_completed(),
+            ]
+        )
+        adapter = make_codex_adapter(client, emit=Emit.TOOL_CALLS | Emit.THOUGHTS)
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await deliver_event(adapter, agent_input("fix the failing test", tools))
+
+        calls = [
+            json.loads(event["content"]) for event in events_of_type(tools, "tool_call")
+        ]
+        assert [(call["name"], call["args"].get("command")) for call in calls] == [
+            ("exec", "pytest tests/"),
+            ("file_edit", None),
+        ]
+        assert len(events_of_type(tools, "tool_result")) == 2
+        thoughts = [event["content"] for event in events_of_type(tools, "thought")]
+        assert len(thoughts) == 2
+        assert "Tests pass" in thoughts[0]
+        # The final agentMessage is a thought, never a posted reply.
+        assert tools.messages_sent == []

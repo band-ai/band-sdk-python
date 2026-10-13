@@ -49,7 +49,9 @@ from tests.adapters.codexturns import (
     await_released_turn,
     event_notification,
     event_request,
+    final_text,
     make_codex_adapter,
+    tool_call_request,
     turn_completed,
 )
 from tests.adapters.dispatch import deliver_event, deliver_message
@@ -356,6 +358,15 @@ async def refusals_of_autonomous_turn(
 
 #: How a native turn no Band turn started is answered.
 REFUSED_AUTONOMOUS_TURN = (False, {"decision": "decline"})
+
+
+def answered_turn() -> list[RpcEvent]:
+    """A turn explicitly completed through a Band decline tool."""
+    return [
+        tool_call_request(1, BandTool.NO_REPLY),
+        final_text("Done."),
+        turn_completed(),
+    ]
 
 
 def parked_on_approval(*then: RpcEvent) -> tuple[RpcEvent, ...]:
