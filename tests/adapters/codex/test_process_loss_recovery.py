@@ -17,21 +17,24 @@ from band.integrations.codex import TRANSPORT_CLOSED, RpcEvent
 from band.integrations.codex.types import (
     CodexRequestMethod,
     CodexSessionState,
-    CodexTokenUsage,
 )
+from band.runtime.tools import BandTool
 from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
     PROCESS_EXITED,
     ROOM_ID,
+    CodexRoom,
     ToolSchemaFakeTools,
     send_bootstrap,
 )
 from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
     FakeCodexClient,
     event_notification,
     make_codex_adapter,
+    tool_call_request,
     turn_completed,
 )
 
@@ -73,26 +76,29 @@ class TestProcessLossRecovery:
         fresh one in its place."""
         client = FakeCodexClient(
             events=[
+                event_notification(
+                    "thread/tokenUsage/updated", {"usage": {"totalTokens": 150}}
+                ),
                 PROCESS_EXITED,
+                tool_call_request(1, BandTool.NO_REPLY),
                 turn_completed("turn-2"),
             ]
         )
-        adapter = make_codex_adapter(client)
-        await adapter.on_started("Codex Agent", "A coding agent")
+        room = CodexRoom(make_codex_adapter(client), client)
+        await room.adapter.on_started("Codex Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await send_bootstrap(adapter)
-        thread_id = adapter._room_threads[ROOM_ID]
-        usage = adapter._token_usage[thread_id] = CodexTokenUsage(total_tokens=150)
+            await room.send("work")
 
-        await send_bootstrap(adapter)
+        await room.send("more work")
+        await room.send("/thread info")
 
         assert client.closed
         assert client.request_methods.count(CodexRequestMethod.THREAD_START) == 1
         (restore,) = client.params_of(CodexRequestMethod.THREAD_RESUME)
-        assert restore["threadId"] == thread_id
         assert set(restore) == {"threadId", "cwd", "personality"}
-        assert adapter._room_threads[ROOM_ID] == thread_id
-        assert adapter._token_usage[thread_id] is usage
+        assert restore["threadId"] == FIRST_THREAD_ID
+        assert f"thread_id: {FIRST_THREAD_ID}\n" in room.chat[-1]
+        assert "total: 150" in room.chat[-1]
 
     @pytest.mark.asyncio
     async def test_a_thread_resumed_from_history_survives_a_lost_process(
