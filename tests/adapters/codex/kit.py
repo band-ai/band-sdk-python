@@ -513,6 +513,20 @@ class ExitsWhileAskedClient(FakeCodexClient):
         raise ConnectionResetError("Connection lost")
 
 
+class RefusalFailsClient(FakeCodexClient):
+    """An app-server that can no longer take an error answer."""
+
+    async def respond_error(
+        self,
+        request_id: int | str,
+        *,
+        code: int,
+        message: str,
+        data: Any | None = None,
+    ) -> None:
+        raise ConnectionResetError("Connection lost")
+
+
 class CountingCloseClient(FakeCodexClient):
     """Counts process starts and physical closes, optionally holding each
     close open or refusing it."""

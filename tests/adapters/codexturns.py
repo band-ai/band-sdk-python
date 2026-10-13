@@ -202,6 +202,11 @@ class FakeCodexClient(RecordedRequests):
         """Each answered request's result, by request id."""
         return dict(self.responses)
 
+    @property
+    def error_codes(self) -> dict[int | str, int]:
+        """Each request answered with an error, by request id."""
+        return {request_id: code for request_id, code, _ in self.response_errors}
+
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         while not self._released:
             self._emitted.clear()
