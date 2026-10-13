@@ -59,7 +59,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import rejoin_owned, report_owned, spawn_owned
+from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
@@ -783,7 +783,8 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
     # Upper bound for letting a released, still-running turn wind down on its
-    # own during cleanup (see _settle_turn) before it's force-cancelled,
+    # own during a leave or stop (the residency owner's settle grace) before
+    # it's force-cancelled,
     # and for answering a finished turn's leftover native requests.
     # Deliberately not Optional like client_close_timeout_s above: that
     # field's "disable the bound" is a legacy allowance for a rarely-slow
@@ -921,10 +922,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "custom Codex clients cannot guarantee room process isolation"
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
-        self._retention = RoomRetention(self.config.retention)
-        # Set from the first cleanup_all until on_started confirms it; while
-        # set, the adapter admits no new room or turn.
-        self._shutdown: asyncio.Task[None] | None = None
+        self._retention = self._new_retention()
         self._workspaces = RoomWorkspaces(self.config.workspace_for_room)
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
@@ -935,15 +933,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
-        # Rooms in cleanup: their turns decline approvals instead of parking
-        # on a human while cleanup waits for them to finish.
-        self._closing_rooms: set[str] = set()
         # A turn runs as a detached task so a manual approval can release
         # on_message: Band dispatches one message per room at a time, so the
         # reply that resolves the approval arrives only after on_message returns.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
-        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -956,6 +950,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._session_approved: dict[str, OrderedDict[str, None]] = {}
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
+
+    def _new_retention(self) -> RoomRetention:
+        """A residency owner whose final disposal gives a room's turn
+        ``turn_settle_timeout_s`` to wind down before cancelling it."""
+        return RoomRetention(
+            self.config.retention, settle_grace_s=self.config.turn_settle_timeout_s
+        )
+
+    def _room_closing(self, room_id: str) -> bool:
+        """Whether the room admits no more work; a forgotten room is closed."""
+        room = self._room_clients.get(room_id)
+        return room is None or room.residency.closing
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
@@ -1065,11 +1071,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        # Only a confirmed shutdown of the previous owner opens a new one.
-        await self.cleanup_all()
-        self._shutdown = None
-        self._closing_rooms.clear()
-        self._retention = RoomRetention(self.config.retention)
+        # A stop is terminal for its owner: only a confirmed one opens a new one.
+        if self._retention.stopping:
+            await self.cleanup_all()
+            self._retention = self._new_retention()
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
         self._log_startup_config(agent_name)
@@ -1170,8 +1175,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        if self._shutdown is not None:
-            raise InputNotAccepted("Codex is shutting down")
         self._admit_turn(room_id, "Codex")
         room = self._room_client(room_id)
         self._active_room.set(room_id)
@@ -1402,7 +1405,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             duration_s=_time.perf_counter() - turn_start,
         )
         # A turn wound down by room cleanup was aborted, not missed.
-        if room_id not in self._closing_rooms:
+        if not room.residency.closing:
             await judge_detached_turn(tools, room_id=room_id)
 
     async def _emit_turn_started(
@@ -1468,25 +1471,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         owner = self._turn_tasks.get(room_id)
         if owner is not None and owner.task is task:
             del self._turn_tasks[room_id]
-
-    async def _settle_turn(self, room_id: str) -> None:
-        """Give the room's detached turn ``turn_settle_timeout_s`` to wind down,
-        then cancel it within the cleanup grace."""
-        turn = self._turn_tasks.get(room_id)
-        if turn is None:
-            return
-        # An already terminated turn keeps its original grace instead.
-        if turn.deadline is None:
-            done, _pending = await asyncio.wait(
-                {turn.task}, timeout=self.config.turn_settle_timeout_s
-            )
-            if not done:
-                logger.warning(
-                    "Room %s: turn still running after %ss; cancelling it",
-                    room_id,
-                    self.config.turn_settle_timeout_s,
-                )
-        await self._cancel_turn(room_id)
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1863,48 +1847,32 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 raise
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Leave a room: settle its turn, close its process, then forget it.
+        """Leave a room: admission closes at once, its turn gets
+        ``turn_settle_timeout_s`` to wind down, then its process closes and the
+        room is forgotten.
 
-        Unfinished or failed cleanup keeps the room's process, thread and
-        workspace claim for the next attempt; the room admits no work meanwhile.
+        Unfinished or failed cleanup keeps the room registered, refusing work,
+        with its process, thread and workspace claim for a retry to join.
         """
         room = self._room_clients.get(room_id)
         if room is None:
             return
-        await self._retire_room(
-            room_id, settle=self._settle_turn, close=partial(self._close_room, room)
-        )
-
-    async def _close_room(self, room: RoomCodexClient) -> None:
-        """Dispose ``room``, keeping it registered until disposal is confirmed.
-
-        A disposal that outlives its reporting bound finishes later as owned
-        work; the retried leave must still find the room to lift its fence.
-        """
+        self._clear_pending_approvals_for_room(room_id)
         await room.residency.dispose()
-        if self._room_clients.get(room.room_id) is room:
-            del self._room_clients[room.room_id]
+        if self._room_clients.get(room_id) is room:
+            del self._room_clients[room_id]
 
     async def cleanup_all(self) -> None:
-        """Seal admission now, then report the one owned shutdown in time.
+        """Stop the residency owner: admission closes at once, every room's
+        turn gets ``turn_settle_timeout_s`` to wind down, then its process
+        closes, all reported within one ``retention.transition_timeout_s``.
 
-        Callers join the same shutdown; one that failed is retried. An
-        unfinished or failed shutdown keeps every room fenced with its process,
-        thread and workspace. Success stays sealed until ``on_started``.
+        Callers join the same stop, and a failed one is retried. An unfinished
+        or failed stop keeps every room fenced with its process, thread and
+        workspace. Success stays sealed until ``on_started``.
         """
-        rooms = list(self._room_clients)
-        self._closing_rooms.update(rooms)
-        for room_id in rooms:
+        for room_id in list(self._room_clients):
             self._clear_pending_approvals_for_room(room_id)
-        self._shutdown = rejoin_owned(
-            self._shutdown, self._shut_down, label="Codex adapter shutdown"
-        )
-        await report_owned(self._shutdown, self.config.retention.transition_timeout_s)
-
-    async def _shut_down(self) -> None:
-        await asyncio.gather(
-            *(self._settle_turn(room_id) for room_id in self._room_clients)
-        )
         await self._retention.stop()
         # Every registered room belonged to the stopped owner and is disposed.
         self._room_clients.clear()
@@ -2659,7 +2627,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if session_hit:
             decision: ApprovalDecision = "acceptForSession"
             decided_by = "session_policy"
-        elif room_id in self._closing_rooms:
+        elif self._room_closing(room_id):
             decision = "decline"
             decided_by = "room_cleanup"
         elif self.config.approval_mode == "manual":

@@ -61,7 +61,11 @@ async def cleaning_turn() -> AsyncIterator[CleaningTurn]:
     """A room whose turn was cancelled mid turn/start and is still cleaning up;
     the cleanup finishes at teardown at the latest."""
     client = CleaningTurnClient()
-    room = CodexRoom(make_codex_adapter(client), client)
+    # A leave reports its unfinished cleanup within this bound.
+    config = CodexAdapterConfig(
+        retention=RoomRetentionConfig(transition_timeout_s=TRANSITION_TIMEOUT_S)
+    )
+    room = CodexRoom(make_codex_adapter(client, config=config), client)
     sending = asyncio.create_task(room.send("work"))
     await client.started.wait()
     sending.cancel()

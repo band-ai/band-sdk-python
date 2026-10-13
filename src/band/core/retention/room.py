@@ -549,17 +549,23 @@ class RetainedRoom:
         if not self._work_cancelled:
             await self._grace()
             self._work_cancelled = True
-            for task in self._owned - self._unwinding:
+            # Work already told to cancel keeps its own cleanup uninterrupted.
+            for task in self._uncancelled_work():
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
                 self._transition.cancel()
         await self._drained.wait()
 
+    def _uncancelled_work(self) -> set[asyncio.Task[Any]]:
+        """Owned work final cleanup may still cancel: not a requester of this
+        cleanup, and not already told to cancel by its own owner."""
+        return {task for task in self._owned - self._unwinding if not task.cancelling()}
+
     async def _grace(self) -> None:
         """Let accepted work finish on its own, with admission closed, until
         the owner's settle grace expires."""
         grace = self._owner.settle_grace_s
-        if not grace or self._drained.is_set():
+        if not grace or not self._uncancelled_work():
             return
         expired = asyncio.Event()
         timer = self._owner.clock.call_at(self._owner.clock.now() + grace, expired.set)

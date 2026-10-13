@@ -158,9 +158,8 @@ class ApprovalInterruptMixin:
         return owner is not None and not owner.task.done()
 
     def _admit_turn(self, room_id: str, provider: str) -> None:
-        """Refuse new input while the room closes or its worker still runs."""
-        if room_id in self._closing_rooms:
-            raise InputNotAccepted(f"The room's {provider} session is closing")
+        """Refuse new input while the room's worker still runs; a closing room
+        is refused by its residency owner."""
         if self._turn_running(room_id):
             raise InputNotAccepted(f"The room already has an active {provider} turn")
 
