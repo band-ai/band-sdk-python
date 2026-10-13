@@ -126,6 +126,8 @@ def _observe_phase(
             message_id,
             monotonic() - started,
         )
+
+
 def _log_turn_error(error: Exception, message: str, *args: object) -> None:
     """Log a failed turn; one whose failure already reached the room was logged
     where it was reported, so it stays out of ERROR alerting."""
