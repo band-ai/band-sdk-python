@@ -11,6 +11,8 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from band.integrations.codex.types import CodexApprovalMethod, CodexRequestMethod
 from tests.adapters.codex.kit import (
+    ACCEPTED,
+    DECLINED,
     PATIENT_APPROVAL_S,
     ROOM_ID,
     CodexRoom,
@@ -51,7 +53,7 @@ class TestApprovalFromASequentialRoom:
         await room.settled()
 
         assert control_tools.turn.complete
-        assert room.client.responses == [(10, {"decision": "accept"})]
+        assert room.client.responses == [(10, ACCEPTED)]
 
     @pytest.mark.asyncio
     async def test_a_request_while_a_turn_awaits_a_human_is_turned_away(
@@ -118,8 +120,8 @@ class TestApprovalFromASequentialRoom:
         await turn
 
         assert room.client.responses == [
-            (10, {"decision": "decline"}),
-            (11, {"decision": "decline"}),
+            (10, DECLINED),
+            (11, DECLINED),
         ]
         assert sum(m.startswith("Approval requested") for m in room.chat) == 1
 
@@ -162,5 +164,5 @@ class TestApprovalFromASequentialRoom:
         await room.send(f"/{CodexCommand.APPROVE} ap-1")
         await room.settled()
 
-        assert room.client.responses == [(7, {"decision": "accept"})]
+        assert room.client.responses == [(7, ACCEPTED)]
         assert "Approval `ap-1` resolved as `accept`." in room.chat

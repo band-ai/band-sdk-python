@@ -362,8 +362,12 @@ async def refusals_of_autonomous_turn(
     return (await answer_to(client, 41))["success"], await answer_to(client, 42)
 
 
+#: How Band answers a Codex approval request.
+DECLINED = {"decision": "decline"}
+ACCEPTED = {"decision": "accept"}
+
 #: How a native turn no Band turn started is answered.
-REFUSED_AUTONOMOUS_TURN = (False, {"decision": "decline"})
+REFUSED_AUTONOMOUS_TURN = (False, DECLINED)
 
 
 def answered_turn() -> list[RpcEvent]:

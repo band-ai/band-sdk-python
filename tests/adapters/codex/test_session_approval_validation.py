@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from tests.adapters.codex.kit import (
+    DECLINED,
     ROOM_ID,
     CodexRoom,
 )
@@ -34,6 +35,6 @@ class TestSessionApprovalValidation:
         await room.send("/decline req-15")
         await room.settled()
 
-        assert room.client.responses == [(15, {"decision": "decline"})]
+        assert room.client.responses == [(15, DECLINED)]
         assert not room.adapter._session_approved.get(ROOM_ID)
         assert sum("cannot be resolved as session-level" in m for m in room.chat) == 1

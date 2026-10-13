@@ -32,6 +32,8 @@ from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    ACCEPTED,
+    DECLINED,
     HANG_GUARD_S,
     PATIENT_APPROVAL_S,
     PROCESS_EXITED,
@@ -143,7 +145,7 @@ class TestNativeTurnOwnership:
         await room.send(f"/{CodexCommand.APPROVE} req-77")
         await room.settled()
 
-        assert await answer_to(room.client, 77) == {"decision": "accept"}
+        assert await answer_to(room.client, 77) == ACCEPTED
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -165,7 +167,7 @@ class TestNativeTurnOwnership:
 
         await room.send("work")
 
-        assert await answer_to(room.client, 77) == {"decision": "decline"}
+        assert await answer_to(room.client, 77) == DECLINED
         assert room.chat == []
 
     @pytest.mark.asyncio
