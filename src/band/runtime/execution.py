@@ -74,6 +74,7 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
+from band.platform.message_lifecycle import SettlementResult
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.formatters import build_participants_message, format_history_for_llm
@@ -499,60 +500,82 @@ class ExecutionContext:
         )
 
     async def _retry_terminal_ack(self, message_id: str) -> bool:
-        """Retry a locally settled message's stored terminal write, within budget."""
-        if not self.claims.is_ack_pending(self.room_id, message_id) or self._stopped:
+        """Retry one pending terminal write; True once nothing remains to retry now.
+
+        A parked entry stays retained but is not retried or blocking: only a
+        reconnect or rejoin unparks it. An unconfirmed write keeps its stored
+        intent however long it takes -- dropping it would replay the handler.
+        """
+        pending = self.claims.pending_ack(self.room_id, message_id)
+        if pending is None or pending["parked"] is not None:
+            return True
+        if self._stopped:
             return False
 
         try:
-            if await self._write_pending(message_id):
-                return True
+            result = await self._write_pending(message_id)
         except RoomExecutionStoppedError:
             return False
+        if result is not SettlementResult.UNCONFIRMED:
+            return True
 
         if self._stopped:
             return False
         retries = self.claims.record_ack_retry(self.room_id, message_id)
-        if retries >= self._retry_tracker.max_retries:
+        if retries == self._retry_tracker.max_retries:
             logger.warning(
-                "ExecutionContext %s: terminal ack retry budget exhausted for message %s; keeping local completion marker",
+                "ExecutionContext %s: terminal write still unconfirmed for message %s; retaining its intent",
                 self.room_id,
                 message_id,
             )
-            self._retry_tracker.mark_success(message_id)
-            self.claims.remember_completed(self.room_id, message_id)
-            return True
-
         return False
 
-    async def _write_pending(self, message_id: str) -> bool:
-        """Send the one write a pending entry owes; accepted, it completes locally."""
+    async def _write_pending(self, message_id: str) -> SettlementResult:
+        """Send the one write a pending entry owes and record what it established."""
         pending = self.claims.pending_ack(self.room_id, message_id)
         if pending is None:
-            return False
-        durable = await self._write_terminal(message_id, pending)
-        if durable:
-            self._retry_tracker.mark_success(message_id)
-            self.claims.remember_completed(self.room_id, message_id)
-        return durable
+            raise ValueError(f"message {message_id} has no pending terminal write")
+        result = await self._write_terminal(message_id, pending)
+        match result:
+            case SettlementResult.ACCEPTED:
+                self._retry_tracker.mark_success(message_id)
+                self.claims.remember_completed(self.room_id, message_id)
+            case SettlementResult.NOT_FOUND | SettlementResult.REJECTED:
+                self.claims.park_ack(self.room_id, message_id, result)
+                logger.warning(
+                    "ExecutionContext %s: terminal write for message %s parked (%s); "
+                    "it is not retried or replayed until the room is rejoined",
+                    self.room_id,
+                    message_id,
+                    result,
+                )
+            case SettlementResult.UNCONFIRMED:
+                pass
+        return result
 
-    async def _write_terminal(self, message_id: str, pending: PendingAck) -> bool:
-        """Send the one write a pending entry owes; its stored intent decides which."""
+    async def _write_terminal(
+        self, message_id: str, pending: PendingAck
+    ) -> SettlementResult:
         match pending["status"]:
             case DeliveryStatus.PROCESSED:
-                return await self.link.mark_processed(self.room_id, message_id)
+                return await self.link.mark_processed_result(self.room_id, message_id)
             case DeliveryStatus.FAILED:
-                return await self.link.mark_failed(
+                return await self.link.mark_failed_result(
                     self.room_id, message_id, pending["error"]
                 )
         raise ValueError(f"unknown pending terminal intent {pending['status']!r}")
 
     async def _settle_originals(self, scope: TurnScope) -> bool:
-        """Write every original's stored intent; each is attempted even if one fails."""
-        outcomes = [
+        """Write every original's stored intent; False while any remains retryable.
+
+        Each original is attempted even if an earlier one fails, so one bad
+        write cannot starve its siblings.
+        """
+        results = [
             await self._write_pending(_event_message_id(event))
             for event in scope.originals
         ]
-        return all(outcomes)
+        return SettlementResult.UNCONFIRMED not in results
 
     @contextlib.contextmanager
     def _claim_message(self, message_id: str) -> Iterator[bool]:
@@ -592,6 +615,7 @@ class ExecutionContext:
         logger.info("Starting ExecutionContext for room: %s", self.room_id)
         self._closing = False
         self._is_running = True
+        self._unpark_terminal_acks()
         self._process_loop_task = asyncio.create_task(
             self._process_loop(),
             name=f"execution-{self.room_id}",
@@ -674,6 +698,7 @@ class ExecutionContext:
                 "ExecutionContext %s: Reconnected, scheduling synchronization",
                 self.room_id,
             )
+            self._unpark_terminal_acks()
             await self.request_resync()
             return
 
@@ -1358,11 +1383,21 @@ class ExecutionContext:
                 self._set_state(ExecutionState.IDLE)
 
     async def _retry_pending_terminal_acks(self) -> bool:
-        """Retry durable processed acks for locally completed messages."""
-        for msg_id in self.claims.pending_ack_ids(self.room_id):
-            if not await self._retry_terminal_ack(msg_id):
-                return False
-        return True
+        """Retry every unparked pending write once; False while any stays retryable."""
+        resolved = [
+            await self._retry_terminal_ack(message_id)
+            for message_id in self.claims.pending_ack_ids(self.room_id)
+        ]
+        return all(resolved)
+
+    def _unpark_terminal_acks(self) -> None:
+        """Let a reconnect or rejoin retry every refused terminal write once."""
+        if unparked := self.claims.unpark_acks(self.room_id):
+            logger.info(
+                "ExecutionContext %s: retrying %s parked terminal write(s)",
+                self.room_id,
+                unparked,
+            )
 
     async def _reconcile(self) -> None:
         # Requests received after this pass starts retain their own sentinel.

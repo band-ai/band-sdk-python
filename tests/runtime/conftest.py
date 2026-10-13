@@ -34,7 +34,7 @@ from band_rest import (
 
 from band.core.types import PlatformConnection, PlatformMessage
 from band.runtime.presence import RoomPresence
-from tests.conftest import make_participant_mock
+from tests.conftest import make_participant_mock, mirror_settlement_results
 from tests.runtime.helpers import AGENT_ID
 
 
@@ -237,6 +237,7 @@ def make_link_mock(
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    mirror_settlement_results(link)
     link.report_activity = AsyncMock(return_value=True)
     link.disconnect = AsyncMock()
     return link
@@ -255,6 +256,7 @@ def link(mock_rest_client: MagicMock) -> MagicMock:
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
+    mirror_settlement_results(link)
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)

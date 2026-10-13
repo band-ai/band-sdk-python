@@ -37,6 +37,7 @@ from tests.conftest import (
     make_participant_added_event,
     make_participant_mock,
     make_participant_removed_event,
+    mirror_settlement_results,
 )
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import LifecyclePlatform, rest_client_over
@@ -76,6 +77,7 @@ def mock_link():
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
+    mirror_settlement_results(link)
     link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)
@@ -652,6 +654,7 @@ class TestCrashRecoverySync:
         link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
+        mirror_settlement_results(link)
         link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
         link.get_stale_processing_messages = AsyncMock(return_value=[])  # No stale msgs
         link.report_activity = AsyncMock(return_value=True)
@@ -1353,10 +1356,11 @@ class TestCrashRecoverySync:
         assert "msg-backlog-ack-retry" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-backlog-ack-retry")
 
-    async def test_processed_ack_retry_budget_exhaustion_keeps_local_completion(
+    async def test_ack_retry_budget_exhaustion_keeps_the_intent_pending(
         self, mock_link_with_next, mock_handler
     ):
-        """Permanent processed ack failure should not deadlock or replay local side effects."""
+        """An unconfirmed terminal write is retained, not dropped, once its
+        retry budget is spent: dropping it would let the room replay effects."""
 
         msg = PlatformMessage(
             id="msg-ack-budget",
@@ -1370,7 +1374,9 @@ class TestCrashRecoverySync:
             created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
-        mock_link_with_next.mark_processed = AsyncMock(return_value=False)
+        mock_link_with_next.mark_processed = AsyncMock(
+            side_effect=[False, False, False, True]
+        )
         ctx = ExecutionContext(
             "room-123",
             mock_link_with_next,
@@ -1381,13 +1387,16 @@ class TestCrashRecoverySync:
             ),
         )
 
-        assert (
-            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
-        )
-        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
+        outcomes = [await ctx._process_backlog_message(msg) for _ in range(4)]
 
+        assert outcomes == [
+            BacklogProcessResult.RETRY_LATER,
+            BacklogProcessResult.RETRY_LATER,
+            BacklogProcessResult.RETRY_LATER,
+            BacklogProcessResult.ADVANCED,
+        ]
         mock_handler.assert_awaited_once()
-        assert mock_link_with_next.mark_processed.await_count == 2
+        assert mock_link_with_next.mark_processed.await_count == 4
         assert "msg-ack-budget" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-budget")
 
