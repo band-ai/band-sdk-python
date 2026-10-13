@@ -888,33 +888,6 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_acp_room_rejoin.py::test_acp_agent_replies_after_rejoining_a_room",
-      "adapter": "copilot_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/behavior/test_acp_room_rejoin.py::test_acp_agent_replies_after_rejoining_a_room",
-      "adapter": "cursor_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/behavior/test_acp_room_rejoin.py::test_acp_agent_replies_after_rejoining_a_room",
-      "adapter": "omp_acp",
-      "lanes": [
-        "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
       "test": "tests/e2e/baseline/smoke/behavior/test_agent_scenarios.py::test_two_agents_greet_each_other",
       "adapter": "suite",
       "lanes": [
@@ -1343,6 +1316,51 @@
       "adapter": "suite",
       "lanes": [
         "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
