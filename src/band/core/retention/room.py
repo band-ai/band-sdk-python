@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
-from band.core.exceptions import CleanupIncompleteError
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention.cleanup import report_owned, spawn_owned
 from band.core.retention.states import (
     BUSY_ACTIVITY_REASON,
@@ -152,7 +152,7 @@ class RetainedRoom:
         """
         try:
             self._check_admission()
-        except RuntimeError:
+        except RoomClosingError:
             task.cancel()
             raise
         self._owned.add(task)
@@ -218,7 +218,7 @@ class RetainedRoom:
 
     def _check_admission(self) -> None:
         if self._closing or self._owner.stopping:
-            raise RuntimeError(f"Room {self.room_id} is closing")
+            raise RoomClosingError(f"Room {self.room_id} is closing")
 
     async def _settle(self) -> None:
         """Finish earlier transitions and pending releases without a lease."""

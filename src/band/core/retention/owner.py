@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from functools import partial
 
-from band.core.exceptions import CleanupIncompleteError
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention.cleanup import report_owned, spawn_owned, task_failure
 from band.core.retention.clock import Cancellable, MonotonicClock, RetentionClock
 from band.core.retention.config import RoomRetentionConfig
@@ -40,7 +40,7 @@ class RoomRetention:
         dispose: Callable[[], Awaitable[None]],
     ) -> RetainedRoom:
         if self.stopping:
-            raise RuntimeError("Room retention is stopping")
+            raise RoomClosingError("Room retention is stopping")
         if room_id in self._rooms:
             raise ValueError(f"Room {room_id} already has a residency owner")
         room = RetainedRoom(self, room_id, acquire, release, dispose)

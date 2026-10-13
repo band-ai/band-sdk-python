@@ -68,6 +68,12 @@ class InputNotAccepted(BandError):
     """
 
 
+class RoomClosingError(InputNotAccepted, RuntimeError):
+    """A closing room, or a stopping residency owner, refused work before it
+    started. Actionable by the host as ``InputNotAccepted``; distinct from a
+    cleanup failure, which the same calls raise as other errors."""
+
+
 class ProviderRunError(BandError):
     """A provider or framework returned a failed run as data instead of raising.
     Actionable by the adapter: raise it inside the turn so the turn is reported

@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.retention import (
     ProviderActivity,
     ReleaseCause,
@@ -164,7 +164,7 @@ class TestDisposal:
         await asyncio.sleep(0)
 
         disposal = asyncio.create_task(resident.room.dispose())
-        with pytest.raises(RuntimeError, match="is closing"):
+        with pytest.raises(InputNotAccepted, match="is closing"):
             await asyncio.wait_for(waiter, timeout=1)
         assert not holder.done()
 
