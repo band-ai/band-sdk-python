@@ -3,19 +3,18 @@
 ``TurnTask`` delivers cancellation and drains one handler or SDK-managed worker
 within a single absolute cleanup grace. Adapters whose manual-approval turn runs
 detached bind that worker to the originating turn scope and share
-``ApprovalInterruptMixin`` for interrupts and room retirement.
+``ApprovalInterruptMixin`` for interrupts.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from band.client.streaming import ControlMode
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
-from band.core.retention import task_failure
+from band.core.exceptions import InputNotAccepted
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
 
@@ -145,21 +144,22 @@ def bind_turn_task(tools: object, task: asyncio.Task[None]) -> TurnTask:
 
 
 class ApprovalInterruptMixin:
-    """Clear approvals, terminate the handler's worker, and retire its room."""
+    """Clear approvals and terminate the handler's worker on an interrupt.
+
+    A room's leave and an adapter's stop belong to its residency owner, which
+    refuses a closing room's work itself.
+    """
 
     def _clear_pending_approvals_for_room(self, room_id: str) -> None: ...
 
     _turn_tasks: dict[str, TurnTask]
-    _room_cleanup: dict[str, asyncio.Task[None]]
-    _closing_rooms: set[str]
 
     def _turn_running(self, room_id: str) -> bool:
         owner = self._turn_tasks.get(room_id)
         return owner is not None and not owner.task.done()
 
     def _admit_turn(self, room_id: str, provider: str) -> None:
-        """Refuse new input while the room's worker still runs; a closing room
-        is refused by its residency owner."""
+        """Refuse new input while the room's worker still runs."""
         if self._turn_running(room_id):
             raise InputNotAccepted(f"The room already has an active {provider} turn")
 
@@ -168,40 +168,6 @@ class ApprovalInterruptMixin:
         if owner is not None:
             owner.terminate()
             await owner.drain()
-
-    async def _retire_room(
-        self,
-        room_id: str,
-        *,
-        settle: Callable[[str], Awaitable[None]],
-        close: Callable[[], Awaitable[None]],
-    ) -> None:
-        """Fence the room, end its worker, then join the room's one close.
-
-        A failed close is retried; only a successful close readmits the room.
-        """
-        self._closing_rooms.add(room_id)
-        self._clear_pending_approvals_for_room(room_id)
-        await settle(room_id)
-        if self._turn_running(room_id):
-            raise CleanupIncompleteError(f"Room {room_id}: turn is still cleaning up")
-        task = self._room_cleanup.get(room_id)
-        if task is None or (task.done() and task_failure(task) is not None):
-            task = asyncio.create_task(self._close_room_once(room_id, close))
-            task.add_done_callback(task_failure)
-            # An eager task factory can finish the close before it is joinable.
-            if not task.done():
-                self._room_cleanup[room_id] = task
-        await asyncio.shield(task)
-
-    async def _close_room_once(
-        self, room_id: str, close: Callable[[], Awaitable[None]]
-    ) -> None:
-        # Readmission belongs to the close itself, so a cancelled waiter cannot
-        # leave the room fenced after the close succeeded.
-        await close()
-        self._room_cleanup.pop(room_id, None)
-        self._closing_rooms.discard(room_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         self._clear_pending_approvals_for_room(room_id)

@@ -113,7 +113,6 @@ from band.integrations.claude_sdk.session_manager import (
     CLI_STARTUP_TIMEOUT_S,  # noqa: F401 -- re-exported for adapter configs
     ClaudeRoomSession,
     ClaudeSessionManager,
-    ClaudeSessionManagerStoppedError,
     TurnStream,
     default_claude_retention,
 )
@@ -684,9 +683,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # client. The TurnTask cancels it for STOP and interrupts; leaving the
         # room cancels it through the RetainedRoom, which fences admission first.
         self._turn_tasks: dict[str, TurnTask] = {}
-        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
-        self._closing_rooms: set[str] = set()
-        self._closing_all = False
 
     @property
     def _approvals(self) -> ClaudeApprovalOptions:
@@ -703,9 +699,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
-        await super().on_started(agent_name, agent_description)
+        # A stop is terminal for its manager: finish it before starting anew.
         if self._session_manager is not None:
             await self.cleanup_all()
+        await super().on_started(agent_name, agent_description)
 
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()
@@ -771,7 +768,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         can_use_tool_factory = (
             self._make_can_use_tool if self.config.approvals is not None else None
         )
-        self._closing_all = False
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
@@ -860,8 +856,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        if self._closing_all:
-            raise ClaudeSessionManagerStoppedError("Claude adapter is stopping")
         self._admit_turn(room_id, "Claude")
         session = self._session_manager.room(room_id)
         if self.config.approvals is not None:
@@ -1593,20 +1587,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Settle the room's turn, close its session and drop its state when
-        the agent leaves; a failed cleanup keeps everything for a retry."""
-        await self._retire_room(
-            room_id,
-            settle=self._dispose_session,
-            close=partial(self._forget_room, room_id),
-        )
-
-    async def _dispose_session(self, room_id: str) -> None:
-        """Fence the session, cancel its turn and any startup, then close it."""
+        """Leave a room: admission closes at once, its turn and any startup
+        are cancelled, its CLI closes, then its state is dropped. A failed or
+        unfinished cleanup keeps everything for a retry to join."""
+        self._clear_pending_approvals_for_room(room_id)
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
+        self._forget_room(room_id)
 
-    async def _forget_room(self, room_id: str) -> None:
+    def _forget_room(self, room_id: str) -> None:
         self._room_tools.pop(room_id, None)
         self._mcp_room_tools.pop(room_id, None)
         self._recorded_session_ids.pop(room_id, None)
@@ -1617,17 +1606,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     async def cleanup_all(self) -> None:
-        """Close every room, then the shared Band MCP server, within one
-        ``retention.transition_timeout_s`` budget.
+        """Stop the session manager, then the shared Band MCP server, within
+        one ``retention.transition_timeout_s`` budget.
 
-        Rooms settle first because their CLIs dial the server until they
-        close; an unfinished or failed step stays owned for a retry.
+        Stopping closes admission for every room at once; rooms close first
+        because their CLIs dial the server until they do. An unfinished or
+        failed step stays owned for a retry.
         """
-        self._closing_all = True
         deadline = cleanup_deadline(self.config.retention)
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        await finish_by(deadline, self._close_rooms(), what="Claude room cleanup")
         if self._session_manager:
             await finish_by(
                 deadline, self._session_manager.stop(), what="Claude session shutdown"
@@ -1641,21 +1629,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._pending_tool_names.clear()
         self._turn_release.clear()
         self._turn_tasks.clear()
-
-    async def _close_rooms(self) -> None:
-        """Clean up every room, attempting each even when another fails."""
-        rooms = set(self._room_tools) | set(self._turn_tasks) | self._closing_rooms
-        results = await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in rooms), return_exceptions=True
-        )
-        errors: list[Exception] = []
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, Exception):
-                errors.append(result)
-        if errors:
-            raise ExceptionGroup("Claude session cleanup failed", errors)
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
