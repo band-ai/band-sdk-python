@@ -118,11 +118,28 @@ Each room is one `ACPRoom`: its process, connection and session, composed with a
 turn, a Copilot model switch) is owned by the room before it runs. A prompt binds
 its tools under the room's lease, and a model switch takes the room's reservation
 in turn with its prompts, so an independent room never waits on another room's
-start, prompt, switch or exit. The room's acquisition starts its process
-within `start_timeout_s` (10s by default). A start that outlasts it, or outlasts
-`transition_timeout_s`, fails that turn and is recovered, so a slow agent needs both
-raised. A turn that stops waiting for a start, at its bound or on `/stop`, cancels
-it, so the room's next message gets a new process.
+start, prompt, switch or exit. The room's acquisition starts its process within
+`retention.transition_timeout_s`, which defaults to `ACP_TRANSITION_TIMEOUT_S` for
+every ACP profile. A start that outlasts it fails that turn with
+`PROCESS_NOT_READY_ERROR` and is recovered; raise that one bound for a slow agent.
+A turn that stops waiting for a start, at its bound or on `/stop`, cancels it, so
+the room's next message gets a new process.
+
+```python
+from band.core.retention import RoomRetentionConfig
+from band.integrations.acp.client_adapter import (
+    ACP_TRANSITION_TIMEOUT_S,
+    ACPClientAdapterConfig,
+)
+
+config = ACPClientAdapterConfig(command="my-agent")
+assert config.retention.transition_timeout_s == ACP_TRANSITION_TIMEOUT_S
+
+slow = ACPClientAdapterConfig(
+    command="my-agent", retention=RoomRetentionConfig(transition_timeout_s=120)
+)
+assert slow.retention.transition_timeout_s == 120
+```
 
 - **A deliberate wake reloads the exact session.** It calls `session/load` with a
   fresh Band MCP endpoint, then reapplies the room's model selection and verifies

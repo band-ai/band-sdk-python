@@ -39,8 +39,7 @@ from tests.integrations.acp.acp_toolkit.agent import MODEL_OPTION_ID, Gate
 from tests.integrations.acp.acp_toolkit.harness import RELEASE_TURNS
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
-# Start and transition bounds short enough that waiting them out costs nothing.
-HUNG_START_TIMEOUT_S = 0.05
+# A transition bound short enough that waiting it out costs nothing.
 SHORT_TRANSITION_S = 0.05
 # A guard on a wait that should finish at once, so a hang fails clearly.
 TEST_GUARD_S = 5

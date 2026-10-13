@@ -12,7 +12,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -194,7 +194,12 @@ SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
-DEFAULT_START_TIMEOUT_SECONDS = 10.0
+# One acquisition launches the agent and runs initialize/authenticate, and a
+# wake also reloads its session.
+ACP_TRANSITION_TIMEOUT_S = 30.0
+# How a turn reports a room process that did not start or stop within
+# ``retention.transition_timeout_s``.
+PROCESS_NOT_READY_ERROR = "ACP agent process did not become ready in time"
 
 
 class SessionCloseReason(StrEnum):
@@ -285,6 +290,9 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     Attributes:
         command: The agent's launch command; a single string is one argv
             element.
+        retention: Residency settings; ``transition_timeout_s``
+            (``ACP_TRANSITION_TIMEOUT_S`` by default) bounds each start, so a
+            slower one fails its turn and its room recovers.
         env: Extra environment for the agent subprocess.
         cwd: Root under which each room gets its own workspace directory;
             exclusive with the adapter's ``workspace_for_room``.
@@ -298,10 +306,6 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         use_unstable_protocol: Speak ACP's unstable protocol methods.
         turn_timeout_s: Seconds a prompt may run before the turn is cancelled
             and a ``timeout`` failure is posted to the room.
-        start_timeout_s: Seconds the agent may take to start and finish
-            ``initialize``/``authenticate``; a longer start fails and its room
-            recovers. A start past ``retention.transition_timeout_s`` already
-            fails its turn, so raise both for a slow agent.
         model: Model selected from each session's advertised catalog; a value
             the catalog does not offer fails the turn.
         reasoning_effort: Reasoning effort selected the same way.
@@ -313,7 +317,11 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     )
 
     command: tuple[str, ...]
-    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
+    retention: RoomRetentionConfig = Field(
+        default_factory=lambda: RoomRetentionConfig(
+            transition_timeout_s=ACP_TRANSITION_TIMEOUT_S
+        )
+    )
     env: dict[str, str] | None = None
     cwd: str | None = None
     mcp_servers: tuple[SessionMcpServer, ...] = ()
@@ -322,7 +330,6 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     custom_section: str = ""
     use_unstable_protocol: bool = False
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
-    start_timeout_s: PositiveFloat = DEFAULT_START_TIMEOUT_SECONDS
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -687,7 +694,7 @@ class ACPClientAdapter(
                 f"Room {room.room_id}'s previous ACP process is not confirmed closed"
             )
         runtime = room.runtime = self._build_runtime(room, generation)
-        await self._start_runtime(runtime)
+        await runtime.start()
         room.retained.observe(
             ProviderActivity.UNKNOWN,
             generation=generation,
@@ -695,16 +702,6 @@ class ACPClientAdapter(
         )
         if resume and (session := room.session) is not None:
             await self._restore_retained_session(room, runtime, session)
-
-    async def _start_runtime(self, runtime: ACPRuntime) -> None:
-        """Start ``runtime`` within ``start_timeout_s``, so a hung agent fails
-        its turn with an error naming its start."""
-        timeout = self.config.start_timeout_s
-        try:
-            async with asyncio.timeout(timeout):
-                await runtime.start()
-        except TimeoutError as error:
-            raise TimeoutError(f"ACP agent did not start within {timeout}s") from error
 
     async def _release_room(self, room: ACPRoom, cause: ReleaseCause) -> ReleaseOutcome:
         """Close the room's process and keep its session identity."""
@@ -740,10 +737,22 @@ class ACPClientAdapter(
             if self.config.inject_band_tools:
                 room.tools = tools
 
-        async with room.reservation, room.retained.use(prepare=bind_tools):
+        async with room.reservation, AsyncExitStack() as lease:
+            try:
+                await lease.enter_async_context(room.retained.use(prepare=bind_tools))
+            except TimeoutError:
+                await self._report_not_ready(room, tools)
+                raise
             if room.runtime is None:
                 raise RuntimeError(f"Room {room.room_id} has no ACP process")
             yield room.runtime
+
+    @staticmethod
+    async def _report_not_ready(room: ACPRoom, tools: AgentToolsProtocol) -> None:
+        """Fail the turn by name: the room's process did not start or stop
+        within the owner's bound, and recovery owns what is left of it."""
+        logger.warning("Room %s: ACP agent process not ready", room.room_id)
+        await tools.send_failure(AgentFailure(_PROVIDER, PROCESS_NOT_READY_ERROR))
 
     async def on_message(
         self,

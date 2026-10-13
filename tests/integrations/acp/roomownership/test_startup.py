@@ -9,6 +9,7 @@ from contextlib import AbstractAsyncContextManager
 import pytest
 
 from band.core.retention import RoomRetentionConfig
+from band.integrations.acp.client_adapter import PROCESS_NOT_READY_ERROR
 from tests.integrations.acp.acp_toolkit import (
     AcpSession,
     FakeACPAgent,
@@ -18,7 +19,6 @@ from tests.integrations.acp.acp_toolkit import (
     released,
 )
 from tests.integrations.acp.roomownership.kit import (
-    HUNG_START_TIMEOUT_S,
     SHORT_TRANSITION_S,
     TEST_GUARD_S,
     cursor,
@@ -36,10 +36,13 @@ class TestStartup:
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         agent.holds_next_initialize()
-        config = fake_agent_config(start_timeout_s=HUNG_START_TIMEOUT_S)
+        config = fake_agent_config(
+            retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S)
+        )
         async with acp_adapter(agent, config) as session:
-            with pytest.raises(TimeoutError, match="did not start"):
+            with pytest.raises(TimeoutError):
                 await session.send("hello")
+            assert session.last_reply.errors == [PROCESS_NOT_READY_ERROR]
 
             served = await session.send("again")
 
@@ -54,8 +57,8 @@ class TestStartup:
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
-        # Far above the bound below: the stop, not the start bound, frees it.
-        async with opened(agent, start_timeout_s=60) as session:
+        # The default start bound is far away: the stop, not the bound, frees it.
+        async with opened(agent) as session:
             first = asyncio.create_task(session.send("hello"))
             await starting.received.wait()
 
