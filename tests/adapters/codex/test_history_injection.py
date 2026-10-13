@@ -26,6 +26,7 @@ from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     agent_input,
     make_platform_message,
@@ -116,7 +117,7 @@ class TestHistoryInjection:
                 "content": "mapping",
                 "metadata": {
                     "codex_thread_id": "thr-existing",
-                    "codex_room_id": "room-1",
+                    "codex_room_id": ROOM_ID,
                 },
             },
             {
@@ -190,7 +191,7 @@ class TestHistoryInjection:
                 "message_type": "task",
                 "content": "task event",
                 "sender_name": "System",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": "room-1"},
+                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
             },
             {
                 "message_type": "tool_call",
@@ -262,7 +263,7 @@ class TestHistoryInjection:
             {
                 "message_type": "task",
                 "content": "mapping",
-                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": "room-1"},
+                "metadata": {"codex_thread_id": "thr-old", "codex_room_id": ROOM_ID},
             },
         ]
         raw_history.extend(
@@ -320,8 +321,8 @@ class TestHistoryInjection:
         await deliver_event(adapter, inp)
 
         # After injection, stashed data should be cleaned up
-        assert "room-1" not in adapter._raw_history_by_room
-        assert "room-1" not in adapter._needs_history_injection
+        assert ROOM_ID not in adapter._raw_history_by_room
+        assert ROOM_ID not in adapter._needs_history_injection
 
     @pytest.mark.asyncio
     async def test_auto_selected_model_error_propagates_without_retry(self) -> None:
@@ -343,7 +344,7 @@ class TestHistoryInjection:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
+        msg = make_platform_message(room_id=ROOM_ID, content="hello")
         with pytest.raises(CodexJsonRpcError, match="not available"):
             await deliver_message(
                 adapter,
@@ -353,7 +354,7 @@ class TestHistoryInjection:
                 None,
                 None,
                 is_session_bootstrap=False,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         assert fake_client.request_methods.count(CodexRequestMethod.TURN_START) == 1
@@ -374,7 +375,7 @@ class TestHistoryInjection:
         await adapter.on_started("Agent", "An agent")
         await start_room_process(adapter)
 
-        assert adapter._room_clients["room-1"].selected_model == "gpt-5.6-sol"
+        assert adapter._room_clients[ROOM_ID].selected_model == "gpt-5.6-sol"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:
@@ -398,7 +399,7 @@ class TestHistoryInjection:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
+        msg = make_platform_message(room_id=ROOM_ID, content="hello")
         with pytest.raises(CodexJsonRpcError, match="not available"):
             await deliver_message(
                 adapter,
@@ -408,7 +409,7 @@ class TestHistoryInjection:
                 None,
                 None,
                 is_session_bootstrap=False,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         assert CodexRequestMethod.MODEL_LIST not in fake_client.request_methods
@@ -426,7 +427,7 @@ class TestHistoryInjection:
         await adapter.on_started("Agent", "An agent")
         await start_room_process(adapter)
 
-        assert adapter._room_clients["room-1"].selected_model == OPENAI_MODEL
+        assert adapter._room_clients[ROOM_ID].selected_model == OPENAI_MODEL
 
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
@@ -438,7 +439,7 @@ class TestHistoryInjection:
         await adapter.on_started("Agent", "An agent")
         await start_room_process(adapter)
 
-        assert adapter._room_clients["room-1"].selected_model == OPENAI_MODEL
+        assert adapter._room_clients[ROOM_ID].selected_model == OPENAI_MODEL
 
     @pytest.mark.asyncio
     async def test_non_model_error_propagates(self) -> None:
@@ -453,7 +454,7 @@ class TestHistoryInjection:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
+        msg = make_platform_message(room_id=ROOM_ID, content="hello")
         with pytest.raises(CodexJsonRpcError, match="overloaded"):
             await deliver_message(
                 adapter,
@@ -463,7 +464,7 @@ class TestHistoryInjection:
                 None,
                 None,
                 is_session_bootstrap=False,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
     @pytest.mark.asyncio
@@ -512,7 +513,7 @@ class TestHistoryInjection:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="do something")
+        msg = make_platform_message(room_id=ROOM_ID, content="do something")
         with pytest.raises(TurnResultAlreadyReported):
             await deliver_message(
                 adapter,
@@ -522,7 +523,7 @@ class TestHistoryInjection:
                 None,
                 None,
                 is_session_bootstrap=False,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         error_events = events_of_type(tools, "error")
@@ -560,13 +561,13 @@ class TestHistoryInjection:
             ),
             key="tok-1",
         )
-        adapter._pending_approvals["room-1"] = registry
-        wire_codex_room(adapter, fake_client, "room-1")
-        adapter._room_threads["room-1"] = "thr-1"
+        adapter._pending_approvals[ROOM_ID] = registry
+        wire_codex_room(adapter, fake_client, ROOM_ID)
+        adapter._room_threads[ROOM_ID] = "thr-1"
 
-        await adapter.on_cleanup("room-1")
+        await adapter.on_cleanup(ROOM_ID)
 
-        assert "room-1" not in adapter._pending_approvals
+        assert ROOM_ID not in adapter._pending_approvals
         # The future should have been resolved (declined)
         assert fut.done()
 
@@ -607,7 +608,7 @@ class TestHistoryInjection:
             None,
             None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # The adapter should have responded to the tool call with success=False

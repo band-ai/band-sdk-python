@@ -160,12 +160,8 @@ class TestCodexTypes:
         assert key == ""
 
     def test_session_approval_key_empty_for_file_changes_without_paths(self) -> None:
-        """Session approval refuses fileChange requests that carry no paths.
-
-        Previously the bare method name was used, which turned a single
-        /approve-session into a blanket "approve every future file change"
-        switch.  We now require a path signature.
-        """
+        """A fileChange request without paths has no session key, so
+        /approve-session can't approve every future change."""
         adapter = CodexAdapter(config=CodexAdapterConfig())
         key = adapter._session_approval_key(
             "item/fileChange/requestApproval", {"reason": "update"}

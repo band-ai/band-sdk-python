@@ -7,8 +7,10 @@ import pytest
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -45,16 +47,7 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         plan_events = [
             e
@@ -91,16 +84,7 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         plan_events = [
             e
@@ -122,16 +106,7 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         lifecycle_events = [
             e
@@ -157,16 +132,7 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         # Now run /threads
         await deliver_message(
@@ -177,7 +143,7 @@ class TestPlanAndLifecycle:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         threads_msgs = [
@@ -187,7 +153,7 @@ class TestPlanAndLifecycle:
             or "active thread" in m["content"].lower()
         ]
         assert len(threads_msgs) >= 1
-        assert "room-1" in threads_msgs[0]["content"]
+        assert ROOM_ID in threads_msgs[0]["content"]
 
     @pytest.mark.asyncio
     async def test_thread_archive_clears_mapping(self) -> None:
@@ -200,17 +166,8 @@ class TestPlanAndLifecycle:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        assert "room-1" in adapter._room_threads
+        await send_bootstrap(adapter, tools=tools)
+        assert ROOM_ID in adapter._room_threads
 
         await deliver_message(
             adapter,
@@ -220,7 +177,7 @@ class TestPlanAndLifecycle:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
-        assert "room-1" not in adapter._room_threads
+        assert ROOM_ID not in adapter._room_threads
         assert any("archived" in m["content"].lower() for m in tools.messages_sent)

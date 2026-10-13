@@ -22,8 +22,10 @@ from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -46,18 +48,9 @@ class TestReviewFixes:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/sandbox workspace-write"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, content="/sandbox workspace-write", tools=tools)
 
-        assert "room-1" not in adapter._sandbox_overrides
+        assert ROOM_ID not in adapter._sandbox_overrides
         assert "Cannot override sandbox" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
@@ -71,20 +64,11 @@ class TestReviewFixes:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         # Seed raw history and injection flag
-        adapter._raw_history_by_room["room-1"] = [{"role": "user", "content": "hi"}]
-        adapter._needs_history_injection.add("room-1")
+        adapter._raw_history_by_room[ROOM_ID] = [{"role": "user", "content": "hi"}]
+        adapter._needs_history_injection.add(ROOM_ID)
 
         await deliver_message(
             adapter,
@@ -94,11 +78,11 @@ class TestReviewFixes:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
-        assert "room-1" not in adapter._raw_history_by_room
-        assert "room-1" not in adapter._needs_history_injection
+        assert ROOM_ID not in adapter._raw_history_by_room
+        assert ROOM_ID not in adapter._needs_history_injection
 
     def test_token_usage_update_handles_zero_values(self) -> None:
         """CodexTokenUsage.update() correctly handles explicit zero values."""
@@ -143,16 +127,7 @@ class TestReviewFixes:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with pytest.raises(TurnResultAlreadyReported):
-            await deliver_message(
-                adapter,
-                make_platform_message(),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-1",
-            )
+            await send_bootstrap(adapter, tools=tools)
         failures = reported_failures(tools)
         assert len(failures) == 1
         assert failures[0]["provider"] == "codex"
@@ -174,16 +149,7 @@ class TestReviewFixes:
         await adapter.on_started("Agent", "A coding agent")
 
         with pytest.raises(CodexJsonRpcError, match="model unavailable"):
-            await deliver_message(
-                adapter,
-                make_platform_message(),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-1",
-            )
+            await send_bootstrap(adapter, tools=tools)
 
         failures = reported_failures(tools)
         assert len(failures) == 1
@@ -209,16 +175,7 @@ class TestReviewFixes:
         await adapter.on_started("Agent", "A coding agent")
 
         with pytest.raises(TurnResultAlreadyReported):
-            await deliver_message(
-                adapter,
-                make_platform_message(),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-1",
-            )
+            await send_bootstrap(adapter, tools=tools)
 
         lifecycle_events = [
             event

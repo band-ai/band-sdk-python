@@ -229,13 +229,14 @@ async def send_bootstrap(
     adapter: CodexAdapter,
     *,
     room_id: str = ROOM_ID,
+    content: str = "hello",
     tools: FakeAgentTools | None = None,
     history: CodexSessionState | None = None,
 ) -> None:
     """Deliver a room's session-bootstrap message to ``adapter``."""
     await deliver_message(
         adapter,
-        make_platform_message(room_id=room_id),
+        make_platform_message(room_id=room_id, content=content),
         tools if tools is not None else ToolSchemaFakeTools(),
         history or CodexSessionState(),
         participants_msg=None,

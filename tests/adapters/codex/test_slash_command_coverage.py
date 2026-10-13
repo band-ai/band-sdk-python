@@ -11,8 +11,10 @@ from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from band.testing import reported_failures
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -31,16 +33,7 @@ class TestSlashCommandCoverage:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/thread info"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, content="/thread info", tools=tools)
 
         assert tools.messages_sent
         assert "No thread mapped" in tools.messages_sent[-1]["content"]
@@ -67,16 +60,7 @@ class TestSlashCommandCoverage:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
         await deliver_message(
             adapter,
             make_platform_message(content="/thread info"),
@@ -85,7 +69,7 @@ class TestSlashCommandCoverage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         info_msgs = [m for m in tools.messages_sent if "Thread info:" in m["content"]]
@@ -102,16 +86,7 @@ class TestSlashCommandCoverage:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/sandbox read-only"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, content="/sandbox read-only", tools=tools)
         await deliver_message(
             adapter,
             make_platform_message(content="/permissions"),
@@ -120,7 +95,7 @@ class TestSlashCommandCoverage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         perm_msgs = [
@@ -154,16 +129,7 @@ class TestSlashCommandCoverage:
             caplog.at_level(logging.ERROR, logger="band.core.delivery"),
             pytest.raises(RuntimeError, match="platform rejected the message"),
         ):
-            await deliver_message(
-                adapter,
-                make_platform_message(content="/help"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-1",
-            )
+            await send_bootstrap(adapter, content="/help", tools=tools)
 
         assert not tools.messages_sent
         assert not reported_failures(tools)
@@ -194,16 +160,7 @@ class TestSlashCommandCoverage:
             caplog.at_level(logging.ERROR, logger="band.core.delivery"),
             pytest.raises(RuntimeError, match="platform rejected the message"),
         ):
-            await deliver_message(
-                adapter,
-                make_platform_message(content="/approvals"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-1",
-            )
+            await send_bootstrap(adapter, content="/approvals", tools=tools)
 
         assert not tools.messages_sent
         assert not reported_failures(tools)

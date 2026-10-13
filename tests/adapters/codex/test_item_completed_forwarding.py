@@ -8,12 +8,12 @@ import pytest
 
 from band.adapters.codex import CodexAdapterConfig
 from band.core.types import Emit
-from band.integrations.codex.types import CodexSessionState
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
-    make_platform_message,
     run_codex_turn,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -22,7 +22,6 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestItemCompletedForwarding:
@@ -61,16 +60,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
         assert call_data["name"] == "mcp:band/band_send_room_file"
@@ -107,16 +97,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         tool_result_events = events_of_type(tools, "tool_result")
@@ -162,16 +143,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         tool_result_events = events_of_type(tools, "tool_result")
@@ -209,16 +181,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
@@ -250,16 +213,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         tool_result_events = events_of_type(tools, "tool_result")
@@ -296,16 +250,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         tool_result_events = events_of_type(tools, "tool_result")
@@ -344,16 +289,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_result_events) == 1
@@ -386,16 +322,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         tool_result_events = events_of_type(tools, "tool_result")
@@ -443,16 +370,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_result_events) == 1
@@ -512,16 +430,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         thought_events = events_of_type(tools, "thought")
         assert len(thought_events) == 1
@@ -554,16 +463,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         thought_events = events_of_type(tools, "thought")
         assert len(thought_events) == 1
@@ -613,16 +513,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         thought_events = events_of_type(tools, "thought")
         assert thought_events == []
@@ -648,16 +539,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         thought_events = events_of_type(tools, "thought")
         assert thought_events == []
@@ -696,16 +578,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_events = [
             e
@@ -749,16 +622,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         # agentMessage text should still be sent as the final message
         assert tools.messages_sent == []
@@ -792,16 +656,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
@@ -833,16 +688,7 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_result_events) == 1
@@ -873,20 +719,11 @@ class TestItemCompletedForwarding:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         meta = tool_call_events[0]["metadata"]
-        assert meta["codex_room_id"] == "room-1"
+        assert meta["codex_room_id"] == ROOM_ID
         assert meta["codex_thread_id"] == "thr-1"
         assert meta["codex_turn_id"] == "turn-1"
