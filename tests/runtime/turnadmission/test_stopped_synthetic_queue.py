@@ -58,7 +58,7 @@ class TestStoppedSyntheticQueue:
         await adapter.entered.wait()
         stop_room(ctx, platform)
 
-        # A handler STOP failed to cancel stays held, so the turn never settles.
+        # Settling proves STOP cancelled the held handler; an uncancelled one never settles.
         await wait_for_condition(lambda: turn_settled(ctx))
         assert queued_synthetic(ctx) == ["local-A", "local-B"]
 

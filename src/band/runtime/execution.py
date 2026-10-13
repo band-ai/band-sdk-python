@@ -789,7 +789,7 @@ class ExecutionContext:
             return None
         if revision != self._control_revision:
             logger.debug(
-                "ExecutionContext %s: control arrived before the turn began; deferring",
+                "ExecutionContext %s: control changed while admitting the turn; deferring",
                 self.room_id,
             )
             return None
