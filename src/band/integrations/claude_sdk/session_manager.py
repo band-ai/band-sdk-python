@@ -105,6 +105,16 @@ class TurnStream:
             raise item.error
 
 
+def _start_failure(error: Exception) -> BaseException:
+    """The failure a start reports when its close was refused too.
+
+    ``ClaudeSDKClient.connect`` closes the CLI before re-raising a failed
+    start, so a refused close raises in its place with the start's own
+    failure as its context.
+    """
+    return error.__context__ if isinstance(error.__context__, Exception) else error
+
+
 class ClaudeRoomSession:
     """A room's Claude CLI session and everything it keeps until closure.
 
@@ -266,13 +276,28 @@ class ClaudeRoomSession:
         self.client, self.transport = client, transport
         try:
             await client.connect()
-        except Exception:
-            await self._close()
-            raise
+        except Exception as error:
+            if await self._closed_failed_start():
+                raise
+            raise _start_failure(error)
         self._reader = asyncio.create_task(self._read(client, generation))
         logger.info(
             "Room %s: Claude session started (resume=%s)", self.room_id, options.resume
         )
+
+    async def _closed_failed_start(self) -> bool:
+        """Close a CLI whose start failed; return whether it closed. A refused
+        close keeps the handles for recovery to retry."""
+        try:
+            await self._close()
+        except Exception:
+            logger.warning(
+                "Room %s: closing a failed Claude start failed; recovery retries it",
+                self.room_id,
+                exc_info=True,
+            )
+            return False
+        return True
 
     async def _close(self) -> None:
         """Close the retained CLI; a failure keeps every handle for a retry."""

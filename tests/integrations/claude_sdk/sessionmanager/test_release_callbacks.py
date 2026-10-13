@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from claude_agent_sdk import CLIConnectionError
 
 from band.core.retention import ReleaseCause, ReleaseOutcome
 from tests.adapters.claude_sdk.fakecli import FakeClaude
@@ -23,7 +24,7 @@ class TestReleaseCallbacks:
         session = manager.room("room-a")
         claude.refuse_connect = claude.refuse_close = True
 
-        with pytest.raises(RuntimeError, match="cleanup failed"):
+        with pytest.raises(CLIConnectionError, match="exited during startup"):
             await exchange(session, "hi")
         claude.refuse_connect = False
         with pytest.raises(RuntimeError, match="cleanup failed"):

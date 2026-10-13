@@ -80,7 +80,7 @@ class TestResumePolicy:
         claude.unresumable.add("sess-gone")
         claude.refuse_close = True
 
-        with pytest.raises(RuntimeError, match="cleanup failed"):
+        with pytest.raises(CLIConnectionError, match="exited during startup"):
             await exchange(session, "hi")
         [cli] = claude.sessions
         held = (manager.has_session("room-a"), session.session_id)

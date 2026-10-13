@@ -38,8 +38,7 @@ async def test_pre_query_startup_failure_reaps_real_child(
         workspaces=RoomWorkspaces(lambda _: str(tmp_path / "shared")),
     )
     try:
-        expected_error = RuntimeError if cleanup_fails else ValueError
-        with pytest.raises(expected_error):
+        with pytest.raises(ValueError, match="invalid literal"):
             await start(manager, "room-a")
         assert len(children) == 1
         if cleanup_fails:

@@ -98,16 +98,14 @@ class LifecycleProfile:
     ``install`` builds the adapter on its production config with retention
     disabled, routing every child it starts through ``RetentionHost.spawned``.
     ``lost_turn`` is the error a turn whose transport is lost fails with, and
-    ``failed_start`` what a turn whose start the peer refused reports.
-    ``failed_start_closing_refused`` is what that turn reports when the
-    failed start's close is refused too; ``None`` means ``failed_start``.
+    ``failed_start`` what a turn whose start the peer refused reports, even
+    when that failed start's close is refused too.
     """
 
     name: str
     install: Callable[[RetentionHost, pytest.MonkeyPatch], LifecycleBridge]
     lost_turn: type[BaseException]
     failed_start: ExpectedFailure
-    failed_start_closing_refused: ExpectedFailure | None = None
 
 
 @dataclass
@@ -145,10 +143,6 @@ class RetentionHost:
     @property
     def failed_start(self) -> ExpectedFailure:
         return self.profile.failed_start
-
-    @property
-    def failed_start_closing_refused(self) -> ExpectedFailure:
-        return self.profile.failed_start_closing_refused or self.failed_start
 
     def workspace(self, room_id: str) -> str:
         return str(self.root / ("shared" if self.shared else room_id))

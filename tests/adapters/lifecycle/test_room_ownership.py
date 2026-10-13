@@ -172,7 +172,7 @@ class TestRoomOwnership:
         await host.start_reached("room-a")
         host.children[0].refuse_close = True
         host.hold_startup.unlink()
-        with raises_exactly(host.failed_start_closing_refused):
+        with raises_exactly(host.failed_start):
             await opening
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))
