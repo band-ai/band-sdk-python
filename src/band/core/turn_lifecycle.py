@@ -10,6 +10,7 @@ is the remote half: it stops the turn an external backend is still running.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.retention import task_failure
 from band.core.retention.cleanup import spawn_owned
+
+logger = logging.getLogger(__name__)
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
 # How long one backend cancel call may run before it is abandoned.
@@ -176,8 +179,10 @@ class BackendTurns(Generic[H]):
       before its own cleanup.
     - Where the backend is acquired before the owning task enters ``running``,
       the adapter awaits ``settled`` first.
-    - The handle carries everything the cancel needs; the cancel reads no
-      ambient context.
+    - Where the call that starts the turn also reveals its handle, the owner
+      awaits it through ``started``, so a stop asked for mid-call still lands.
+    - The handle carries the turn's own state the cancel needs; the cancel
+      never reads per-turn ambient context such as a ``ContextVar``.
     """
 
     def __init__(
@@ -204,6 +209,34 @@ class BackendTurns(Generic[H]):
         finally:
             if self._turns.get(room_id) is turn:
                 del self._turns[room_id]
+            if (
+                turn.stop_requested
+                and turn.handle is None
+                and not self.stopping(room_id)
+            ):
+                logger.info(
+                    "%s turn in room %s ended before its backend revealed it; "
+                    "no backend stop was sent",
+                    self._provider,
+                    room_id,
+                )
+
+    async def started(self, room_id: str, start: Awaitable[H | None]) -> H | None:
+        """Await the call that starts the room's backend turn and bind the
+        handle it reveals.
+
+        The call outlives a cancelled owner, so a turn the backend already
+        accepted is still stopped once its handle arrives.
+        """
+        call = asyncio.ensure_future(start)
+        try:
+            handle = await asyncio.shield(call)
+        except asyncio.CancelledError:
+            self._spawn_stop(room_id, self._stop_when_started(call))
+            raise
+        if handle is not None:
+            self.bind(room_id, handle)
+        return handle
 
     def bind(self, room_id: str, handle: H) -> None:
         """Attach the handle the backend revealed; a stop already asked for runs now."""
@@ -244,8 +277,19 @@ class BackendTurns(Generic[H]):
             await asyncio.wait(set(self._stopping.values()))
 
     def _stop(self, room_id: str, handle: H) -> None:
+        self._spawn_stop(room_id, self._cancel(handle))
+
+    async def _stop_when_started(self, call: asyncio.Future[H | None]) -> None:
+        try:
+            handle = await call
+        except Exception:  # noqa: BLE001 -- a start that failed left no turn to stop
+            return
+        if handle is not None:
+            await self._cancel(handle)
+
+    def _spawn_stop(self, room_id: str, stop: Awaitable[None]) -> None:
         task = spawn_owned(
-            asyncio.wait_for(self._cancel(handle), BACKEND_CANCEL_TIMEOUT_SECONDS),
+            asyncio.wait_for(stop, BACKEND_CANCEL_TIMEOUT_SECONDS),
             label=(
                 f"{self._provider} backend stop for room {room_id} "
                 f"(limit {BACKEND_CANCEL_TIMEOUT_SECONDS}s)"

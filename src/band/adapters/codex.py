@@ -1033,19 +1033,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 # turn/interrupt is what stops the app-server's turn; cancelling
                 # this worker alone leaves it running.
                 async with self.backend_turns.running(room_id):
-                    turn_started = await self._start_turn(turn_params)
+                    started = await self.backend_turns.started(
+                        room_id, self._start_turn(thread_id, turn_params)
+                    )
                     if has_pending_prompt_injection:
                         self._prompt_injected_rooms.add(room_id)
-                    turn = (
-                        turn_started.get("turn")
-                        if isinstance(turn_started, dict)
-                        else {}
-                    )
-                    turn_id = str((turn or {}).get("id") or "")
-                    if turn_id:
-                        self.backend_turns.bind(
-                            room_id, CodexTurn(self._client, thread_id, turn_id)
-                        )
+                    turn_id = started.turn_id if started is not None else ""
 
                     if (
                         Emit.TASK_EVENTS in self.features.emit
@@ -3583,10 +3576,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             {"threadId": turn.thread_id, "turnId": turn.turn_id},
         )
 
-    async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
-        if self._client is None:
+    async def _start_turn(
+        self, thread_id: str, params: dict[str, Any]
+    ) -> CodexTurn | None:
+        """Start the app-server turn; None when the server names no turn id."""
+        if (client := self._client) is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        return await self._client.request(CodexRequestMethod.TURN_START, params)
+        started = await client.request(CodexRequestMethod.TURN_START, params)
+        turn = started.get("turn") if isinstance(started, dict) else {}
+        turn_id = str((turn or {}).get("id") or "")
+        return CodexTurn(client, thread_id, turn_id) if turn_id else None
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None

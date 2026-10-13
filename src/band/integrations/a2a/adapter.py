@@ -199,11 +199,18 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         # Convert Band message to A2A format
         a2a_message = self._to_a2a_message(msg, room_id)
+        # A continued task is known before the remote answers; a new one only
+        # once its first task event arrives.
+        continued = (
+            A2ATaskRun(self._client, room_id, a2a_message.task_id)
+            if a2a_message.task_id
+            else None
+        )
 
         try:
             # Send to remote A2A agent and process events. A task paused on
             # INPUT_REQUIRED ends the stream normally and stays for the next turn.
-            async with self.backend_turns.running(room_id):
+            async with self.backend_turns.running(room_id, continued):
                 async for event in self._client.send_message(
                     SendMessageRequest(message=a2a_message)
                 ):
