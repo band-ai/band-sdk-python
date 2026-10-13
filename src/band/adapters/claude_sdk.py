@@ -884,10 +884,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # nothing needs a human, the turn finishes before release fires.
         loop = asyncio.get_running_loop()
         release_future: asyncio.Future[None] = loop.create_future()
-        # An eager task factory runs the turn before create_task returns.
+        # The turn's own TurnTask exists only once its task does.
         owner_ready: asyncio.Future[TurnTask] = loop.create_future()
-        turn_task = asyncio.create_task(
-            self._run_turn(
+        turn_task = session.retained.start_owned(
+            partial(
+                self._run_turn,
                 owner_ready,
                 session,
                 tools,
@@ -897,7 +898,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 resume_from=history.session_id if is_session_bootstrap else None,
             )
         )
-        session.retained.own(turn_task)
         self._turn_release[room_id] = release_future
         self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn_task)
         owner_ready.set_result(owner)
