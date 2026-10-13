@@ -668,7 +668,7 @@ class ACPClientAdapter(
             # An unanswered set may have left a dead connection the runtime
             # never replaces; only a fresh runtime lets the next turn retry.
             if isinstance(error, ACPConfigUnreachableError):
-                await self.on_cleanup(room_id, expected_runtime=runtime)
+                await self._teardown_room(room_id, expected_runtime=runtime)
             await self._report_config_error(tools, error)
             return
         runtime.reset_session(session_id)
@@ -771,7 +771,7 @@ class ACPClientAdapter(
             raise
         except Exception as e:
             logger.exception("ACP agent error")
-            await self.on_cleanup(room_id)
+            await self._teardown_room(room_id)
             await tools.send_failure(_to_agent_failure(e))
             raise
 
@@ -791,7 +791,7 @@ class ACPClientAdapter(
             session_id,
         )
         await self._cancel_agent_turn(runtime, room_id=room_id, session_id=session_id)
-        await self.on_cleanup(room_id)
+        await self._teardown_room(room_id)
         await tools.send_failure(
             AgentFailure(
                 _PROVIDER,
@@ -1498,6 +1498,17 @@ class ACPClientAdapter(
     async def on_cleanup(
         self, room_id: str, *, expected_runtime: ACPRuntime | None = None
     ) -> None:
+        await self._teardown_room(room_id, expected_runtime=expected_runtime)
+
+    async def _teardown_room(
+        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
+    ) -> None:
+        """Release the room's runtime and session.
+
+        The turn's own error and timeout paths call this directly, so it must
+        never wait on the turn that is running them; ``on_cleanup`` is the
+        external entry point.
+        """
         async with self._session_lock:
             if (
                 expected_runtime is not None
