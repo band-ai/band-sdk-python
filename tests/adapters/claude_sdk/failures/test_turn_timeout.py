@@ -88,7 +88,7 @@ async def test_a_timeout_from_the_cli_stream_is_an_ordinary_failure(
         [room.model_reply("Back on a fresh process.")],
     )
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TurnResultAlreadyReported, match="read timed out"):
         await room.send("first")
     await room.send("second")
 

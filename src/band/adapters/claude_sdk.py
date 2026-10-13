@@ -1072,15 +1072,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
-            raise
+            raise TurnResultAlreadyReported(str(e)) from e
 
-        except Exception:
+        except Exception as e:
             logger.exception("Error processing message")
             session.recover("Turn failed before its result")
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
-            raise
+            raise TurnResultAlreadyReported(str(e)) from e
 
         except asyncio.CancelledError:
             session.recover("Turn cancelled before its result")

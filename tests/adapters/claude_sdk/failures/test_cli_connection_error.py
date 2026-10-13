@@ -6,9 +6,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 import pytest
-from claude_agent_sdk import CLIConnectionError
 
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from tests.adapters.claude_sdk.fakecli import Hangup
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
 from tests.baseline.decisions import ModelDecision
@@ -34,7 +36,7 @@ async def test_a_cli_that_dies_mid_turn_fails_only_an_unanswered_turn(
     )
 
     await room.send("first")
-    with pytest.raises(CLIConnectionError, match="ended without a result"):
+    with pytest.raises(TurnResultAlreadyReported, match="ended without a result"):
         await room.send("second")
     await room.send("third")
 
@@ -57,7 +59,7 @@ async def test_a_cli_that_died_while_idle_is_replaced_on_the_next_message(
 
     await room.send("hi")
     room.claude.sessions[-1].die()
-    with pytest.raises(CLIConnectionError):
+    with pytest.raises(TurnResultAlreadyReported):
         await room.send("are you there?")
     await room.send("hi again")
 
