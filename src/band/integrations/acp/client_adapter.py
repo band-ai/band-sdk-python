@@ -649,9 +649,12 @@ class ACPClientAdapter(
         return self._profile
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        # Agent.start() reuses this instance after cleanup_all().
+        # Agent.start() reuses this instance after cleanup_all(); a stop is
+        # terminal for its owner and MCP server, so only a start reopens them.
         if self._retention.stopping:
-            await self.cleanup_all(final=False)
+            await self.cleanup_all()
+        self._retention = self._retention.renewed()
+        await self._mcp.reopen()
         await super().on_started(agent_name, agent_description)
 
     def _room(self, room_id: str) -> ACPRoom:
@@ -1618,19 +1621,14 @@ class ACPClientAdapter(
             await room.retained.dispose()
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
-    async def cleanup_all(self, *, final: bool = True) -> None:
+    async def cleanup_all(self) -> None:
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
         Disposes every room, then stops the shared Band MCP server, within one
         ``retention.transition_timeout_s`` budget. Anything unfinished stays
         owned and the next call resumes it. The MCP server stops only after
-        every room's process closed.
-
-        ``final`` distinguishes real process shutdown (the default: no future turn
-        can arrive, so a still-parked one must fail rather than start resources
-        nothing will ever stop) from a teardown after which later turns start
-        afresh. Both close the MCP server the same way; ``final=False`` reopens
-        it, and the residency owner, only once that close is confirmed.
+        every room's process closed. Later turns are refused until
+        ``on_started`` serves again.
 
         Raises:
             CleanupIncompleteError: A room or the MCP server is still closing.
@@ -1638,14 +1636,11 @@ class ACPClientAdapter(
         await self._mcp.close_after(
             self._retention.stop(), retention=self.config.retention
         )
-        if not final:
-            await self._mcp.reopen()
-            self._retention = self._retention.renewed()
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:
-        """Tear down every room and the MCP server; later turns start afresh."""
-        await self.cleanup_all(final=False)
+        """Tear down every room and the MCP server, as ``cleanup_all`` does."""
+        await self.cleanup_all()
 
     async def _fetch_replay(
         self,

@@ -34,14 +34,14 @@ class TestACPClientAdapterShutdown:
     async def test_restart_after_a_full_stop_allows_backend_creation(self) -> None:
         """Agent.start() reuses the same adapter instance across a
         stop()-then-start() restart (and across a retry after a failed
-        start -- both go through cleanup_all's final=True default). Rooms and
+        start). Rooms and
         the MCP backend must serve again, or a perfectly healthy restarted
         adapter can never answer or call a Band tool again."""
         agent = FakeACPAgent().will_say("ok")
         async with acp_adapter(agent) as session:
             await session.send("before the restart")
 
-            await session.adapter.cleanup_all()  # Agent.stop(), final=True
+            await session.adapter.cleanup_all()  # Agent.stop()
             await session.adapter.on_started("Codex", "bridge")  # Agent.start()
 
             with backends_created_by() as starts:

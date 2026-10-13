@@ -142,11 +142,12 @@ it, so the room's next message gets a new process.
   `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
   inherited it keeps the room closing until it exits, with a warning naming the
   agent's pid. A failed or cancelled exit leaves the room owned, and a retry kills
-  and waits for the same process. Final cleanup and a direct `stop()` share one
+  and waits for the same process. `cleanup_all()` and its alias `stop()` share one
   `transition_timeout_s` budget across the rooms and the shared Band MCP server,
   and keep that server open while any room is still held. A cancelled, failed or
-  overdue server close stays owned and a retry joins it; `stop()` lets later turns
-  start afresh only after the close is confirmed.
+  overdue server close stays owned and a retry joins it. A stop is final: later
+  turns are refused until `on_started` (an `Agent.start()`) finishes it and serves
+  again.
 - **Idle release stays off.** OMP, Cursor and Copilot report `ProviderActivity.UNKNOWN`,
   so an idle release always answers BUSY. Native qualification is still owed: OMP
   background jobs (including suppressed or acknowledged work), Cursor work beyond

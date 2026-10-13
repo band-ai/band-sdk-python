@@ -156,6 +156,11 @@ async def stop(session: AcpSession, handler: asyncio.Task[Reply]) -> None:
         await handler
 
 
+async def restart(session: AcpSession) -> None:
+    """Start the adapter again, as ``Agent.start()`` does after a stop."""
+    await session.adapter.on_started("Fake Agent", "in-process fake")
+
+
 def answered(option: str) -> dict[str, object]:
     return {
         "outcome": {

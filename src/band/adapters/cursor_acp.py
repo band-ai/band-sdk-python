@@ -452,9 +452,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             _cancel(turn)
         self._cancel_room_decisions(room_id)
 
-    async def cleanup_all(self, *, final: bool = True) -> None:
+    async def cleanup_all(self) -> None:
         self._cancel_all_decisions()
-        await super().cleanup_all(final=final)
+        await super().cleanup_all()
 
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest

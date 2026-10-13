@@ -15,7 +15,7 @@ from band.integrations.mcp import BandMCPTransport
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from tests.integrations.acp.clientadapter.kit import CODEX
 from tests.integrations.acp.conftest import make_platform_message
-from tests.mcpbackends import backends_created_by, hold_backend
+from tests.mcpbackends import backends_created_by
 from tests.mcpclient import endpoint_path
 
 
@@ -72,22 +72,6 @@ class TestACPClientAdapterLocalMcpConfig:
             )
 
         assert first.url == second.url
-        assert len(starts.requested) == 1
-
-    @pytest.mark.asyncio
-    async def test_turn_recovery_stop_allows_backend_recreation(self) -> None:
-        """The on_message error path's ``stop()`` tears down to recover a wedged
-        turn, not to end the adapter -- a later turn on any room must still be
-        able to self-heal by starting a fresh backend."""
-        adapter = ACPClientAdapter(CODEX)
-        stopped = await hold_backend(adapter._mcp)
-
-        await adapter.stop()  # the on_message except-handler's call, not shutdown
-
-        with backends_created_by() as starts:
-            recreated = await adapter._mcp.ensure()
-
-        assert recreated is not stopped
         assert len(starts.requested) == 1
 
     async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
