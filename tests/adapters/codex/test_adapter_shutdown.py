@@ -4,12 +4,14 @@ stays closed until an explicit restart confirms it."""
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
 from band.core.exceptions import CleanupIncompleteError
 from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
+    CLOSE_FAILURE,
     HELD_ROOM,
     NEW_ROOM,
     TwoRooms,
@@ -17,6 +19,13 @@ from tests.adapters.codex.kit import (
     send_bootstrap,
     start_room_process,
 )
+
+
+def failed_close() -> pytest.RaisesGroup[RuntimeError]:
+    """Expect shutdown to raise the held room's refused close, and only that."""
+    return pytest.RaisesGroup(
+        pytest.RaisesExc(RuntimeError, match=re.escape(CLOSE_FAILURE))
+    )
 
 
 class TestAdapterShutdown:
@@ -93,9 +102,9 @@ class TestAdapterShutdown:
     ) -> None:
         await two_rooms.finish()
         two_rooms.held.refuse_close = True
-        with pytest.raises(ExceptionGroup):
+        with failed_close():
             await two_rooms.adapter.cleanup_all()
-        with pytest.raises(ExceptionGroup):
+        with failed_close():
             await two_rooms.adapter.on_started("Codex Agent", "Close still fails")
         assert await refused(send_bootstrap(two_rooms.adapter, room_id=NEW_ROOM))
         assert (two_rooms.held.starts, two_rooms.held.closes) == (1, 2)

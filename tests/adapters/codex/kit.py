@@ -537,6 +537,10 @@ class RefusalFailsClient(FakeCodexClient):
         raise ConnectionResetError("Connection lost")
 
 
+#: Why a CountingCloseClient refuses to close.
+CLOSE_FAILURE = "Codex process close failed"
+
+
 class CountingCloseClient(FakeCodexClient):
     """Counts process starts and physical closes, optionally holding each
     close open or refusing it."""
@@ -561,7 +565,7 @@ class CountingCloseClient(FakeCodexClient):
         self.closing.set()
         await self.finish_close.wait()
         if self.refuse_close:
-            raise RuntimeError("Codex process close failed")
+            raise RuntimeError(CLOSE_FAILURE)
         await super().close()
         self.close_finished.set()
 
