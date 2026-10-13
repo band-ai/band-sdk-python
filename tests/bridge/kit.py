@@ -81,9 +81,12 @@ def make_participant_added_event(
     )
 
 
+AGENT_ID = "agent-1"
+
+
 def build_runner(
     *,
-    agent_id: str = "agent-1",
+    agent_id: str = AGENT_ID,
     forwarder: Forwarder | None = None,
     link: MagicMock | None = None,
     shutdown_event: asyncio.Event | None = None,

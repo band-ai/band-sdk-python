@@ -24,7 +24,8 @@ from band.core.retention.cleanup import spawn_owned
 logger = logging.getLogger(__name__)
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
-# How long one backend cancel call may run before it is abandoned.
+# How long one backend stop may run, including any wait for the start call
+# whose turn it stops, before it is abandoned.
 BACKEND_CANCEL_TIMEOUT_SECONDS = 5.0
 
 H = TypeVar("H")
@@ -232,7 +233,7 @@ class BackendTurns(Generic[H]):
         try:
             handle = await asyncio.shield(call)
         except asyncio.CancelledError:
-            self._spawn_stop(room_id, self._stop_when_started(call))
+            self._spawn_stop(room_id, self._stop_when_started(room_id, call))
             raise
         if handle is not None:
             self.bind(room_id, handle)
@@ -279,10 +280,18 @@ class BackendTurns(Generic[H]):
     def _stop(self, room_id: str, handle: H) -> None:
         self._spawn_stop(room_id, self._cancel(handle))
 
-    async def _stop_when_started(self, call: asyncio.Future[H | None]) -> None:
+    async def _stop_when_started(
+        self, room_id: str, call: asyncio.Future[H | None]
+    ) -> None:
         try:
             handle = await call
-        except Exception:  # noqa: BLE001 -- a start that failed left no turn to stop
+        except Exception as error:  # noqa: BLE001 -- a start that failed left no turn to stop
+            logger.debug(
+                "%s turn start in room %s failed after its turn was stopped: %r",
+                self._provider,
+                room_id,
+                error,
+            )
             return
         if handle is not None:
             await self._cancel(handle)

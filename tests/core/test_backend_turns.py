@@ -13,6 +13,7 @@ from tests.core.recordingcancel import RecordingCancel
 ROOM = "room-1"
 OTHER_ROOM = "room-2"
 HANDLE = "turn-1"
+LIFECYCLE_LOGGER = "band.core.turn_lifecycle"
 
 
 class TestBackendTurns:
@@ -61,20 +62,27 @@ class TestBackendTurns:
 
         assert cancel.sent == [HANDLE]
 
-    async def test_a_turn_cancelled_while_it_starts_is_stopped_once_it_starts(
-        self, turns: BackendTurns[str], cancel: RecordingCancel
+    @staticmethod
+    async def cancel_while_starting(
+        turns: BackendTurns[str], start: asyncio.Future[str]
     ) -> None:
-        accepted = asyncio.get_running_loop().create_future()
+        """Cancel a turn whose owner is still awaiting ``start``."""
 
         async def turn() -> None:
             async with turns.running(ROOM):
-                await turns.started(ROOM, accepted)
+                await turns.started(ROOM, start)
 
         task = asyncio.create_task(turn())
         await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+    async def test_a_turn_cancelled_while_it_starts_is_stopped_once_it_starts(
+        self, turns: BackendTurns[str], cancel: RecordingCancel
+    ) -> None:
+        accepted = asyncio.get_running_loop().create_future()
+        await self.cancel_while_starting(turns, accepted)
         assert cancel.sent == []
         accepted.set_result(HANDLE)
         await turns.drain()
@@ -88,16 +96,7 @@ class TestBackendTurns:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         refused = asyncio.get_running_loop().create_future()
-
-        async def turn() -> None:
-            async with turns.running(ROOM):
-                await turns.started(ROOM, refused)
-
-        task = asyncio.create_task(turn())
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        await self.cancel_while_starting(turns, refused)
         with caplog.at_level(logging.WARNING):
             refused.set_exception(RuntimeError("turn refused"))
             await turns.drain()
@@ -111,13 +110,16 @@ class TestBackendTurns:
         cancel: RecordingCancel,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        with caplog.at_level(logging.INFO):
+        with caplog.at_level(logging.INFO, logger=LIFECYCLE_LOGGER):
             async with turns.running(ROOM):
                 turns.cancel(ROOM)
 
         assert cancel.sent == []
-        assert [(r.levelno, ROOM in r.getMessage()) for r in caplog.records] == [
-            (logging.INFO, True)
+        assert [r.getMessage() for r in caplog.records] == [
+            (
+                f"test turn in room {ROOM} ended before its backend revealed it; "
+                "no backend stop was sent"
+            )
         ]
 
     async def test_cancel_returns_while_the_backend_call_is_in_flight(
@@ -186,10 +188,9 @@ class TestBackendTurns:
 
         assert loop.time() - started == BACKEND_CANCEL_TIMEOUT_SECONDS
         assert cancel.finished == []
-        assert [
-            (r.levelno, r.getMessage().endswith("TimeoutError()"))
-            for r in caplog.records
-        ] == [(logging.WARNING, True)]
+        assert [(r.levelno, r.exc_info and r.exc_info[0]) for r in caplog.records] == [
+            (logging.WARNING, TimeoutError)
+        ]
 
     @pytest.mark.parametrize("ending", [TimeoutError, RuntimeError, None])
     async def test_a_turn_that_ends_itself_sends_nothing(

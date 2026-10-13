@@ -8,6 +8,7 @@ import logging
 import pytest
 
 from tests.bridge.kit import (
+    AGENT_ID,
     MultiRoomHangingForwarder,
     make_platform_message,
     rehydrating_runner,
@@ -39,4 +40,4 @@ class TestFailedRehydrationNudge:
             record.getMessage()
             for record in caplog.records
             if record.levelno == logging.ERROR
-        ] == [f"Agent agent-1: rehydration nudge for room {FAILING_ROOM} failed"]
+        ] == [f"Agent {AGENT_ID}: rehydration nudge for room {FAILING_ROOM} failed"]
