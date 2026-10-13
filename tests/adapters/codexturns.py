@@ -15,6 +15,7 @@ from typing import Any
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.integrations.codex import TRANSPORT_CLOSED, CodexRequestMethod, RpcEvent
+from tests.adapters.waiting import until
 
 
 class RecordedRequests:
@@ -47,9 +48,6 @@ async def await_released_turn(
         await asyncio.wait_for(asyncio.shield(turn.task), timeout=timeout_s)
 
 
-# Ready work settles within a few loop turns; this bounds a wait for work
-# that never would.
-MAX_LOOP_POLLS = 200
 #: The model FakeCodexClient's model/list offers.
 LISTED_MODEL = "gpt-5.5"
 #: The id of the first thread a FakeCodexClient starts.
@@ -194,11 +192,15 @@ class FakeCodexClient(RecordedRequests):
         The reader routes an event in the same step that takes it, so this
         also means every taken event has been routed.
         """
-        for _ in range(MAX_LOOP_POLLS):
-            if not self._released:
-                return
-            await asyncio.sleep(0)
-        raise AssertionError("The adapter never read the events sent to it")
+        await until(
+            lambda: not self._released,
+            failure="The adapter never read the events sent to it",
+        )
+
+    @property
+    def answers(self) -> dict[int | str, dict[str, Any]]:
+        """Each answered request's result, by request id."""
+        return dict(self.responses)
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         while not self._released:

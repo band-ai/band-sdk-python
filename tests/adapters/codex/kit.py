@@ -44,7 +44,6 @@ from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
-    MAX_LOOP_POLLS,
     FakeCodexClient,
     await_released_turn,
     event_notification,
@@ -55,6 +54,7 @@ from tests.adapters.codexturns import (
     turn_completed,
 )
 from tests.adapters.dispatch import deliver_event, deliver_message
+from tests.adapters.waiting import until
 from tests.paths import host_absolute_path
 
 ROOM_ID = "room-1"
@@ -448,12 +448,11 @@ class StayQuietInput(BaseModel):
 
 async def answer_to(client: FakeCodexClient, request_id: int | str) -> dict[str, Any]:
     """The response the adapter sent ``request_id``, once it has."""
-    for _ in range(MAX_LOOP_POLLS):
-        for answered, result in client.responses:
-            if answered == request_id:
-                return result
-        await asyncio.sleep(0)
-    raise AssertionError(f"Request {request_id} was never answered")
+    await until(
+        lambda: request_id in client.answers,
+        failure=f"Request {request_id} was never answered",
+    )
+    return client.answers[request_id]
 
 
 class SlowTurnStartClient(FakeCodexClient):
@@ -684,8 +683,7 @@ async def codex_room() -> AsyncIterator[Callable[..., Awaitable[CodexRoom]]]:
 
 async def disposed(residency: RetainedRoom) -> None:
     """Wait until an owned disposal that outlived its caller has finished."""
-    for _ in range(MAX_LOOP_POLLS):
-        if residency.snapshot.state == Residency.CLOSED:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError("The room's disposal never finished")
+    await until(
+        lambda: residency.snapshot.state == Residency.CLOSED,
+        failure="The room's disposal never finished",
+    )
