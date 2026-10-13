@@ -111,6 +111,7 @@ class FakeACPAgent:
         self.exit_failure: Exception | None = None
         # Holds the next initialize, as a process slow to start.
         self._initialize_gate: Gate | None = None
+        self._initialize_error: RequestError | None = None
         self._close_gate: Gate | None = None
         self._new_session_error: RequestError | None = None
         # Observability for assertions:
@@ -173,6 +174,11 @@ class FakeACPAgent:
     def fails_next_new_session(self) -> FakeACPAgent:
         """Refuse the next ``session/new``, once."""
         self._new_session_error = RequestError.internal_error({"detail": "no session"})
+        return self
+
+    def fails_next_initialize(self) -> FakeACPAgent:
+        """Refuse the next connection's ``initialize``, once."""
+        self._initialize_error = RequestError.internal_error({"detail": "no start"})
         return self
 
     def holds_next_initialize(self) -> Gate:
@@ -474,8 +480,14 @@ class FakeACPAgent:
         )
         return self
 
-    def will_update_cursor_todos(self, *contents: str) -> FakeACPAgent:
-        self._script.append(lambda a, sid: a.update_cursor_todos(sid, *contents))
+    def will_update_cursor_todos(
+        self, *contents: str, sessionless: bool = False
+    ) -> FakeACPAgent:
+        self._script.append(
+            lambda a, sid: a.update_cursor_todos(
+                sid, *contents, sessionless=sessionless
+            )
+        )
         return self
 
     def keeps_updating_cursor_todos(self) -> asyncio.Event:
@@ -529,14 +541,14 @@ class FakeACPAgent:
     async def say(self, session_id: str, text: str) -> None:
         await self.emit(session_id, update_agent_message_text(text))
 
-    async def update_cursor_todos(self, session_id: str, *contents: str) -> None:
-        """Push Cursor's ``cursor/update_todos`` extension notification."""
-        todos = [
-            {"id": f"t{index}", "content": content, "status": "pending"}
-            for index, content in enumerate(contents)
-        ]
+    async def update_cursor_todos(
+        self, session_id: str, *contents: str, sessionless: bool = False
+    ) -> None:
+        """Push Cursor's ``cursor/update_todos`` extension notification;
+        ``sessionless`` omits its session id, as Cursor itself does."""
         await self._conn_for(session_id).ext_notification(
-            "cursor/update_todos", {"sessionId": session_id, "todos": todos}
+            "cursor/update_todos",
+            cursor_todos(*contents, session_id=None if sessionless else session_id),
         )
 
     def _conn_for(self, session_id: str) -> AgentSideConnection:
@@ -643,6 +655,9 @@ class FakeACPAgent:
             self._initialize_gate = None
             gate.received.set()
             await gate.release.wait()
+        if (error := self._initialize_error) is not None:
+            self._initialize_error = None
+            raise error
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
@@ -802,3 +817,13 @@ def select_option(
             for value in values
         ],
     )
+
+
+def cursor_todos(*contents: str, session_id: str | None = None) -> dict[str, Any]:
+    """A ``cursor/update_todos`` payload; Cursor itself sends no session id."""
+    todos = [
+        {"id": f"t{index}", "content": content, "status": "pending"}
+        for index, content in enumerate(contents)
+    ]
+    session = {} if session_id is None else {"sessionId": session_id}
+    return {**session, "todos": todos}

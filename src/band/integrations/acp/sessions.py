@@ -55,7 +55,7 @@ class ACPSessionOperations(ABC):
         self._config_lock = asyncio.Lock()
 
     @abstractmethod
-    async def ensure_connection(self, *, can_respawn: bool) -> ACPConnectionProtocol:
+    async def ensure_connection(self) -> ACPConnectionProtocol:
         """Return the lifecycle owner's active connection."""
         raise NotImplementedError
 
@@ -66,7 +66,7 @@ class ACPSessionOperations(ABC):
     async def create_session_response(
         self, *, cwd: str, mcp_servers: list[object]
     ) -> NewSessionResponse:
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         response = cast(
             NewSessionResponse,
             await self._request(conn.new_session(cwd=cwd, mcp_servers=mcp_servers)),
@@ -100,7 +100,7 @@ class ACPSessionOperations(ABC):
         if not self._agent_supports_session_load:
             return None
 
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         try:
             response = await asyncio.wait_for(
                 self._request(
@@ -146,19 +146,26 @@ class ACPSessionOperations(ABC):
 
         Raises:
             ACPSessionRestoreError: The connection does not advertise
-                ``loadSession`` or the agent refused the load.
+                ``loadSession``, or the agent refused or did not answer the
+                load.
         """
         if not self._agent_supports_session_load:
             raise ACPSessionRestoreError(
                 session_id, "the connection does not advertise loadSession"
             )
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         try:
-            response = await self._request(
-                conn.load_session(
-                    cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
+            async with asyncio.timeout(ACP_SESSION_LOAD_TIMEOUT_SECONDS):
+                response = await self._request(
+                    conn.load_session(
+                        cwd=cwd, session_id=session_id, mcp_servers=mcp_servers
+                    )
                 )
-            )
+        except TimeoutError as error:
+            raise ACPSessionRestoreError(
+                session_id,
+                f"no answer within {ACP_SESSION_LOAD_TIMEOUT_SECONDS} seconds",
+            ) from error
         except RequestError as error:
             raise ACPSessionRestoreError(session_id, str(error)) from error
         self._record_config_options(session_id, response)
@@ -172,7 +179,7 @@ class ACPSessionOperations(ABC):
         value: str,
     ) -> SetSessionConfigOptionResponse | None:
         """Set one advertised select option and return the refreshed catalog."""
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         response = await self._request(
             conn.set_config_option(
                 session_id=session_id,
@@ -205,7 +212,7 @@ class ACPSessionOperations(ABC):
             self._client.forget_session(session_id)
         if not self._agent_supports_session_close:
             return
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         await self._request(conn.close_session(session_id))
 
     async def prompt(
@@ -215,7 +222,7 @@ class ACPSessionOperations(ABC):
         prompt_text: str,
         on_chunk: ChunkSink | None = None,
     ) -> list[CollectedChunk]:
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         if on_chunk is not None and self._client is not None:
             self._client.set_sink(session_id, on_chunk)
         try:
@@ -231,7 +238,7 @@ class ACPSessionOperations(ABC):
 
     async def cancel_turn(self, session_id: str) -> None:
         """Tell the agent to stop a room's in-flight prompt."""
-        conn = await self.ensure_connection(can_respawn=False)
+        conn = await self.ensure_connection()
         async with asyncio.timeout(ACP_SESSION_CANCEL_TIMEOUT_SECONDS):
             await self._request(conn.cancel(session_id))
 

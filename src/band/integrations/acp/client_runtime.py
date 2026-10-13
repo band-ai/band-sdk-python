@@ -14,6 +14,7 @@ from acp.schema import (
 )
 
 from band.core.retention import task_failure
+from band.core.retention.cleanup import spawn_owned
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -75,6 +76,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 STDOUT_DISCARD_CHUNK_BYTES = 65536
+STDOUT_HELD_WARNING_SECONDS = 5.0
 
 
 class ACPRuntime(ACPSessionOperations):
@@ -179,21 +181,10 @@ class ACPRuntime(ACPSessionOperations):
             await conn.authenticate(method_id=self._auth_method)
             logger.info("Authenticated with method: %s", self._auth_method)
 
-    async def ensure_connection(self, *, can_respawn: bool) -> ACPConnectionProtocol:
-        async with self._stop_lock:
-            if self._conn is None:
-                if self._ctx is None and can_respawn:
-                    await self._start(respawn=False)
-                else:
-                    raise RuntimeError(
-                        "ACP client not initialized. Call on_started first."
-                    )
-
-            conn = self._conn
-
-        if conn is None:
-            raise RuntimeError("ACP client connection dropped before prompt")
-        return conn
+    async def ensure_connection(self) -> ACPConnectionProtocol:
+        if self._conn is None:
+            raise RuntimeError("ACP client connection is not open")
+        return self._conn
 
     @property
     def closed(self) -> bool:
@@ -218,7 +209,9 @@ class ACPRuntime(ACPSessionOperations):
     async def _closed(self) -> None:
         closure = self._closure
         if closure is None or (closure.done() and task_failure(closure) is not None):
-            closure = self._closure = asyncio.create_task(self._close())
+            closure = self._closure = spawn_owned(
+                self._close(), label="ACP runtime closure"
+            )
         await asyncio.shield(closure)
 
     async def _close(self) -> None:
@@ -239,14 +232,15 @@ class ACPRuntime(ACPSessionOperations):
         process = self._transport
         if not self._exit_attempted and self._ctx is not None:
             self._exit_attempted = True
-            await self._ctx.__aexit__(None, None, None)
+            try:
+                await self._ctx.__aexit__(None, None, None)
+            except Exception:
+                logger.exception("ACP agent subprocess failed to exit")
+                raise
         elif isinstance(process, asyncio.subprocess.Process):
-            if process.returncode is None:
-                with suppress(ProcessLookupError):
-                    process.kill()
-            await process.wait()
+            await _kill(process)
         if isinstance(process, asyncio.subprocess.Process) and process.stdout:
-            await _read_to_eof(process.stdout)
+            await _confirm_stdout_closed(process, process.stdout)
 
     def _forget_connection(self) -> None:
         self._ctx = None
@@ -287,6 +281,33 @@ class ACPRuntime(ACPSessionOperations):
         capabilities = getattr(init_response, "agent_capabilities", None)
         session_capabilities = getattr(capabilities, "session_capabilities", None)
         return getattr(session_capabilities, "close", None) is not None
+
+
+async def _kill(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        logger.warning(
+            "Killing ACP agent subprocess %s after its exit failed", process.pid
+        )
+        with suppress(ProcessLookupError):
+            process.kill()
+    await process.wait()
+
+
+async def _confirm_stdout_closed(
+    process: asyncio.subprocess.Process, stdout: asyncio.StreamReader
+) -> None:
+    """Wait for stdout EOF, saying why when a descendant keeps it open."""
+    try:
+        async with asyncio.timeout(STDOUT_HELD_WARNING_SECONDS):
+            await _read_to_eof(stdout)
+    except TimeoutError:
+        logger.warning(
+            "ACP agent subprocess %s exited (code %s) but a descendant still "
+            "holds its stdout; its room stays owned until that closes",
+            process.pid,
+            process.returncode,
+        )
+        await _read_to_eof(stdout)
 
 
 async def _read_to_eof(stream: asyncio.StreamReader) -> None:

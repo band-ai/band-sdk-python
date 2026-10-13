@@ -59,7 +59,6 @@ class ACPRoom:
     workspace: str
     retained: RetainedRoom = field(init=False)
     runtime: ACPRuntime | None = None
-    generation: int = 0
     session: RoomSession | None = None
     tools: AgentToolsProtocol | None = None
     reservation: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -73,6 +72,11 @@ class ACPRoom:
             snapshot.state == Residency.CLOSED
             or snapshot.pending_release == ReleaseCause.FINAL
         )
+
+    @property
+    def generation(self) -> int:
+        """The residency the room's current process belongs to."""
+        return self.retained.snapshot.generation
 
     @property
     def live_session(self) -> tuple[str, ACPRuntime] | None:

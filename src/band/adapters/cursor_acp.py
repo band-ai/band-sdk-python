@@ -199,8 +199,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         # Each room's accepted turns in arrival order; one at a time holds the
         # room, and independent rooms prompt concurrently.
         self._turns: dict[str, list[CursorTurn]] = {}
-        # Capped per room in _wait_for_decision, so no room evicts another's.
-        self._pending_decisions: DecisionRegistry[PendingDecision] = DecisionRegistry()
+        # One capped registry per room, so no room evicts another's decision.
+        self._pending_decisions: dict[str, DecisionRegistry[PendingDecision]] = {}
         super().__init__(
             config,
             additional_tools=additional_tools,
@@ -318,6 +318,12 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 )
                 # A failed or cancelled turn never gets here.
                 await judge_detached_turn(turn.tools, room_id=room.room_id)
+        except Exception as error:
+            # A detached turn has no handler left to carry its failure, and
+            # one that failed before its prompt was never reported.
+            if turn.tools.turn.detached and not turn.tools.turn.complete:
+                await self._report_failure(turn.tools, error)
+            raise
         finally:
             if turn.generation is not None:
                 self._cancel_room_decisions(room.room_id)
@@ -573,10 +579,11 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             choices=choices or {},
             multi_select=multi_select,
         )
-        self._evict_room_overflow(turn.room.room_id)
-        entry = self._pending_decisions.register_minted(
-            pending, room_id=turn.room.room_id
-        ).entry
+        decisions = self._room_decisions(turn.room.room_id)
+        registration = decisions.register_minted(pending, room_id=turn.room.room_id)
+        if registration.evicted is not None:
+            self._resolve_evicted_decision(registration.evicted)
+        entry = registration.entry
         try:
             await turn.tools.send_notice(
                 prompt.replace("{token}", entry.token),
@@ -585,7 +592,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
             logger.warning("Could not deliver Cursor %s decision prompt", kind)
             # A reply that claimed it meanwhile owns the answer; wait for it.
-            if self._pending_decisions.withdraw(entry):
+            if decisions.withdraw(entry):
                 return None
         finally:
             # Release on_message here, not only in _run_turn's finally --
@@ -593,7 +600,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             # outstanding, whether or not the prompt itself landed.
             _detach(turn)
 
-        result = await self._pending_decisions.wait(
+        result = await decisions.wait(
             entry, future, timeout_s=self.config.decision_timeout_s
         )
         if result is Timeout.TIMED_OUT:
@@ -631,8 +638,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             )
             return True
         action, token = words[1].lower(), words[2]
-        pending = self._pending_decisions.get(token)
-        if pending is None or pending.room_id != room_id:
+        decisions = self._room_decisions(room_id)
+        pending = decisions.get(token)
+        if pending is None:
             await tools.send_notice(
                 DECISION_NOT_PENDING_TEMPLATE.format(token=token), mentions=mentions
             )
@@ -648,7 +656,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self.config.decision_authorized_senders, msg.sender_id
         ):
             reply = DECISION_UNAUTHORIZED_MESSAGE
-        elif self._pending_decisions.try_claim(token) is None:
+        elif decisions.try_claim(token) is None:
             reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
         else:
             pending.future.set_result(result)
@@ -731,13 +739,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             turn if turn and not turn.closed and turn.session_id == session_id else None
         )
 
-    def _evict_room_overflow(self, room_id: str) -> None:
-        """Make room for one more decision within this room's cap."""
-        open_in_room = self._pending_decisions.unclaimed_in_room(room_id)
-        overflow = len(open_in_room) + 1 - self.config.max_pending_decisions
-        for oldest in open_in_room[: max(overflow, 0)]:
-            if self._pending_decisions.withdraw(oldest):
-                self._resolve_evicted_decision(oldest)
+    def _room_decisions(self, room_id: str) -> DecisionRegistry[PendingDecision]:
+        return self._pending_decisions.setdefault(
+            room_id, DecisionRegistry(max_pending=self.config.max_pending_decisions)
+        )
 
     @staticmethod
     def _resolve_evicted_decision(evicted: DecisionEntry[PendingDecision]) -> None:
@@ -751,7 +756,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         evicted.payload.future.set_result(None)
 
     def _cancel_room_decisions(self, room_id: str) -> None:
-        for entry in self._pending_decisions.cancel_room(room_id):
+        decisions = self._pending_decisions.pop(room_id, None)
+        if decisions is None:
+            return
+        for entry in decisions.cancel_all():
             logger.info(
                 "Cancelling pending Cursor %s decision `%s` in room %s (room cleanup)",
                 entry.payload.kind,
@@ -761,22 +769,24 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             entry.payload.future.set_result(None)
 
     def _cancel_all_decisions(self) -> None:
-        for entry in self._pending_decisions.cancel_all():
-            logger.info(
-                "Cancelling pending Cursor %s decision `%s` in room %s "
-                "(adapter shutdown)",
-                entry.payload.kind,
-                entry.token,
-                entry.payload.room_id,
-            )
-            entry.payload.future.set_result(None)
+        rooms, self._pending_decisions = self._pending_decisions, {}
+        for decisions in rooms.values():
+            for entry in decisions.cancel_all():
+                logger.info(
+                    "Cancelling pending Cursor %s decision `%s` in room %s "
+                    "(adapter shutdown)",
+                    entry.payload.kind,
+                    entry.token,
+                    entry.payload.room_id,
+                )
+                entry.payload.future.set_result(None)
 
     async def _list_decisions(
         self, tools: AgentToolsProtocol, room_id: str, *, mentions: list[str]
     ) -> None:
         pending = [
             f"`{entry.token}` ({entry.payload.kind})"
-            for entry in self._pending_decisions.unclaimed_in_room(room_id)
+            for entry in self._room_decisions(room_id).unclaimed()
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")
         await tools.send_notice(content, mentions=mentions)

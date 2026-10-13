@@ -1034,13 +1034,14 @@ class TestACPClientAdapterOnMessage:
         assert failures[0]["detail"] == {"detail": "oom"}
 
     @pytest.mark.asyncio
-    async def test_runtime_rejects_calls_when_respawn_is_disabled(self) -> None:
-        """A runtime only rejects an unstarted connection when respawn is disabled."""
+    async def test_an_unstarted_runtime_rejects_calls_without_spawning(self) -> None:
+        """Only the room's acquisition starts a process, never a session call."""
         adapter = ACPClientAdapter(CODEX)
         runtime = adapter._build_runtime(room_holder(adapter, "room-123"), 1)
 
-        with pytest.raises(RuntimeError, match="ACP client not initialized"):
-            await runtime.ensure_connection(can_respawn=False)
+        with pytest.raises(RuntimeError, match="connection is not open"):
+            await runtime.ensure_connection()
+        assert runtime.closed
 
 
 class TestACPClientAdapterPermissionHandler:
@@ -1725,8 +1726,7 @@ class TestACPCollectingClientCursorProfileExtensions:
     @pytest.mark.asyncio
     async def test_ext_notification_cursor_update_todos(self) -> None:
         """Cursor's merge flag preserves prior todo state."""
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
@@ -1759,8 +1759,7 @@ class TestACPCollectingClientCursorProfileExtensions:
         """Regression: a `todos: []` update that legitimately clears the list
         used to emit no chunk at all, leaving the room showing the stale
         checklist from before the clear."""
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
@@ -1784,9 +1783,9 @@ class TestACPCollectingClientCursorProfileExtensions:
 
     @pytest.mark.asyncio
     async def test_ext_notification_cursor_todos_do_not_cross_sessions(self) -> None:
-        profile = CursorACPClientProfile()
+        active = "first"
+        profile = CursorACPClientProfile(active_session=lambda: active)
         client = ACPCollectingClient(profile=profile)
-        profile.bind_session("first")
         await client.ext_notification(
             "cursor/update_todos",
             {
@@ -1794,7 +1793,7 @@ class TestACPCollectingClientCursorProfileExtensions:
                 "merge": False,
             },
         )
-        profile.bind_session("second")
+        active = "second"
         await client.ext_notification(
             "cursor/update_todos",
             {
@@ -1809,8 +1808,7 @@ class TestACPCollectingClientCursorProfileExtensions:
     @pytest.mark.asyncio
     async def test_ext_notification_cursor_task(self) -> None:
         """Renders documented task metadata without inventing a result field."""
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
@@ -1832,8 +1830,7 @@ class TestACPCollectingClientCursorProfileExtensions:
     async def test_ext_notification_cursor_task_without_a_description_is_a_noop(
         self,
     ) -> None:
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification("cursor/task", {"description": ""})
@@ -1844,8 +1841,7 @@ class TestACPCollectingClientCursorProfileExtensions:
     async def test_ext_notification_cursor_generate_image_without_a_description_is_a_noop(
         self,
     ) -> None:
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
@@ -1858,8 +1854,7 @@ class TestACPCollectingClientCursorProfileExtensions:
     async def test_ext_notification_cursor_update_todos_marks_in_progress_and_cancelled(
         self,
     ) -> None:
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
@@ -1879,9 +1874,8 @@ class TestACPCollectingClientCursorProfileExtensions:
 
     @pytest.mark.asyncio
     async def test_ext_notification_uses_serialized_profile_session(self) -> None:
-        """Cursor notifications omit session ids, so the profile binds the turn."""
-        profile = CursorACPClientProfile()
-        profile.bind_session("sess-1")
+        """Cursor notifications omit session ids, so the profile names the turn's."""
+        profile = CursorACPClientProfile(active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
@@ -1914,7 +1908,7 @@ class TestACPCollectingClientCursorProfileExtensions:
         self,
     ) -> None:
         """Regression: the bridge path (resolve_acp_client_profile("cursor"))
-        never calls bind_session, so a notification that carries its own
+        sets no active session, so a notification that carries its own
         sessionId must still render -- not fall silent because self._session_id
         is None. ACPCollectingClient.ext_notification already resolves the
         SAME precedence for chunk routing; the profile's own todo state must

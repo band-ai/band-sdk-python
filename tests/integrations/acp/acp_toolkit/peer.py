@@ -7,11 +7,12 @@ import asyncio
 import os
 import subprocess
 import sys
+from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from acp import run_agent
+from acp import run_agent, spawn_agent_process
 from acp.schema import (
     InitializeResponse,
     LoadSessionResponse,
@@ -71,6 +72,40 @@ def stdio_peer_config(
         inject_band_tools=crash_marker is not None,
         **settings,
     )
+
+
+EXIT_FAILURE = "agent subprocess exit failed"
+
+
+class ExitFailsOnce:
+    """``spawn_agent_process`` whose first exit raises without closing
+    anything, leaving the agent running as a failed teardown does."""
+
+    def __init__(self) -> None:
+        self.processes: list[asyncio.subprocess.Process] = []
+        self._failed = False
+
+    def __call__(self, *args: Any, **kwargs: Any) -> AbstractAsyncContextManager[Any]:
+        return _FailingExit(self, spawn_agent_process(*args, **kwargs))
+
+
+class _FailingExit:
+    def __init__(
+        self, spawns: ExitFailsOnce, inner: AbstractAsyncContextManager[Any]
+    ) -> None:
+        self._spawns = spawns
+        self._inner = inner
+
+    async def __aenter__(self) -> Any:
+        connection, process = await self._inner.__aenter__()
+        self._spawns.processes.append(process)
+        return connection, process
+
+    async def __aexit__(self, *exc_info: object) -> bool | None:
+        if not self._spawns._failed:
+            self._spawns._failed = True
+            raise RuntimeError(EXIT_FAILURE)
+        return await self._inner.__aexit__(*exc_info)
 
 
 def spawn_pipe_holder(pid_file: Path) -> None:

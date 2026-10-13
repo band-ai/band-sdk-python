@@ -169,9 +169,18 @@ class CursorRoom:
             await accepted_work_finished(room)
 
 
+# A holder that was never acquired is at its first generation.
+UNACQUIRED_GENERATION = 0
+
+
+def pending_tokens(adapter: CursorACPAdapter) -> list[str]:
+    """Every open decision token, across the adapter's rooms."""
+    return [token for room in adapter._pending_decisions.values() for token in room]
+
+
 def activate(adapter: CursorACPAdapter, turn: CursorTurn) -> CursorTurn:
     """Make ``turn`` its room's open prompt, as a running turn does."""
-    turn.generation = turn.room.generation
+    turn.generation = UNACQUIRED_GENERATION
     adapter._turns.setdefault(turn.room.room_id, []).append(turn)
     return turn
 
@@ -661,7 +670,7 @@ class TestCursorACPAdapterDecisions:
         await tools.prompt_sent.wait()
         assert "agent=Agent" in tools.messages[0]
         assert "plan=Plan" in tools.messages[0]
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         handled = await adapter._handle_control_message(
             cast(
@@ -716,7 +725,7 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -787,7 +796,7 @@ class TestCursorACPAdapterDecisions:
         )
         await tools.prompt_sent.wait()
         assert "confirm" in tools.messages[0]
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -918,7 +927,7 @@ class TestCursorACPAdapterDecisions:
         )
         pending = asyncio.create_task(adapter._resolve_cursor_permission(request))
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -948,7 +957,7 @@ class TestCursorACPAdapterDecisions:
         )
         pending = asyncio.create_task(adapter._resolve_cursor_permission(request))
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         await adapter._handle_control_message(
             cast(
@@ -991,7 +1000,7 @@ class TestCursorACPAdapterDecisions:
         first = asyncio.create_task(adapter._resolve_cursor_permission(request("a")))
         repeat = asyncio.create_task(adapter._resolve_cursor_permission(request("b")))
         await tools.prompt_sent.wait()
-        [token] = adapter._pending_decisions
+        [token] = pending_tokens(adapter)
 
         await adapter._handle_control_message(
             cast(
@@ -1037,7 +1046,7 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
         assert tools.messages == [
             PLAN_REQUESTED_TEMPLATE.format(plan="Plan", token=token)
         ]
@@ -1085,7 +1094,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert result is None
-        assert len(adapter._pending_decisions) == 0
+        assert len(pending_tokens(adapter)) == 0
 
     @pytest.mark.asyncio
     @pytest.mark.looptime
@@ -1101,7 +1110,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert result is None
-        assert len(adapter._pending_decisions) == 0
+        assert len(pending_tokens(adapter)) == 0
 
     @pytest.mark.asyncio
     async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
@@ -1121,7 +1130,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         async with failing_prompt:
-            token = next(iter(adapter._pending_decisions))
+            token = pending_tokens(adapter)[0]
             await adapter._handle_control_message(
                 room_message(f"/cursor accept {token}"), tools, "room-1"
             )
@@ -1147,7 +1156,7 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
-        [token] = [entry.token for entry in adapter._pending_decisions.unclaimed()]
+        [token] = pending_tokens(adapter)
 
         async with timeout_notice:
             await adapter._handle_control_message(
@@ -1176,9 +1185,9 @@ class TestCursorACPAdapterDecisions:
             adapter._wait_for_decision(kind="plan", turn=turn, prompt="Plan {token}")
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
-        claimed = adapter._pending_decisions.try_claim(token)
+        claimed = adapter._pending_decisions["room-1"].try_claim(token)
         assert claimed is not None
 
         handled = await adapter._handle_control_message(
@@ -1220,8 +1229,9 @@ class TestCursorACPAdapterDecisions:
             first_tools.prompt_sent.wait(), second_tools.prompt_sent.wait()
         )
         tokens = {
-            entry.payload.room_id: entry.token
-            for entry in adapter._pending_decisions.unclaimed()
+            room: token
+            for room, decisions in adapter._pending_decisions.items()
+            for token in decisions
         }
 
         await adapter.on_cleanup("room-1")
@@ -1454,7 +1464,7 @@ class TestCursorACPAdapterControlMessages:
             )
         )
         await tools.prompt_sent.wait()
-        token = next(iter(adapter._pending_decisions))
+        token = pending_tokens(adapter)[0]
 
         handled = await adapter._handle_control_message(
             cast(
@@ -1524,7 +1534,7 @@ class TestCursorACPAdapterControlMessages:
         await second_tools.prompt_sent.wait()
 
         assert await first is None
-        assert len(adapter._pending_decisions) == 1
+        assert len(pending_tokens(adapter)) == 1
         adapter._cancel_all_decisions()
         await second
 
@@ -1545,11 +1555,21 @@ class TestCursorACPAdapterControlMessages:
         ]
         for room in rooms:
             await tools[room].prompt_sent.wait()
+        [first_prompt] = tools["room-1"].messages
+        token = first_prompt.removeprefix("Plan ")
 
-        assert not any(wait.done() for wait in waits)
-        assert len(adapter._pending_decisions) == 2
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(content=f"/cursor accept {token}", sender_id="user-1"),
+            ),
+            tools["room-1"],
+            "room-1",
+        )
+
+        assert await waits[0] == {"outcome": {"outcome": "accepted"}}
         adapter._cancel_all_decisions()
-        await asyncio.gather(*waits)
+        assert await waits[1] is None
 
 
 def todo_sessions(session: AcpSession, room: str = "room-1") -> set[str]:

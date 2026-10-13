@@ -128,23 +128,15 @@ class CursorACPClientProfile:
         active_session: Callable[[], str | None] | None = None,
     ) -> None:
         """``active_session`` names the session sessionless notifications
-        belong to; it overrides ``bind_session`` for a profile bound to one
-        process."""
+        belong to; without it they are dropped."""
         self._resolve_method = resolve_method
         self._active_session = active_session
-        self._session_id: str | None = None
         self._todos_by_session: dict[str, dict[str, tuple[str, str]]] = {}
 
     @property
     def extension_session_id(self) -> str | None:
         """The session receiving Cursor notifications without a session id."""
-        if self._active_session is not None:
-            return self._active_session()
-        return self._session_id
-
-    def bind_session(self, session_id: str | None) -> None:
-        """Bind extension notifications to the serialized Cursor turn's session."""
-        self._session_id = session_id
+        return None if self._active_session is None else self._active_session()
 
     def forget_session(self, session_id: str) -> None:
         """Drop todo state when the adapter closes its ACP session."""
