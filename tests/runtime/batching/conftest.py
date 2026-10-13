@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.types import SessionConfig
+from tests.runtime.batching.kit import FakeRoom
 
 
 @pytest.fixture
@@ -25,3 +26,8 @@ def ctx() -> MagicMock:
         return_value=MagicMock(messages=[], participants=[])
     )
     return context
+
+
+@pytest.fixture
+def platform() -> FakeRoom:
+    return FakeRoom()

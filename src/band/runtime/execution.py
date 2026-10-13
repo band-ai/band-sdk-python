@@ -81,6 +81,14 @@ from band.runtime.cycle import TurnScope
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.resync import ResyncSchedule
+from band.runtime.selection import (
+    Candidate,
+    Disposition,
+    MessageKey,
+    Selection,
+    Stop,
+    select_prefix,
+)
 from band.runtime.tools.agent import AgentTools
 from band.runtime.types import (
     ConversationContext,
@@ -138,6 +146,40 @@ def _event_message_id(event: MessageEvent) -> str:
     if event.payload is None:
         raise ValueError("a message event without a payload has no delivery id")
     return event.payload.id
+
+
+def _delivery_id(event: PlatformEvent) -> str | None:
+    """The platform id of a message delivery; ``None`` for any other event."""
+    if isinstance(event, MessageEvent) and event.payload is not None:
+        return event.payload.id
+    return None
+
+
+def _payload(event: MessageEvent) -> MessageCreatedPayload:
+    """The payload of a message event that carries a real delivery."""
+    if event.payload is None:
+        raise ValueError("a message event without a payload has no delivery")
+    return event.payload
+
+
+def _is_ordinary(event: PlatformEvent) -> bool:
+    """Whether the event is a real delivery a turn can include."""
+    return (
+        isinstance(event, MessageEvent)
+        and event.payload is not None
+        and not _is_synthetic(event)
+    )
+
+
+def _is_synthetic(event: PlatformEvent) -> bool:
+    """Whether the event is a contact-hub turn that owes no delivery write."""
+    return (
+        isinstance(event, MessageEvent)
+        and event.payload is not None
+        and is_contact_hub_turn(
+            sender_type=event.payload.sender_type, sender_id=event.payload.sender_id
+        )
+    )
 
 
 def _handler_status(owner: TurnTask | None) -> DeliveryStatus | None:
@@ -390,7 +432,12 @@ class ExecutionContext:
         self._retry_tracker = RetryTracker(max_retries=self.config.max_message_retries)
         self._sync_complete = False  # True after sync with /next completes
         self._deferred_message_id: str | None = None
-        self._pending_synthetic: deque[MessageEvent] = deque()
+        # Retained local events in observed order: synthetic hub turns, original
+        # deliveries not yet settled, and (batch mode) every housekeeping event.
+        self._pending: deque[PlatformEvent] = deque()
+        self._scan_cursor: str | None = None
+        self._last_selection: tuple[str, ...] = ()
+        self._resync_absorbed = False
         self._control_cursor: str | None = None
 
         # Graceful shutdown: event signaled when state becomes idle
@@ -1227,6 +1274,10 @@ class ExecutionContext:
             # A blocked startup yields to the scheduler so controls can reach
             # active work without letting newer ordinary messages run.
             await self._synchronize_with_next()
+            if self._sync_complete and (
+                self.config.consume_all_queued or self._pending
+            ):
+                await self._reconcile()
 
             self._set_state(ExecutionState.IDLE)
             logger.info(
@@ -1255,6 +1306,10 @@ class ExecutionContext:
                     if event is self._pending_resync:
                         await self._reconcile()
                     continue
+                if self.config.consume_all_queued:
+                    self._retain_arrival(event)
+                    await self._service_arrival()
+                    continue
                 if isinstance(event, MessageEvent) and (
                     not self._sync_complete or self._has_pending_work
                 ):
@@ -1274,7 +1329,7 @@ class ExecutionContext:
 
     @property
     def _has_pending_work(self) -> bool:
-        return self._deferred_message_id is not None or bool(self._pending_synthetic)
+        return self._deferred_message_id is not None or self._has_synthetic
 
     def _set_deferred_head(self, message_id: str | None) -> None:
         if message_id != self._deferred_message_id:
@@ -1291,28 +1346,26 @@ class ExecutionContext:
             message_id or "synthetic",
         )
 
-    def _retain_synthetic(
-        self, event: PlatformEvent | None, *, first: bool = False
-    ) -> bool:
+    def _retain(self, event: PlatformEvent | None, *, first: bool = False) -> None:
+        """Keep a message delivery's payload until its lifecycle settles it."""
         if not isinstance(event, MessageEvent) or event.payload is None:
-            return False
-        payload = event.payload
-        if not is_contact_hub_turn(
-            sender_type=payload.sender_type, sender_id=payload.sender_id
-        ):
-            return False
-        if not any(
-            item.payload is not None and item.payload.id == payload.id
-            for item in self._pending_synthetic
-        ):
-            if first:
-                self._pending_synthetic.appendleft(event)
-            else:
-                self._pending_synthetic.append(event)
-        return True
+            return
+        if any(_delivery_id(item) == _delivery_id(event) for item in self._pending):
+            return
+        if first:
+            self._pending.appendleft(event)
+        else:
+            self._pending.append(event)
+
+    def _release(self, message_ids: Iterable[str]) -> None:
+        released = set(message_ids)
+        self._pending = deque(
+            event for event in self._pending if _delivery_id(event) not in released
+        )
 
     async def _retain_or_handle_control(self, event: MessageEvent) -> None:
-        if self._retain_synthetic(event):
+        self._retain(event)
+        if _is_synthetic(event):
             return
         if not self._stopped and self._on_message_control is not None:
             await self._scan_controls()
@@ -1471,6 +1524,11 @@ class ExecutionContext:
         Process in platform order until empty or the first queued WebSocket
         message is reached; remove its queued duplicate before continuing.
         """
+        if self.config.consume_all_queued:
+            # The selector reads the actionable list and merges retained
+            # originals by id, so there is no sync point to find.
+            self._sync_complete = True
+            return True
         logger.debug(
             "ExecutionContext %s: Starting /next synchronization", self.room_id
         )
@@ -1574,9 +1632,10 @@ class ExecutionContext:
     ) -> ResyncOutcome:
         """Drain actionable work, distinguishing empty from blocked recovery."""
         self._resync_handled_work = False
+        if self.config.consume_all_queued:
+            return await self._drain_pending()
         if self._deferred_message_id is None:
-            while self._pending_synthetic:
-                event = self._pending_synthetic.popleft()
+            while (event := self._pop_synthetic()) is not None:
                 if not await self._process_event(event):
                     return ResyncOutcome.BLOCKED
         previous_id: str | None = None
@@ -1589,9 +1648,16 @@ class ExecutionContext:
                     next_msg = await self._get_next_message()
                 if revision != self._control_revision:
                     return ResyncOutcome.BLOCKED
+                if (retained := self._retained_before(next_msg)) is not None:
+                    candidate = next_msg
+                    if not await self._process_event(retained):
+                        return ResyncOutcome.BLOCKED
+                    if self._stopped:
+                        return ResyncOutcome.STOPPED
+                    continue
                 if next_msg is None:
                     self._set_deferred_head(None)
-                    if self._pending_synthetic:
+                    if self._has_synthetic:
                         return ResyncOutcome.BLOCKED
                     return (
                         ResyncOutcome.WORK
@@ -1618,7 +1684,7 @@ class ExecutionContext:
                     return ResyncOutcome.RETRY
                 if next_msg.id == self._deferred_message_id:
                     self._set_deferred_head(None)
-                if self._pending_synthetic:
+                if self._has_synthetic:
                     return ResyncOutcome.BLOCKED
         except Exception:
             logger.exception(
@@ -1627,18 +1693,246 @@ class ExecutionContext:
             return ResyncOutcome.RETRY
 
     def _backlog_is_nonrunnable(self, msg: PlatformMessage) -> bool:
+        return self._is_nonrunnable(msg.id, msg.sender_id, msg.sender_type)
+
+    def _is_nonrunnable(
+        self, message_id: str, sender_id: str | None, sender_type: str | None
+    ) -> bool:
         return (
-            self.claims.is_completed(self.room_id, msg.id)
-            or self._retry_tracker.is_permanently_failed(msg.id)
+            self.claims.is_completed(self.room_id, message_id)
+            or self._retry_tracker.is_permanently_failed(message_id)
             or bool(
                 self._agent_id
                 and is_self_echo(
-                    sender_id=msg.sender_id or "",
-                    sender_type=msg.sender_type or "",
+                    sender_id=sender_id or "",
+                    sender_type=sender_type or "",
                     agent_id=self._agent_id,
                 )
             )
         )
+
+    @property
+    def _has_synthetic(self) -> bool:
+        return any(_is_synthetic(event) for event in self._pending)
+
+    def _pop_synthetic(self) -> MessageEvent | None:
+        """Remove and return the oldest retained synthetic turn."""
+        for event in self._pending:
+            if isinstance(event, MessageEvent) and _is_synthetic(event):
+                self._pending.remove(event)
+                return event
+        return None
+
+    def _retained_before(self, next_msg: PlatformMessage | None) -> MessageEvent | None:
+        """The oldest retained original that precedes ``next_msg`` (or any, if none).
+
+        An original REST omits (a thread reply) can only be ordered by its own
+        key; settled or self-authored ones are dropped here.
+        """
+        live: list[MessageEvent] = []
+        dead: list[str] = []
+        for event in self._pending:
+            if not isinstance(event, MessageEvent) or event.payload is None:
+                continue
+            payload = event.payload
+            if _is_synthetic(event):
+                continue
+            if self._is_nonrunnable(payload.id, payload.sender_id, payload.sender_type):
+                dead.append(payload.id)
+            else:
+                live.append(event)
+        self._release(dead)
+        if not live:
+            return None
+        oldest = min(live, key=MessageKey.of_event)
+        if next_msg is None or MessageKey.of_event(oldest) < MessageKey.of_message(
+            next_msg
+        ):
+            return oldest
+        return None
+
+    def _retain_arrival(self, event: PlatformEvent) -> None:
+        if isinstance(event, MessageEvent):
+            self._retain(event)
+        else:
+            self._pending.append(event)
+
+    def _absorb_queue(self) -> None:
+        """Move queued events onto the retained line, keeping arrival order."""
+        while True:
+            try:
+                event = self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if isinstance(event, ResyncRequest):
+                self._resync_absorbed |= event is self._pending_resync
+            else:
+                self._retain_arrival(event)
+
+    async def _service_arrival(self) -> None:
+        """React to one arrival: controls only while ordinary work is deferred."""
+        if self._stopped:
+            return
+        if self._deferred_message_id is not None:
+            await self._scan_controls()
+        else:
+            await self._drain_pending()
+        if self._resync_absorbed:
+            self._resync_absorbed = False
+            await self._reconcile()
+
+    async def _drain_pending(self) -> ResyncOutcome:
+        """Run selection passes until the room is empty, blocked or stopped."""
+        self._last_selection = ()
+        try:
+            while (outcome := await self._batch_step()) is None:
+                # Controls and local boundaries get the loop between passes.
+                await asyncio.sleep(0)
+        except Exception:
+            logger.exception(
+                "ExecutionContext %s: Error during batch selection", self.room_id
+            )
+            return ResyncOutcome.RETRY
+        if outcome is ResyncOutcome.EMPTY:
+            self._set_deferred_head(None)
+            if self._resync_handled_work:
+                return ResyncOutcome.WORK
+        return outcome
+
+    async def _batch_step(self) -> ResyncOutcome | None:
+        """One selection pass; ``None`` means progress and another pass is due."""
+        self._absorb_queue()
+        if self._stopped:
+            return ResyncOutcome.STOPPED
+        if self._pending and not _is_ordinary(self._pending[0]):
+            return await self._run_boundary()
+        revision = self._control_revision
+        page = await self.link.get_actionable_page(
+            self.room_id, cursor=self._scan_cursor
+        )
+        self._absorb_queue()
+        if self._stopped:
+            return ResyncOutcome.STOPPED
+        if revision != self._control_revision:
+            return ResyncOutcome.BLOCKED
+        segment, limit = self._local_segment()
+        rest = [
+            self._candidate(_backlog_event(msg), msg.metadata) for msg in page.messages
+        ]
+        retained = [
+            self._candidate(event, _payload(event).metadata) for event in segment
+        ]
+        selection = select_prefix(
+            rest,
+            retained,
+            cap=self.config.max_queued_messages,
+            page_reaches=rest[-1].key if rest else None,
+            exhausted=page.next_cursor is None,
+            limit=limit,
+        )
+        pruned = self._prune_skipped(retained, rest)
+        if not selection.members:
+            return self._after_empty_scan(selection, page.next_cursor, pruned)
+        return await self._run_selection(selection, revision)
+
+    async def _run_boundary(self) -> ResyncOutcome | None:
+        """Execute the head non-message event or synthetic turn on its own."""
+        event = self._pending.popleft()
+        if await self._process_event_body(event):
+            return None
+        if _is_synthetic(event):
+            self._pending.appendleft(event)
+        return ResyncOutcome.BLOCKED
+
+    def _local_segment(self) -> tuple[list[MessageEvent], MessageKey | None]:
+        """The leading ordinary originals of the line and REST's expansion limit.
+
+        A later non-message event bounds the segment at its last original: a
+        REST candidate past that key cannot be placed before or after the event.
+        """
+        segment: list[MessageEvent] = []
+        for event in self._pending:
+            if not (isinstance(event, MessageEvent) and _is_ordinary(event)):
+                return segment, MessageKey.of_event(segment[-1]) if segment else None
+            segment.append(event)
+        return segment, None
+
+    def _candidate(self, event: MessageEvent, metadata: Any) -> Candidate:
+        payload = _payload(event)
+        return Candidate(
+            MessageKey.of_event(event),
+            event,
+            self._disposition(
+                payload.id, payload.sender_id, payload.sender_type, metadata
+            ),
+        )
+
+    def _disposition(
+        self,
+        message_id: str,
+        sender_id: str | None,
+        sender_type: str | None,
+        metadata: Any,
+    ) -> Disposition:
+        """What a batch may do with an original; durable FAILED is never retried."""
+        if self._is_nonrunnable(
+            message_id, sender_id, sender_type
+        ) or self.claims.is_ack_pending(self.room_id, message_id):
+            return Disposition.SKIP
+        if self._delivery_status_for_agent(metadata) in {
+            DeliveryStatus.PROCESSED,
+            DeliveryStatus.FAILED,
+        }:
+            return Disposition.SKIP
+        if message_id in self.claims.inflight_ids(self.room_id):
+            return Disposition.HELD
+        return Disposition.RUNNABLE
+
+    def _prune_skipped(self, retained: list[Candidate], rest: list[Candidate]) -> bool:
+        """Drop retained originals nothing will ever run; True if any went."""
+        rest_skipped = {c.message_id for c in rest if c.disposition is Disposition.SKIP}
+        gone = [
+            c.message_id
+            for c in retained
+            if c.disposition is Disposition.SKIP or c.message_id in rest_skipped
+        ]
+        self._release(gone)
+        return bool(gone)
+
+    def _after_empty_scan(
+        self, selection: Selection, next_cursor: str | None, pruned: bool
+    ) -> ResyncOutcome | None:
+        if selection.stop is Stop.HELD and selection.at is not None:
+            self._set_deferred_head(selection.at.message_id)
+            return ResyncOutcome.BLOCKED
+        if next_cursor is not None:
+            self._scan_cursor = next_cursor
+            return None
+        self._scan_cursor = None
+        return None if pruned else ResyncOutcome.EMPTY
+
+    async def _run_selection(
+        self, selection: Selection, revision: int
+    ) -> ResyncOutcome | None:
+        events = selection.events
+        ids = tuple(_event_message_id(event) for event in events)
+        if ids == self._last_selection:
+            return ResyncOutcome.BLOCKED
+        self._last_selection = ids
+        outcome = await self._run_message_attempt(events, revision=revision)
+        if self._stopped:
+            return ResyncOutcome.STOPPED
+        if revision != self._control_revision:
+            return ResyncOutcome.BLOCKED
+        match outcome:
+            case BacklogProcessResult.NOT_ACCEPTED:
+                return ResyncOutcome.BLOCKED
+            case BacklogProcessResult.RETRY_LATER:
+                self._set_deferred_head(ids[0])
+                return ResyncOutcome.RETRY
+            case BacklogProcessResult.ADVANCED:
+                self._clear_deferred_head_for(events)
+                return None
 
     async def _process_backlog_message(
         self, msg: PlatformMessage, *, revision: int | None = None
@@ -1712,7 +2006,10 @@ class ExecutionContext:
                     ids,
                 )
                 return BacklogProcessResult.RETRY_LATER
-            return await self._run_claimed_attempt(events, revision, handler)
+            outcome = await self._run_claimed_attempt(events, revision, handler)
+            if outcome is BacklogProcessResult.ADVANCED:
+                self._release(ids)
+            return outcome
 
     async def _run_claimed_attempt(
         self,
@@ -2183,7 +2480,8 @@ class ExecutionContext:
         self._discard_attempts(_event_message_id(e) for e in scope.originals)
         await self._clear_activity()
         if kind is ControlMode.STOP:
-            self._retain_synthetic(event, first=True)
+            for retained in reversed(scope.originals or (event,)):
+                self._retain(retained, first=True)
         # Consume an interrupted message so the idle /next resync does not
         # re-return it and re-fire the cycle the user just interrupted. A
         # failed write stays retained as a pending intent.
@@ -2240,7 +2538,7 @@ class ExecutionContext:
         # never reaches the adapter (reply->403). The message is left untouched
         # so /next replays it on play.
         if self._stopped and isinstance(event, MessageEvent):
-            self._retain_synthetic(event)
+            self._retain(event)
             logger.debug(
                 "ExecutionContext %s: stopped, skipping message %s (left for replay)",
                 self.room_id,
@@ -2296,11 +2594,13 @@ class ExecutionContext:
                 outcome = await self._run_message_attempt(
                     (event,), revision=self._control_revision
                 )
+                if outcome is not BacklogProcessResult.ADVANCED:
+                    self._retain(event)
                 return outcome is BacklogProcessResult.ADVANCED
 
         processed = await self._process_event_body(event)
         if not processed:
-            self._retain_synthetic(event, first=True)
+            self._retain(event, first=True)
         return processed
 
     def note_turn_failure_reported(self) -> None:
