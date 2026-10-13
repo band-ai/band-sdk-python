@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from band.core.protocols import AgentToolsProtocol
-from band.core.retention import ReleaseCause, Residency, RetainedRoom
+from band.core.retention import RetainedRoom
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.collecting import ACPCollectingClient
 
@@ -67,11 +67,7 @@ class ACPRoom:
     @property
     def closing(self) -> bool:
         """Whether the room's final disposal has begun or finished."""
-        snapshot = self.retained.snapshot
-        return (
-            snapshot.state == Residency.CLOSED
-            or snapshot.pending_release == ReleaseCause.FINAL
-        )
+        return self.retained.snapshot.disposing
 
     @property
     def generation(self) -> int:

@@ -67,3 +67,10 @@ class RetentionSnapshot(BaseAdapterConfig):
     pending_release: ReleaseCause | None
     pending_cleanup: bool
     error: str | None
+
+    @property
+    def disposing(self) -> bool:
+        """Whether the room's final disposal has begun or finished."""
+        return (
+            self.state == Residency.CLOSED or self.pending_release == ReleaseCause.FINAL
+        )

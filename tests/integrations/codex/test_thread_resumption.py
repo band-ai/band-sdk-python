@@ -8,12 +8,12 @@ import pytest
 
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex import CodexJsonRpcError, CodexRequestMethod
-from tests.adapters.codex.kit import ToolSchemaFakeTools
+from tests.adapters.codex.kit import ToolSchemaFakeTools, agent_input
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
 )
-from tests.integrations.codex.kit import agent_input, answered_turn
+from tests.integrations.codex.kit import answered_turn
 
 
 class TestThreadResumption:

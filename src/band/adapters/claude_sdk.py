@@ -644,9 +644,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._mcp_room_tools: dict[str, AgentToolsProtocol] = {}
 
-        # Per-room session context (text history for Claude SDK)
-        self._session_context: dict[str, str] = {}
-
         # The session id each room last recorded as a task event; the room's
         # ClaudeRoomSession owns the id it resumes.
         self._recorded_session_ids: dict[str, str] = {}
@@ -936,14 +933,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         room_id: str,
     ) -> str:
         """The text sent to Claude: bootstrap memory, system updates, message."""
-        if is_session_bootstrap:
-            self._session_context[room_id] = history.text
-            if history.text:  # Already converted to text by SimpleAdapter
-                logger.info(
-                    "Room %s: Loaded historical context (%s chars)",
-                    room_id,
-                    len(history.text),
-                )
+        if is_session_bootstrap and history.text:  # Already text via SimpleAdapter
+            logger.info(
+                "Room %s: Loaded historical context (%s chars)",
+                room_id,
+                len(history.text),
+            )
 
         messages_to_send = []
 
@@ -952,13 +947,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # "previous context" aside weakly, so a fact another participant stated (or that
         # you stated) while you were offline gets missed on recall. Tell it plainly this
         # is its own memory of the room and to answer from it.
-        if is_session_bootstrap and self._session_context.get(room_id):
+        if is_session_bootstrap and history.text:
             messages_to_send.append(
                 "Your memory of this room so far — real earlier messages from you and "
                 "from other participants and agents, including ones sent while you were "
                 "offline. Treat these as facts you know and answer questions about the "
                 f"conversation directly from them:\n"
-                f"{self._session_context[room_id]}"
+                f"{history.text}"
             )
 
         if participants_msg:
@@ -1623,7 +1618,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def _forget_room(self, room_id: str) -> None:
         self._room_tools.pop(room_id, None)
         self._mcp_room_tools.pop(room_id, None)
-        self._session_context.pop(room_id, None)
         self._recorded_session_ids.pop(room_id, None)
         self._room_last_sender.pop(room_id, None)
         self._notified_declines.pop(room_id, None)
@@ -1651,7 +1645,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await _finish_by(deadline, self._mcp.close(final=True))
         self._room_tools.clear()
         self._mcp_room_tools.clear()
-        self._session_context.clear()
         self._recorded_session_ids.clear()
         self._room_last_sender.clear()
         self._notified_declines.clear()

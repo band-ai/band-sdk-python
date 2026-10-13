@@ -35,8 +35,7 @@ PROFILE_MODULE = "lifecycleprofile.py"
 async def pause_at(hold: Hold | None) -> None:
     """Stop at ``hold``, when set, until the test releases it."""
     if hold is not None:
-        hold.reached.set()
-        await hold.released.wait()
+        await hold.wait()
 
 
 class LifecyclePeer(Protocol):

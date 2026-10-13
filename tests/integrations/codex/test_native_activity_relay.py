@@ -11,7 +11,7 @@ import pytest
 from band.adapters.codex import CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import Emit
-from tests.adapters.codex.kit import ToolSchemaFakeTools
+from tests.adapters.codex.kit import ToolSchemaFakeTools, agent_input
 from tests.adapters.codexturns import (
     FakeCodexClient,
     await_released_turn,
@@ -20,7 +20,6 @@ from tests.adapters.codexturns import (
     make_codex_adapter,
 )
 from tests.adapters.dispatch import deliver_event
-from tests.integrations.codex.kit import agent_input
 
 
 class TestNativeActivityRelay:

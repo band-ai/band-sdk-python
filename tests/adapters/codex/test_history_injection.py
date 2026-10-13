@@ -14,10 +14,6 @@ from band.adapters.codex import (
 )
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.protocols import TurnResultAlreadyReported
-from band.core.types import (
-    AgentInput,
-    HistoryProvider,
-)
 from band.integrations.codex import CodexJsonRpcError
 from band.integrations.codex.types import (
     CodexRequestMethod,
@@ -31,6 +27,7 @@ from band.testing import (
 )
 from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
+    agent_input,
     make_platform_message,
     start_room_process,
     wire_codex_room,
@@ -82,17 +79,7 @@ class TestHistoryInjection:
             },
         ]
 
-        inp = AgentInput(
-            msg=make_platform_message(
-                room_id="room-1", content="Now add rate limiting"
-            ),
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        inp = agent_input("Now add rate limiting", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
@@ -139,15 +126,7 @@ class TestHistoryInjection:
             },
         ]
 
-        inp = AgentInput(
-            msg=make_platform_message(room_id="room-1", content="Continue"),
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        inp = agent_input("Continue", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
@@ -182,15 +161,7 @@ class TestHistoryInjection:
             },
         ]
 
-        inp = AgentInput(
-            msg=make_platform_message(room_id="room-1", content="Continue"),
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        inp = agent_input("Continue", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
@@ -249,15 +220,7 @@ class TestHistoryInjection:
             },
         ]
 
-        inp = AgentInput(
-            msg=make_platform_message(room_id="room-1", content="Go"),
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        inp = agent_input("Go", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
@@ -311,15 +274,7 @@ class TestHistoryInjection:
             for i in range(10)
         )
 
-        inp = AgentInput(
-            msg=make_platform_message(room_id="room-1", content="Go"),
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        inp = agent_input("Go", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         turn_start = fake_client.params_of(CodexRequestMethod.TURN_START)[0]
@@ -361,15 +316,7 @@ class TestHistoryInjection:
             },
         ]
 
-        inp = AgentInput(
-            msg=make_platform_message(room_id="room-1", content="Go"),
-            tools=tools,
-            history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        inp = agent_input("Go", tools, raw_history=raw_history)
         await deliver_event(adapter, inp)
 
         # After injection, stashed data should be cleaned up

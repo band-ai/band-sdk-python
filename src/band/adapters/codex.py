@@ -1333,7 +1333,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             # perf_counter (not monotonic): highest-resolution clock, so a fast
             # turn still measures a non-zero duration on Windows, where
             # monotonic()'s coarse tick can round an instant turn to 0.0.
-            _turn_start = _time.perf_counter()
+            turn_start = _time.perf_counter()
             try:
                 result = await self._process_turn_events(
                     native=native,
@@ -1341,7 +1341,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     msg=msg,
                     room_id=room_id,
                     thread_id=thread_id,
-                    turn_start=_turn_start,
+                    turn_start=turn_start,
                 )
             except TurnResultAlreadyReported:
                 # A nested handler (e.g. the turn-timeout branch) already
@@ -1357,7 +1357,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     thread_id=thread_id,
                     turn_id=native.turn_id,
                     result=TurnResult(turn_status="failed", turn_error=str(error)),
-                    turn_start=_turn_start,
+                    turn_start=turn_start,
                 )
                 raise
             except Exception:
@@ -1380,7 +1380,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         turn_status="failed",
                         turn_error="Internal error during turn processing",
                     ),
-                    turn_start=_turn_start,
+                    turn_start=turn_start,
                 )
                 raise TurnResultAlreadyReported(
                     "Internal error during turn processing"
@@ -1395,7 +1395,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             turn_status=result.turn_status,
             turn_error=result.turn_error,
             native_messages=result.native_messages,
-            duration_s=_time.perf_counter() - _turn_start,
+            duration_s=_time.perf_counter() - turn_start,
         )
         # A turn wound down by room cleanup was aborted, not missed.
         if room_id not in self._closing_rooms:
@@ -2147,17 +2147,23 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _dispose(self, room: RoomCodexClient) -> None:
         """Erase what only a final leave ends: thread, settings, workspace claim."""
         room_id = room.room_id
-        if (thread_id := self._room_threads.pop(room_id, None)) is not None:
-            self._token_usage.pop(thread_id, None)
+        self._forget_room_thread(room_id)
         self._clear_pending_approvals_for_room(room_id)
-        self._prompt_injected_rooms.discard(room_id)
-        self._needs_history_injection.discard(room_id)
-        self._raw_history_by_room.pop(room_id, None)
         self._approval_audit.pop(room_id, None)
         self._session_approved.pop(room_id, None)
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
         self._workspaces.release(room_id, room.workspace)
+
+    def _forget_room_thread(self, room_id: str) -> str | None:
+        """Drop the room's thread mapping and per-thread state; return the thread id."""
+        thread_id = self._room_threads.pop(room_id, None)
+        if thread_id is not None:
+            self._token_usage.pop(thread_id, None)
+        self._prompt_injected_rooms.discard(room_id)
+        self._needs_history_injection.discard(room_id)
+        self._raw_history_by_room.pop(room_id, None)
+        return thread_id
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -3899,12 +3905,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return True
 
             if subcommand == CodexSubcommand.ARCHIVE:
-                mapped_thread = self._room_threads.pop(room_id, None)
+                mapped_thread = self._forget_room_thread(room_id)
                 self._require_active_client_state().forget_thread()
-                self._prompt_injected_rooms.discard(room_id)
-                self._token_usage.pop(mapped_thread or "", None)
-                self._raw_history_by_room.pop(room_id, None)
-                self._needs_history_injection.discard(room_id)
                 await deliver_notice(
                     tools,
                     f"Thread `{mapped_thread or 'none'}` archived. "

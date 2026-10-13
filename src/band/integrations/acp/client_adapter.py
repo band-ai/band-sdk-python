@@ -702,8 +702,8 @@ class ACPClientAdapter(
             generation=generation,
             reason=self.config.retention_unavailable_reason,
         )
-        if resume and room.session is not None:
-            await self._restore_retained_session(room, runtime)
+        if resume and (session := room.session) is not None:
+            await self._restore_retained_session(room, runtime, session)
 
     async def _start_runtime(self, runtime: ACPRuntime) -> None:
         """Start ``runtime`` within ``start_timeout_s``, so a hung agent fails
@@ -1314,7 +1314,7 @@ class ACPClientAdapter(
         )
 
     async def _restore_retained_session(
-        self, room: ACPRoom, runtime: ACPRuntime
+        self, room: ACPRoom, runtime: ACPRuntime, session: RoomSession
     ) -> None:
         """Wake the room's retained session on a new process, exactly.
 
@@ -1323,9 +1323,6 @@ class ACPClientAdapter(
         and keeps both the session identity and the selection; it never falls
         back to a new session or a transcript replay.
         """
-        session = room.session
-        if session is None:
-            return
         mcp = await self._session_mcp_servers(room, runtime)
         await runtime.restore_session_response(
             cwd=room.workspace,

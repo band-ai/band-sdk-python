@@ -52,9 +52,11 @@ from tests.adapters.codexturns import (
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.paths import host_absolute_path
 
+ROOM_ID = "room-1"
+
 
 def make_platform_message(
-    room_id: str = "room-1", content: str = "hello"
+    room_id: str = ROOM_ID, content: str = "hello"
 ) -> PlatformMessage:
     return PlatformMessage(
         id=str(uuid4()),
@@ -66,6 +68,25 @@ def make_platform_message(
         message_type="text",
         metadata={},
         created_at=datetime.now(UTC),
+    )
+
+
+def agent_input(
+    content: str,
+    tools: FakeAgentTools,
+    *,
+    raw_history: list[dict[str, Any]] | None = None,
+    room_id: str = ROOM_ID,
+    is_session_bootstrap: bool = True,
+) -> AgentInput:
+    return AgentInput(
+        msg=make_platform_message(room_id=room_id, content=content),
+        tools=tools,
+        history=HistoryProvider(raw=raw_history or []),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=is_session_bootstrap,
+        room_id=room_id,
     )
 
 
@@ -141,13 +162,13 @@ def patch_codex_clients_by_room(
 def wire_codex_room(
     adapter: CodexAdapter,
     client: FakeCodexClient,
-    room_id: str = "room-1",
+    room_id: str = ROOM_ID,
 ) -> None:
     adapter._room_client(room_id).client = client
     adapter._active_room.set(room_id)
 
 
-async def start_room_process(adapter: CodexAdapter, room_id: str = "room-1") -> None:
+async def start_room_process(adapter: CodexAdapter, room_id: str = ROOM_ID) -> None:
     """Bring up ``room_id``'s Codex process through a local command's lease."""
     await deliver_message(
         adapter,
@@ -202,9 +223,6 @@ async def run_codex_turn(
     return CodexTurn(adapter=adapter, client=client, tools=room_tools)
 
 
-ROOM_ID = "room-1"
-
-
 async def send_bootstrap(
     adapter: CodexAdapter,
     *,
@@ -256,15 +274,7 @@ class CodexRoom:
         self.deliveries.append(tools := ToolSchemaFakeTools())
         await deliver_event(
             self.adapter,
-            AgentInput(
-                msg=make_platform_message(room_id=ROOM_ID, content=content),
-                tools=tools,
-                history=HistoryProvider(raw=[]),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=len(self.deliveries) == 1,
-                room_id=ROOM_ID,
-            ),
+            agent_input(content, tools, is_session_bootstrap=len(self.deliveries) == 1),
         )
 
     async def settled(self) -> None:

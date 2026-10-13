@@ -137,12 +137,7 @@ class ClaudeRoomSession:
     @property
     def closing(self) -> bool:
         """Whether the room's final cleanup has begun; it never serves again."""
-        snapshot = self.retained.snapshot
-        return (
-            self._manager.stopping
-            or snapshot.state == Residency.CLOSED
-            or snapshot.pending_release == ReleaseCause.FINAL
-        )
+        return self._manager.stopping or self.retained.snapshot.disposing
 
     def speaks_for(self, generation: int) -> bool:
         """Whether a callback from residency ``generation`` may still act.

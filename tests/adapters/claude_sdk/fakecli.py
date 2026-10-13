@@ -115,6 +115,11 @@ class Hold:
     ) -> None:
         self.released.set()
 
+    async def wait(self) -> None:
+        """Signal the step is reached and park until the test releases it."""
+        self.reached.set()
+        await self.released.wait()
+
 
 Step = (
     ModelDecision
@@ -220,8 +225,7 @@ class FakeCLISession(Transport):
     async def connect(self) -> None:
         if (hold := self.claude.connecting) is not None:
             self.claude.connecting = None
-            hold.reached.set()
-            await hold.released.wait()
+            await hold.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
             raise CLIConnectionError("Claude CLI exited during startup")
 
@@ -234,8 +238,7 @@ class FakeCLISession(Transport):
         self.close_calls += 1
         if (hold := self.claude.closing) is not None:
             self.claude.closing = None
-            hold.reached.set()
-            await hold.released.wait()
+            await hold.wait()
         if self.claude.refuse_close or self.refuse_close:
             raise RuntimeError("Claude CLI cleanup failed")
         self.alive = False
@@ -333,8 +336,7 @@ class FakeCLISession(Transport):
                     case Raw(message=message):
                         self._outbox.put_nowait(message)
                     case Hold():
-                        step.reached.set()
-                        await step.released.wait()
+                        await step.wait()
                     case EndTurn():
                         ending = step
                     case Remember(note=note):
