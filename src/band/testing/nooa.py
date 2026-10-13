@@ -29,9 +29,13 @@ RETURN_RESULT = "return_result"
 
 
 def tool_call_turn(
-    name: str, arguments: dict[str, Any], *, usage: dict[str, int] | None = None
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    usage: dict[str, int] | None = None,
+    reasoning: str | None = None,
 ) -> LLMResponse:
-    """A model turn that calls one CodeAct tool, reporting *usage* if given."""
+    """A model turn that calls one CodeAct tool, with optional usage and reasoning."""
     call_id = f"call-{uuid4().hex[:8]}"
     encoded = json.dumps(arguments)
     return LLMResponse(
@@ -50,14 +54,18 @@ def tool_call_turn(
                 }
             ],
         },
-        reasoning=None,
+        reasoning=reasoning,
         usage=usage,
     )
 
 
-def code_turn(code: str, *, usage: dict[str, int] | None = None) -> LLMResponse:
+def code_turn(
+    code: str, *, usage: dict[str, int] | None = None, reasoning: str | None = None
+) -> LLMResponse:
     """A model turn that runs *code* in the agent's Python session."""
-    return tool_call_turn(EXECUTE_PYTHON, {"code": code}, usage=usage)
+    return tool_call_turn(
+        EXECUTE_PYTHON, {"code": code}, usage=usage, reasoning=reasoning
+    )
 
 
 def result_turn(

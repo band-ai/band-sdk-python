@@ -6,23 +6,21 @@ NOOA's own ``FakeLLMClient``. The Band side uses ``FakeAgentTools``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from nooa import Agent
 from nooa.config.execution_config import ExecutionConfig
 from nooa.unifiedllm import FakeLLMClient
 from pydantic import BaseModel, Field
 from typing_extensions import Unpack
 
-from band.adapters.nooa import (
-    TOOLS_BLOCK,
-    NooaAdapter,
-    NooaAdapterConfig,
-    NooaRoomAgent,
-)
+from band.adapters.nooa import NooaAdapter, NooaAdapterConfig, NooaRoomAgent
+from band.adapters.nooa.adapter import TOOLS_BLOCK
 from band.core.types import FeatureKwargs, PlatformMessage, ToolEventKey
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
 from band.runtime.tools import TurnEffect
@@ -83,6 +81,65 @@ def room_agent_with_execution(execution: ExecutionConfig) -> type[NooaRoomAgent]
         llm=FakeLLMClient(),
         execution=execution,
     )
+
+
+class SlowInput(BaseModel):
+    """A custom tool that finishes only once its gate opens."""
+
+
+class Gate:
+    """Holds a custom tool open, and records whether it ever committed."""
+
+    def __init__(self) -> None:
+        self.opened = asyncio.Event()
+        self.entered = asyncio.Event()
+        self.committed: list[str] = []
+
+    async def handler(self) -> str:
+        self.entered.set()
+        await self.opened.wait()
+        self.committed.append("effect")
+        return "done"
+
+
+CHILD_USAGE = {"prompt_tokens": 100, "completion_tokens": 15}
+
+
+def delegating_room_agent() -> type[NooaRoomAgent]:
+    """A room agent whose ``respond`` delegates to a scripted child agent.
+
+    The parent makes no model call of its own, so every token the turn spends
+    is the child's.
+    """
+    child_llm = FakeLLMClient(
+        [code_turn("print('working')", usage=CHILD_USAGE), result_turn()]
+    )
+    child_class = type(Agent)(
+        "Child",
+        (Agent,),
+        {
+            "__doc__": "You are a helper agent.",
+            "__module__": __name__,
+            "work": child_work,
+        },
+        llm=child_llm,
+    )
+
+    async def respond(self: NooaRoomAgent, message: str) -> None:
+        await child_class().work()
+        await self.room.band_no_reply()
+
+    return type(NooaRoomAgent)(
+        "Parent",
+        (NooaRoomAgent,),
+        {"__doc__": "You delegate.", "__module__": __name__, "respond": respond},
+        llm=FakeLLMClient(),
+    )
+
+
+async def child_work(self: Agent) -> None:
+    """Do the delegated work."""
+    ...  # noqa: PIE790 -- NOOA hands an ellipsis-bodied method to the model
 
 
 def declining_turns(count: int) -> FakeLLMClient:

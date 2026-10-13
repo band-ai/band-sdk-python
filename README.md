@@ -578,7 +578,7 @@ Adapter emit support:
 | Pydantic AI | Yes | - | - | Yes |
 | LangGraph | Yes | - | - | Yes |
 | Strands Agents | Yes | - | - | Yes |
-| NOOA | Yes | - | - | Yes |
+| NOOA | Yes | Yes | - | Yes |
 | Parlant | - | - | - | - |
 | A2A / A2A Gateway | - | - | - | - |
 | ACP Client | - | - | - | - |

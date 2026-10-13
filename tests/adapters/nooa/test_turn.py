@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from nooa import GenerationError
 from nooa.unifiedllm import FakeLLMClient
 
-from band.adapters.nooa import platform_tool_spec, room_tools_class
+from band.adapters.nooa import NooaAdapter
+from band.adapters.nooa.tools import platform_tool_spec, room_tools_class
 from band.core.exceptions import BandToolError
 from band.core.types import Emit
 from band.runtime.tools import TOOL_DEFINITIONS, BandTool
 from band.testing import FakeAgentTools, events_of_type, failure_reports
 from band.testing.nooa import code_turn, result_turn, room_call, scripted_llm
 from tests.adapters.nooa.kit import (
+    Gate,
+    SlowInput,
+    delegating_room_agent,
     failing_llm,
     failing_report,
     prompt_text,
@@ -160,3 +166,76 @@ class TestRoomTurn:
         )
 
         assert second_turn.chat == []
+
+    async def test_a_delegating_turn_reports_its_child_agents_usage(
+        self, tools: FakeAgentTools
+    ) -> None:
+        adapter = NooaAdapter(agent=delegating_room_agent(), emit={Emit.USAGE})
+        await adapter.on_started("Agent", "A test agent")
+
+        await run_turn(adapter, tools)
+
+        [usage_event] = [
+            event for event in events_of_type(tools, "task") if event.get("metadata")
+        ]
+        assert usage_event["metadata"]["band_usage"] == {
+            "input_tokens": 100,
+            "output_tokens": 15,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+
+    async def test_a_tool_call_still_running_when_the_turn_ends_is_cancelled(
+        self, tools: FakeAgentTools
+    ) -> None:
+        gate = Gate()
+        llm = scripted_llm(
+            f"pending = asyncio.create_task({room_call('slow')[len('await ') :]})\n"
+            "await asyncio.sleep(0.05)\n"
+            f"{room_call('band_no_reply')}"
+        )
+        adapter = await started_adapter(
+            llm, additional_tools=[(SlowInput, gate.handler)], emit={Emit.TOOL_CALLS}
+        )
+
+        await run_turn(adapter, tools)
+        gate.opened.set()
+        await asyncio.sleep(0.05)
+
+        assert gate.entered.is_set()
+        assert gate.committed == []
+        assert {
+            result["name"]: result["is_error"] for result in tool_results(tools)
+        } == {"slow": True, "band_no_reply": False}
+
+    async def test_reasoning_is_posted_as_thoughts_when_enabled(
+        self, tools: FakeAgentTools
+    ) -> None:
+        llm = FakeLLMClient(
+            [
+                code_turn(room_call("band_no_reply"), reasoning="Alice only said hi."),
+                result_turn(),
+            ]
+        )
+        adapter = await started_adapter(llm, emit={Emit.THOUGHTS})
+
+        await run_turn(adapter, tools)
+
+        assert [event["content"] for event in events_of_type(tools, "thought")] == [
+            "Alice only said hi."
+        ]
+
+    async def test_reasoning_stays_out_of_the_room_without_thoughts(
+        self, tools: FakeAgentTools
+    ) -> None:
+        llm = FakeLLMClient(
+            [
+                code_turn(room_call("band_no_reply"), reasoning="Alice only said hi."),
+                result_turn(),
+            ]
+        )
+        adapter = await started_adapter(llm, emit={Emit.TOOL_CALLS})
+
+        await run_turn(adapter, tools)
+
+        assert events_of_type(tools, "thought") == []

@@ -42,15 +42,24 @@ These invariants are easy to break:
   class annotations, so the adapter subclasses the given class with `room`
   annotated as a `RoomTools` subclass that has exactly the allowed tools. That
   set depends on the effective features, which are only known after capability
-  negotiation.
+  negotiation. The subclass passes the class's `execution` setting on, because
+  NOOA resets it to the default on every subclass.
 - **One instance per room.** A NOOA agent keeps its event log for its lifetime,
   so the room instance is its conversation memory. A session start replaces it
   and seeds the platform transcript as a prefix context block. `on_cleanup`
   drops it.
-- **A tool call only works during a turn.** `self.room` is bound to the turn's
-  tools while `respond` runs. A call after that, for example from a task the
-  model left running, raises `BandToolError`. A failed tool call also raises
-  `BandToolError` into the model's session, so the model can read it and recover.
+- **A tool call belongs to the turn that made it.** Each turn binds its tools
+  in a `ContextVar`, so a task the model's code starts keeps its own turn's
+  binding. When `respond` returns, the binding closes. A later call, for example
+  from a task the model left running, raises `BandToolError`, and a call still
+  in flight is cancelled and awaited, so no effect commits after the turn is
+  judged. A failed tool call also raises `BandToolError` into the model's
+  session, so the model can read it and recover.
+- **Usage and thoughts cover delegated work.** A turn can call child agents,
+  each with its own event bus. While the turn runs, NOOA instrumentation hooks
+  (which NOOA scopes to a `ContextVar`) subscribe every agent the turn calls, so
+  `Emit.USAGE` sums all of their model calls. `Emit.THOUGHTS` posts each call's
+  raw `reasoning_content`; leave it out of `emit` to keep reasoning out of the room.
 - **The return value is never relayed.** `respond` returns `None`. A reply
   reaches the room only through `band_send_message`, and the shared turn
   judgment reports a turn that neither replied nor declined.

@@ -297,7 +297,7 @@ async def _probe_strands() -> bool:
 
 
 async def _probe_nooa() -> bool:
-    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
+    from band.adapters.nooa.tools import (  # noqa: PLC0415 -- nooa extra, absent on Python 3.11
         RoomToolSpec,
         room_tools_class,
     )
@@ -309,7 +309,7 @@ async def _probe_nooa() -> bool:
         BandTool.READ_ROOM_FILE, TOOL_MODELS[BandTool.READ_ROOM_FILE], read
     )
     room = room_tools_class([spec])(emit_tool_calls=False)
-    with room.bound_to(MagicMock()):
+    async with room.bound_to(MagicMock()):
         result = await getattr(room, BandTool.READ_ROOM_FILE)(file_id="f1")
 
     [image] = result
