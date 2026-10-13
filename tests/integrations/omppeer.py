@@ -299,6 +299,36 @@ class Peer:
                     }
                 )
                 return
+            case "ask":
+                self.held = frame
+                send({"type": "agent_start"})
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "ask-1",
+                        "method": "ask",
+                        "questions": [
+                            {
+                                "id": "storage",
+                                "question": "Database?",
+                                "header": "Storage",
+                                "options": [
+                                    {"label": "SQLite", "description": "Embedded"},
+                                    {"label": "Postgres"},
+                                ],
+                                "recommended": 0,
+                            },
+                            {
+                                "id": "targets",
+                                "question": "Deploy where?",
+                                "options": [{"label": "Dev"}, {"label": "Prod"}],
+                                "multi": True,
+                            },
+                        ],
+                        "timeout": 30000,
+                    }
+                )
+                return
             case "stale":
                 send({"type": "session_settled"})
                 send(
@@ -504,6 +534,16 @@ class Peer:
                 if frame.type == "extension_ui_response":
                     self.ui_answered = True
                 if (
+                    self.scenario == "ask"
+                    and frame.type == "extension_ui_response"
+                    and self.held is not None
+                ):
+                    self.respond(self.held)
+                    self.held = None
+                    self.end("asked")
+                    self.result(settled=True)
+                    self.settle()
+                if (
                     self.scenario == "callbacks"
                     and self.tool_results == {"host-1", "host-2"}
                     and self.ui_answered
@@ -517,6 +557,27 @@ class Peer:
             case "checkpoint":
                 self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
             case "abort":
+                if self.scenario == "ask-on-abort":
+                    send(
+                        {
+                            "type": "extension_ui_request",
+                            "id": "late-ask",
+                            "method": "ask",
+                            "questions": [
+                                {"id": "q", "question": "Late?", "options": []}
+                            ],
+                        }
+                    )
+                if self.scenario == "tool-on-abort":
+                    send(
+                        {
+                            "type": "host_tool_call",
+                            "id": "late-tool",
+                            "toolCallId": "call-late",
+                            "toolName": "band_chat",
+                            "arguments": {},
+                        }
+                    )
                 if self.scenario != "stubborn":
                     self.respond(frame)
                     if self.prompt_id is not None:

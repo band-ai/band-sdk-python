@@ -27,6 +27,7 @@ from band.integrations.omprpc import (
     OmpRpcError,
 )
 from band.integrations.ompwire import (
+    OmpAskAnswer,
     OmpContent,
     OmpEvent,
     OmpHostToolCall,
@@ -408,6 +409,78 @@ async def test_host_tools_and_ui_run_concurrently_even_before_prompt_acceptance(
     await second_prompt(client)
 
 
+async def test_ask_dialog_questions_and_answers_cross_the_wire(
+    client_factory: ClientFactory,
+) -> None:
+    client = await client_factory("ask")
+    observer = Observer()
+    asked: list[OmpUIRequest] = []
+
+    async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
+        raise AssertionError(f"unexpected host tool {call.toolName}")
+
+    async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
+        asked.append(request)
+        return OmpUIResponse(
+            answers=[
+                OmpAskAnswer(id=question.id, customInput=f"pending {question.id}")
+                for question in request.questions
+            ]
+        )
+
+    async with asyncio.timeout(5):
+        await client.prompt(
+            "first", on_event=observer.on_event, on_tool=on_tool, on_ui=on_ui
+        )
+    [request] = asked
+    assert request.method == "ask"
+    assert [
+        (
+            question.id,
+            question.header,
+            question.multi,
+            question.recommended,
+            [(option.label, option.description) for option in question.options],
+        )
+        for question in request.questions
+    ] == [
+        ("storage", "Storage", False, 0, [("SQLite", "Embedded"), ("Postgres", None)]),
+        ("targets", None, True, None, [("Dev", None), ("Prod", None)]),
+    ]
+    frames = await checkpoint_frames(client)
+    response = next(frame for frame in frames if frame.get("id") == "ask-1")
+    assert response == {
+        "type": "extension_ui_response",
+        "id": "ask-1",
+        "answers": [
+            {"id": "storage", "selectedOptions": [], "customInput": "pending storage"},
+            {"id": "targets", "selectedOptions": [], "customInput": "pending targets"},
+        ],
+    }
+    await second_prompt(client)
+
+
+def test_ask_question_accepts_any_numeric_recommendation() -> None:
+    # OMP types ``recommended`` as a number and forwards the model's value
+    # unchanged; rejecting it would fail the reader and with it the turn.
+    request = OmpUIRequest.model_validate(
+        {
+            "type": "extension_ui_request",
+            "id": "ask-1",
+            "method": "ask",
+            "questions": [
+                {
+                    "id": "q",
+                    "question": "Pick",
+                    "options": [{"label": "A"}, {"label": "B"}],
+                    "recommended": 0.5,
+                }
+            ],
+        }
+    )
+    assert request.questions[0].recommended == 0.5
+
+
 @pytest.mark.parametrize("kind", ["host", "ui"])
 async def test_native_cancel_targets_the_callback_and_keeps_the_next_turn_usable(
     client_factory: ClientFactory, kind: str
@@ -500,6 +573,40 @@ async def test_interrupted_prompt_aborts_reaps_and_can_restart(
             await client.start()
             await second_prompt(client)
         assert client._proc is not process
+    finally:
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.parametrize("scenario", ["ask-on-abort", "tool-on-abort"])
+async def test_callbacks_arriving_during_shutdown_never_run(
+    client_factory: ClientFactory, scenario: str
+) -> None:
+    # A UI or host-tool callback can post to the room; once shutdown has begun,
+    # nothing remains to cancel a newly started one, so it must not start.
+    client = await client_factory(scenario)
+    observer = Observer()
+    started: list[str] = []
+
+    async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
+        started.append(call.id)
+        return OmpToolResult(content=[OmpContent(type="text", text="late")])
+
+    async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
+        started.append(request.id)
+        return OmpUIResponse(cancelled=True)
+
+    running = asyncio.create_task(
+        client.prompt("first", on_event=observer.on_event, on_tool=on_tool, on_ui=on_ui)
+    )
+    try:
+        await observer.wait_for("agent_end")
+        running.cancel()
+        async with asyncio.timeout(6):
+            with pytest.raises(asyncio.CancelledError):
+                await running
+        await asyncio.sleep(0)
+        assert started == []
     finally:
         running.cancel()
         await asyncio.gather(running, return_exceptions=True)

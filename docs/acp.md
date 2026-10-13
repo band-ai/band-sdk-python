@@ -232,11 +232,21 @@ text/image tool results.
   OMP does not use the ACP `resolve_session_config` callback.
 - **Tools and replies.** Canonical Band tools and `additional_tools` are
   registered through native `set_host_tools`; results retain text/image content.
-  Room replies still require `band_send_message`, and deliberate declines use
-  `band_no_reply`. Native assistant text is optional thought telemetry, not a
+  Room replies require `band_send_message` or an `ask` (below), and deliberate
+  declines use `band_no_reply`. Native assistant text is optional thought telemetry, not a
   room reply. `SimpleAdapter.run_judged_turn` remains the sole turn-judging owner:
   native-only output and failed tools followed by narration still reach the
   missing-reply verdict.
+- **Questions go to the room.** The adapter opts each session into OMP's
+  structured `ask` dialog (`set_ask_dialog`). An `ask` call posts its questions,
+  options and recommended choice to the room, mentioning the requester; the post
+  counts as the turn's reply. Once the post lands, the tool returns without
+  waiting for the answer and tells the model it arrives as a later message; that
+  reply resumes the same native session. Band processes a room's messages one at
+  a time, so a turn cannot wait for the answer, and OMP aborts the whole turn on
+  a cancelled `ask`. When the post fails, the model is told so instead and the
+  turn still owes a reply; a room the platform stopped ends the turn. Other UI
+  requests keep the `resolve_permission` behavior.
 - **Instructions and attribution.** A private always-apply native rule places Band's
   stable communication and completion guidance in OMP's genuine system prompt,
   preserving native instructions, user prompt additions and append-file discovery.

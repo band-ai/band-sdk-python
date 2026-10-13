@@ -10,13 +10,17 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
+from band.core.exceptions import RoomExecutionStoppedError
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.ompwire import (
+    OmpAskOption,
+    OmpAskQuestion,
     OmpContent,
     OmpEvent,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
+    OmpUIResponse,
 )
 from band.runtime.tools import ToolCallOutcome
 from band.testing import (
@@ -50,6 +54,8 @@ class PendingRuntime:
                 "sessionFile": None,
                 "isSettled": True,
             }
+        if command == "set_ask_dialog":
+            return {"enabled": True}
         return {}
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
@@ -257,6 +263,113 @@ async def test_failed_band_reply_remains_an_error_for_the_model():
     assert result.is_error
     assert result.content[0].text == "delivery rejected"
     assert not tools.turn.replied
+
+
+class AskingRuntime(PendingRuntime):
+    """Models a turn whose only action is OMP's ``ask`` tool."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.commands: list[tuple[str, dict]] = []
+        self.answer: OmpUIResponse | None = None
+
+    async def request(self, command, **parameters):
+        self.commands.append((command, parameters))
+        return await super().request(command, **parameters)
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        self.answer = await on_ui(
+            OmpUIRequest(
+                id="ask-1",
+                method="ask",
+                questions=[
+                    OmpAskQuestion(
+                        id="storage",
+                        question="Database?",
+                        options=[
+                            OmpAskOption(label="SQLite", description="Embedded"),
+                            OmpAskOption(label="Postgres"),
+                        ],
+                        recommended=0,
+                    ),
+                    OmpAskQuestion(
+                        id="targets",
+                        question="Deploy where?",
+                        options=[OmpAskOption(label="Dev"), OmpAskOption(label="Prod")],
+                        multi=True,
+                    ),
+                ],
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_ask_posts_its_questions_to_the_room_as_the_turn_reply(
+    monkeypatch, tmp_path: Path
+):
+    runtime = AskingRuntime()
+    monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+    adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+    tools = FakeAgentTools()
+    await run_turn(adapter, tools)
+    assert ("set_ask_dialog", {"enabled": True}) in runtime.commands
+    [posted] = tools.messages_sent
+    assert posted["mentions"] == [{"id": "peer-456", "name": "Test Peer"}]
+    for text in ("Database?", "SQLite", "Embedded", "Postgres", "Deploy where?"):
+        assert text in posted["content"]
+    assert runtime.answer is not None
+    assert not runtime.answer.cancelled
+    assert [answer.id for answer in runtime.answer.answers or []] == [
+        "storage",
+        "targets",
+    ]
+    assert all(
+        answer.customInput and not answer.selectedOptions
+        for answer in runtime.answer.answers or []
+    )
+    # Posting the question is the turn's reply: no missing-reply failure.
+    assert tools.turn.replied
+    assert not failure_reports(tools)
+    await adapter.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_undeliverable_ask_tells_the_model_instead_of_aborting(
+    monkeypatch, tmp_path: Path
+):
+    runtime = AskingRuntime()
+    monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+    adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+    tools = FakeAgentTools()
+    tools.send_message_error = RuntimeError("platform unavailable")
+    with pytest.raises(TurnResultAlreadyReported):
+        await run_turn(adapter, tools)
+    assert runtime.answer is not None
+    assert not runtime.answer.cancelled
+    answers = runtime.answer.answers or []
+    assert [answer.id for answer in answers] == ["storage", "targets"]
+    assert all("platform unavailable" in (a.customInput or "") for a in answers)
+    # Nothing reached the room, so the turn still owes a reply.
+    assert not tools.turn.replied
+    assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
+    await adapter.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_stopped_room_ends_the_turn_instead_of_answering_the_ask(
+    monkeypatch, tmp_path: Path
+):
+    runtime = AskingRuntime()
+    monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+    adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+    tools = FakeAgentTools()
+    tools.send_message_error = RoomExecutionStoppedError("room-123")
+    with pytest.raises(RoomExecutionStoppedError):
+        await run_turn(adapter, tools)
+    # The model is never told to carry on in a room the platform stopped.
+    assert runtime.answer is None
+    assert runtime.closed
+    await adapter.cleanup_all()
 
 
 @pytest.mark.asyncio
