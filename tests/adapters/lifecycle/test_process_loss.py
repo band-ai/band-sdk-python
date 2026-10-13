@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from band.core.retention import Residency
-from tests.adapters.lifecycle.kit import RetentionHost
+from tests.adapters.lifecycle.kit import RetentionHost, workspace_still_claimed
 from tests.adapters.roompeer import PeerCommand, write_instruction
 
 
@@ -50,7 +50,7 @@ class TestProcessLoss:
         await host.settled("room-a")
         assert host.state("room-a") == Residency.CLEANUP_PENDING
 
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         assert host.state("room-a") == Residency.CLEANUP_PENDING
         assert (len(host.children), host.overlaps) == (1, 0)

@@ -31,11 +31,22 @@ IN_FLIGHT = frozenset({Residency.ACQUIRING, Residency.SUSPENDING})
 # Modules that register a provider's profiles, each under its own tests.
 PROFILE_MODULE = "lifecycleprofile.py"
 
+# The distinctive start of the refusal band.workspaces raises for a workspace
+# another room still holds; the config-time "not both" error must not match.
+WORKSPACE_CLAIMED = "workspace_for_room assigned"
+
 
 async def pause_at(hold: Hold | None) -> None:
     """Stop at ``hold``, when set, until the test releases it."""
     if hold is not None:
         await hold.wait()
+
+
+@contextmanager
+def workspace_still_claimed() -> Iterator[None]:
+    """Expect the refusal of a workspace another room still holds."""
+    with pytest.raises(ValueError, match=re.escape(WORKSPACE_CLAIMED)):
+        yield
 
 
 @dataclass(frozen=True)

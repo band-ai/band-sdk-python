@@ -9,7 +9,11 @@ import pytest
 
 from band.core.exceptions import InputNotAccepted
 from tests.adapters.hold import Hold
-from tests.adapters.lifecycle.kit import RetentionHost, raises_exactly
+from tests.adapters.lifecycle.kit import (
+    RetentionHost,
+    raises_exactly,
+    workspace_still_claimed,
+)
 from tests.adapters.roompeer import (
     CLEANUP_FAILURE,
     PeerCommand,
@@ -41,7 +45,7 @@ class TestRoomOwnership:
         host.children[0].refuse_close = True
         with pytest.raises(RuntimeError, match=CLEANUP_FAILURE):
             await host.leave("room-a")
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         with pytest.raises(InputNotAccepted, match="is closing"):
             await host.send("room-a", write_instruction("changed"))
@@ -62,7 +66,7 @@ class TestRoomOwnership:
             await host.send("room-a", write_instruction("alpha"))
         await host.settled("room-a")
         assert host.exited == [True]
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         await host.leave("room-a")
         host.fail_startup.unlink()
@@ -81,7 +85,7 @@ class TestRoomOwnership:
         await host.leave("room-a")
         assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
         assert host.exited == [True, False]
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
 
     async def test_cancelled_startup_keeps_ownership_and_can_recover(
@@ -95,7 +99,7 @@ class TestRoomOwnership:
         with pytest.raises(asyncio.CancelledError):
             await opening
         host.hold_startup.unlink()
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         assert host.exited.count(False) == 1
@@ -132,7 +136,7 @@ class TestRoomOwnership:
         assert not done
         with pytest.raises(InputNotAccepted, match="is closing"):
             await host.send("room-a", write_instruction("changed"))
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         assert host.exited == [False]
         barrier.released.set()
@@ -174,7 +178,7 @@ class TestRoomOwnership:
         host.hold_startup.unlink()
         with raises_exactly(host.failed_start):
             await opening
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         assert host.exited == [False]
         host.fail_startup.unlink()
