@@ -238,9 +238,15 @@ def _attributed(event: RpcEvent, turn_id: str) -> RpcEvent:
     )
 
 
-def patch_codex_client(adapter: CodexAdapter, client: FakeCodexClient) -> None:
+def patch_codex_client(
+    adapter: CodexAdapter, client: FakeCodexClient, *replacements: FakeCodexClient
+) -> None:
+    """Serve ``client`` as the first Codex process and each of ``replacements``
+    to the next process started after a loss; the last one keeps serving."""
+    processes = deque([client, *replacements])
+
     def _build(_workspace: str) -> FakeCodexClient:
-        return client
+        return processes.popleft() if len(processes) > 1 else processes[0]
 
     adapter._build_client = _build  # type: ignore[method-assign]
 

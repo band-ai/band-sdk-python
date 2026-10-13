@@ -5,24 +5,28 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
-from band.core.protocols import AgentToolsProtocol, TurnResultAlreadyReported
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
 )
 from band.integrations.codex import CodexRequestMethod
 from band.runtime.tools import BandTool
-from band.testing import FakeAgentTools
 from band.workspaces import is_host_absolute, resolve_room_workspace
-from tests.adapters.codex.kit import PROCESS_EXITED, CodexRoom
+from tests.adapters.codex.kit import (
+    PROCESS_EXITED,
+    CodexRoom,
+    answered_turn,
+    patch_codex_clients_by_room,
+    send_bootstrap,
+)
 from tests.adapters.codexturns import (
     FakeCodexClient,
-    make_codex_adapter,
+    patch_codex_client,
     tool_call_request,
     turn_completed,
 )
@@ -72,8 +76,7 @@ class TestRoomWorkspaceIsolation:
     ) -> None:
         assert is_host_absolute(path) is (os.name in accepted_on)
 
-    @pytest.mark.asyncio
-    async def test_adapters_refuse_a_relative_workspace(
+    def test_adapters_refuse_a_relative_workspace(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
@@ -91,8 +94,7 @@ class TestRoomWorkspaceIsolation:
             acp._room("room-a")
         assert not (tmp_path / "workspace").exists()
 
-    @pytest.mark.asyncio
-    async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
+    def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
         self,
         tmp_path: Path,
     ) -> None:
@@ -120,9 +122,8 @@ class TestRoomWorkspaceIsolation:
         replacement = FakeCodexClient(
             events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()]
         )
-        adapter = make_codex_adapter(lost, config=CodexAdapterConfig(model=None))
-        processes = iter([lost, replacement])
-        adapter._build_client = lambda _workspace: next(processes)  # type: ignore[method-assign]
+        adapter = CodexAdapter(CodexAdapterConfig(model=None))
+        patch_codex_client(adapter, lost, replacement)
         await adapter.on_started("Codex Agent", "A coding agent")
         room = CodexRoom(adapter, lost)
 
@@ -156,41 +157,23 @@ class TestRoomWorkspaceIsolation:
     async def test_codex_starts_each_thread_in_its_room_workspace(
         self, tmp_path: Path
     ) -> None:
-        class Client:
-            def __init__(self) -> None:
-                self.params: dict[str, object] | None = None
-
-            async def request(
-                self, method: str, params: dict[str, object]
-            ) -> dict[str, object]:
-                assert method == CodexRequestMethod.THREAD_START
-                self.params = params
-                return {"thread": {"id": "thread"}}
-
         def workspace_for_room(room_id: str) -> str:
             return str(tmp_path / room_id)
 
+        rooms = ("room-a", "room-b")
+        clients = {
+            room_id: FakeCodexClient(events=answered_turn()) for room_id in rooms
+        }
         adapter = CodexAdapter(
-            CodexAdapterConfig(
-                model="gpt-5.5",
-                workspace_for_room=workspace_for_room,
-            )
+            CodexAdapterConfig(workspace_for_room=workspace_for_room)
         )
-        tools = cast(AgentToolsProtocol, FakeAgentTools())
-        clients: list[Client] = []
-        for room_id in ("room-a", "room-b"):
-            room = adapter._room_client(room_id)
-            room.client = client = Client()  # type: ignore[assignment]
-            room.selected_model = "gpt-5.5"
-            clients.append(client)
-            await adapter._ensure_thread(
-                room=room,
-                history=CodexSessionState(),
-                tools=tools,
-                is_session_bootstrap=False,
-            )
+        patch_codex_clients_by_room(adapter, clients)
+        await adapter.on_started("Codex Agent", "A coding agent")
 
-        assert [client.params["cwd"] for client in clients if client.params] == [
-            resolve_room_workspace("room-a", workspace_for_room),
-            resolve_room_workspace("room-b", workspace_for_room),
-        ]
+        for room_id in rooms:
+            await send_bootstrap(adapter, room_id=room_id)
+
+        assert [
+            clients[room_id].params_of(CodexRequestMethod.THREAD_START)[0]["cwd"]
+            for room_id in rooms
+        ] == [resolve_room_workspace(room_id, workspace_for_room) for room_id in rooms]
