@@ -22,10 +22,17 @@ class RoomRetention:
     """
 
     def __init__(
-        self, config: RoomRetentionConfig, *, clock: RetentionClock | None = None
+        self,
+        config: RoomRetentionConfig,
+        *,
+        clock: RetentionClock | None = None,
+        settle_grace_s: float = 0.0,
     ) -> None:
+        """``settle_grace_s`` is how long final disposal lets accepted work
+        finish on its own, admission already closed, before cancelling it."""
         self.config = config
         self.clock = clock or MonotonicClock()
+        self.settle_grace_s = settle_grace_s
         self.stopping = False
         self._rooms: dict[str, RetainedRoom] = {}
         self._timer: Cancellable | None = None

@@ -136,6 +136,12 @@ class RetainedRoom:
         self._schedule(reset=changed)
         return True
 
+    @property
+    def closing(self) -> bool:
+        """Whether admission is closed for good: the room is being disposed or
+        its owner is stopping."""
+        return self._closing or self._owner.stopping
+
     def has_authority(self, generation: int) -> bool:
         """Whether residency ``generation`` may still observe or act: the
         current one, not closing, and not retired by recovery or final close."""
@@ -219,7 +225,7 @@ class RetainedRoom:
             self._start_requested_recovery()
 
     def _check_admission(self) -> None:
-        if self._closing or self._owner.stopping:
+        if self.closing:
             raise RoomClosingError(f"Room {self.room_id} is closing")
 
     async def _settle(self) -> None:
@@ -319,7 +325,7 @@ class RetainedRoom:
         return self._transition
 
     async def _run_acquire(self) -> None:
-        if self._closing or self._owner.stopping:
+        if self.closing:
             self._state = Residency.SUSPENDED
             self._schedule()
             self._check_admission()
@@ -400,8 +406,7 @@ class RetainedRoom:
     def _idle_release_allowed(self, automatic: bool) -> bool:
         return (
             self._cause == ReleaseCause.IDLE
-            and not self._closing
-            and not self._owner.stopping
+            and not self.closing
             and not self._leases
             and not (automatic and self._accepted)
             and self._activity == ProviderActivity.QUIESCENT
@@ -449,8 +454,7 @@ class RetainedRoom:
     def _idle_eligible(self) -> bool:
         return (
             self._idle_candidate
-            and not self._closing
-            and not self._owner.stopping
+            and not self.closing
             and not self._leases
             and not self._accepted
             and self._activity == ProviderActivity.QUIESCENT
@@ -469,7 +473,7 @@ class RetainedRoom:
                 return False
 
     def _notify(self) -> None:
-        settleable = not self._leases or self._closing or self._owner.stopping
+        settleable = not self._leases or self.closing
         _hold(self._settleable, settleable)
         _hold(self._drained, not self._accepted)
         self._owner.reschedule()
@@ -540,11 +544,36 @@ class RetainedRoom:
             self._schedule()
 
     async def _settle_accepted(self) -> None:
-        """Cancel accepted tasks and interrupted startup once, then join all."""
+        """Give accepted work the owner's grace, then cancel what remains and
+        interrupted startup once, and join all."""
         if not self._work_cancelled:
+            await self._grace()
             self._work_cancelled = True
             for task in self._owned - self._unwinding:
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
                 self._transition.cancel()
         await self._drained.wait()
+
+    async def _grace(self) -> None:
+        """Let accepted work finish on its own, with admission closed, until
+        the owner's settle grace expires."""
+        grace = self._owner.settle_grace_s
+        if not grace or self._drained.is_set():
+            return
+        expired = asyncio.Event()
+        timer = self._owner.clock.call_at(self._owner.clock.now() + grace, expired.set)
+        drained = asyncio.ensure_future(self._drained.wait())
+        expiry = asyncio.ensure_future(expired.wait())
+        try:
+            await asyncio.wait({drained, expiry}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            timer.cancel()
+            drained.cancel()
+            expiry.cancel()
+        if not self._drained.is_set():
+            logger.warning(
+                "Room %s: accepted work still running after %ss; cancelling it",
+                self.room_id,
+                grace,
+            )

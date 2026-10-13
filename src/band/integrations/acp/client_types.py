@@ -66,8 +66,9 @@ class ACPRoom:
 
     @property
     def closing(self) -> bool:
-        """Whether the room's final disposal has begun or finished."""
-        return self.retained.snapshot.disposing
+        """Whether the room admits no more work: it is being disposed or its
+        owner is stopping."""
+        return self.retained.closing
 
     @property
     def generation(self) -> int:

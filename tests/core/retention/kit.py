@@ -134,9 +134,16 @@ class Resident:
         )
 
 
+#: The settle grace a graceful host's disposal gives accepted work.
+SETTLE_GRACE_S = 5.0
+
+
 class ResidenceHost:
     def __init__(
-        self, timeout: float | None = 10, transition_timeout: float = 10.0
+        self,
+        timeout: float | None = 10,
+        transition_timeout: float = 10.0,
+        settle_grace: float = 0.0,
     ) -> None:
         self.clock = ManualClock()
         self.owner = RoomRetention(
@@ -144,6 +151,7 @@ class ResidenceHost:
                 idle_timeout_s=timeout, transition_timeout_s=transition_timeout
             ),
             clock=self.clock,
+            settle_grace_s=settle_grace,
         )
         self.residents: list[Resident] = []
 

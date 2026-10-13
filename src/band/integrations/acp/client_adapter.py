@@ -487,7 +487,7 @@ class ACPClientAdapter(
             current = asyncio.current_task()
             if current is not None and current.cancelling():
                 raise
-            if not (room.closing or self._retention.stopping):
+            if not room.closing:
                 raise
             raise _session_ended_mid_switch(room_id) from None
 
