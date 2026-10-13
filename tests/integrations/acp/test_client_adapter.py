@@ -901,6 +901,7 @@ class TestACPClientAdapterOnMessage:
         turn.cancel()
         with pytest.raises(asyncio.CancelledError):
             await turn
+        await adapter_with_mocks.backend_turns.drain()
 
         assert prompt_cancelled.is_set()
         conn.cancel.assert_awaited_once_with("acp-session-123")

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+import band.adapters
 from band.core.simple_adapter import SimpleAdapter
 from tests.framework_conformance.stopprobes import NoBackendTurn, StopCase
 from tests.framework_conformance.stopprobes import a2a as a2a_probe
@@ -18,9 +19,7 @@ from tests.framework_conformance.stopprobes import opencode as opencode_probe
 from tests.framework_conformance.stopprobes import parlant as parlant_probe
 from tests.framework_conformance.test_turn_outcome import band_adapters
 
-#: The stop cases of each adapter that drives a backend, by class name. A
-#: subclass that keeps its parent's ``backend_turns`` and ``on_message`` is
-#: covered by the parent's probe.
+#: The stop cases of each adapter that drives a backend, by class name.
 STOP_PROBES: dict[str, dict[str, StopCase]] = {
     "A2AAdapter": a2a_probe.CASES,
     "ACPClientAdapter": acp_probe.CASES,
@@ -33,6 +32,13 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
     "ParlantAdapter": parlant_probe.CASES,
 }
 
+#: Subclasses that keep a probed parent's ``backend_turns`` and ``on_message``,
+#: so the parent's probe covers them.
+INHERITED_PROBES: dict[str, str] = {
+    "CopilotACPAdapter": "ACPClientAdapter",
+    "OmpACPAdapter": "ACPClientAdapter",
+}
+
 #: Adapters with no backend turn to stop, and why.
 NO_BACKEND_TURN: dict[str, NoBackendTurn] = {
     "AgnoAdapter": NoBackendTurn.IN_PROCESS,
@@ -42,6 +48,7 @@ NO_BACKEND_TURN: dict[str, NoBackendTurn] = {
     "GeminiAdapter": NoBackendTurn.IN_PROCESS,
     "GoogleADKAdapter": NoBackendTurn.IN_PROCESS,
     "LangGraphAdapter": NoBackendTurn.IN_PROCESS,
+    "NooaAdapter": NoBackendTurn.IN_PROCESS,
     "PydanticAIAdapter": NoBackendTurn.IN_PROCESS,
     "StrandsAdapter": NoBackendTurn.IN_PROCESS,
     "A2AGatewayAdapter": NoBackendTurn.GATEWAY,
@@ -68,33 +75,41 @@ CASES = [
 ]
 
 
-def probed_by(
-    cls: type[SimpleAdapter], adapters: dict[str, type[SimpleAdapter]]
-) -> str | None:
-    """The probed adapter whose backend stop ``cls`` runs."""
-    for name in STOP_PROBES:
-        owner = adapters.get(name)
-        if (
-            owner is not None
-            and issubclass(cls, owner)
-            and cls.on_message is owner.on_message
-            and cls.backend_turns is owner.backend_turns
-        ):
-            return name
-    return None
+ACCOUNTED = STOP_PROBES.keys() | INHERITED_PROBES.keys() | NO_BACKEND_TURN.keys()
+
+
+def runs_parents_stop(cls: type[SimpleAdapter], parent: type[SimpleAdapter]) -> bool:
+    return (
+        issubclass(cls, parent)
+        and cls.on_message is parent.on_message
+        and cls.backend_turns is parent.backend_turns
+    )
 
 
 class TestBackendStop:
     def test_every_band_adapter_is_probed_or_pinned(self) -> None:
         adapters = band_adapters()
-        unaccounted = {
+
+        assert adapters.keys() - ACCOUNTED == set()
+        assert not STOP_PROBES.keys() & NO_BACKEND_TURN.keys()
+
+    def test_every_exported_adapter_is_probed_or_pinned_even_without_its_extra(
+        self,
+    ) -> None:
+        exported = {name for name in band.adapters.__all__ if name.endswith("Adapter")}
+
+        assert exported - ACCOUNTED == set()
+
+    def test_inherited_probes_really_run_the_parents_stop(self) -> None:
+        adapters = band_adapters()
+        wrong = {
             name
-            for name, cls in adapters.items()
-            if probed_by(cls, adapters) is None and name not in NO_BACKEND_TURN
+            for name, parent in INHERITED_PROBES.items()
+            if name in adapters
+            and not runs_parents_stop(adapters[name], adapters[parent])
         }
 
-        assert unaccounted == set()
-        assert not STOP_PROBES.keys() & NO_BACKEND_TURN.keys()
+        assert wrong == set()
 
     @pytest.mark.parametrize(("adapter", "case"), CASES)
     async def test_ending_a_turn_leaves_these_backend_cancels(

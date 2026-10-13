@@ -13,11 +13,13 @@ class RecordingCancel:
         self.finished: list[str] = []
         self.release = asyncio.Event()
         self.release.set()
+        self.entered = asyncio.Event()
 
     def hold(self) -> None:
         self.release.clear()
 
     async def __call__(self, handle: str) -> None:
         self.sent.append(handle)
+        self.entered.set()
         await self.release.wait()
         self.finished.append(handle)

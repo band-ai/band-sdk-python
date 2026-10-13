@@ -128,7 +128,7 @@ class TestBackendTurns:
         cancel.hold()
         async with turns.running(ROOM, HANDLE):
             turns.cancel(ROOM)
-            await asyncio.sleep(0)
+            await cancel.entered.wait()
             assert cancel.sent == [HANDLE]
             assert cancel.finished == []
         cancel.release.set()
