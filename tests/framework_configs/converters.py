@@ -25,6 +25,7 @@ from band.converters.copilot_sdk import (
 )
 from band.converters.crewai import CrewAIHistoryConverter
 from band.converters.google_adk import GoogleADKHistoryConverter
+from band.converters.nooa import NooaHistoryConverter
 from band.converters.parlant import ParlantHistoryConverter
 from tests.framework_configs.output_adapters import (
     AgnoOutputAdapter,
@@ -34,6 +35,7 @@ from tests.framework_configs.output_adapters import (
     GeminiOutputAdapter,
     GoogleADKOutputAdapter,
     LangChainOutputAdapter,
+    NooaOutputAdapter,
     PydanticAIOutputAdapter,
     SenderDictListAdapter,
     StrandsOutputAdapter,
@@ -129,6 +131,10 @@ def _pydantic_ai_factory(**kw: Any) -> Any:
     )
 
     return PydanticAIHistoryConverter(**kw)
+
+
+def _nooa_factory(**kw: Any) -> Any:
+    return NooaHistoryConverter(**kw)
 
 
 def _parlant_factory(**kw: Any) -> Any:
@@ -365,6 +371,24 @@ def _build_strands_config() -> ConverterConfig:
     )
 
 
+def _build_nooa_config() -> ConverterConfig:
+    return ConverterConfig(
+        framework_id="nooa",
+        display_name="NOOA",
+        converter_factory=_nooa_factory,
+        empty_result=[],
+        # The transcript seeds a fresh agent, so it keeps the agent's own lines:
+        # they are the only record of what the agent already said.
+        filters_own_messages=False,
+        skips_tool_events=True,
+        skips_empty_content=True,
+        empty_sender_behavior=SenderBehavior.UNKNOWN_PREFIX,
+        missing_sender_behavior=SenderBehavior.UNKNOWN_PREFIX,
+        has_role_concept=False,
+        output_adapter=NooaOutputAdapter(),
+    )
+
+
 _CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
     _build_anthropic_config,
     _build_langchain_config,
@@ -377,6 +401,7 @@ _CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
     _build_gemini_config,
     _build_google_adk_config,
     _build_strands_config,
+    _build_nooa_config,
 ]
 
 

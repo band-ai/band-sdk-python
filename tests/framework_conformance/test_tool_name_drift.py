@@ -74,13 +74,17 @@ def _extract_tool_names(source: str) -> set[str]:
     }
 
 
+# The band.runtime.tools functions that hand out registry tool definitions.
+REGISTRY_ENTRY_POINTS = ("iter_tool_definitions", "selected_tool_definitions")
+
+
 def _assert_derives_from_registry(file_path: Path, integration_label: str) -> None:
     """Fail unless ``file_path`` derives its tools from the central registry
     instead of hand-rolling per-tool wrappers."""
     source = file_path.read_text()
-    assert "iter_tool_definitions" in source, (
+    assert any(entry in source for entry in REGISTRY_ENTRY_POINTS), (
         f"{integration_label} integration should derive its tool objects "
-        "from iter_tool_definitions() in band.runtime.tools instead of "
+        f"from one of {REGISTRY_ENTRY_POINTS} in band.runtime.tools instead of "
         "hand-rolling per-tool wrappers."
     )
 
