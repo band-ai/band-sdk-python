@@ -16,14 +16,16 @@ from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     accepted_work_finished,
 )
-from tests.integrations.acp.acp_toolkit.agent import Gate
 from tests.integrations.acp.acp_toolkit.harness import (
     SlowFailureReports,
     TranscriptTools,
 )
 from tests.integrations.acp.roomownership.kit import (
+    answer,
     answered,
+    ask_mode,
     cursor,
+    holds_prompt,
     question_asked,
     question_token,
 )
@@ -60,12 +62,7 @@ class TestCursorTurns:
         self,
     ) -> None:
         agent = FakeACPAgent()
-        prompting = Gate()
-
-        @agent.on_prompt
-        async def hold(peer: FakeACPAgent, session_id: str) -> None:
-            prompting.received.set()
-            await prompting.release.wait()
+        prompting = holds_prompt(agent, 1)
 
         async with cursor(agent) as session:
             turn = asyncio.create_task(session.send("hello"))
@@ -90,16 +87,14 @@ class TestCursorTurns:
         @agent.on_prompt
         async def ask_first(peer: FakeACPAgent, session_id: str) -> None:
             if len(peer.prompts) == 1:
-                answers.append(
-                    await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
-                )
+                answers.append(await ask_mode(peer, session_id))
 
         async with cursor(agent) as session:
             asked = await session.send("ask")
             refused = TranscriptTools()
             with pytest.raises(InputNotAccepted):
                 await session.send("next", tools=refused)
-            await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            await session.send(answer(question_token(asked), "plan"))
             await accepted_work_finished(session.room())
             retried = await session.send("next")
 
@@ -119,7 +114,7 @@ class TestCursorTurns:
         @agent.on_prompt
         async def busy_after_cancel(peer: FakeACPAgent, session_id: str) -> None:
             if len(peer.prompts) == 1:
-                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+                await ask_mode(peer, session_id)
                 await cancelled.wait()
                 return
             raise session_busy_error()
@@ -158,16 +153,14 @@ class TestCursorTurns:
         @agent.on_prompt
         async def fail_then_ask(peer: FakeACPAgent, session_id: str) -> None:
             if len(peer.prompts) == 1:
-                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+                await ask_mode(peer, session_id)
                 raise failure
-            answers.append(
-                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
-            )
+            answers.append(await ask_mode(peer, session_id))
 
         async with cursor(agent) as session:
             failing = SlowFailureReports(lost=lost)
             asked = await session.send("ask", tools=failing)
-            await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            await session.send(answer(question_token(asked), "plan"))
             await failing.reporting.received.wait()
 
             with pytest.raises(InputNotAccepted):
@@ -176,7 +169,7 @@ class TestCursorTurns:
             await accepted_work_finished(session.room())
             retried = await session.send("next")
             await question_asked(retried)
-            await session.send(f"/cursor answer {question_token(retried)} mode=agent")
+            await session.send(answer(question_token(retried), "agent"))
             await accepted_work_finished(session.room())
 
         assert answers == [answered("agent")]
@@ -191,20 +184,18 @@ class TestCursorTurns:
         @agent.on_prompt
         async def busy_then_ask(peer: FakeACPAgent, session_id: str) -> None:
             if len(peer.prompts) == 1:
-                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+                await ask_mode(peer, session_id)
                 raise session_busy_error()
-            answers.append(
-                await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
-            )
+            answers.append(await ask_mode(peer, session_id))
 
         async with cursor(agent) as session:
             failing = SlowFailureReports(lost=1)
             asked = await session.send("ask", tools=failing)
-            await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            await session.send(answer(question_token(asked), "plan"))
             await accepted_work_finished(session.room())
             retried = await session.send("next")
             await question_asked(retried)
-            await session.send(f"/cursor answer {question_token(retried)} mode=agent")
+            await session.send(answer(question_token(retried), "agent"))
             await accepted_work_finished(session.room())
 
             assert not failing.reporting.received.is_set()
@@ -218,13 +209,14 @@ class TestCursorTurns:
         agent = FakeACPAgent().will_say("ok")
         async with cursor(agent) as session:
             await session.send("hello")
+            exiting = agent.exits_slowly()
             leaving = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
-            await asyncio.sleep(0)
-            assert session.room().retained.closing
+            await exiting.received.wait()
             tools = TranscriptTools()
 
             with eager_tasks(), pytest.raises(InputNotAccepted):
                 await session.send("late", tools=tools)
+            exiting.release.set()
             await leaving
 
             assert tools.transcript == []

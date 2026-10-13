@@ -29,14 +29,25 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
+from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
+from tests.adapters.waiting import until
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
+
+RELEASED = frozenset({Residency.SUSPENDED, Residency.CLOSED})
+
+# A command naming a pending Cursor decision, capturing its token.
+_DECISION_COMMAND = re.compile(
+    re.escape(f"`{ROOM_COMMAND} ")
+    + f"(?:{'|'.join(map(re.escape, CursorCommandWord))})"
+    + r" (\S+)"
+)
 
 
 @dataclass(frozen=True)
@@ -193,8 +204,8 @@ def pending_decisions(adapter: CursorACPAdapter) -> dict[str, list[str]]:
     }
 
 
-# Loop turns a scripted in-process release may take; a bound, not a delay.
-RELEASE_TURNS = 200
+# Loop turns ``spin`` gives runnable tasks; a bound, not a delay.
+SPIN_TURNS = 200
 
 
 async def started_runtime(
@@ -207,19 +218,18 @@ async def started_runtime(
 
 
 async def spin() -> None:
-    """Give every runnable task its loop turns, so a step that would happen
-    without a barrier has happened; a bound, not a delay."""
-    for _ in range(RELEASE_TURNS):
+    """Give every runnable task its loop turns, for a "nothing happened"
+    check on a step that exposes no state to wait for."""
+    for _ in range(SPIN_TURNS):
         await asyncio.sleep(0)
 
 
 async def released(room: ACPRoom) -> None:
     """Let a release already started for ``room`` confirm closure."""
-    for _ in range(RELEASE_TURNS):
-        if room.retained.snapshot.state in (Residency.SUSPENDED, Residency.CLOSED):
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(f"{room.room_id} never released: {room.retained.snapshot}")
+    await until(
+        lambda: room.retained.snapshot.state in RELEASED,
+        failure=f"{room.room_id} never released",
+    )
 
 
 def accepted_work(room: ACPRoom) -> list[asyncio.Task[Any]]:
@@ -245,7 +255,7 @@ def room_holder(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> ACPRoom:
 
 def decision_token(prompt: str) -> str:
     """The token a Cursor decision prompt asks the room to answer with."""
-    match = re.search(r"`/cursor \w+ (\S+)", prompt)
+    match = _DECISION_COMMAND.search(prompt)
     assert match is not None, prompt
     return match[1]
 

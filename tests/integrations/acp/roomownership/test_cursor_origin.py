@@ -13,13 +13,15 @@ from tests.integrations.acp.acp_toolkit import (
     accepted_work_finished,
     pending_decisions,
 )
-from tests.integrations.acp.acp_toolkit.agent import Gate
 from tests.integrations.acp.roomownership.kit import (
     CANCELLED,
+    MODE_QUESTION,
     TEST_GUARD_S,
     QuestioningAgent,
+    answer,
     answered,
     cursor,
+    holds_prompt,
     question_token,
     recover,
 )
@@ -35,12 +37,8 @@ class TestCursorOrigin:
             room_a = await session.send("ask", room="room-a")
             room_b = await session.send("ask", room="room-b")
 
-            await session.send(
-                f"/cursor answer {question_token(room_b)} mode=plan", room="room-b"
-            )
-            await session.send(
-                f"/cursor answer {question_token(room_a)} mode=agent", room="room-a"
-            )
+            await session.send(answer(question_token(room_b), "plan"), room="room-b")
+            await session.send(answer(question_token(room_a), "agent"), room="room-a")
             for room in ("room-a", "room-b"):
                 await accepted_work_finished(session.room(room))
 
@@ -62,7 +60,7 @@ class TestCursorOrigin:
             assert room.retained.snapshot.accepted == 1
             assert not session.runtime().closed
 
-            await session.send(f"/cursor answer {question_token(asked)} mode=plan")
+            await session.send(answer(question_token(asked), "plan"))
             await accepted_work_finished(room)
 
             assert room.retained.snapshot.leases == 0
@@ -73,16 +71,7 @@ class TestCursorOrigin:
         self,
     ) -> None:
         agent = FakeACPAgent()
-        parked = Gate()
-        prompts = 0
-
-        @agent.on_prompt
-        async def park_second(peer: FakeACPAgent, session_id: str) -> None:
-            nonlocal prompts
-            prompts += 1
-            if prompts == 2:
-                parked.received.set()
-                await parked.release.wait()
+        parked = holds_prompt(agent, 2)
 
         async with cursor(agent) as session:
             await session.send("hello")
@@ -95,7 +84,14 @@ class TestCursorOrigin:
             async with asyncio.timeout(TEST_GUARD_S):
                 stale = await old_client.ext_method(
                     CURSOR_ASK_QUESTION_METHOD,
-                    {"questions": [{"id": "mode", "options": [{"id": "agent"}]}]},
+                    {
+                        "questions": [
+                            {
+                                "id": MODE_QUESTION.id,
+                                "options": [{"id": MODE_QUESTION.options[0]}],
+                            }
+                        ]
+                    },
                 )
 
             assert stale == CANCELLED

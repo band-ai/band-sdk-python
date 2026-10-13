@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from acp import RequestError
+from acp.schema import LoadSessionResponse
 
 from band.core.model_catalog import ModelSelection
 from band.core.retention import Residency
@@ -14,7 +17,12 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
     fake_agent_config,
 )
-from tests.integrations.acp.roomownership.kit import model_select, models, recover
+from tests.integrations.acp.roomownership.kit import (
+    fails_prompt,
+    model_select,
+    models,
+    recover,
+)
 
 
 class TestRecovery:
@@ -23,14 +31,9 @@ class TestRecovery:
     @pytest.mark.asyncio
     async def test_the_next_turn_reloads_the_recovered_session(self) -> None:
         agent = FakeACPAgent(supports_session_load=True)
-        prompts = 0
-
-        @agent.on_prompt
-        async def fail_first(peer: FakeACPAgent, session_id: str) -> None:
-            nonlocal prompts
-            prompts += 1
-            if prompts == 1:
-                raise RequestError.internal_error({"detail": "process wedged"})
+        fails_prompt(
+            agent, 1, RequestError.internal_error({"detail": "process wedged"})
+        )
 
         async with acp_adapter(agent) as session:
             with pytest.raises(RequestError):
@@ -123,7 +126,13 @@ class TestRecovery:
         reply = "restored"
 
         class RestoringAgent(FakeACPAgent):
-            async def load_session(self, cwd, session_id, mcp_servers=None, **kwargs):
+            async def load_session(
+                self,
+                cwd: str,
+                session_id: str,
+                mcp_servers: Any = None,
+                **kwargs: Any,
+            ) -> LoadSessionResponse:
                 loaded = await super().load_session(
                     cwd, session_id, mcp_servers, **kwargs
                 )
@@ -136,14 +145,7 @@ class TestRecovery:
                 return loaded
 
         agent = RestoringAgent(supports_session_load=True)
-        prompts = 0
-
-        @agent.on_prompt
-        async def fail_first(peer: FakeACPAgent, session_id: str) -> None:
-            nonlocal prompts
-            prompts += 1
-            if prompts == 1:
-                raise RequestError.internal_error()
+        fails_prompt(agent, 1, RequestError.internal_error())
 
         async with acp_adapter(
             agent, fake_agent_config(inject_band_tools=True)

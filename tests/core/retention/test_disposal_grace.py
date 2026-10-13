@@ -9,6 +9,7 @@ import pytest
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention import ReleaseCause, Residency
+from tests.adapters.waiting import until
 from tests.core.retention.kit import (
     SETTLE_GRACE_S,
     Barrier,
@@ -33,26 +34,23 @@ async def parked_work(resident: Resident, barrier: Barrier) -> asyncio.Task[None
     return task
 
 
-# Loop turns a disposal may take to reach its grace; a bound, not a delay.
+# Loop turns a disposal may take to decide on its grace; a bound, not a delay.
 GRACE_TURNS = 20
 
 
 async def grace_started(host: ResidenceHost, rooms: int = 1) -> None:
     """Let a started disposal or shutdown arm ``rooms`` settle graces."""
-    for _ in range(GRACE_TURNS):
-        if len(armed(host.clock)) >= rooms:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError("no settle grace was armed")
+    await until(
+        lambda: len(armed(host.clock)) >= rooms, failure="no settle grace was armed"
+    )
 
 
 async def closes_on_its_own(resident: Resident) -> None:
     """Let an owned disposal finish with no further ``dispose()`` call."""
-    for _ in range(GRACE_TURNS):
-        if resident.room.snapshot.state is Residency.CLOSED:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError("the owned disposal never finished")
+    await until(
+        lambda: resident.room.snapshot.state is Residency.CLOSED,
+        failure="the owned disposal never finished",
+    )
 
 
 async def leaving(host: ResidenceHost, resident: Resident) -> asyncio.Task[None]:

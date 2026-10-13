@@ -8,13 +8,15 @@ import os
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from acp.schema import SessionConfigOptionSelect
+from acp.schema import SessionConfigOptionSelect, ToolCallUpdate
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.client.streaming import ControlMode
+from band.core.model_catalog import ModelSelection
 from band.core.retention import ReleaseCause, RoomRetentionConfig
 from band.integrations.acp import client_runtime
 from band.integrations.acp.client_adapter import (
@@ -22,7 +24,9 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapterConfig,
 )
 from band.integrations.acp.client_types import ACPRoom
+from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.model_selection import MODEL_CATEGORY
+from tests.adapters.waiting import until
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     AcpSession,
@@ -35,8 +39,12 @@ from tests.integrations.acp.acp_toolkit import (
     select_option,
     started_acp_adapter,
 )
-from tests.integrations.acp.acp_toolkit.agent import MODEL_OPTION_ID, Gate
-from tests.integrations.acp.acp_toolkit.harness import RELEASE_TURNS
+from tests.integrations.acp.acp_toolkit.agent import (
+    MODEL_OPTION_ID,
+    Gate,
+    allow_or_reject,
+)
+from tests.integrations.acp.acp_toolkit.harness import spin
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
 # A transition bound short enough that waiting it out costs nothing.
@@ -79,6 +87,11 @@ async def woken(adapter: ACPClientAdapter, room: ACPRoom) -> AsyncIterator[None]
         await adapter._release_room(room, ReleaseCause.RECOVERY)
 
 
+def decisions(reply: Reply) -> list[str]:
+    """Every decision prompt ``reply`` has posted: each tells the room how to reply."""
+    return [text for text in reply.texts if f"Reply `{ROOM_COMMAND} " in text]
+
+
 def questions(reply: Reply) -> list[str]:
     """The Cursor question decisions ``reply`` has posted to the room."""
     return [text for text in reply.texts if "Cursor needs input" in text]
@@ -86,11 +99,7 @@ def questions(reply: Reply) -> list[str]:
 
 async def question_asked(reply: Reply) -> None:
     """Let a running turn post its question decision to ``reply``'s room."""
-    for _ in range(RELEASE_TURNS):
-        if questions(reply):
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(f"no question was asked: {reply.texts}")
+    await until(lambda: bool(questions(reply)), failure="no question was asked")
 
 
 def question_token(reply: Reply) -> str:
@@ -119,8 +128,53 @@ def holds_prompt(agent: FakeACPAgent, number: int) -> Gate:
     return prompting
 
 
+def fails_prompt(agent: FakeACPAgent, number: int, error: Exception) -> None:
+    """Fail the agent's ``number``-th prompt with ``error``; others answer."""
+
+    @agent.on_prompt
+    async def fail(peer: FakeACPAgent, session_id: str) -> None:
+        if len(peer.prompts) == number:
+            raise error
+
+
+@dataclass(frozen=True)
+class CursorQuestion:
+    id: str
+    options: tuple[str, ...]
+
+
+# The one Cursor question these tests ask, and the options it offers.
+MODE_QUESTION = CursorQuestion(id="mode", options=("agent", "plan"))
+
+
+async def ask_mode(agent: FakeACPAgent, session_id: str) -> dict[str, object]:
+    """Ask ``MODE_QUESTION`` from ``session_id`` and return the agent's answer."""
+    return await agent.ask_cursor_question(
+        session_id, MODE_QUESTION.id, *MODE_QUESTION.options
+    )
+
+
+async def ask_shell_permission(
+    agent: FakeACPAgent, session_id: str
+) -> dict[str, object]:
+    """Ask permission to run a shell tool from ``session_id``; return the answer."""
+    answer = await agent.ask_permission(
+        session_id,
+        ToolCallUpdate(tool_call_id="tc-shell", title="shell"),
+        allow_or_reject(),
+    )
+    return answer.model_dump(by_alias=True, exclude_none=True)
+
+
+def answer(token: str, option: str) -> str:
+    """The room command answering ``MODE_QUESTION`` decision ``token`` with ``option``."""
+    return (
+        f"{ROOM_COMMAND} {CursorCommandWord.ANSWER} {token} {MODE_QUESTION.id}={option}"
+    )
+
+
 class QuestioningAgent(FakeACPAgent):
-    """Asks one Cursor question per prompt and records each session's answer."""
+    """Asks ``MODE_QUESTION`` per prompt and records each session's answer."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -128,9 +182,7 @@ class QuestioningAgent(FakeACPAgent):
         self.on_prompt(self.ask_mode)
 
     async def ask_mode(self, peer: FakeACPAgent, session_id: str) -> None:
-        self.answers[session_id] = await self.ask_cursor_question(
-            session_id, "mode", "agent", "plan"
-        )
+        self.answers[session_id] = await ask_mode(peer, session_id)
 
 
 @asynccontextmanager
@@ -164,9 +216,53 @@ def answered(option: str) -> dict[str, object]:
     return {
         "outcome": {
             "outcome": "answered",
-            "answers": [{"questionId": "mode", "selectedOptionIds": [option]}],
+            "answers": [
+                {"questionId": MODE_QUESTION.id, "selectedOptionIds": [option]}
+            ],
         }
     }
+
+
+@dataclass(frozen=True)
+class HeldSwitch:
+    """A model switch to ``SWITCHED_MODEL`` queued behind the room's held prompt."""
+
+    agent: FakeACPAgent
+    session: AcpSession
+    session_id: str
+    prompting: Gate
+    held: asyncio.Task[Reply]
+    switch: asyncio.Task[None]
+
+
+SWITCHED_MODEL = "b"
+
+
+@asynccontextmanager
+async def switch_behind_held_prompt() -> AsyncIterator[HeldSwitch]:
+    """A bootstrapped room whose second prompt is held, with a model switch
+    queued behind it."""
+    agent = models("a", "a", SWITCHED_MODEL)
+    prompting = holds_prompt(agent, 2)
+    async with acp_adapter(agent) as session:
+        await session.send("bootstrap")
+        held = asyncio.create_task(session.send("held"))
+        await prompting.received.wait()
+        switch = asyncio.create_task(
+            session.adapter.apply_model_selection(
+                ModelSelection(model=SWITCHED_MODEL), room_id=DEFAULT_ROOM
+            )
+        )
+        # The switch exposes no state while it queues on the room.
+        await spin()
+        yield HeldSwitch(
+            agent=agent,
+            session=session,
+            session_id=session.session_id(DEFAULT_ROOM),
+            prompting=prompting,
+            held=held,
+            switch=switch,
+        )
 
 
 def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
