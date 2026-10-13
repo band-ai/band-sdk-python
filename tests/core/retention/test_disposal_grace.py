@@ -46,6 +46,15 @@ async def grace_started(host: ResidenceHost, rooms: int = 1) -> None:
     raise AssertionError("no settle grace was armed")
 
 
+async def closes_on_its_own(resident: Resident) -> None:
+    """Let an owned disposal finish with no further ``dispose()`` call."""
+    for _ in range(GRACE_TURNS):
+        if resident.room.snapshot.state is Residency.CLOSED:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the owned disposal never finished")
+
+
 async def leaving(host: ResidenceHost, resident: Resident) -> asyncio.Task[None]:
     """A leave whose disposal is inside its settle grace."""
     disposal = asyncio.create_task(resident.room.dispose())
@@ -84,6 +93,7 @@ class TestDisposalGrace:
         await disposal
 
         assert not work.cancelled()
+        assert armed(graceful_host.clock) == []
         assert resident.releases == [ReleaseCause.FINAL]
         assert resident.room.snapshot.state is Residency.CLOSED
 
@@ -97,7 +107,7 @@ class TestDisposalGrace:
         await graceful_host.clock.advance(SETTLE_GRACE_S)
         await disposal
 
-        assert work.cancelled()
+        assert work.cancelled() and work.cancelling() == 1
         assert resident.releases == [ReleaseCause.FINAL]
 
     async def test_a_report_timeout_in_the_grace_leaves_one_joinable_disposal(
@@ -113,6 +123,7 @@ class TestDisposalGrace:
 
         parked.released.set()
         await work
+        await closes_on_its_own(resident)
         await resident.room.dispose()
 
         assert not work.cancelled()
@@ -125,17 +136,20 @@ class TestDisposalGrace:
         parked = Barrier()
         await parked_work(resident, parked)
         disposal = await leaving(graceful_host, resident)
+        grace = armed(graceful_host.clock)
 
         disposal.cancel()
         with pytest.raises(asyncio.CancelledError):
             await disposal
+        assert armed(graceful_host.clock) == grace
         parked.released.set()
+        await closes_on_its_own(resident)
         await resident.room.dispose()
 
         assert resident.releases == [ReleaseCause.FINAL]
         assert resident.room.snapshot.state is Residency.CLOSED
 
-    async def test_a_retry_after_a_failed_release_closes_at_once(
+    async def test_a_release_failing_after_the_grace_is_retried_by_the_next_leave(
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()

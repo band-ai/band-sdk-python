@@ -4,7 +4,6 @@ it behind the turn."""
 
 from __future__ import annotations
 
-import httpx
 import pytest
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
@@ -16,32 +15,12 @@ from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, allow_or_reje
 from tests.integrations.acp.acp_toolkit.harness import pair_in_process
 from tests.runtime.helpers import (
     AGENT_ID,
+    ALICE,
     ROOM_ID,
-    LifecyclePlatform,
+    PostingPlatform,
     rest_client_over,
     run_through,
 )
-
-ALICE = {"id": "user-456", "name": "Alice", "handle": "alice", "type": "User"}
-
-
-class PostingPlatform(LifecyclePlatform):
-    """A running room whose participants are listed and whose posts land."""
-
-    def answer(self, request: httpx.Request) -> httpx.Response:
-        tail = request.url.path.rsplit("/", 1)[-1]
-        if tail == "participants":
-            return httpx.Response(
-                200,
-                json={"data": [ALICE], "metadata": {"has_more": False, "limit": 50}},
-            )
-        if request.method == "POST" and tail == "events":
-            return httpx.Response(
-                201, json={"data": {"id": "e-1", "message_type": "event"}}
-            )
-        if request.method == "POST" and tail == "messages":
-            return httpx.Response(201, json={"data": {"id": "m-1", "recipients": []}})
-        return super().answer(request)
 
 
 class TestCursorMessageDelivery:
@@ -80,5 +59,5 @@ class TestCursorMessageDelivery:
             await adapter.stop()
 
         assert len(agent.prompts) == 1
-        assert ("A", "processed") in peer.accepted_marks
-        assert ("B", "processed") not in peer.accepted_marks
+        assert peer.marked("processed") == ["A"]
+        assert peer.marked("failed") == []

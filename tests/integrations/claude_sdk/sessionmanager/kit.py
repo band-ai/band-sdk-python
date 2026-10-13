@@ -89,6 +89,10 @@ def allow_everything(session: ClaudeRoomSession, generation: int) -> CanUseTool:
     return decide
 
 
+# Loop turns a reader may take to act on what it read; a bound, not a delay.
+READER_TURNS = 100
+
+
 class Signal(logging.Handler):
     """Sets ``seen`` once a record containing ``fragment`` is logged."""
 
@@ -100,3 +104,20 @@ class Signal(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if self.fragment in record.getMessage():
             self.seen.set()
+
+    async def logged(self) -> None:
+        """Wait for the record, failing fast if it never comes."""
+        for _ in range(READER_TURNS):
+            if self.seen.is_set():
+                return
+            await asyncio.sleep(0)
+        raise AssertionError(f"nothing logged {self.fragment!r}")
+
+
+async def retired(session: ClaudeRoomSession, generation: int) -> None:
+    """Wait until recovery retires the room's residency ``generation``."""
+    for _ in range(READER_TURNS):
+        if not session.speaks_for(generation):
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"residency {generation} was never retired")

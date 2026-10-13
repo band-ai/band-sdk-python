@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions
 
-from band.integrations.claude_sdk import transport
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
-from band.workspaces import RoomWorkspaces
-from tests.adapters.claude_sdk.process import WorkspaceProcess
+from tests.integrations.claude_sdk.conftest import Launches
 
 
 async def start(manager: ClaudeSessionManager, room_id: str) -> None:
@@ -19,41 +13,37 @@ async def start(manager: ClaudeSessionManager, room_id: str) -> None:
         pass
 
 
-@pytest.mark.parametrize("cleanup_fails", [False, True])
-async def test_pre_query_startup_failure_reaps_real_child(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
-) -> None:
-    children: list[WorkspaceProcess] = []
+class TestPreQueryStartup:
+    """A startup failing before the SDK builds its Query still reaps the child."""
 
-    def launch(*, prompt: str, options: ClaudeAgentOptions) -> WorkspaceProcess:
-        child = WorkspaceProcess(prompt=prompt, options=options)
-        child.refuse_close = cleanup_fails
-        children.append(child)
-        return child
+    async def test_a_failed_start_reaps_its_child(self, launches: Launches) -> None:
+        manager = launches.manager
 
-    monkeypatch.setattr(transport, "SubprocessCLITransport", launch)
-    monkeypatch.setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "invalid")
-    manager = ClaudeSessionManager(
-        ClaudeAgentOptions(cli_path=sys.executable, env={"PROBE_MARKER": "startup"}),
-        workspaces=RoomWorkspaces(lambda _: str(tmp_path / "shared")),
-    )
-    try:
         with pytest.raises(ValueError, match="invalid literal"):
             await start(manager, "room-a")
-        assert len(children) == 1
-        if cleanup_fails:
-            assert not children[0].exited
-            assert manager.has_session("room-a")
-            with pytest.raises(ValueError, match="both"):
-                await start(manager, "room-b")
-            with pytest.raises(RuntimeError, match="cleanup failed"):
-                await start(manager, "room-a")
-            assert len(children) == 1
-            children[0].refuse_close = False
-            await manager.cleanup_session("room-a")
-        assert children[0].exited
+
+        [child] = launches.children
+        assert child.exited
         assert not manager.has_session("room-a")
-    finally:
-        for child in children:
-            child.refuse_close = False
-        await manager.stop()
+
+    async def test_a_refused_close_keeps_the_child_and_its_claim_until_a_retry(
+        self, launches: Launches
+    ) -> None:
+        manager = launches.manager
+        launches.refuse_close = True
+
+        with pytest.raises(ValueError, match="invalid literal"):
+            await start(manager, "room-a")
+        [child] = launches.children
+        assert not child.exited
+        assert manager.has_session("room-a")
+        with pytest.raises(ValueError, match="both"):
+            await start(manager, "room-b")
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            await start(manager, "room-a")
+        assert launches.children == [child]
+
+        child.refuse_close = False
+        await manager.cleanup_session("room-a")
+        assert child.exited
+        assert not manager.has_session("room-a")

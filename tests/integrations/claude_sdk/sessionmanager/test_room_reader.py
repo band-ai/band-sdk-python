@@ -18,6 +18,7 @@ from tests.integrations.claude_sdk.sessionmanager.kit import (
     STRAY_RESULT,
     Signal,
     new_manager,
+    retired,
     thinking,
     thoughts,
 )
@@ -41,7 +42,7 @@ class TestRoomReader:
             with caplog.at_level(logging.DEBUG, logger=session_manager.__name__):
                 await exchange(session, "first")
                 finished.set()
-                await dropped.seen.wait()
+                await dropped.logged()
                 second = await exchange(session, "second")
         finally:
             session_logger.removeHandler(dropped)
@@ -93,19 +94,15 @@ class TestRoomReader:
         claude.script(
             [*thinking("one"), AfterResult(unreadable, gate=malformed)], thinking("two")
         )
-        retired = Signal("retiring its CLI")
-        session_logger = logging.getLogger(session_manager.__name__)
-        session_logger.addHandler(retired)
         try:
             async with session.using() as client:
                 with session.listening() as stream:
                     await client.query("one")
                     [_ async for _ in stream.until_result()]
                     malformed.set()
-                    await retired.seen.wait()
+                    await retired(session, 1)
             second = await exchange(session, "two")
         finally:
-            session_logger.removeHandler(retired)
             await manager.stop()
 
         assert thoughts(second) == ["two"]

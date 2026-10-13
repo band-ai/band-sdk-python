@@ -17,6 +17,7 @@ OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 class TestShutdownBudget:
+    @pytest.mark.looptime
     async def test_shutdown_keeps_mcp_for_open_rooms(
         self, claude_room: OpenRoom
     ) -> None:

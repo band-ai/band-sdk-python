@@ -266,6 +266,29 @@ class LifecyclePlatform:
         return [mid for mid, mark in self.requested_marks if mark == status]
 
 
+#: A room participant the platform lists.
+ALICE = {"id": "user-456", "name": "Alice", "handle": "alice", "type": "User"}
+
+
+class PostingPlatform(LifecyclePlatform):
+    """A running room whose participants are listed and whose posts land."""
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        tail = request.url.path.rsplit("/", 1)[-1]
+        if tail == "participants":
+            return httpx.Response(
+                200,
+                json={"data": [ALICE], "metadata": {"has_more": False, "limit": 50}},
+            )
+        if request.method == "POST" and tail == "events":
+            return httpx.Response(
+                201, json={"data": {"id": "e-1", "message_type": "event"}}
+            )
+        if request.method == "POST" and tail == "messages":
+            return httpx.Response(201, json={"data": {"id": "m-1", "recipients": []}})
+        return super().answer(request)
+
+
 class ClaimGate:
     """Hold one real HTTP processing response across a control or shutdown."""
 

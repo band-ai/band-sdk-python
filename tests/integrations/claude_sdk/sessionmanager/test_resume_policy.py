@@ -17,34 +17,40 @@ from tests.integrations.claude_sdk.sessionmanager.kit import (
 
 
 class TestResumePolicy:
-    @pytest.mark.parametrize(
-        ("resume", "attempts", "kept"),
-        [(True, ["sess-gone"], "sess-gone"), (False, ["sess-gone", None], None)],
-        ids=["strict-wake", "bootstrap-fallback"],
-    )
-    async def test_only_a_strict_wake_keeps_an_unresumable_session(
+    async def test_a_strict_wake_keeps_an_unresumable_session(
         self,
         claude: FakeClaude,
-        resume: bool,
-        attempts: list[str | None],
-        kept: str | None,
     ) -> None:
         """A deliberate wake reports the failure and keeps the conversation's
-        identity; bootstrap and crash recovery start a new conversation."""
+        identity."""
         manager = new_manager()
         session = manager.room("room-a")
         session.adopt("sess-gone")
         claude.unresumable.add("sess-gone")
 
-        if resume:
-            with pytest.raises(CLIConnectionError):
-                await session.acquire(1, resume)
-        else:
-            await session.acquire(1, resume)
+        with pytest.raises(CLIConnectionError, match="exited during startup"):
+            await session.acquire(1, True)
         await session.release(ReleaseCause.FINAL)
 
-        assert claude.resumed == attempts
-        assert session.session_id == kept
+        assert claude.resumed == ["sess-gone"]
+        assert session.session_id == "sess-gone"
+        assert not any(cli.alive for cli in claude.sessions)
+
+    async def test_bootstrap_starts_a_new_conversation_for_an_unresumable_session(
+        self,
+        claude: FakeClaude,
+    ) -> None:
+        """Bootstrap and crash recovery start a new conversation."""
+        manager = new_manager()
+        session = manager.room("room-a")
+        session.adopt("sess-gone")
+        claude.unresumable.add("sess-gone")
+
+        await session.acquire(1, False)
+        await session.release(ReleaseCause.FINAL)
+
+        assert claude.resumed == ["sess-gone", None]
+        assert session.session_id is None
         assert not any(cli.alive for cli in claude.sessions)
 
     async def test_a_startup_that_fails_twice_keeps_the_conversation(
