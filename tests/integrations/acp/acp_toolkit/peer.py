@@ -7,12 +7,11 @@ import asyncio
 import os
 import subprocess
 import sys
-from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
-from acp import run_agent, spawn_agent_process
+from acp import run_agent
 from acp.schema import (
     InitializeResponse,
     LoadSessionResponse,
@@ -72,52 +71,6 @@ def stdio_peer_config(
         inject_band_tools=crash_marker is not None,
         **settings,
     )
-
-
-EXIT_FAILURE = "agent subprocess exit failed"
-
-
-class FailingExits:
-    """``spawn_agent_process`` whose exits raise without closing anything,
-    leaving the agent running as a failed teardown does.
-
-    As an async context manager it exits the abandoned spawns on leaving, so
-    a test leaks no transport.
-    """
-
-    def __init__(self) -> None:
-        self.processes: list[asyncio.subprocess.Process] = []
-        self._abandoned: list[AbstractAsyncContextManager[Any]] = []
-
-    def __call__(self, *args: Any, **kwargs: Any) -> AbstractAsyncContextManager[Any]:
-        return FailingExit(self, spawn_agent_process(*args, **kwargs))
-
-    def abandon(self, spawn: AbstractAsyncContextManager[Any]) -> None:
-        self._abandoned.append(spawn)
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        for spawn in self._abandoned:
-            await spawn.__aexit__(None, None, None)
-
-
-class FailingExit:
-    def __init__(
-        self, spawns: FailingExits, inner: AbstractAsyncContextManager[Any]
-    ) -> None:
-        self._spawns = spawns
-        self._inner = inner
-
-    async def __aenter__(self) -> Any:
-        connection, process = await self._inner.__aenter__()
-        self._spawns.processes.append(process)
-        return connection, process
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        self._spawns.abandon(self._inner)
-        raise RuntimeError(EXIT_FAILURE)
 
 
 def spawn_pipe_holder(pid_file: Path) -> None:

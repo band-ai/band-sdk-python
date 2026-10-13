@@ -13,6 +13,7 @@ from tests.integrations.acp.acp_toolkit import (
     acp_adapter,
     fake_agent_config,
 )
+from tests.integrations.acp.acp_toolkit.agent import AGENT_EXIT_FAILURE
 from tests.integrations.acp.acp_toolkit.harness import spin
 from tests.integrations.acp.roomownership.kit import stop_budget
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
@@ -32,7 +33,7 @@ class TestFinalCleanup:
             runtime = session.runtime()
             agent.fails_next_exit()
 
-            with pytest.raises(RuntimeError, match="agent exit failed"):
+            with pytest.raises(RuntimeError, match=AGENT_EXIT_FAILURE):
                 await session.adapter.on_cleanup(DEFAULT_ROOM)
 
             room = session.room()
@@ -137,7 +138,7 @@ class TestFinalCleanup:
                 agent.fails_next_exit()
 
                 with pytest.RaisesGroup(
-                    pytest.RaisesExc(RuntimeError, match="agent exit failed")
+                    pytest.RaisesExc(RuntimeError, match=AGENT_EXIT_FAILURE)
                 ):
                     await session.adapter.cleanup_all()
                 assert session.adapter._mcp.current is not None

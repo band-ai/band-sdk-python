@@ -12,7 +12,7 @@ import sys
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from functools import partial
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import pytest
 from acp import spawn_agent_process
@@ -49,6 +49,10 @@ class LifecycleChild:
         self._open = False
 
     @property
+    def process(self) -> Any:
+        return self._process
+
+    @property
     def exited(self) -> bool:
         return self._process is not None and self._process.returncode is not None
 
@@ -70,6 +74,27 @@ class LifecycleChild:
         if self._open:
             self._open = False
             await self._spawn.__aexit__(None, None, None)
+
+
+class FailingExits:
+    """``spawn_agent_process`` whose every exit is refused, leaving the agent
+    running as a failed teardown does; leaving it closes them all."""
+
+    def __init__(self) -> None:
+        self.children: list[LifecycleChild] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> LifecycleChild:
+        child = LifecycleChild(spawn_agent_process(*args, **kwargs))
+        child.refuse_close = True
+        self.children.append(child)
+        return child
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        for child in self.children:
+            await child.close()
 
 
 def install(

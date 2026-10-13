@@ -12,14 +12,11 @@ from band.core.exceptions import CleanupIncompleteError
 from band.core.retention import Residency, RoomRetentionConfig
 from band.integrations.acp import client_adapter, client_runtime
 from band.integrations.acp.client_adapter import ACPClientAdapter, ACPTurnTimeoutError
+from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.integrations.acp.acp_toolkit import DEFAULT_ROOM
 from tests.integrations.acp.acp_toolkit.harness import send_to
-from tests.integrations.acp.acp_toolkit.peer import (
-    EXIT_FAILURE,
-    ExitStage,
-    FailingExits,
-    stdio_peer_config,
-)
+from tests.integrations.acp.acp_toolkit.lifecycle import FailingExits
+from tests.integrations.acp.acp_toolkit.peer import ExitStage, stdio_peer_config
 from tests.integrations.acp.roomownership.kit import runtime_warnings, terminate_pid
 from tests.paths import REPO_ROOT
 
@@ -103,9 +100,10 @@ class TestProcessClosure:
                 await send_to(adapter, DEFAULT_ROOM)
                 room = adapter._rooms[DEFAULT_ROOM]
                 runtime = room.runtime
-                [process] = spawns.processes
+                [child] = spawns.children
+                process = child.process
 
-                with pytest.raises(RuntimeError, match=EXIT_FAILURE):
+                with pytest.raises(RuntimeError, match=CLEANUP_FAILURE):
                     await adapter.on_cleanup(DEFAULT_ROOM)
 
                 assert process.returncode is None

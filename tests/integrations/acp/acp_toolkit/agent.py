@@ -58,6 +58,9 @@ ConfigOptionHandler = Callable[
 MODEL_OPTION_ID = "model"
 EFFORT_OPTION_ID = "reasoning_effort"
 
+# What ``fails_next_exit`` raises from the connection's shutdown.
+AGENT_EXIT_FAILURE = "agent exit failed"
+
 
 @dataclass
 class Gate:
@@ -116,7 +119,6 @@ class FakeACPAgent:
         # Holds the next initialize, as a process slow to start.
         self._initialize_gate: Gate | None = None
         self._session_load_gate: Gate | None = None
-        self._initialize_error: RequestError | None = None
         self._close_gate: Gate | None = None
         self._new_session_error: RequestError | None = None
         # Observability for assertions:
@@ -164,7 +166,7 @@ class FakeACPAgent:
 
     def fails_next_exit(self) -> None:
         """Raise from the next connection's shutdown, once."""
-        self.exit_failure = RuntimeError("agent exit failed")
+        self.exit_failure = RuntimeError(AGENT_EXIT_FAILURE)
 
     def holds_session_closes(self) -> Gate:
         """Hold every ``session/close`` until release, before recording it."""
@@ -179,11 +181,6 @@ class FakeACPAgent:
     def fails_next_new_session(self) -> FakeACPAgent:
         """Refuse the next ``session/new``, once."""
         self._new_session_error = RequestError.internal_error({"detail": "no session"})
-        return self
-
-    def fails_next_initialize(self) -> FakeACPAgent:
-        """Refuse the next connection's ``initialize``, once."""
-        self._initialize_error = RequestError.internal_error({"detail": "no start"})
         return self
 
     def holds_next_initialize(self) -> Gate:
@@ -664,9 +661,6 @@ class FakeACPAgent:
         if (gate := self._initialize_gate) is not None:
             self._initialize_gate = None
             await gate.hold()
-        if (error := self._initialize_error) is not None:
-            self._initialize_error = None
-            raise error
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
