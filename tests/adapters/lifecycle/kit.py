@@ -9,7 +9,9 @@ these shared files.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +23,7 @@ from band.core.protocols import FrameworkAdapter
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from tests.adapters.hold import Hold
+from tests.adapters.roompeer import STARTING_MARKER
 from tests.framework_conformance.turnprobes import DispatchingFakeTools
 
 # A transition settles in a few loop turns; this bounds a wait that never would.
@@ -36,6 +39,22 @@ async def pause_at(hold: Hold | None) -> None:
     """Stop at ``hold``, when set, until the test releases it."""
     if hold is not None:
         await hold.wait()
+
+
+@dataclass(frozen=True)
+class ExpectedFailure:
+    """The exact error a provider reports: its type and message."""
+
+    error: type[BaseException]
+    message: str
+
+
+@contextmanager
+def raises_exactly(expected: ExpectedFailure) -> Iterator[None]:
+    """Expect exactly ``expected``'s type, not a subclass, carrying its message."""
+    with pytest.raises(expected.error, match=re.escape(expected.message)) as raised:
+        yield
+    assert raised.type is expected.error, raised.value
 
 
 class LifecyclePeer(Protocol):
@@ -78,12 +97,17 @@ class LifecycleProfile:
 
     ``install`` builds the adapter on its production config with retention
     disabled, routing every child it starts through ``RetentionHost.spawned``.
-    ``lost_turn`` is the error a turn whose transport is lost fails with.
+    ``lost_turn`` is the error a turn whose transport is lost fails with, and
+    ``failed_start`` what a turn whose start the peer refused reports.
+    ``failed_start_closing_refused`` is what that turn reports when the
+    failed start's close is refused too; ``None`` means ``failed_start``.
     """
 
     name: str
     install: Callable[[RetentionHost, pytest.MonkeyPatch], LifecycleBridge]
     lost_turn: type[BaseException]
+    failed_start: ExpectedFailure
+    failed_start_closing_refused: ExpectedFailure | None = None
 
 
 @dataclass
@@ -117,6 +141,14 @@ class RetentionHost:
     @property
     def lost_turn(self) -> type[BaseException]:
         return self.profile.lost_turn
+
+    @property
+    def failed_start(self) -> ExpectedFailure:
+        return self.profile.failed_start
+
+    @property
+    def failed_start_closing_refused(self) -> ExpectedFailure:
+        return self.profile.failed_start_closing_refused or self.failed_start
 
     def workspace(self, room_id: str) -> str:
         return str(self.root / ("shared" if self.shared else room_id))
@@ -173,6 +205,15 @@ class RetentionHost:
                 return
             await asyncio.sleep(0.01)
         raise AssertionError(f"Room {room_id} never settled")
+
+    async def start_reached(self, room_id: str) -> None:
+        """Wait until the room's peer has begun starting in its workspace."""
+        marker = Path(self.workspace(room_id)) / STARTING_MARKER
+        for _ in range(MAX_SETTLE_POLLS):
+            if marker.exists():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"Room {room_id}'s peer never began starting")
 
     def native_id(self, room_id: str) -> str | None:
         return self.bridge.native_id(room_id)

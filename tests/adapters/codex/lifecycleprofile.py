@@ -11,14 +11,16 @@ import pytest
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import RetainedRoom
-from band.integrations.codex import CodexStdioClient
+from band.integrations.codex import CodexJsonRpcError, CodexStdioClient
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
+    ExpectedFailure,
     LifecycleBridge,
     LifecycleProfile,
     RetentionHost,
     pause_at,
 )
+from tests.adapters.roompeer import CLEANUP_FAILURE, STARTUP_FAILURE
 from tests.paths import REPO_ROOT
 
 # Where the Codex peer saves each thread's conversation, under the host root.
@@ -39,7 +41,7 @@ class CodexPeer(CodexStdioClient):
     async def _close_process(self) -> None:
         await pause_at(self.closing)
         if self.refuse_close:
-            raise RuntimeError("subprocess cleanup failed")
+            raise RuntimeError(CLEANUP_FAILURE)
         await super()._close_process()
 
     @property
@@ -86,5 +88,10 @@ def install(host: RetentionHost, monkeypatch: pytest.MonkeyPatch) -> LifecycleBr
 
 
 PROFILES = [
-    LifecycleProfile(name="codex", install=install, lost_turn=TurnResultAlreadyReported)
+    LifecycleProfile(
+        name="codex",
+        install=install,
+        lost_turn=TurnResultAlreadyReported,
+        failed_start=ExpectedFailure(CodexJsonRpcError, STARTUP_FAILURE),
+    )
 ]

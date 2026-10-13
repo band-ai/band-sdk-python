@@ -10,10 +10,13 @@ import pytest
 from band.adapters.codex import CodexAdapter
 from band.core.exceptions import InputNotAccepted
 from tests.adapters.hold import Hold
-from tests.adapters.lifecycle.kit import (
-    RetentionHost,
+from tests.adapters.lifecycle.kit import RetentionHost, raises_exactly
+from tests.adapters.roompeer import (
+    CLEANUP_FAILURE,
+    PeerCommand,
+    memo_instruction,
+    write_instruction,
 )
-from tests.adapters.roompeer import PeerCommand, memo_instruction, write_instruction
 
 
 class TestRoomOwnership:
@@ -38,7 +41,7 @@ class TestRoomOwnership:
     ) -> None:
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         host.children[0].refuse_close = True
-        with pytest.raises(RuntimeError, match="cleanup failed"):
+        with pytest.raises(RuntimeError, match=CLEANUP_FAILURE):
             await host.leave("room-a")
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))
@@ -57,7 +60,7 @@ class TestRoomOwnership:
         host: RetentionHost,
     ) -> None:
         host.fail_startup.touch()
-        with pytest.raises(Exception, match="startup failed"):
+        with raises_exactly(host.failed_start):
             await host.send("room-a", write_instruction("alpha"))
         await host.settled("room-a")
         assert host.exited == [True]
@@ -74,7 +77,7 @@ class TestRoomOwnership:
         """A retried leave frees the room to rejoin its workspace."""
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         host.children[0].refuse_close = True
-        with pytest.raises(RuntimeError, match="cleanup failed"):
+        with pytest.raises(RuntimeError, match=CLEANUP_FAILURE):
             await host.leave("room-a")
         host.children[0].refuse_close = False
         await host.leave("room-a")
@@ -92,7 +95,7 @@ class TestRoomOwnership:
         assert await host.send("room-a", memo_instruction("kept")) == ["Noted."]
         left_thread = host.native_id("room-a")
         host.children[0].refuse_close = True
-        with pytest.raises(RuntimeError, match="cleanup failed"):
+        with pytest.raises(RuntimeError, match=CLEANUP_FAILURE):
             await host.leave("room-a")
         host.children[0].refuse_close = False
         with pytest.raises(InputNotAccepted, match="is closing"):
@@ -114,8 +117,7 @@ class TestRoomOwnership:
     ) -> None:
         host.hold_startup.touch()
         opening = asyncio.create_task(host.send("room-a", write_instruction("alpha")))
-        while not (Path(host.workspace("room-a")) / "starting.txt").exists():
-            await asyncio.sleep(0.01)
+        await host.start_reached("room-a")
         opening.cancel()
         with pytest.raises(asyncio.CancelledError):
             await opening
@@ -176,7 +178,7 @@ class TestRoomOwnership:
         host.children[0].refuse_close = True
         with pytest.raises(ExceptionGroup) as failed:
             await host.shutdown()
-        assert failed.group_contains(RuntimeError, match="cleanup failed", depth=None)
+        assert failed.group_contains(RuntimeError, match=CLEANUP_FAILURE, depth=None)
         assert host.exited == [False, True]
         with pytest.raises(InputNotAccepted):
             await host.send("room-a", PeerCommand.READ)
@@ -194,14 +196,10 @@ class TestRoomOwnership:
         host.fail_startup.touch()
         host.hold_startup.touch()
         opening = asyncio.create_task(host.send("room-a", write_instruction("alpha")))
-        while not (Path(host.workspace("room-a")) / "starting.txt").exists():
-            await asyncio.sleep(0.01)
+        await host.start_reached("room-a")
         host.children[0].refuse_close = True
         host.hold_startup.unlink()
-        # The opening turn reports its own failure in the provider's own
-        # error; Codex reports the failed cleanup that follows to the next
-        # operation.
-        with pytest.raises(Exception, match="startup failed|cleanup failed"):
+        with raises_exactly(host.failed_start_closing_refused):
             await opening
         with pytest.raises(ValueError, match="both"):
             await host.send("room-b", write_instruction("bravo"))

@@ -17,11 +17,13 @@ from band.integrations.claude_sdk.session_manager import ClaudeRoomSession
 from tests.adapters.claude_sdk.process import WorkspacePeer
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
+    ExpectedFailure,
     LifecycleBridge,
     LifecycleProfile,
     RetentionHost,
     pause_at,
 )
+from tests.adapters.roompeer import CLEANUP_FAILURE, STARTUP_FAILURE
 
 
 class ClaudePeer(WorkspacePeer):
@@ -72,6 +74,12 @@ def install(host: RetentionHost, monkeypatch: pytest.MonkeyPatch) -> LifecycleBr
 
 PROFILES = [
     LifecycleProfile(
-        name="claude", install=install, lost_turn=TurnResultAlreadyReported
+        name="claude",
+        install=install,
+        lost_turn=TurnResultAlreadyReported,
+        # The SDK raises a refused initialize as a bare Exception.
+        failed_start=ExpectedFailure(Exception, STARTUP_FAILURE),
+        # The refused close of the failed start surfaces in its place.
+        failed_start_closing_refused=ExpectedFailure(RuntimeError, CLEANUP_FAILURE),
     )
 ]
