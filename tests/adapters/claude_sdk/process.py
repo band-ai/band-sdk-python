@@ -26,9 +26,12 @@ class WorkspaceProcess(SubprocessCLITransport):
     """Exercise SDK spawning, pipes and cleanup without a Claude installation."""
 
     refuse_close = False
+    # Closes refused before one succeeds; ``refuse_close`` refuses every one.
+    refused_closes = 0
 
     async def close(self) -> None:
-        if self.refuse_close:
+        if self.refuse_close or self.refused_closes:
+            self.refused_closes = max(self.refused_closes - 1, 0)
             raise RuntimeError(CLEANUP_FAILURE)
         await super().close()
 

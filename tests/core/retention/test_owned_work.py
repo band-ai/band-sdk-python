@@ -6,11 +6,12 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention import (
     ReleaseCause,
     Residency,
 )
+from tests.conftest import eager_tasks, requires_eager_tasks
 from tests.core.retention.kit import Barrier, ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
@@ -156,3 +157,41 @@ class TestOwnedWork:
         await task
         await resident.room.dispose()
         assert resident.releases == [ReleaseCause.FINAL]
+
+    @requires_eager_tasks
+    async def test_started_work_runs_only_once_enrolled(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        enrolled_when_run: list[bool] = []
+
+        async def work() -> None:
+            current = asyncio.current_task()
+            enrolled_when_run.append(resident.room.enrolls(current))
+
+        with eager_tasks():
+            task = resident.room.start_owned(work)
+        await task
+
+        assert enrolled_when_run == [True]
+
+    @requires_eager_tasks
+    async def test_work_started_on_a_closing_room_never_runs(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        resident.closing = Barrier()
+        disposal = asyncio.create_task(resident.room.dispose())
+        await resident.closing.reached.wait()
+        ran: list[bool] = []
+
+        async def work() -> None:
+            ran.append(True)
+
+        with eager_tasks(), pytest.raises(RoomClosingError):
+            resident.room.start_owned(work)
+        resident.closing.released.set()
+        await disposal
+
+        assert ran == []

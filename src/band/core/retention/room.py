@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention.cleanup import report_owned, spawn_owned
@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from band.core.retention.owner import RoomRetention
 
 logger = logging.getLogger(__name__)
+
+Result = TypeVar("Result")
 
 # Circuit breaker. One step joins a transition, waits for leases, or runs one
 # release. Settle allows an in-flight join, a lease wait, that release, a
@@ -142,12 +144,17 @@ class RetainedRoom:
         its owner is stopping."""
         return self._closing or self._owner.stopping
 
+    @property
+    def generation(self) -> int:
+        """The current residency's generation; each acquisition starts a new one."""
+        return self._generation
+
     def has_authority(self, generation: int) -> bool:
         """Whether residency ``generation`` may still observe or act: the
         current one, not closing, and not retired by recovery or final close."""
         return (
             generation == self._generation
-            and not self._closing
+            and not self.closing
             and self._cause in (None, ReleaseCause.IDLE)
             and self._state not in (Residency.SUSPENDED, Residency.CLOSED)
         )
@@ -166,6 +173,23 @@ class RetainedRoom:
         self._owned.add(task)
         task.add_done_callback(self._disown)
         self._schedule()
+
+    def start_owned(
+        self, operation: Callable[[], Coroutine[Any, Any, Result]]
+    ) -> asyncio.Task[Result]:
+        """Run ``operation`` as owned detached work that starts only once
+        enrolled; an eager task factory would otherwise run it before ``own``
+        can enroll or refuse it."""
+        enrolled = asyncio.get_running_loop().create_future()
+
+        async def run() -> Result:
+            await enrolled
+            return await operation()
+
+        task = asyncio.create_task(run())
+        self.own(task)
+        enrolled.set_result(None)
+        return task
 
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)

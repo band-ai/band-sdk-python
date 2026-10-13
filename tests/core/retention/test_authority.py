@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from band.core.retention import (
@@ -46,3 +48,16 @@ class TestAuthority:
         assert not old.room.recover(generation=1, reason="stale")
         assert new.room.snapshot.provider_activity is ProviderActivity.ACTIVE
         assert not new.room.snapshot.pending_cleanup
+
+    async def test_a_stopping_owner_revokes_authority_before_disposal_starts(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+
+        stopping = asyncio.create_task(host.owner.stop())
+        await asyncio.sleep(0)  # stop() ran; its shutdown task has not
+        assert host.owner.stopping
+        assert resident.room.snapshot.pending_release is None
+        assert not resident.room.has_authority(resident.room.generation)
+        await stopping

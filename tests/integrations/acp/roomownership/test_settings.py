@@ -61,7 +61,7 @@ class TestSettings:
                 leaving = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
                 await asyncio.sleep(0)
                 # The caller gives up as the room starts closing.
-                assert session.room().closing
+                assert session.room().retained.closing
                 switch.cancel()
                 prompting.release.set()
                 await leaving

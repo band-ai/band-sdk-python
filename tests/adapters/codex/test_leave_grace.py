@@ -1,11 +1,13 @@
-"""A leaving room's turn gets its settle grace with admission closed: what
-it still asks is declined instead of parking on a human."""
+"""A leaving or stopping room's turn gets its settle grace with admission
+closed: what it still asks is declined instead of parking on a human."""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from band.adapters.codex import CodexApprovalMethod
+import pytest
+
+from band.adapters.codex import CodexAdapter, CodexApprovalMethod
 from band.testing import failure_reports
 from tests.adapters.codex.kit import ROOM_ID, CodexRoom, parked_on_approval
 from tests.adapters.codexturns import event_request, turn_completed
@@ -13,9 +15,20 @@ from tests.adapters.codexturns import event_request, turn_completed
 DECLINED = {"decision": "decline"}
 
 
+async def leave(adapter: CodexAdapter) -> None:
+    await adapter.on_cleanup(ROOM_ID)
+
+
+async def stop(adapter: CodexAdapter) -> None:
+    await adapter.cleanup_all()
+
+
 class TestLeaveGrace:
-    async def test_an_approval_asked_during_a_leave_is_declined_and_the_turn_ends(
-        self, codex_room: Callable[..., Awaitable[CodexRoom]]
+    @pytest.mark.parametrize("closing", [leave, stop])
+    async def test_an_approval_asked_while_closing_is_declined_and_the_turn_ends(
+        self,
+        codex_room: Callable[..., Awaitable[CodexRoom]],
+        closing: Callable[[CodexAdapter], Awaitable[None]],
     ) -> None:
         room = await codex_room(
             *parked_on_approval(
@@ -27,7 +40,7 @@ class TestLeaveGrace:
         )
         await room.send("run tests")
 
-        await room.adapter.on_cleanup(ROOM_ID)
+        await closing(room.adapter)
 
         assert room.client.responses == [(10, DECLINED), (11, DECLINED)]
         [turn] = room.deliveries

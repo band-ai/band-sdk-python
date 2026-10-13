@@ -211,12 +211,20 @@ class TestCursorTurns:
 
     @requires_eager_tasks
     @pytest.mark.asyncio
-    async def test_a_turn_run_by_an_eager_task_factory_is_owned_first(
+    async def test_a_closing_room_refuses_a_message_under_an_eager_task_factory(
         self,
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         async with cursor(agent) as session:
-            with eager_tasks():
-                served = await session.send("hello")
+            await session.send("hello")
+            leaving = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
+            await asyncio.sleep(0)
+            assert session.room().retained.closing
+            tools = TranscriptTools()
 
-        assert served.errors == [] and len(agent.prompts) == 1
+            with eager_tasks(), pytest.raises(InputNotAccepted):
+                await session.send("late", tools=tools)
+            await leaving
+
+            assert tools.transcript == []
+        assert len(agent.prompts) == 1

@@ -8,6 +8,7 @@ import pytest
 
 from band.adapters.codex import CodexAdapter
 from band.core.exceptions import InputNotAccepted
+from band.testing import failure_reports
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.roompeer import (
@@ -16,6 +17,7 @@ from tests.adapters.roompeer import (
     memo_instruction,
     write_instruction,
 )
+from tests.framework_conformance.turnprobes import DispatchingFakeTools
 
 
 class TestLifecycleLeave:
@@ -74,12 +76,9 @@ class TestLifecycleLeave:
 
     async def test_leaving_during_startup_closes_the_half_started_process(
         self,
-        host: RetentionHost,
+        brief_grace_host: RetentionHost,
     ) -> None:
-        assert isinstance(host.adapter, CodexAdapter)
-        host.adapter.config = host.adapter.config.model_copy(
-            update={"turn_settle_timeout_s": 0.01}
-        )
+        host = brief_grace_host
         starting = host.next_start = Hold()
         opening = asyncio.create_task(host.send("room-a", write_instruction("alpha")))
         await starting.reached.wait()
@@ -90,4 +89,44 @@ class TestLifecycleLeave:
             await opening
         assert host.exited == [True]
         assert host.native_id("room-a") is None
+        assert await host.send("room-b", write_instruction("bravo")) == ["bravo"]
+
+    async def test_a_turn_starting_its_process_at_leave_is_refused_not_failed(
+        self,
+        host: RetentionHost,
+    ) -> None:
+        tools = DispatchingFakeTools(room_id="room-a")
+        host.hold_startup.touch()
+        sending = asyncio.create_task(
+            host.deliver("room-a", write_instruction("alpha"), tools)
+        )
+        await host.start_reached("room-a")
+        leaving = asyncio.create_task(host.leave("room-a"))
+        await asyncio.sleep(0)
+        residency = host.bridge.residency("room-a")
+        assert residency is not None and residency.closing
+
+        host.hold_startup.unlink()  # the start finishes inside the settle grace
+        await leaving
+
+        with pytest.raises(InputNotAccepted):
+            await sending
+        assert failure_reports(tools) == []
+
+    async def test_a_message_after_an_abandoned_leave_finished_keeps_no_claim(
+        self,
+        host: RetentionHost,
+    ) -> None:
+        assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
+        closing = host.children[0].closing = Hold()
+        leaving = asyncio.create_task(host.leave("room-a"))
+        await closing.reached.wait()
+        leaving.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await leaving
+        closing.released.set()
+        await host.forgotten("room-a")
+
+        assert await host.send("room-a", PeerCommand.RECALL) == ["Recalled: None"]
+        await host.leave("room-a")
         assert await host.send("room-b", write_instruction("bravo")) == ["bravo"]

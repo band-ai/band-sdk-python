@@ -65,15 +65,9 @@ class ACPRoom:
     session_closes: set[asyncio.Task[None]] = field(default_factory=set)
 
     @property
-    def closing(self) -> bool:
-        """Whether the room admits no more work: it is being disposed or its
-        owner is stopping."""
-        return self.retained.closing
-
-    @property
     def generation(self) -> int:
         """The residency the room's current process belongs to."""
-        return self.retained.snapshot.generation
+        return self.retained.generation
 
     @property
     def live_record(self) -> RoomSession | None:

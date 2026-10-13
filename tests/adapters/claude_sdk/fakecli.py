@@ -202,7 +202,11 @@ class FakeCLISession(Transport):
             self.claude.connecting = None
             await hold.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
-            raise CLIConnectionError("Claude CLI exited during startup")
+            # Like the SDK transport, the startup error is raised from its cause.
+            try:
+                raise OSError("Claude CLI exited with status 1")
+            except OSError as exited:
+                raise CLIConnectionError("Claude CLI exited during startup") from exited
 
     def is_ready(self) -> bool:
         return self.alive

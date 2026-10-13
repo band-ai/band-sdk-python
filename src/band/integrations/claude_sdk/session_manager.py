@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
@@ -106,13 +107,19 @@ class TurnStream:
 
 
 def _start_failure(error: Exception) -> BaseException:
-    """The failure a start reports when its close was refused too.
+    """The failure a failed ``ClaudeSDKClient.connect`` reports for its start.
 
-    ``ClaudeSDKClient.connect`` closes the CLI before re-raising a failed
-    start, so a refused close raises in its place with the start's own
+    ``connect`` closes the CLI before re-raising a failed start, so a close
+    that fails there raises in the start's place, with the start's own
     failure as its context.
     """
-    return error.__context__ if isinstance(error.__context__, Exception) else error
+    raised_by_close = any(
+        frame.f_code is ClaudeSDKClient.disconnect.__code__
+        for frame, _ in traceback.walk_tb(error.__traceback__)
+    )
+    if raised_by_close and isinstance(error.__context__, Exception):
+        return error.__context__
+    return error
 
 
 class ClaudeRoomSession:
@@ -142,16 +149,11 @@ class ClaudeRoomSession:
 
     @property
     def generation(self) -> int:
-        return self.retained.snapshot.generation
+        return self.retained.generation
 
     @property
     def holds_cli(self) -> bool:
         return self.client is not None
-
-    @property
-    def closing(self) -> bool:
-        """Whether the room's final cleanup has begun; it never serves again."""
-        return self.retained.closing
 
     def speaks_for(self, generation: int) -> bool:
         """Whether a callback from residency ``generation`` may still act.
@@ -242,7 +244,7 @@ class ClaudeRoomSession:
         return (
             not resume
             and self.session_id is not None
-            and not self.closing
+            and not self.retained.closing
             and self.client is None
         )
 
@@ -277,17 +279,18 @@ class ClaudeRoomSession:
         try:
             await client.connect()
         except Exception as error:
-            if await self._closed_failed_start():
+            await self._close_failed_start()
+            if (failure := _start_failure(error)) is error:
                 raise
-            raise _start_failure(error)
+            raise failure
         self._reader = asyncio.create_task(self._read(client, generation))
         logger.info(
             "Room %s: Claude session started (resume=%s)", self.room_id, options.resume
         )
 
-    async def _closed_failed_start(self) -> bool:
-        """Close a CLI whose start failed; return whether it closed. A refused
-        close keeps the handles for recovery to retry."""
+    async def _close_failed_start(self) -> None:
+        """Close a CLI whose start failed; a refused close keeps the handles
+        for recovery to retry."""
         try:
             await self._close()
         except Exception:
@@ -296,8 +299,6 @@ class ClaudeRoomSession:
                 self.room_id,
                 exc_info=True,
             )
-            return False
-        return True
 
     async def _close(self) -> None:
         """Close the retained CLI; a failure keeps every handle for a retry."""

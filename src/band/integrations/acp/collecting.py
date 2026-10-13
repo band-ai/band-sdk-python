@@ -156,7 +156,8 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
     def forget_session(self, session_id: str) -> None:
         """Drop a closed session's catalog and any state its profile keeps."""
         self._config_options.pop(session_id, None)
-        forget = getattr(self._profile, "forget_session", None)
+        # A custom profile written before this hook has none.
+        forget = getattr(self._profile, ACPClientProfile.forget_session.__name__, None)
         if forget is not None:
             forget(session_id)
 

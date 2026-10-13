@@ -49,7 +49,12 @@ class CodexPeer(CodexStdioClient):
         return self._proc is not None and self._proc.returncode is not None
 
 
-def install(host: RetentionHost, monkeypatch: pytest.MonkeyPatch) -> LifecycleBridge:
+def install(
+    host: RetentionHost,
+    monkeypatch: pytest.MonkeyPatch,
+    **settings: Any,
+) -> LifecycleBridge:
+    """``settings`` override the production config's fields."""
     adapter = CodexAdapter(
         CodexAdapterConfig(
             model="peer",
@@ -63,6 +68,7 @@ def install(host: RetentionHost, monkeypatch: pytest.MonkeyPatch) -> LifecycleBr
                 str(host.root / CODEX_HOME),
                 "--stay",
             ),
+            **settings,
         )
     )
 

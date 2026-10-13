@@ -41,7 +41,6 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.exceptions import (
     BandConfigError,
-    CleanupIncompleteError,
     InputNotAccepted,
 )
 from band.core.model_catalog import ModelSelection
@@ -58,7 +57,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.retention.cleanup import cleanup_deadline, finish_by, spawn_owned
+from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -111,7 +110,6 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.integrations.mcp.backends import MCP_FINAL_CLOSE
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
@@ -479,15 +477,16 @@ class ACPClientAdapter(
             raise _no_live_session(room_id)
         # Owned by the room, so its disposal cancels and joins the switch
         # instead of closing the process under it.
-        switch = asyncio.create_task(self._switch_room(room, selection))
         try:
-            room.retained.own(switch)
+            switch = room.retained.start_owned(
+                partial(self._switch_room, room, selection)
+            )
             await switch
         except (asyncio.CancelledError, RuntimeError):
             current = asyncio.current_task()
             if current is not None and current.cancelling():
                 raise
-            if not room.closing:
+            if not room.retained.closing:
                 raise
             raise _session_ended_mid_switch(room_id) from None
 
@@ -650,23 +649,10 @@ class ACPClientAdapter(
         return self._profile
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        # Agent.start() reuses this instance after cleanup_all(); a stop is
-        # terminal for its owner, so a restart first finishes it.
+        # Agent.start() reuses this instance after cleanup_all().
         if self._retention.stopping:
             await self.cleanup_all(final=False)
         await super().on_started(agent_name, agent_description)
-
-    def _renew_retention(self) -> None:
-        """Replace a stopped residency owner; a stop is terminal for its owner."""
-        if not self._retention.stopping:
-            return
-        # Unreachable while stop() keeps its contract: it succeeds only after
-        # disposing every room. Guards against renewing over a live room.
-        if self._rooms:
-            raise CleanupIncompleteError(
-                "ACP rooms from the previous stop are still closing"
-            )
-        self._retention = RoomRetention(self.config.retention)
 
     def _room(self, room_id: str) -> ACPRoom:
         """The room's holder, registered with the residency owner on first use."""
@@ -1666,12 +1652,12 @@ class ACPClientAdapter(
         Raises:
             CleanupIncompleteError: A room or the MCP server is still closing.
         """
-        deadline = cleanup_deadline(self.config.retention)
-        await self._retention.stop()
-        await finish_by(deadline, self._mcp.close(final=True), what=MCP_FINAL_CLOSE)
+        await self._mcp.close_after(
+            self._retention.stop(), retention=self.config.retention
+        )
         if not final:
             await self._mcp.reopen()
-            self._renew_retention()
+            self._retention = self._retention.renewed()
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:

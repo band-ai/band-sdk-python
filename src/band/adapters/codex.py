@@ -631,7 +631,7 @@ class RoomCodexClient:
     @property
     def generation(self) -> int:
         """The residency the room's current process belongs to."""
-        return self.residency.snapshot.generation
+        return self.residency.generation
 
     def bind_thread(
         self, *, registration: list[dict[str, Any]] | None, settings: ThreadSettings
@@ -782,10 +782,9 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # disables the bound (legacy behavior); ``retention.transition_timeout_s``
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
-    # Upper bound for letting a released, still-running turn wind down on its
-    # own during a leave or stop (the residency owner's settle grace) before
-    # it's force-cancelled,
-    # and for answering a finished turn's leftover native requests.
+    # Upper bound for letting a still-running turn wind down on its own during
+    # a leave or stop (the residency owner's settle grace) before it is
+    # cancelled, and for answering a finished turn's leftover native requests.
     # Deliberately not Optional like client_close_timeout_s above: that
     # field's "disable the bound" is a legacy allowance for a rarely-slow
     # transport close, not something a turn possibly stuck on real work
@@ -922,7 +921,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "custom Codex clients cannot guarantee room process isolation"
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
-        self._retention = self._new_retention()
+        # Final disposal gives a room's turn ``turn_settle_timeout_s`` to wind
+        # down before cancelling it.
+        self._retention = RoomRetention(
+            self.config.retention, settle_grace_s=self.config.turn_settle_timeout_s
+        )
         self._workspaces = RoomWorkspaces(self.config.workspace_for_room)
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
@@ -951,13 +954,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
 
-    def _new_retention(self) -> RoomRetention:
-        """A residency owner whose final disposal gives a room's turn
-        ``turn_settle_timeout_s`` to wind down before cancelling it."""
-        return RoomRetention(
-            self.config.retention, settle_grace_s=self.config.turn_settle_timeout_s
-        )
-
     def _room_closing(self, room_id: str) -> bool:
         """Whether the room admits no more work; a forgotten room is closed."""
         room = self._room_clients.get(room_id)
@@ -966,7 +962,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
         if room is not None:
-            self._workspaces.claim(room_id, room.workspace)
             return room
         room = RoomCodexClient(
             room_id=room_id, workspace=self._workspaces.claim(room_id)
@@ -978,7 +973,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 release=partial(self._release, room),
                 dispose=partial(self._dispose, room),
             )
-        except InputNotAccepted:
+        except BaseException:
             self._workspaces.release(room_id, room.workspace)
             raise
         self._room_clients[room_id] = room
@@ -1071,10 +1066,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        # A stop is terminal for its owner: only a confirmed one opens a new one.
         if self._retention.stopping:
             await self.cleanup_all()
-            self._retention = self._new_retention()
+        self._retention = self._retention.renewed()
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
         self._log_startup_config(agent_name)
@@ -1181,8 +1175,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        turn = asyncio.create_task(
-            self._run_turn(
+        turn = room.residency.start_owned(
+            partial(
+                self._run_turn,
                 room=room,
                 msg=msg,
                 tools=tools,
@@ -1193,7 +1188,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 command=command,
             )
         )
-        room.residency.own(turn)
         self._turn_release[room_id] = release
         self._turn_tasks[room_id] = bind_turn_task(tools, turn)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
@@ -1240,7 +1234,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     )
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
-            except TurnResultAlreadyReported:
+            except (TurnResultAlreadyReported, InputNotAccepted):
+                # A lease refused by a closing room is no failed turn: the
+                # host keeps the message.
                 raise
             except (CodexJsonRpcError, CodexContinuityError) as e:
                 # A structured RPC error from the app-server (e.g. "model not
@@ -1859,8 +1855,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return
         self._clear_pending_approvals_for_room(room_id)
         await room.residency.dispose()
-        if self._room_clients.get(room_id) is room:
-            del self._room_clients[room_id]
 
     async def cleanup_all(self) -> None:
         """Stop the residency owner: admission closes at once, every room's
@@ -1874,8 +1868,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         for room_id in list(self._room_clients):
             self._clear_pending_approvals_for_room(room_id)
         await self._retention.stop()
-        # Every registered room belonged to the stopped owner and is disposed.
-        self._room_clients.clear()
 
     async def _acquire(
         self, room: RoomCodexClient, generation: int, resume: bool
@@ -1900,7 +1892,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         )
         await self._register_skill_roots(client)
         room.selected_model = await self._select_model(room, client)
-        logger.info("Codex model selected: %s", room.selected_model)
+        logger.info(
+            "Room %s: Codex model selected: %s", room.room_id, room.selected_model
+        )
         if (thread_id := self._room_threads.get(room.room_id)) is not None:
             await self._restore_thread(room, client, thread_id)
 
@@ -2025,17 +2019,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             _native_turn_id(event),
         )
         try:
-            match event.method:
-                case method if method == DYNAMIC_TOOL_CALL_METHOD:
-                    await client.respond(
-                        event.id, _tool_result(_UNOWNED_TOOL_CALL_TEXT, success=False)
-                    )
-                case method if method in CODEX_APPROVAL_METHODS:
-                    await client.respond(event.id, _approval_response("decline"))
-                case method:
-                    await _refuse_unhandled_request(
-                        client, request_id=event.id, method=method
-                    )
+            if event.method == DYNAMIC_TOOL_CALL_METHOD:
+                await client.respond(
+                    event.id, _tool_result(_UNOWNED_TOOL_CALL_TEXT, success=False)
+                )
+            elif event.method in CODEX_APPROVAL_METHODS:
+                await client.respond(event.id, _approval_response("decline"))
+            else:
+                await _refuse_unhandled_request(
+                    client, request_id=event.id, method=event.method
+                )
         except Exception:
             logger.warning(
                 "Room %s: could not refuse Codex %s",
@@ -2130,6 +2123,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._sandbox_overrides.pop(room_id, None)
         self._room_task_titles.pop(room_id, None)
         self._workspaces.release(room_id, room.workspace)
+        if self._room_clients.get(room_id) is room:
+            del self._room_clients[room_id]
 
     def _forget_room_thread(self, room_id: str) -> str | None:
         """Drop the room's thread mapping and per-thread state; return the thread id."""

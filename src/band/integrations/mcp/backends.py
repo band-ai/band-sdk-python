@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Self
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import cleanup_deadline, finish_by, spawn_owned
+from band.core.retention.config import RoomRetentionConfig
 from band.integrations.mcp.engine import (
     RoomToolResolver,
     build_resolved_band_mcp_tool_registrations,
@@ -27,7 +28,8 @@ from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
-#: The shared backend's final close, as cleanup reports name it.
+#: The cleanup steps ``close_after`` reports, as cleanup reports name them.
+ROOMS_CLOSE = "Room shutdown"
 MCP_FINAL_CLOSE = "Band MCP backend final close"
 
 
@@ -221,6 +223,20 @@ class SharedBandMCPBackend:
             return
         if (stopping := await self._final_stop()) is not None:
             await asyncio.shield(stopping)
+
+    async def close_after(
+        self, rooms_closed: Awaitable[None], *, retention: RoomRetentionConfig
+    ) -> None:
+        """Close for good once the rooms whose processes dial this server have
+        closed, both within one ``retention.transition_timeout_s`` deadline.
+
+        Raises:
+            CleanupIncompleteError: A step outlived the deadline; it stays
+                owned for a retry.
+        """
+        deadline = cleanup_deadline(retention)
+        await finish_by(deadline, rooms_closed, what=ROOMS_CLOSE)
+        await finish_by(deadline, self.close(final=True), what=MCP_FINAL_CLOSE)
 
     async def _final_stop(self) -> asyncio.Task[None] | None:
         async with self._lock:

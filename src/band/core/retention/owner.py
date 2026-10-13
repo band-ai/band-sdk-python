@@ -102,6 +102,26 @@ class RoomRetention:
             )
         await report_owned(shutdown, self.config.transition_timeout_s)
 
+    def renewed(self) -> RoomRetention:
+        """The owner to serve with after a restart.
+
+        A stop is terminal for its owner, so a stopped one is replaced by a
+        fresh owner with the same settings, and only once its stop confirmed
+        every room closed.
+
+        Raises:
+            CleanupIncompleteError: The stop is unfinished or failed.
+        """
+        if not self.stopping:
+            return self
+        if self._rooms:
+            raise CleanupIncompleteError(
+                "Room retention cannot renew while rooms from its stop remain"
+            )
+        return RoomRetention(
+            self.config, clock=self.clock, settle_grace_s=self.settle_grace_s
+        )
+
     def _owned_shutdown(self) -> asyncio.Task[None]:
         """Join the running or settled shutdown; restart one that failed."""
         self._shutdown = rejoin_owned(

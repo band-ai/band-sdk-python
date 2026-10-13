@@ -159,6 +159,12 @@ class RetentionHost:
 
     async def send(self, room_id: str, content: str) -> list[str]:
         tools = DispatchingFakeTools(room_id=room_id)
+        await self.deliver(room_id, content, tools)
+        return [message["content"] for message in tools.messages_sent]
+
+    async def deliver(
+        self, room_id: str, content: str, tools: DispatchingFakeTools
+    ) -> None:
         await self.adapter.on_event(
             AgentInput(
                 msg=PlatformMessage(
@@ -180,7 +186,6 @@ class RetentionHost:
                 room_id=room_id,
             )
         )
-        return [message["content"] for message in tools.messages_sent]
 
     async def leave(self, room_id: str) -> None:
         await self.adapter.on_cleanup(room_id)
@@ -191,6 +196,14 @@ class RetentionHost:
     def state(self, room_id: str) -> Residency | None:
         residency = self.bridge.residency(room_id)
         return residency.snapshot.state if residency is not None else None
+
+    async def forgotten(self, room_id: str) -> None:
+        """Wait until the adapter no longer holds the room, its disposal done."""
+        for _ in range(MAX_SETTLE_POLLS):
+            if self.bridge.residency(room_id) is None:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"Room {room_id} was never forgotten")
 
     async def settled(self, room_id: str) -> None:
         """Wait out the room's in-flight process transition, such as recovery."""

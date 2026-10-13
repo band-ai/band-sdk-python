@@ -81,6 +81,10 @@ class ACPClientProfile(Protocol):
     @property
     def extension_session_id(self) -> str | None: ...
 
+    def forget_session(self, session_id: str) -> None:
+        """Drop any state kept for a session the adapter closed."""
+        ...
+
     async def ext_method(
         self,
         method: str,
@@ -100,6 +104,9 @@ class NoopACPClientProfile:
     @property
     def extension_session_id(self) -> None:
         return None
+
+    def forget_session(self, session_id: str) -> None:
+        del session_id
 
     async def ext_method(
         self,

@@ -276,14 +276,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             requester_id=msg.sender_id,
             release=release,
         )
-        # Registered before it can run, so an interrupt during startup reaches it.
-        self._accept(turn)
-        # An eager task factory runs the turn before create_task returns.
-        enrolled: asyncio.Future[None] = loop.create_future()
-        turn_task = turn.task = asyncio.create_task(
-            self._run_turn(
+        turn_task = turn.task = room.retained.start_owned(
+            partial(
+                self._run_turn,
                 turn,
-                enrolled,
                 msg,
                 history,
                 participants_msg,
@@ -291,9 +287,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 is_session_bootstrap=is_session_bootstrap,
             )
         )
+        # Registered before it runs, so an interrupt during startup reaches it.
+        self._accept(turn)
         turn_task.add_done_callback(partial(self._on_turn_task_done, turn=turn))
-        room.retained.own(turn_task)
-        enrolled.set_result(None)
         try:
             done, _ = await asyncio.wait(
                 {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
@@ -342,7 +338,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _run_turn(
         self,
         turn: CursorTurn,
-        enrolled: asyncio.Future[None],
         msg: PlatformMessage,
         history: ACPClientSessionState,
         participants_msg: str | None,
@@ -352,7 +347,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     ) -> None:
         room = turn.room
         try:
-            await enrolled
             async with (
                 self._using_room(room, turn.tools) as runtime,
                 self._holding(turn),
@@ -421,12 +415,14 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         self._holders[turn.room.room_id] = turn
 
     def _turn_of(self, room: ACPRoom, generation: int) -> CursorTurn | None:
-        """The open prompt of exactly this room holder and residency."""
+        """The open prompt of exactly this room holder and of a residency
+        recovery has not retired."""
         turn = self._holders.get(room.room_id)
         if (
             turn is None
             or turn.room is not room
             or turn.generation != generation
+            or not room.retained.has_authority(generation)
             or turn.closed
         ):
             return None

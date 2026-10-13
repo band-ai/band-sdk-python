@@ -91,7 +91,6 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
-from band.core.retention.cleanup import cleanup_deadline, finish_by
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
@@ -121,7 +120,6 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
-from band.integrations.mcp.backends import MCP_FINAL_CLOSE
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_effects,
@@ -691,6 +689,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             raise RuntimeError("chat-based approvals are disabled")
         return approvals
 
+    async def _stop_sessions(self) -> None:
+        if self._session_manager is not None:
+            await self._session_manager.stop()
+
     @property
     def _approval_label(self) -> str:
         approvals = self.config.approvals
@@ -1006,7 +1008,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 started = True
                 yield client
         except Exception:
-            if not started and not session.closing:
+            if not started and not session.retained.closing:
                 logger.exception("Room %s: Session creation failed", session.room_id)
                 await tools.send_failure(_TURN_FAILURE)
             raise
@@ -1059,7 +1061,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
 
         except Exception as e:
-            logger.exception("Error processing message")
+            logger.exception(
+                "Room %s: error processing message (generation %s)",
+                session.room_id,
+                session.generation,
+            )
             await _fail_turn(session, tools, e, reason="Turn failed before its result")
 
         except asyncio.CancelledError:
@@ -1613,14 +1619,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         because their CLIs dial the server until they do. An unfinished or
         failed step stays owned for a retry.
         """
-        deadline = cleanup_deadline(self.config.retention)
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        if self._session_manager:
-            await finish_by(
-                deadline, self._session_manager.stop(), what="Claude session shutdown"
-            )
-        await finish_by(deadline, self._mcp.close(final=True), what=MCP_FINAL_CLOSE)
+        await self._mcp.close_after(
+            self._stop_sessions(), retention=self.config.retention
+        )
         self._room_tools.clear()
         self._mcp_room_tools.clear()
         self._recorded_session_ids.clear()

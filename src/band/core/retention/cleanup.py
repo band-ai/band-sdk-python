@@ -41,7 +41,7 @@ def rejoin_owned(
 
 def _log_failure(task: asyncio.Task[None], *, label: str) -> None:
     if not task.cancelled() and (error := task.exception()) is not None:
-        logger.warning("%s failed: %s", label, error)
+        logger.warning("%s failed: %s", label, error, exc_info=error)
 
 
 def task_failure(task: asyncio.Task[Any]) -> BaseException | None:
