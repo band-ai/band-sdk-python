@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=4.0.0"]
+# dependencies = ["band-sdk[strands]>=5.0.1"]
 # ///
 """
 Jerry the mouse agent - outsmarts Tom!
@@ -26,7 +26,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -44,7 +44,7 @@ async def main() -> None:
 
     adapter = StrandsAdapter(
         StrandsAdapterConfig(custom_section=generate_jerry_prompt("Jerry")),
-        llm=OpenAIModel(model_id="gpt-6-luna"),
+        llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
     )
 
     logger.info("Jerry is watching for Tom from his mouse hole...")

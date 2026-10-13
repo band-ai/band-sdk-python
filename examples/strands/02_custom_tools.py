@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=4.0.0"]
+# dependencies = ["band-sdk[strands]>=5.0.1"]
 # ///
 """
 Strands agent with custom tools and capabilities.
@@ -20,7 +20,7 @@ import logging
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
@@ -47,7 +47,7 @@ async def main() -> None:
         StrandsAdapterConfig(
             custom_section="You can check the weather with the weather tool."
         ),
-        llm=OpenAIModel(model_id="gpt-6-luna"),
+        llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
         additional_tools=[(WeatherInput, get_weather)],  # CustomToolDef tuple
         capabilities=Capability.MEMORY | Capability.CONTACTS,
     )
