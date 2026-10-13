@@ -4,7 +4,6 @@ every room's next session dials the live one."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -13,9 +12,7 @@ from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
 class TestMcpBackendReplacement:

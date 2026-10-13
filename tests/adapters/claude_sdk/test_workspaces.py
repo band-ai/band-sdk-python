@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -13,9 +12,7 @@ from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
 from band.core.exceptions import InputNotAccepted
 from band.workspaces import create_room_workspace_resolver
 from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
 class TestRoomWorkspaces:

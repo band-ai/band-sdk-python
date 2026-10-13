@@ -4,16 +4,13 @@ reporting budget, and leaves anything unfinished for a retry."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 
 import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from band.core.exceptions import CleanupIncompleteError
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, OpenRoom
 
 
 class TestShutdownBudget:

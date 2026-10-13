@@ -9,11 +9,10 @@ import pytest
 from tests.adapters.claude_sdk.fakecli import Recall, Remember
 from tests.adapters.claude_sdk.helpers import (
     ClaudeRoom,
+    OpenRoom,
     band_server_replaced,
     turn_cancelled,
 )
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 class TestConversationContinuity:

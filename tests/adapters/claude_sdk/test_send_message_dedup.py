@@ -3,12 +3,8 @@ load; the room must still see one message."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
 async def test_a_repeated_reply_reaches_its_room_once_even_after_the_turn_ends(

@@ -7,9 +7,7 @@ import looptime
 import pytest
 
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom, said
 
 
 @pytest.mark.parametrize(

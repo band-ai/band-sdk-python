@@ -3,14 +3,11 @@ the model never supplies the room."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
 
 from band.runtime.tools import BandTool
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import OpenRoom
 from tests.mcpclient import advertised_arguments, endpoint_path, mcp_session
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 async def test_rooms_dial_their_own_band_endpoint_on_one_server(

@@ -3,8 +3,6 @@ tools, people answer in chat, and the test reads what the room saw."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 
 from band.adapters.claude_sdk import (
@@ -18,12 +16,10 @@ from band.core.exceptions import InputNotAccepted
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.adapters.claude_sdk.helpers import (
     WRITE_NOTE,
-    ClaudeRoom,
+    OpenRoom,
     with_approvals,
 )
 from tests.baseline.decisions import ModelDecision, ToolCall
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 ADMIN = {"id": "admin-1", "name": "Admin"}
 DECLINED = "User declined tool use"

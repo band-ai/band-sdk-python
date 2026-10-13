@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 from claude_agent_sdk import CLIConnectionError
 
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import OpenRoom
 
 
 async def test_a_room_resumes_the_session_its_history_recorded(

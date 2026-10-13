@@ -3,8 +3,6 @@ turn it took down with it."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 
 from band.core.protocols import (
@@ -12,10 +10,8 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from tests.adapters.claude_sdk.fakecli import Hangup
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import OpenRoom
 from tests.baseline.decisions import ModelDecision
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 class TestCLIConnectionError:

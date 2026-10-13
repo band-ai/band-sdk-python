@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -12,9 +11,7 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.fakecli import Hold, StreamFails
-from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET, OpenRoom
 
 # Short enough to abandon the held turn quickly, long enough for the next
 # turn's real loopback round trips to the Band MCP server on a slow runner.

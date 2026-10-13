@@ -4,7 +4,6 @@ a turn that answered the room must stay quiet."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -21,12 +20,10 @@ from tests.adapters.claude_sdk.fakecli import EndTurn, Thinking
 from tests.adapters.claude_sdk.helpers import (
     MISSING_REPLY_TEXT,
     SEND_MESSAGE_MCP_NAME,
-    ClaudeRoom,
+    OpenRoom,
     with_approvals,
 )
 from tests.baseline.decisions import ModelDecision
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 async def test_a_turn_that_answered_the_room_is_narrated_and_quiet(

@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 from claude_agent_sdk.types import PermissionResultDeny, ToolPermissionContext
 
 from band.adapters.claude_sdk import RETIRED_SESSION_DENIAL
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, with_approvals
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import OpenRoom, with_approvals
 
 
 class TestRetiredCliAuthority:

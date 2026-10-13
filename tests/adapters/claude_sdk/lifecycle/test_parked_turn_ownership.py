@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 
 from band.adapters.claude_sdk import APPROVAL_REQUESTED_TEMPLATE
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom, with_approvals
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import (
+    WRITE_NOTE,
+    OpenRoom,
+    with_approvals,
+)
 
 WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
     summary="Write: notes.md", token="a-1"
