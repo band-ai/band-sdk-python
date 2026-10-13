@@ -29,6 +29,8 @@ class CodexItemType(StrEnum):
     WEB_SEARCH = "webSearch"
     IMAGE_VIEW = "imageView"
     COLLAB_AGENT_TOOL_CALL = "collabAgentToolCall"
+    # multi_agent_v2 announces sub-agents with this instead of a collab call.
+    SUB_AGENT_ACTIVITY = "subAgentActivity"
     DYNAMIC_TOOL_CALL = "dynamicToolCall"
     REASONING = "reasoning"
     PLAN = "plan"
@@ -60,6 +62,9 @@ class CodexApprovalMethod(StrEnum):
 
 
 CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApprovalMethod)
+
+# The server request that runs one of the adapter's dynamic tools.
+DYNAMIC_TOOL_CALL_METHOD = "item/tool/call"
 
 
 class CodexRequestMethod(StrEnum):

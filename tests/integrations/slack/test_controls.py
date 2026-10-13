@@ -9,16 +9,13 @@ import pytest
 from band.core.exceptions import InputNotAccepted
 from band.integrations.codex.types import CodexSessionState
 from band.testing import events_of_type
-from tests.adapters import test_codex_adapter
-from tests.adapters.codexturns import final_text, turn_completed
-from tests.adapters.test_codex_adapter import (
+from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     make_platform_message,
     parked_on_approval,
 )
+from tests.adapters.codexturns import final_text, turn_completed
 from tests.integrations.slack.test_wrapping import _make_adapter, _mention_event
-
-codex_room = test_codex_adapter.codex_room
 
 
 @pytest.mark.parametrize("entry", ["band", "slack", "recovery"])

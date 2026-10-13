@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .rpc_base import (
+    TRANSPORT_CLOSED,
     CodexJsonRpcError,
     OverloadRetryPolicy,
     RpcEvent,
@@ -11,6 +12,7 @@ from .stdio_client import CodexStdioClient
 from .types import (
     CODEX_APPROVAL_METHODS,
     CODEX_PROVIDER,
+    DYNAMIC_TOOL_CALL_METHOD,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
@@ -26,6 +28,8 @@ from .websocket_client import CodexWebSocketClient
 __all__ = [
     "CODEX_APPROVAL_METHODS",
     "CODEX_PROVIDER",
+    "DYNAMIC_TOOL_CALL_METHOD",
+    "TRANSPORT_CLOSED",
     "ApprovalAuditEntry",
     "CodexApprovalMethod",
     "CodexItemType",

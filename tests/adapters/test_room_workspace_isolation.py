@@ -10,14 +10,22 @@ from typing import cast
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import AgentToolsProtocol, TurnResultAlreadyReported
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
 )
 from band.integrations.codex import CodexRequestMethod
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from band.workspaces import is_host_absolute, resolve_room_workspace
+from tests.adapters.codex.kit import PROCESS_EXITED, CodexRoom
+from tests.adapters.codexturns import (
+    FakeCodexClient,
+    make_codex_adapter,
+    tool_call_request,
+    turn_completed,
+)
 
 
 def test_default_workspace_is_created_per_room(
@@ -111,46 +119,23 @@ async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms(
 
 @pytest.mark.asyncio
 async def test_model_override_survives_codex_client_rebuild() -> None:
-    class Client:
-        def __init__(self, model: str) -> None:
-            self.model = model
-            self.model_list_calls = 0
+    lost = FakeCodexClient(events=[PROCESS_EXITED])
+    replacement = FakeCodexClient(
+        events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()]
+    )
+    adapter = make_codex_adapter(lost, config=CodexAdapterConfig(model=None))
+    processes = iter([lost, replacement])
+    adapter._build_client = lambda _workspace: next(processes)  # type: ignore[method-assign]
+    await adapter.on_started("Codex Agent", "A coding agent")
+    room = CodexRoom(adapter, lost)
 
-        async def connect(self) -> None:
-            return None
+    await room.send("/model room-model")
+    with pytest.raises(TurnResultAlreadyReported):
+        await room.send("work")
+    await room.send("more work")
 
-        async def initialize(self, **_kwargs: object) -> None:
-            return None
-
-        async def request(
-            self, method: str, _params: dict[str, object]
-        ) -> dict[str, object]:
-            assert method == CodexRequestMethod.MODEL_LIST
-            self.model_list_calls += 1
-            return {"data": [{"id": self.model, "hidden": False}]}
-
-        async def close(self) -> None:
-            return None
-
-    clients = [Client("auto-model-a"), Client("auto-model-b")]
-
-    def build_client(_config: object) -> Client:
-        return clients.pop(0)
-
-    adapter = CodexAdapter(CodexAdapterConfig(model=None))
-    adapter._build_client = build_client  # type: ignore[method-assign]
-    adapter._room_client("room-a")
-    adapter._active_room.set("room-a")
-    state = adapter._require_active_client_state()
-    state.model_override = "room-model"
-
-    await adapter._ensure_client_ready()
-    adapter._client = None
-    adapter._initialized = False
-    await adapter._ensure_client_ready()
-
-    assert adapter._selected_model == "room-model"
-    assert clients == []
+    (turn,) = replacement.params_of(CodexRequestMethod.TURN_START)
+    assert turn["model"] == "room-model"
 
 
 def test_codex_rejects_the_former_shared_cwd_option() -> None:
@@ -197,14 +182,12 @@ async def test_codex_starts_each_thread_in_its_room_workspace(tmp_path: Path) ->
     tools = cast(AgentToolsProtocol, FakeAgentTools())
     clients: list[Client] = []
     for room_id in ("room-a", "room-b"):
-        adapter._room_client(room_id)
-        adapter._active_room.set(room_id)
-        client = Client()
-        adapter._client = client  # type: ignore[assignment]
-        adapter._selected_model = "gpt-5.5"
+        room = adapter._room_client(room_id)
+        room.client = client = Client()  # type: ignore[assignment]
+        room.selected_model = "gpt-5.5"
         clients.append(client)
         await adapter._ensure_thread(
-            room_id=room_id,
+            room=room,
             history=CodexSessionState(),
             tools=tools,
             is_session_bootstrap=False,

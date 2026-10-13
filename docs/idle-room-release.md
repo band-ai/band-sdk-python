@@ -82,7 +82,17 @@ closed.
 These ownership rules hold with retention disabled. Room, execution, adapter and
 shared MCP cleanup that fails or is cancelled stays owned, with the agent's
 single-instance guard, and the next `stop()` or `shutdown()` retries it instead
-of reporting success.
+of reporting success. Adapter shutdown refuses new rooms and turns before its
+first wait, and settles running turns and closes rooms within one reporting
+deadline. Every caller joins that same shutdown. The adapter admits work again
+only when the next start has confirmed it.
+
+## Provider integration
+
+| Adapter | Ownership integration | Idle release |
+| --- | --- | --- |
+| Codex | Each room's process, thread and workspace compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A lost process goes through `recover()`; the next process strictly restores the same thread and verifies its provider, workspace and tools. One reader per process routes each native callback by its `turnId` to the Band turn that started it and refuses work no Band turn started. | Refused: the release callback returns `BUSY` for `IDLE` because every examined Codex shutdown cancels background work; activity stays `UNKNOWN`. |
+| Claude SDK, OMP, Cursor and Copilot ACP | Pending their adapter rewrites. | Rejected by configuration. |
 
 The shared mechanics do not certify a provider's release callback. Production
 integration still needs authoritative native inactivity or a demonstrated
