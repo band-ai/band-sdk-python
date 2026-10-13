@@ -134,7 +134,8 @@ def changelog_request(tag: str, previous_tag: str) -> str:
 
 def agent_options(settings: ChangelogAgentSettings) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
-        # Pinned: the CLI's own default model pick fails under API-key auth.
+        # The repo's latest-Sonnet id, never the CLI's `sonnet` alias: the
+        # bundled CLI resolves that alias to an older Sonnet.
         model=ANTHROPIC_MODEL,
         system_prompt={
             "type": "preset",
