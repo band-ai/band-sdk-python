@@ -21,7 +21,12 @@ from acp.agent.connection import AgentSideConnection
 from band.adapters.cursor_acp import CursorACPAdapter
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention import Residency
-from band.core.types import MessageType, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    HistoryProvider,
+    MessageType,
+    PlatformMessage,
+)
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -446,6 +451,23 @@ class AcpSession:
             contacts_msg=contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=room,
+        )
+        return tools.reply
+
+    async def send_judged(self, content: str, *, room: str = DEFAULT_ROOM) -> Reply:
+        """Deliver ``content`` through ``on_event``, as the runtime does, so
+        its turn is judged; return what the adapter posted back."""
+        tools = self._last_tools = TranscriptTools()
+        await self.adapter.on_event(
+            AgentInput(
+                msg=_message(content, room),
+                tools=tools,
+                history=HistoryProvider(raw=[]),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id=room,
+            )
         )
         return tools.reply
 

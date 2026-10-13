@@ -17,6 +17,9 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 
 CYCLE_CANCEL_GRACE_SECONDS = 1.0
+# How long a room's final disposal lets its accepted turn wind down on its own
+# before cancelling it.
+TURN_SETTLE_GRACE_S = 10.0
 
 
 def terminal_deadline() -> float:

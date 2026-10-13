@@ -164,6 +164,16 @@ class RetainedRoom:
             and self._state not in (Residency.SUSPENDED, Residency.CLOSED)
         )
 
+    def may_finish(self, generation: int) -> bool:
+        """Whether accepted work may still hear from residency ``generation``:
+        with authority, or while its closing room settles that work before
+        the final release."""
+        return self.has_authority(generation) or (
+            self.closing
+            and generation == self._generation
+            and self._state == Residency.RESIDENT
+        )
+
     def own(self, task: asyncio.Task[Any]) -> None:
         """Enroll accepted detached work before its first await.
 

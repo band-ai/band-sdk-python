@@ -307,9 +307,9 @@ async def test_answers_stand_however_a_flaky_room_connection_fares(
 async def test_leaving_a_room_drops_only_its_asks_and_tokens_keep_counting(
     claude_room: OpenRoom,
 ) -> None:
-    """Tokens count per room; leaving one room closes its session without
-    touching the other's pending ask, a rejoin continues the room's token
-    sequence, and stopping the agent closes every session."""
+    """Tokens count per room; leaving one room declines only its own ask and
+    closes its session once that turn settles, a rejoin continues the room's
+    token sequence, and stopping the agent closes every session."""
     room = await claude_room(with_approvals())
     other = room.beside("room-2")
     room.claude.script(
@@ -326,7 +326,12 @@ async def test_leaving_a_room_drops_only_its_asks_and_tokens_keep_counting(
     await room.send("List them again")
     await room.adapter.cleanup_all()
 
-    assert room.chat == [prompt("a-1", "Bash: `ls`"), prompt("a-2", "Bash: `ls`")]
+    assert room.chat == [
+        prompt("a-1", "Bash: `ls`"),
+        "Listed.",
+        prompt("a-2", "Bash: `ls`"),
+        "Listed after rejoining.",
+    ]
     assert other.chat == [
         prompt("a-1", "Write: notes.md"),
         resolved("a-1", "accept"),

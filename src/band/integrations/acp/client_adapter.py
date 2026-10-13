@@ -32,7 +32,13 @@ from acp.schema import (
     SseMcpServer,
 )
 from band_sdk_core import AgentFailure
-from pydantic import Field, PositiveFloat, field_validator, model_validator
+from pydantic import (
+    Field,
+    NonNegativeFloat,
+    PositiveFloat,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import TypeVar, Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
@@ -60,6 +66,7 @@ from band.core.retention import (
 from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -306,6 +313,8 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         use_unstable_protocol: Speak ACP's unstable protocol methods.
         turn_timeout_s: Seconds a prompt may run before the turn is cancelled
             and a ``timeout`` failure is posted to the room.
+        turn_settle_timeout_s: Seconds a leave or stop lets the room's turn
+            wind down on its own before cancelling it.
         model: Model selected from each session's advertised catalog; a value
             the catalog does not offer fails the turn.
         reasoning_effort: Reasoning effort selected the same way.
@@ -330,6 +339,7 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     custom_section: str = ""
     use_unstable_protocol: bool = False
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
+    turn_settle_timeout_s: NonNegativeFloat = TURN_SETTLE_GRACE_S
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -444,7 +454,9 @@ class ACPClientAdapter(
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
         self._workspaces = RoomWorkspaces(self._workspace_for_room)
-        self._retention = RoomRetention(config.retention)
+        self._retention = RoomRetention(
+            config.retention, settle_grace_s=config.turn_settle_timeout_s
+        )
         self._rooms: dict[str, ACPRoom] = {}
         # Outlives the room's sessions; see apply_model_selection.
         self._room_selections: dict[str, ModelSelection] = {}
@@ -483,7 +495,7 @@ class ACPClientAdapter(
         room = self._rooms.get(room_id)
         if room is None:
             raise _no_live_session(room_id)
-        # Owned by the room, so its disposal cancels and joins the switch
+        # Owned by the room, so its disposal settles and joins the switch
         # instead of closing the process under it. A closing room refuses the
         # switch here, before it ever runs.
         switch = room.retained.start_owned(partial(self._switch_room, room, selection))

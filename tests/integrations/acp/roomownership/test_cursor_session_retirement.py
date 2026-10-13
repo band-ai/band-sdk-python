@@ -44,10 +44,11 @@ class TestCursorSessionRetirement:
         self,
     ) -> None:
         """A turn left running detached keeps updating todos; leaving the room
-        cancels and joins it before the room's process, and its todos, are gone."""
+        cancels it once its settle grace is over and joins it before the room's
+        process, and its todos, are gone."""
         agent = FakeACPAgent()
         updating = agent.keeps_updating_cursor_todos()
-        async with cursor(agent) as session:
+        async with cursor(agent, turn_settle_timeout_s=0) as session:
             turn = asyncio.create_task(session.send("plan it"))
             await updating.wait()
             runtime = session.runtime()

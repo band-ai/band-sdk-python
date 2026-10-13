@@ -123,10 +123,13 @@ start, prompt, switch or exit. The room's acquisition starts its process within
 every ACP profile. A start that outlasts it fails that turn with
 `PROCESS_NOT_READY_ERROR` and is recovered; raise that one bound for a slow agent.
 A turn that stops waiting for a start, at its bound or on `/stop`, cancels it, so
-the room's next message gets a new process.
+the room's next message gets a new process. A leave or stop closes admission at
+once and gives the room's running turn and model switch `turn_settle_timeout_s`
+(`TURN_SETTLE_GRACE_S` by default) to finish on their own before cancelling them.
 
 ```python
 from band.core.retention import RoomRetentionConfig
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
 from band.integrations.acp.client_adapter import (
     ACP_TRANSITION_TIMEOUT_S,
     ACPClientAdapterConfig,
@@ -134,6 +137,7 @@ from band.integrations.acp.client_adapter import (
 
 config = ACPClientAdapterConfig(command="my-agent")
 assert config.retention.transition_timeout_s == ACP_TRANSITION_TIMEOUT_S
+assert config.turn_settle_timeout_s == TURN_SETTLE_GRACE_S
 
 slow = ACPClientAdapterConfig(
     command="my-agent", retention=RoomRetentionConfig(transition_timeout_s=120)

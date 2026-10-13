@@ -476,7 +476,7 @@ class TestCopilotACPModelSelection:
     ) -> None:
         agent = copilot()
 
-        async with copilot_room(agent) as session:
+        async with copilot_room(agent, turn_settle_timeout_s=0) as session:
             await session.send("Hello")
             gate = agent.holds_config_replies()
             first = asyncio.create_task(switch_room(session, model="gpt-5.4"))
@@ -495,15 +495,28 @@ class TestCopilotACPModelSelection:
     ) -> None:
         # Sweeps where the cleanup lands: before the model reply, between the
         # model and effort steps, and after the switch completes.
-        outcomes = {await self._switch_cleaned_up_after(ticks) for ticks in range(12)}
+        outcomes = {
+            await self._switch_cleaned_up_after(ticks, turn_settle_timeout_s=0)
+            for ticks in range(12)
+        }
 
         assert outcomes <= {"ok", "room room-1's ACP session ended mid-switch"}
         assert "room room-1's ACP session ended mid-switch" in outcomes
 
+    @pytest.mark.asyncio
+    async def test_a_cleanup_at_any_point_of_a_switch_lets_it_finish(
+        self,
+    ) -> None:
+        """Within the settle grace a running switch completes before its
+        session ends, wherever the cleanup lands."""
+        outcomes = {await self._switch_cleaned_up_after(ticks) for ticks in range(12)}
+
+        assert outcomes == {"ok"}
+
     @staticmethod
-    async def _switch_cleaned_up_after(ticks: int) -> str:
+    async def _switch_cleaned_up_after(ticks: int, **config: Any) -> str:
         agent = copilot()
-        async with copilot_room(agent) as session:
+        async with copilot_room(agent, **config) as session:
             await session.send("Hello")
             gate = agent.holds_config_replies()
             switch = asyncio.create_task(

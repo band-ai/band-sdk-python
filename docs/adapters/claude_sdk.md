@@ -133,7 +133,9 @@ so a slow CLI in one room never holds up another.
   before it starts and keeps the room leased through its query, tool calls,
   approval waits and outcome, including after `on_message` returns early for a
   manual approval. Leaving the room, or `cleanup_all`, closes admission at
-  once, cancels and joins that turn, and only then closes the CLI.
+  once, gives that turn `turn_settle_timeout_s` (`TURN_SETTLE_GRACE_S` by
+  default) to finish on its own, then cancels and joins it, and only then
+  closes the CLI.
 - **A CLI is held until its close succeeds.** A failed or cancelled startup, a
   crashed CLI, a turn that stopped before its result and a replaced Band MCP
   server all retire the CLI through the room's owner once the turn unwinds.
@@ -161,8 +163,10 @@ import pytest
 
 from band.adapters.claude_sdk import CLI_STARTUP_TIMEOUT_S, ClaudeSDKAdapterConfig
 from band.core.retention import RoomRetentionConfig
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
 
 assert ClaudeSDKAdapterConfig().retention.transition_timeout_s == CLI_STARTUP_TIMEOUT_S
+assert ClaudeSDKAdapterConfig().turn_settle_timeout_s == TURN_SETTLE_GRACE_S
 
 config = ClaudeSDKAdapterConfig(retention=RoomRetentionConfig(transition_timeout_s=30))
 assert config.retention.idle_timeout_s is None

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManagerStoppedError,
 )
@@ -97,10 +98,10 @@ class TestMcpBackendReplacement:
         self,
         claude_room: OpenRoom,
     ) -> None:
-        """The shutdown lands while a resume is connecting: it cancels the turn
-        and the connect, so no fresh-session fallback starts and nothing is
-        reported mid-shutdown."""
-        room = await claude_room()
+        """The shutdown lands while a resume is connecting and the turn has no
+        settle grace: it cancels the turn and the connect, so no fresh-session
+        fallback starts and nothing is reported mid-shutdown."""
+        room = await claude_room(ClaudeSDKAdapterConfig(turn_settle_timeout_s=0))
         room.claude.unresumable.add("sess-earlier")
         room.claude.connecting = connecting = Hold()
         sending = asyncio.create_task(room.send("hi", session_id="sess-earlier"))

@@ -52,7 +52,8 @@ class TestSettings:
                     queued.session.adapter.on_cleanup(DEFAULT_ROOM)
                 )
                 # The caller gives up as the room starts closing, in the one
-                # loop turn before its disposal cancels the switch.
+                # loop turn before the cancelled prompt frees the switch to
+                # be refused by the closing room.
                 await asyncio.sleep(0)
                 assert room.retained.closing
                 queued.switch.cancel()

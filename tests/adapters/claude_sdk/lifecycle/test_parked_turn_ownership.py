@@ -22,9 +22,10 @@ class TestParkedTurnOwnership:
         self, claude_room: OpenRoom
     ) -> None:
         """``on_message`` returns while the turn waits on a person; the detached
-        turn still holds the room, and leaving settles it before the CLI closes."""
+        turn still holds the room, and leaving lets it settle, its approval
+        declined, before the CLI closes."""
         room = await claude_room(with_approvals())
-        room.claude.script([WRITE_NOTE, room.model_reply("never sent")])
+        room.claude.script([WRITE_NOTE, room.model_reply("Skipped the note.")])
 
         await room.send("jot a note")
         await room.until_said("Approval requested")
@@ -37,5 +38,9 @@ class TestParkedTurnOwnership:
 
         assert (parked, running_at_close) == (True, False)
         assert [cli.alive for cli in room.claude.sessions] == [False]
-        assert room.chat == [WRITE_PROMPT]
+        assert room.chat == [WRITE_PROMPT, "Skipped the note."]
+        # The turn read its own result, so it finished rather than being cancelled.
+        assert room.persisted_sessions == [
+            cli.session_id for cli in room.claude.sessions
+        ]
         assert room.failures == []

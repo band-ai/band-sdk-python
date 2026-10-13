@@ -93,7 +93,12 @@ from band.core.protocols import (
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    TURN_SETTLE_GRACE_S,
+    ApprovalInterruptMixin,
+    TurnTask,
+    bind_turn_task,
+)
 from band.core.types import (
     ApprovalMode,
     Capability,
@@ -351,6 +356,8 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
         turn_timeout_s: Seconds a turn may run before it is interrupted and
             a ``timeout`` failure is posted to the room; ``None`` leaves turns
             unbounded.
+        turn_settle_timeout_s: Seconds a leave or stop lets the room's turn
+            wind down on its own before cancelling it.
         send_message_dedup_ttl_seconds: Window in which identical
             ``band_send_message`` calls collapse into one post, absorbing CLI
             or MCP transport retries; ``0`` disables it.
@@ -369,6 +376,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     cwd: DirectoryPath | None = None
     setting_sources: tuple[SettingSource, ...] = ()
     turn_timeout_s: PositiveFloat | None = None
+    turn_settle_timeout_s: NonNegativeFloat = TURN_SETTLE_GRACE_S
     send_message_dedup_ttl_seconds: NonNegativeFloat = DEFAULT_DEDUP_TTL_SECONDS
     cli: ClaudeCLIOptions = Field(default_factory=ClaudeCLIOptions)
     approvals: ClaudeApprovalOptions | None = None
@@ -776,6 +784,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             mcp_servers_factory=self._room_mcp_servers,
             workspaces=self._workspaces,
             retention=self.config.retention,
+            settle_grace_s=self.config.turn_settle_timeout_s,
             on_disposed=self._forget_room,
         )
 
@@ -1594,8 +1603,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Leave a room: admission closes at once, its turn and any startup
-        are cancelled, its CLI closes, then its state is dropped. A failed
+        """Leave a room: admission closes at once, its turn gets
+        ``turn_settle_timeout_s`` to wind down before it and any startup are
+        cancelled, its CLI closes, then its state is dropped. A failed
         cleanup keeps everything for a retry to join; an unfinished one still
         drops the state once it finishes."""
         self._clear_pending_approvals_for_room(room_id)

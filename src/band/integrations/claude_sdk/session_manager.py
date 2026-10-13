@@ -28,6 +28,7 @@ from band.core.retention import (
     RoomRetention,
     RoomRetentionConfig,
 )
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
 from band.workspaces import RoomWorkspaces
 
 try:
@@ -336,7 +337,7 @@ class ClaudeRoomSession:
 
     def _listener(self, generation: int) -> TurnStream | None:
         turn = self._turn
-        if turn is None or turn.completed or not self.speaks_for(generation):
+        if turn is None or turn.completed or not self.retained.may_finish(generation):
             return None
         return turn
 
@@ -370,6 +371,7 @@ class ClaudeSessionManager:
         mcp_servers_factory: Callable[[str], dict[str, McpServerConfig]] | None = None,
         workspaces: RoomWorkspaces | None = None,
         retention: RoomRetentionConfig | None = None,
+        settle_grace_s: float = TURN_SETTLE_GRACE_S,
         on_disposed: Callable[[str], None] | None = None,
     ) -> None:
         """
@@ -386,6 +388,8 @@ class ClaudeSessionManager:
             retention: Residency settings, including the transition reporting
                 budget, which defaults to ``CLI_STARTUP_TIMEOUT_S``; idle
                 release stays with the adapter's validation.
+            settle_grace_s: How long a leave or stop lets a room's turn wind
+                down on its own before cancelling it.
             on_disposed: Called with a room's id once its final release is
                 confirmed, even if the leave that started it stopped waiting.
         """
@@ -394,7 +398,10 @@ class ClaudeSessionManager:
         self._mcp_servers_factory = mcp_servers_factory
         self._workspaces = workspaces
         self._on_disposed = on_disposed
-        self._retention = RoomRetention(retention or default_claude_retention())
+        self._retention = RoomRetention(
+            retention or default_claude_retention(),
+            settle_grace_s=settle_grace_s,
+        )
         self._rooms: dict[str, ClaudeRoomSession] = {}
 
     def room(self, room_id: str) -> ClaudeRoomSession:

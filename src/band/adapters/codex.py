@@ -63,7 +63,12 @@ from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    TURN_SETTLE_GRACE_S,
+    ApprovalInterruptMixin,
+    TurnTask,
+    bind_turn_task,
+)
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -789,7 +794,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # field's "disable the bound" is a legacy allowance for a rarely-slow
     # transport close, not something a turn possibly stuck on real work
     # should ever be allowed to defeat.
-    turn_settle_timeout_s: float = 10.0
+    turn_settle_timeout_s: float = TURN_SETTLE_GRACE_S
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
     # ``"full_command"`` (default, more restrictive) — the key is the exact

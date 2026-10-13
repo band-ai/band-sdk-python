@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 import looptime
 import pytest
 
+from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom, said
 
@@ -45,13 +46,18 @@ async def shut_down(room: ClaudeRoom) -> None:
     await room.adapter.cleanup_all()
 
 
+# A turn still running when its room closes is cancelled at once.
+NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
+
+
 @pytest.mark.parametrize("teardown", [leave_room, shut_down])
 async def test_teardown_mid_turn_stops_the_turn_before_closing_its_session(
     claude_room: OpenRoom, teardown: Callable[[ClaudeRoom], Awaitable[None]]
 ) -> None:
-    """Closing the session under a live turn would surface as a dead CLI; the
-    turn is cancelled first, so the room sees neither a reply nor a failure."""
-    room = await claude_room()
+    """Closing the session under a live turn would surface as a dead CLI; a
+    turn past its settle grace is cancelled first, so the room sees neither a
+    reply nor a failure."""
+    room = await claude_room(NO_SETTLE_GRACE)
     thinking = Hold()
     room.claude.script([thinking, room.model_reply("never sent")])
 
@@ -70,7 +76,7 @@ async def test_teardown_mid_turn_stops_the_turn_before_closing_its_session(
 async def test_a_room_left_mid_turn_can_be_rejoined_with_a_fresh_session(
     claude_room: OpenRoom,
 ) -> None:
-    room = await claude_room()
+    room = await claude_room(NO_SETTLE_GRACE)
     thinking = Hold()
     room.claude.script(
         [thinking, room.model_reply("never sent")], [room.model_reply("welcome back")]

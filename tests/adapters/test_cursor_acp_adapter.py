@@ -1364,9 +1364,11 @@ class TestCursorACPAdapterDetachedTurn:
         assert failure_reports(turn) == []
 
     @pytest.mark.asyncio
-    async def test_a_turn_cancelled_by_cleanup_is_not_judged(
+    async def test_a_turn_woken_by_cleanup_is_judged_at_its_end(
         self, cursor_room: Callable[..., Awaitable[CursorRoom]]
     ) -> None:
+        """Cleanup cancels the parked permission and the agent ends its turn
+        within the settle grace, without answering the room."""
         room = await cursor_room(
             FakeACPAgent().will_ask_permission(
                 title="shell", options=allow_or_reject("allow-once")
@@ -1375,10 +1377,8 @@ class TestCursorACPAdapterDetachedTurn:
         turn = await room.send("run it")
 
         await room.adapter.on_cleanup("room-1")
-        await room.turns_finished()
 
-        # The stopped connection fails the turn with the ACP error it raised.
-        assert MISSING_REPLY_FAILURE not in failure_reports(turn)
+        assert failure_reports(turn) == [MISSING_REPLY_FAILURE]
 
     @pytest.mark.asyncio
     async def test_an_interrupted_detached_turn_is_not_reported(
