@@ -760,13 +760,6 @@ async def inline(agent: FakeACPAgent, **settings: Any) -> AsyncIterator[AcpSessi
         yield session
 
 
-async def start_failed(room: ACPRoom) -> None:
-    """Wait for ``room``'s hung start to run out its own bound."""
-    async with asyncio.timeout(5):
-        while "did not start" not in (room.retained.snapshot.error or ""):
-            await asyncio.sleep(0)
-
-
 async def stop(session: AcpSession, handler: asyncio.Task[Reply]) -> None:
     """A room ``/stop``: the runtime cancels the handler and interrupts the room."""
     handler.cancel()
@@ -811,12 +804,12 @@ class TestStartup:
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
-        async with opened(agent, start_timeout_s=HUNG_START_TIMEOUT_S) as session:
+        # Far above the bound below: the stop, not the start bound, frees it.
+        async with opened(agent, start_timeout_s=60) as session:
             first = asyncio.create_task(session.send("hello"))
             await starting.received.wait()
 
             await stop(session, first)
-            await start_failed(session.room())
             async with asyncio.timeout(5):
                 served = await session.send("again")
                 await accepted_work_finished(session.room())

@@ -706,11 +706,8 @@ class ACPClientAdapter(
             await self._restore_retained_session(room, runtime)
 
     async def _start_runtime(self, runtime: ACPRuntime) -> None:
-        """Start ``runtime`` within ``start_timeout_s``.
-
-        The owner never cancels an acquisition its caller stopped waiting for,
-        so an agent that never answers would otherwise block recovery.
-        """
+        """Start ``runtime`` within ``start_timeout_s``, so a hung agent fails
+        its turn with an error naming its start."""
         timeout = self.config.start_timeout_s
         try:
             async with asyncio.timeout(timeout):

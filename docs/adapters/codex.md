@@ -50,7 +50,7 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   refreshing `model/list` and resuming its thread must finish within
   `retention.transition_timeout_s`, which defaults to 60 seconds for Codex.
   A start that runs over fails the turn with "Codex process did not become
-  ready in time" and is closed once it finishes; raise the bound for slow
+  ready in time" and is cancelled and closed; raise the bound for slow
   starts.
 - **Native work answers to the turn that started it.** Each tool call or
   approval request is handled for the Band turn whose native turn sent it, on

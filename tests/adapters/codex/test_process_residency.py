@@ -51,8 +51,9 @@ class TestProcessResidency:
         assert [f["message"] for f in reported_failures(room.deliveries[0])] == [
             PROCESS_NOT_READY_ERROR
         ]
-        # The abandoned start was closed; the second message started anew.
-        assert (client.starts, client.closes) == (2, 1)
+        # The abandoned start was cancelled before its handshake finished and
+        # closed; only the second message's start completed.
+        assert (client.starts, client.closes) == (1, 1)
         assert len(client.params_of(CodexRequestMethod.TURN_START)) == 1
 
     async def test_an_idle_release_is_refused_and_keeps_the_process(

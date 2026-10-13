@@ -121,8 +121,8 @@ in turn with its prompts, so an independent room never waits on another room's
 start, prompt, switch or exit. The room's acquisition starts its process
 within `start_timeout_s` (10s by default). A start that outlasts it, or outlasts
 `transition_timeout_s`, fails that turn and is recovered, so a slow agent needs both
-raised. A message sent while a start that never answers is still running fails with
-that start's error; one sent after that start has failed gets a new process.
+raised. A turn that stops waiting for a start, at its bound or on `/stop`, cancels
+it, so the room's next message gets a new process.
 
 - **A deliberate wake reloads the exact session.** It calls `session/load` with a
   fresh Band MCP endpoint, then reapplies the room's model selection and verifies

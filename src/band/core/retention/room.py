@@ -269,17 +269,19 @@ class RetainedRoom:
             done, _ = await asyncio.wait({transition}, timeout=timeout)
         except asyncio.CancelledError:
             if initiator:
-                self._abandon()
+                self._abandon_acquisition(transition)
             raise
         if not done:
             if initiator:
-                self._abandon()
+                self._abandon_acquisition(transition)
             raise TimeoutError(
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
         if transition.cancelled():
+            # Closed admission means disposal cancelled it; otherwise recovery
+            # did, and the caller re-evaluates the room.
             self._check_admission()
-            raise RuntimeError(f"Room {self.room_id} transition was cancelled")
+            return
         if (error := transition.exception()) is not None:
             raise error
 
@@ -289,6 +291,14 @@ class RetainedRoom:
         self._recover_when_unleased = True
         if self._state == Residency.RESIDENT:
             self._state = Residency.CLEANUP_PENDING
+
+    def _abandon_acquisition(self, transition: asyncio.Task[None]) -> None:
+        """Recovery cancels a start its initiator stopped waiting for, so one
+        that never finishes cannot hold the room; a pending ``FINAL`` leaves
+        it to disposal."""
+        self._abandon()
+        if self._state == Residency.ACQUIRING and self._cause == ReleaseCause.RECOVERY:
+            transition.cancel(f"Room {self.room_id} acquisition was abandoned")
 
     def _request(self, cause: ReleaseCause) -> None:
         self._cause = stronger_cause(self._cause, cause)

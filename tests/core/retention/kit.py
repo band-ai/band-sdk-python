@@ -80,6 +80,7 @@ class Resident:
     fail_close: bool = False
     fail_acquire: bool = False
     fail_dispose: bool = False
+    resists_cancel: bool = False
 
     async def acquire(self, generation: int, resume: bool) -> None:
         assert not self.live, "replacement started before the previous handle closed"
@@ -88,9 +89,18 @@ class Resident:
         self.resume_requests.append(resume)
         self.room.observe(self.startup_activity, generation=generation)
         if self.opening is not None:
-            await self.opening.wait()
+            await self._open(self.opening)
         if self.fail_acquire:
             raise RuntimeError("resume rejected")
+
+    async def _open(self, opening: Barrier) -> None:
+        """Wait at the opening barrier; a resistant start finishes there anyway."""
+        try:
+            await opening.wait()
+        except asyncio.CancelledError:
+            if not self.resists_cancel:
+                raise
+            await opening.released.wait()
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
         if cause is not ReleaseCause.FINAL:

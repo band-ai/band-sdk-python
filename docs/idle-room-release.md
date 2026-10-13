@@ -77,7 +77,8 @@ cause and handles retained. A crashed or abandoned residency goes through
 `recover()`, which revokes its event authority and releases once the reporting
 operation unwinds. `transition_timeout_s` bounds how long a caller waits to
 learn an outcome; an unfinished transition stays owned and is never treated as
-closed.
+closed. Recovery cancels an acquisition whose caller stopped waiting for it, so a
+start that never finishes cannot hold the room.
 
 These ownership rules hold with retention disabled. Room, execution, adapter and
 shared MCP cleanup that fails or is cancelled stays owned, with the agent's
