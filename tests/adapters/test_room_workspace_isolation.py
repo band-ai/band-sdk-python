@@ -16,7 +16,7 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.codex import CodexRequestMethod
 from band.runtime.tools import BandTool
-from band.workspaces import is_host_absolute, resolve_room_workspace
+from band.workspaces import RoomWorkspaces, is_host_absolute, resolve_room_workspace
 from tests.adapters.codex.kit import (
     PROCESS_EXITED,
     CodexRoom,
@@ -115,6 +115,16 @@ class TestRoomWorkspaceIsolation:
             codex._room_client("room-b")
         with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
             acp._room("room-b")
+
+    def test_a_failed_room_setup_gives_its_workspace_back(self, tmp_path: Path) -> None:
+        workspaces = RoomWorkspaces(lambda _room_id: str(tmp_path / "workspace"))
+
+        with pytest.raises(RuntimeError), workspaces.claiming("room-a"):
+            raise RuntimeError("room setup failed")
+
+        workspaces.claim("room-b")
+
+        assert workspaces.rooms == ("room-b",)
 
     @pytest.mark.asyncio
     async def test_model_override_survives_codex_client_rebuild(self) -> None:

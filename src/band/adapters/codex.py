@@ -601,7 +601,7 @@ class ThreadSettings:
 class RoomCodexClient:
     """One Band room's Codex process and what its thread was started with.
 
-    ``residency`` owns admission and every physical transition. ``client`` and
+    ``retained`` owns admission and every physical transition. ``client`` and
     ``reader`` are cleared only once the process is confirmed closed; the
     room's thread id stays in the adapter's ``_room_threads`` across process
     replacement until the room is finally disposed.
@@ -609,7 +609,7 @@ class RoomCodexClient:
 
     room_id: str
     workspace: str
-    residency: RetainedRoom = dataclass_field(init=False)
+    retained: RetainedRoom = dataclass_field(init=False)
     client: CodexClientProtocol | None = None
     reader: asyncio.Task[None] | None = None
     turn: NativeTurn | None = None
@@ -631,7 +631,7 @@ class RoomCodexClient:
     @property
     def generation(self) -> int:
         """The residency the room's current process belongs to."""
-        return self.residency.generation
+        return self.retained.generation
 
     def bind_thread(
         self, *, registration: list[dict[str, Any]] | None, settings: ThreadSettings
@@ -957,25 +957,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     def _room_closing(self, room_id: str) -> bool:
         """Whether the room admits no more work; a forgotten room is closed."""
         room = self._room_clients.get(room_id)
-        return room is None or room.residency.closing
+        return room is None or room.retained.closing
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
         if room is not None:
             return room
-        room = RoomCodexClient(
-            room_id=room_id, workspace=self._workspaces.claim(room_id)
-        )
-        try:
-            room.residency = self._retention.register(
+        with self._workspaces.claiming(room_id) as workspace:
+            room = RoomCodexClient(room_id=room_id, workspace=workspace)
+            room.retained = self._retention.register(
                 room_id,
                 acquire=partial(self._acquire, room),
                 release=partial(self._release, room),
                 dispose=partial(self._dispose, room),
             )
-        except BaseException:
-            self._workspaces.release(room_id, room.workspace)
-            raise
         self._room_clients[room_id] = room
         return room
 
@@ -1175,7 +1170,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        turn = room.residency.start_owned(
+        turn = room.retained.start_owned(
             partial(
                 self._run_turn,
                 room=room,
@@ -1222,7 +1217,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     room=room, msg=msg, tools=tools, history=history, command=command
                 ):
                     return
-                async with room.residency.use():
+                async with room.retained.use():
                     await self._serve_turn(
                         room=room,
                         msg=msg,
@@ -1276,7 +1271,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         that ask it: the rest must work while it cannot start, as
         ``/thread archive`` must after Codex refuses to restore the thread."""
         name, args = command
-        lease = room.residency.use() if name in _PROCESS_COMMANDS else nullcontext()
+        lease = room.retained.use() if name in _PROCESS_COMMANDS else nullcontext()
         async with lease:
             handled = await self._handle_local_command(
                 tools=tools,
@@ -1401,7 +1396,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             duration_s=_time.perf_counter() - turn_start,
         )
         # A turn wound down by room cleanup was aborted, not missed.
-        if not room.residency.closing:
+        if not room.retained.closing:
             await judge_detached_turn(tools, room_id=room_id)
 
     async def _emit_turn_started(
@@ -1854,7 +1849,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         self._clear_pending_approvals_for_room(room_id)
-        await room.residency.dispose()
+        await room.retained.dispose()
 
     async def cleanup_all(self) -> None:
         """Stop the residency owner: admission closes at once, every room's
@@ -1991,7 +1986,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         waiting on them with ``cause``: the transport's closing notice, or the
         reader's own failure. Recovery closes the process once that turn unwinds.
         """
-        room.residency.recover(
+        room.retained.recover(
             generation=generation,
             reason=f"Codex events stopped: {_loss_reason(cause)}",
         )

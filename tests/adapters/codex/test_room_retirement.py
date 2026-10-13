@@ -99,7 +99,7 @@ class TestRoomRetirement:
         )
         await adapter.on_started("Codex Agent", "A coding agent")
         await send_bootstrap(adapter)
-        residency = adapter._room_clients[ROOM_ID].residency
+        residency = adapter._room_clients[ROOM_ID].retained
         with pytest.raises(CleanupIncompleteError):
             await adapter.on_cleanup(ROOM_ID)
         client.finish_close.set()

@@ -76,7 +76,7 @@ class TestNativeTurnOwnership:
             *parked_on_approval(turn_completed()), approval_wait_timeout_s=3600
         )
         await room.send("run tests")
-        residency = room.adapter._room_clients[ROOM_ID].residency
+        residency = room.adapter._room_clients[ROOM_ID].retained
         assert (residency.snapshot.leases, residency.snapshot.accepted) == (1, 1)
 
         await room.send(f"/{CodexCommand.APPROVE} req-10")

@@ -657,17 +657,14 @@ class ACPClientAdapter(
         room = self._rooms.get(room_id)
         if room is not None:
             return room
-        room = ACPRoom(room_id=room_id, workspace=self._workspaces.claim(room_id))
-        try:
+        with self._workspaces.claiming(room_id) as workspace:
+            room = ACPRoom(room_id=room_id, workspace=workspace)
             room.retained = self._retention.register(
                 room_id,
                 acquire=partial(self._acquire_room, room),
                 release=partial(self._release_room, room),
                 dispose=partial(self._dispose_room, room),
             )
-        except BaseException:
-            self._workspaces.release(room_id)
-            raise
         self._rooms[room_id] = room
         return room
 

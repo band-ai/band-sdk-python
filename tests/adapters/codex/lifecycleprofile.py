@@ -86,7 +86,7 @@ def install(
 
     def residency(room_id: str) -> RetainedRoom | None:
         room = adapter._room_clients.get(room_id)
-        return room.residency if room is not None else None
+        return room.retained if room is not None else None
 
     return LifecycleBridge(
         adapter=adapter, residency=residency, native_id=adapter._room_threads.get

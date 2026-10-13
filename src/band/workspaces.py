@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,16 @@ class RoomWorkspaces:
             return
         release_room_workspace(room_id, path, self._owners)
         del self._paths[room_id]
+
+    @contextmanager
+    def claiming(self, room_id: str) -> Iterator[str]:
+        """Claim the room's workspace for a setup that gives it back if it raises."""
+        workspace = self.claim(room_id)
+        try:
+            yield workspace
+        except BaseException:
+            self.release(room_id, workspace)
+            raise
 
 
 def is_host_absolute(path: str) -> bool:
