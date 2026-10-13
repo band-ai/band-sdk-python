@@ -23,39 +23,39 @@ class TestStoppedSyntheticQueue:
     async def test_stop_during_synthetic_setup_keeps_loop_responsive_and_replays_after_play(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
         setup_gate: ResponseGate,
     ) -> None:
         await ctx.start()
-        await queue_while_stopped(ctx, peer, "local-A", "local-B")
+        await queue_while_stopped(ctx, platform, "local-A", "local-B")
         setup_gate.release.clear()
-        await play(ctx, peer)
+        await play(ctx, platform)
         await setup_gate.entered.wait()
-        peer.stopped = True
+        platform.stopped = True
         ctx.stop_room()
         setup_gate.release.set()
 
         await wait_for_condition(lambda: turn_settled(ctx))
         assert adapter.completed == []
         assert queued_synthetic(ctx) == ["local-A", "local-B"]
-        assert peer.posts == []
+        assert platform.posts == []
 
-        await play(ctx, peer)
+        await play(ctx, platform)
         await wait_for_condition(lambda: adapter.completed == ["local-A", "local-B"])
 
     async def test_stop_during_queued_synthetic_handler_ends_pass_and_replays_in_order(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
     ) -> None:
         await ctx.start()
-        await queue_while_stopped(ctx, peer, "local-A", "local-B")
+        await queue_while_stopped(ctx, platform, "local-A", "local-B")
         adapter.release.clear()
-        await play(ctx, peer)
+        await play(ctx, platform)
         await adapter.entered.wait()
-        peer.stopped = True
+        platform.stopped = True
         ctx.stop_room()
 
         await wait_for_condition(lambda: turn_settled(ctx))
@@ -63,5 +63,5 @@ class TestStoppedSyntheticQueue:
         assert queued_synthetic(ctx) == ["local-A", "local-B"]
 
         adapter.release.set()
-        await play(ctx, peer)
+        await play(ctx, platform)
         await wait_for_condition(lambda: adapter.completed == ["local-A", "local-B"])

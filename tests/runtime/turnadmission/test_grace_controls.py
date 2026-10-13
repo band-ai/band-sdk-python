@@ -31,11 +31,11 @@ class TestGraceControls:
     async def test_stop_during_turn_grace_leaves_real_message_unclaimed(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
         stop_observer: asyncio.Event,
     ) -> None:
-        peer.add_message("B")
+        platform.add_message("B")
         turn = asyncio.create_task(
             ctx._process_event(make_message_event(room_id=ROOM_ID, msg_id="B"))
         )
@@ -45,7 +45,7 @@ class TestGraceControls:
         await turn
 
         assert adapter.completed == []
-        assert peer.requested("processing") == []
+        assert platform.requested("processing") == []
 
         await ctx.resume_room()
         await ctx._reconcile()
@@ -54,14 +54,14 @@ class TestGraceControls:
     async def test_stop_during_turn_grace_keeps_synthetic_message_queued(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
         stop_observer: asyncio.Event,
     ) -> None:
         await ctx.start()
         await ctx.on_event(synthetic("local-A"))
         await asyncio.sleep(WITHIN_GRACE)
-        peer.stopped = True
+        platform.stopped = True
         ctx.stop_room()
         stop_observer.set()
         await asyncio.sleep(CYCLE_CANCEL_GRACE_SECONDS)
@@ -69,26 +69,26 @@ class TestGraceControls:
         assert adapter.completed == []
         assert queued_synthetic(ctx) == ["local-A"]
 
-        await play(ctx, peer)
+        await play(ctx, platform)
         await wait_for_condition(lambda: adapter.completed == ["local-A"])
 
     async def test_stop_during_turn_grace_skips_control_probe(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
         stop_observer: asyncio.Event,
     ) -> None:
-        peer.add_message("B")
-        peer.add_message("C", content=APPROVAL)
+        platform.add_message("B")
+        platform.add_message("C", content=APPROVAL)
         ctx._deferred_message_id = "B"
         scan = asyncio.create_task(ctx._scan_controls())
         # A STOP before the page returns ends the scan on its revision check.
-        await wait_for_condition(lambda: peer.actionable_cursors != [])
+        await wait_for_condition(lambda: platform.actionable_cursors != [])
         await asyncio.sleep(WITHIN_GRACE)
         ctx.stop_room()
         stop_observer.set()
         await scan
 
         assert adapter.controls == []
-        assert peer.requested("processing") == []
+        assert platform.requested("processing") == []

@@ -23,7 +23,7 @@ from tests.runtime.turnadmission.kit import TurnRecorder
 
 
 @pytest.fixture
-def peer() -> LifecyclePlatform:
+def platform() -> LifecyclePlatform:
     return LifecyclePlatform()
 
 
@@ -33,9 +33,9 @@ def adapter() -> TurnRecorder:
 
 
 @pytest.fixture
-def setup_gate(peer: LifecyclePlatform) -> ResponseGate:
+def setup_gate(platform: LifecyclePlatform) -> ResponseGate:
     """Holds the participants load of a turn's setup once ``release`` clears."""
-    gate = ResponseGate(peer, "/participants")
+    gate = ResponseGate(platform, "/participants")
     gate.release.set()
     return gate
 

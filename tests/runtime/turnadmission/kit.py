@@ -58,27 +58,27 @@ def queued_synthetic(ctx: ExecutionContext) -> list[str]:
 
 
 async def queue_while_stopped(
-    ctx: ExecutionContext, peer: LifecyclePlatform, *message_ids: str
+    ctx: ExecutionContext, platform: LifecyclePlatform, *message_ids: str
 ) -> None:
     """Stop a started room and let its loop queue synthetic work for PLAY."""
     await wait_for_condition(lambda: ctx._sync_complete)
-    peer.stopped = True
+    platform.stopped = True
     ctx.stop_room()
     for message_id in message_ids:
         await ctx.on_event(synthetic(message_id))
     await wait_for_condition(lambda: queued_synthetic(ctx) == list(message_ids))
 
 
-async def play(ctx: ExecutionContext, peer: LifecyclePlatform) -> None:
-    peer.stopped = False
+async def play(ctx: ExecutionContext, platform: LifecyclePlatform) -> None:
+    platform.stopped = False
     await ctx.resume_room()
 
 
-async def reconcile_once(ctx: ExecutionContext, peer: LifecyclePlatform) -> None:
+async def reconcile_once(ctx: ExecutionContext, platform: LifecyclePlatform) -> None:
     """Run one scheduled pass; its /next read follows the synthetic drain."""
-    reads = len(peer.next_reads)
+    reads = len(platform.next_reads)
     await ctx.request_resync()
-    await wait_for_condition(lambda: len(peer.next_reads) > reads)
+    await wait_for_condition(lambda: len(platform.next_reads) > reads)
 
 
 def turn_settled(ctx: ExecutionContext) -> bool:

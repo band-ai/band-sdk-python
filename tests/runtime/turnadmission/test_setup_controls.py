@@ -24,14 +24,14 @@ class TestSetupTimeControls:
     async def test_stop_during_websocket_setup_never_runs_real_message(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
         setup_gate: ResponseGate,
     ) -> None:
         await ctx.start()
         await wait_for_condition(lambda: ctx._sync_complete)
         setup_gate.release.clear()
-        peer.add_message("B")
+        platform.add_message("B")
         await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="B"))
         await setup_gate.entered.wait()
         # The platform still accepts the claim: it raced the STOP.
@@ -40,16 +40,16 @@ class TestSetupTimeControls:
 
         await wait_for_condition(lambda: turn_settled(ctx))
         assert adapter.completed == []
-        assert peer.marked("processed") == []
+        assert platform.marked("processed") == []
 
         await ctx.resume_room()
         await wait_for_condition(lambda: adapter.completed == ["B"])
-        assert peer.marked("processed") == ["B"]
+        assert platform.marked("processed") == ["B"]
 
     async def test_interrupt_during_synthetic_setup_consumes_the_turn(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
         setup_gate: ResponseGate,
     ) -> None:
@@ -62,14 +62,14 @@ class TestSetupTimeControls:
         setup_gate.release.set()
 
         await wait_for_condition(lambda: turn_settled(ctx))
-        await reconcile_once(ctx, peer)
+        await reconcile_once(ctx, platform)
         assert adapter.completed == []
         assert queued_synthetic(ctx) == []
 
     async def test_interrupt_after_observed_stop_drops_synthetic_turn(
         self,
         ctx: ExecutionContext,
-        peer: LifecyclePlatform,
+        platform: LifecyclePlatform,
         adapter: TurnRecorder,
     ) -> None:
         await ctx.start()
@@ -84,6 +84,6 @@ class TestSetupTimeControls:
 
         await wait_for_condition(lambda: scope.settled)
         adapter.release.set()
-        await reconcile_once(ctx, peer)
+        await reconcile_once(ctx, platform)
         assert adapter.completed == []
         assert queued_synthetic(ctx) == []
