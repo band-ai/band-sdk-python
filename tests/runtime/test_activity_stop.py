@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from unittest.mock import AsyncMock
 
 import httpx
@@ -146,8 +146,10 @@ async def test_stop_on_initial_activity_report_never_enters_handler() -> None:
     peer.stopped = True
     handler = BlockingHandler(block=False)
     observer = AsyncMock()
-    async with activity_context(peer, handler, observer) as ctx:
-        scope = await ctx._begin_scope()
+    async with (
+        activity_context(peer, handler, observer) as ctx,
+        ctx._turn_scope() as scope,
+    ):
         assert scope is not None
         assert not await ctx._run_cycle(
             scope, make_message_event(msg_id="trigger"), "trigger"
@@ -253,8 +255,11 @@ async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
         completed.append(event)
 
     observer = AsyncMock()
-    async with activity_context(peer, handler, observer, enabled=False) as ctx:
-        scope = await ctx._begin_scope()
+    async with (
+        activity_context(peer, handler, observer, enabled=False) as ctx,
+        AsyncExitStack() as scopes,
+    ):
+        scope = await scopes.enter_async_context(ctx._turn_scope())
         async with asyncio.TaskGroup() as tasks:
             report = tasks.create_task(ctx._report_working_state(True))
             await peer.entered.wait()
@@ -262,7 +267,7 @@ async def test_stale_activity_refusal_does_not_stop_a_newer_scope(
                 case "play":
                     await ctx.resume_room()
                 case "replacement":
-                    scope = await ctx._begin_scope()
+                    scope = await scopes.enter_async_context(ctx._turn_scope())
                 case "shutdown":
                     await ctx.stop()
                     peer.release.set()

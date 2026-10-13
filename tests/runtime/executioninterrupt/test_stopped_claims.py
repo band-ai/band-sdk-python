@@ -55,11 +55,13 @@ class TestStoppedClaims:
         ctx = ExecutionContext(
             "room-123", mock_link, AsyncMock(), on_platform_stop=observer
         )
-        await ctx._begin_scope()
-        ctx.observe_platform_stop(ctx.current_scope)
-        await entered.wait()
-        monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
-        assert not await ctx._process_event(make_message_event(msg_id="later"))
-        mock_link.mark_processing.assert_not_awaited()
-        release.set()
-        assert await ctx._process_event(make_message_event(msg_id="later"))
+        async with ctx._turn_scope():
+            ctx.observe_platform_stop(ctx.current_scope)
+            await entered.wait()
+            monkeypatch.setattr(
+                "band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01
+            )
+            assert not await ctx._process_event(make_message_event(msg_id="later"))
+            mock_link.mark_processing.assert_not_awaited()
+            release.set()
+            assert await ctx._process_event(make_message_event(msg_id="later"))

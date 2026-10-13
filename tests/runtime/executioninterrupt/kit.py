@@ -67,6 +67,7 @@ def auxiliary_context(
     observer: Callable[[ExecutionContext, TurnScope], Awaitable[None]] | None = None,
     max_cycle_seconds: float | None = None,
     execution_type: type[ExecutionContext] = ExecutionContext,
+    enable_context_hydration: bool = False,
 ) -> ExecutionContext:
     link = BandLink(agent_id=AGENT_ID, api_key="test-key")
     link.rest = rest
@@ -77,7 +78,7 @@ def auxiliary_context(
         agent_id=AGENT_ID,
         on_platform_stop=observer,
         config=SessionConfig(
-            enable_context_hydration=False,
+            enable_context_hydration=enable_context_hydration,
             enable_working_state=False,
             max_message_retries=1,
             max_cycle_seconds=max_cycle_seconds,

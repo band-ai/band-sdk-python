@@ -18,7 +18,7 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
@@ -655,9 +655,9 @@ class ExecutionContext:
                 matching string coerces; anything else raises ``ValueError``.
 
         Returns:
-            True if the signal terminated an admitted, unsettled turn scope,
-            whether or not its handler has started. Between cycles this is a
-            clean no-op and cannot affect the next cycle.
+            True if the signal terminated an unsettled turn scope, whether it
+            is still in setup or its handler has started. Between cycles this
+            is a clean no-op and cannot affect the next cycle.
 
         Raises:
             ValueError: ``kind`` is not a valid ``ControlMode``, or is
@@ -673,9 +673,9 @@ class ExecutionContext:
 
     @property
     def _running_scope(self) -> TurnScope | None:
-        """The current scope between admission and settlement."""
+        """The current scope until it settles."""
         scope = self.current_scope
-        if scope is None or scope.settled or not scope.admitted:
+        if scope is None or scope.settled:
             return None
         return scope
 
@@ -749,7 +749,13 @@ class ExecutionContext:
         if self.owns_stop_observation(scope) and self._on_platform_stop is not None:
             await self._on_platform_stop(self, scope)
 
-    async def _begin_scope(self) -> TurnScope | None:
+    @contextlib.asynccontextmanager
+    async def _turn_scope(self) -> AsyncIterator[TurnScope | None]:
+        """A turn scope that controls can terminate from creation; settled on exit.
+
+        Yields None, deferring the turn, while the previous turn's platform-stop
+        observer is still running.
+        """
         previous = self.current_scope
         if (
             previous is not None
@@ -761,9 +767,13 @@ class ExecutionContext:
                 "deferring the next turn",
                 self.room_id,
             )
-            return None
-        self.current_scope = TurnScope(self._control_revision)
-        return self.current_scope
+            yield None
+            return
+        scope = self.current_scope = TurnScope(self._control_revision)
+        try:
+            yield scope
+        finally:
+            scope.settled = True
 
     async def _stop_retained_tasks(self, deadline: float) -> None:
         owners = tuple(self._detached_cycle_tasks.values())
@@ -1266,45 +1276,46 @@ class ExecutionContext:
             self.claims.remember_completed(self.room_id, msg_id)
             return False
         with self._claim_message(msg_id) as acquired:
-            if not acquired or (scope := await self._begin_scope()) is None:
+            if not acquired:
                 return False
-            revision = self._control_revision
-            consumed = False
+            async with self._turn_scope() as scope:
+                if scope is None:
+                    return False
+                revision = self._control_revision
+                consumed = False
 
-            async def probe() -> None:
-                nonlocal consumed
-                consumed = await self._on_message_control(self, event)
+                async def probe() -> None:
+                    nonlocal consumed
+                    consumed = await self._on_message_control(self, event)
 
-            try:
-                scope.admitted = True
-                if not await self.link.mark_processing(self.room_id, msg_id):
+                try:
+                    if not await self.link.mark_processing(self.room_id, msg_id):
+                        return False
+                    await self._ensure_fresh_context()
+                    if revision != self._control_revision:
+                        return False
+                    if (
+                        not await self._run_cycle(scope, event, msg_id, handler=probe)
+                        or not consumed
+                    ):
+                        return False
+                    self.claims.remember_ack_pending(self.room_id, msg_id)
+                    if await self.link.mark_processed(self.room_id, msg_id):
+                        self._retry_tracker.mark_success(msg_id)
+                        self.claims.remember_completed(self.room_id, msg_id)
+                    return True
+                except RoomExecutionStoppedError:
                     return False
-                await self._ensure_fresh_context()
-                if revision != self._control_revision:
+                except Exception as error:  # noqa: BLE001 -- control boundary uses the normal delivery-failure policy
+                    _log_turn_error(error, "Error handling control message %s", msg_id)
+                    attempts, _ = self._retry_tracker.record_attempt(msg_id)
+                    await self._handle_turn_failure(msg_id, attempts, error)
+                    if attempts >= self._retry_tracker.max_retries:
+                        self._retry_tracker.mark_permanently_failed(msg_id)
                     return False
-                if (
-                    not await self._run_cycle(scope, event, msg_id, handler=probe)
-                    or not consumed
-                ):
-                    return False
-                self.claims.remember_ack_pending(self.room_id, msg_id)
-                if await self.link.mark_processed(self.room_id, msg_id):
-                    self._retry_tracker.mark_success(msg_id)
-                    self.claims.remember_completed(self.room_id, msg_id)
-                return True
-            except RoomExecutionStoppedError:
-                return False
-            except Exception as error:  # noqa: BLE001 -- control boundary uses the normal delivery-failure policy
-                _log_turn_error(error, "Error handling control message %s", msg_id)
-                attempts, _ = self._retry_tracker.record_attempt(msg_id)
-                await self._handle_turn_failure(msg_id, attempts, error)
-                if attempts >= self._retry_tracker.max_retries:
-                    self._retry_tracker.mark_permanently_failed(msg_id)
-                return False
-            finally:
-                scope.settled = True
-                self._turn_failure_reported = False
-                self._set_state(ExecutionState.IDLE)
+                finally:
+                    self._turn_failure_reported = False
+                    self._set_state(ExecutionState.IDLE)
 
     async def _retry_pending_processed_acks(self) -> bool:
         """Retry durable processed acks for locally completed messages."""
@@ -1474,6 +1485,10 @@ class ExecutionContext:
         self._resync_handled_work = False
         if self._deferred_message_id is None:
             while self._pending_synthetic:
+                # A stopped room retains synthetic work for PLAY; draining it
+                # now would re-queue each event without ever yielding.
+                if self._stopped:
+                    return ResyncOutcome.STOPPED
                 event = self._pending_synthetic.popleft()
                 if not await self._process_event(event):
                     return ResyncOutcome.BLOCKED
@@ -1595,108 +1610,107 @@ class ExecutionContext:
         msg_id = msg.id
         if revision is None:
             revision = self._control_revision
-        scope = await self._begin_scope()
-        if scope is None or revision != self._control_revision:
-            return BacklogProcessResult.RETRY_LATER
-        self._set_state(ExecutionState.PROCESSING)
-        logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
-
-        attempts: int | None = None
-        try:
-            if (
-                self._delivery_status_for_agent(msg.metadata)
-                == DeliveryStatus.PROCESSED
-            ):
-                logger.info(
-                    "Skipping stale /next message %s in room %s because it is already processed",
-                    msg_id,
-                    self.room_id,
-                )
-                self.claims.remember_completed(self.room_id, msg_id)
-                return BacklogProcessResult.ADVANCED
-
-            # Track attempts - check if exceeded BEFORE processing
-            attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
-            if exceeded:
-                logger.warning(
-                    "Message %s exceeded max retries (%s attempts)", msg_id, attempts
-                )
-                return BacklogProcessResult.ADVANCED
-
-            # From admission a control terminates this scope, even before its
-            # handler starts.
-            scope.admitted = True
-
-            # Mark as processing on server BEFORE we start. If this fails, do not
-            # invoke the adapter; otherwise the platform will keep returning the
-            # same message and the agent may replay side effects.
-            if not await self._claim(msg_id):
-                logger.warning(
-                    "ExecutionContext %s: Could not claim backlog message %s",
-                    self.room_id,
-                    msg_id,
-                )
+        async with self._turn_scope() as scope:
+            if scope is None or revision != self._control_revision:
                 return BacklogProcessResult.RETRY_LATER
+            self._set_state(ExecutionState.PROCESSING)
+            logger.info(
+                "Processing backlog message %s in room %s", msg_id, self.room_id
+            )
 
-            if revision != self._control_revision:
-                return await self._defer_superseded_backlog(msg_id)
-            await self._ensure_fresh_context()
-            if revision != self._control_revision:
-                return await self._defer_superseded_backlog(msg_id)
+            attempts: int | None = None
+            try:
+                if (
+                    self._delivery_status_for_agent(msg.metadata)
+                    == DeliveryStatus.PROCESSED
+                ):
+                    logger.info(
+                        "Skipping stale /next message %s in room %s because it is already processed",
+                        msg_id,
+                        self.room_id,
+                    )
+                    self.claims.remember_completed(self.room_id, msg_id)
+                    return BacklogProcessResult.ADVANCED
 
-            event = _backlog_event(msg)
+                # Track attempts - check if exceeded BEFORE processing
+                attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
+                if exceeded:
+                    logger.warning(
+                        "Message %s exceeded max retries (%s attempts)",
+                        msg_id,
+                        attempts,
+                    )
+                    return BacklogProcessResult.ADVANCED
 
-            # Call execution handler as a cancellable cycle (backlog messages
-            # are always reasoning cycles, so the working signal is always
-            # reported: started by _execute_message_cycle, stopped by _run_cycle). A
-            # control signal can abort just this turn; when it does, status is
-            # handled inside _run_cycle and we advance without sending
-            # anything.
-            if not await self._run_cycle(scope, event, msg_id):
-                if scope.stop_observed:
+                # Mark as processing on server BEFORE we start. If this fails, do not
+                # invoke the adapter; otherwise the platform will keep returning the
+                # same message and the agent may replay side effects.
+                if not await self._claim(msg_id):
+                    logger.warning(
+                        "ExecutionContext %s: Could not claim backlog message %s",
+                        self.room_id,
+                        msg_id,
+                    )
                     return BacklogProcessResult.RETRY_LATER
+
+                if revision != self._control_revision:
+                    return await self._defer_superseded_backlog(msg_id)
+                await self._ensure_fresh_context()
+                if revision != self._control_revision:
+                    return await self._defer_superseded_backlog(msg_id)
+
+                event = _backlog_event(msg)
+
+                # Call execution handler as a cancellable cycle (backlog messages
+                # are always reasoning cycles, so the working signal is always
+                # reported: started by _execute_message_cycle, stopped by _run_cycle). A
+                # control signal can abort just this turn; when it does, status is
+                # handled inside _run_cycle and we advance without sending
+                # anything.
+                if not await self._run_cycle(scope, event, msg_id):
+                    if scope.stop_observed:
+                        return BacklogProcessResult.RETRY_LATER
+                    return BacklogProcessResult.ADVANCED
+
+                # SUCCESS: record ack-pending BEFORE the awaited mark_processed
+                # call, synchronously, so a cancellation landing inside that await
+                # (e.g. ExecutionContext.stop() cancelling this loop task) still
+                # leaves the message correctly ack-pending -- redelivery then
+                # retries only the ack via _retry_processed_ack, never re-running
+                # the handler. remember_completed clears this on success below.
+                self.claims.remember_ack_pending(self.room_id, msg_id)
+                durable_processed = await self.link.mark_processed(self.room_id, msg_id)
+                if durable_processed:
+                    self._retry_tracker.mark_success(msg_id)
+                    self.claims.remember_completed(self.room_id, msg_id)
+                else:
+                    logger.warning(
+                        "ExecutionContext %s: Local execution completed but durable processed mark failed for backlog message %s",
+                        self.room_id,
+                        msg_id,
+                    )
+                    return BacklogProcessResult.RETRY_LATER
+
+                logger.debug("Message %s processed successfully", msg_id)
                 return BacklogProcessResult.ADVANCED
 
-            # SUCCESS: record ack-pending BEFORE the awaited mark_processed
-            # call, synchronously, so a cancellation landing inside that await
-            # (e.g. ExecutionContext.stop() cancelling this loop task) still
-            # leaves the message correctly ack-pending -- redelivery then
-            # retries only the ack via _retry_processed_ack, never re-running
-            # the handler. remember_completed clears this on success below.
-            self.claims.remember_ack_pending(self.room_id, msg_id)
-            durable_processed = await self.link.mark_processed(self.room_id, msg_id)
-            if durable_processed:
-                self._retry_tracker.mark_success(msg_id)
-                self.claims.remember_completed(self.room_id, msg_id)
-            else:
-                logger.warning(
-                    "ExecutionContext %s: Local execution completed but durable processed mark failed for backlog message %s",
-                    self.room_id,
-                    msg_id,
-                )
+            except InputNotAccepted:
+                self._defer_unaccepted_input(msg_id)
+                return BacklogProcessResult.NOT_ACCEPTED
+
+            except RoomExecutionStoppedError:
+                if not self.claims.is_ack_pending(self.room_id, msg_id):
+                    self._retry_tracker.discard_attempt(msg_id)
                 return BacklogProcessResult.RETRY_LATER
 
-            logger.debug("Message %s processed successfully", msg_id)
-            return BacklogProcessResult.ADVANCED
+            except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+                _log_turn_error(e, "Error processing backlog message %s", msg_id)
+                await self._handle_turn_failure(msg_id, attempts, e)
+                return BacklogProcessResult.ADVANCED
 
-        except InputNotAccepted:
-            self._defer_unaccepted_input(msg_id)
-            return BacklogProcessResult.NOT_ACCEPTED
-
-        except RoomExecutionStoppedError:
-            if not self.claims.is_ack_pending(self.room_id, msg_id):
-                self._retry_tracker.discard_attempt(msg_id)
-            return BacklogProcessResult.RETRY_LATER
-
-        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
-            _log_turn_error(e, "Error processing backlog message %s", msg_id)
-            await self._handle_turn_failure(msg_id, attempts, e)
-            return BacklogProcessResult.ADVANCED
-
-        finally:
-            scope.settled = True
-            self._turn_failure_reported = False
-            self._set_state(ExecutionState.IDLE)
+            finally:
+                self._turn_failure_reported = False
+                self._set_state(ExecutionState.IDLE)
 
     async def _defer_superseded_backlog(self, msg_id: str) -> BacklogProcessResult:
         scope = self.current_scope
@@ -1833,7 +1847,6 @@ class ExecutionContext:
         if scope.kind is not None:
             scope.settled = True
             return await self._abort_cycle(scope.kind, msg_id, event=event)
-        scope.admitted = True
 
         async def invoke() -> None:
             if handler is not None:
@@ -2156,132 +2169,129 @@ class ExecutionContext:
             self.claims.remember_completed(self.room_id, msg_id)
             return True
 
-        scope = await self._begin_scope()
-        if scope is None:
-            return False
+        async with self._turn_scope() as scope:
+            if scope is None:
+                return False
 
-        self._set_state(ExecutionState.PROCESSING)
-        logger.debug("Processing %s in room %s", event.type, self.room_id)
+            self._set_state(ExecutionState.PROCESSING)
+            logger.debug("Processing %s in room %s", event.type, self.room_id)
 
-        attempts: int | None = None
-        try:
-            if isinstance(event, MessageEvent) and msg_id and payload:
-                # Charged before hydration, as on the backlog path, so a
-                # hydration failure counts toward the retry budget.
-                attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
-                if exceeded:
-                    logger.warning(
-                        "Message %s exceeded max retries (%s attempts)",
-                        msg_id,
-                        attempts,
+            attempts: int | None = None
+            try:
+                if isinstance(event, MessageEvent) and msg_id and payload:
+                    # Charged before hydration, as on the backlog path, so a
+                    # hydration failure counts toward the retry budget.
+                    attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
+                    if exceeded:
+                        logger.warning(
+                            "Message %s exceeded max retries (%s attempts)",
+                            msg_id,
+                            attempts,
+                        )
+                        return True
+
+                    # Hydrate before claiming real WebSocket messages when payload
+                    # metadata did not prove they were already processed. Hydrated
+                    # context may contain the durable delivery status for replayed
+                    # events.
+                    if not self._context_hydrated:
+                        await self._ensure_fresh_context()
+                    if self._message_processed_for_agent(msg_id, payload.metadata):
+                        logger.info(
+                            "Skipping processed replay message %s in room %s after hydration",
+                            msg_id,
+                            self.room_id,
+                        )
+                        self._retry_tracker.discard_attempt(msg_id)
+                        self.claims.remember_completed(self.room_id, msg_id)
+                        return True
+
+                    # For messages: mark as processing on server
+                    if not await self._claim(msg_id):
+                        logger.warning(
+                            "ExecutionContext %s: Could not claim message %s",
+                            self.room_id,
+                            msg_id,
+                        )
+                        return False
+
+                # Hydrate context on first event (loads participants always,
+                # history only if enable_context_hydration is True)
+                await self._ensure_fresh_context()
+
+                # Handle participant events internally; the callback below still
+                # fires either way since it reports the platform event, not roster state.
+                if isinstance(event, ParticipantAddedEvent) and event.payload:
+                    payload = event.payload
+                    log_roster_call(
+                        logger,
+                        call=self.add_participant,
+                        arg=payload.model_dump(),
+                        room_id=self.room_id,
                     )
-                    return True
-
-                # Hydrate before claiming real WebSocket messages when payload
-                # metadata did not prove they were already processed. Hydrated
-                # context may contain the durable delivery status for replayed
-                # events.
-                if not self._context_hydrated:
-                    await self._ensure_fresh_context()
-                if self._message_processed_for_agent(msg_id, payload.metadata):
-                    logger.info(
-                        "Skipping processed replay message %s in room %s after hydration",
-                        msg_id,
-                        self.room_id,
+                    await self._notify_participant_added(event)
+                elif isinstance(event, ParticipantRemovedEvent) and event.payload:
+                    payload = event.payload
+                    log_roster_call(
+                        logger,
+                        call=self.remove_participant,
+                        arg=payload.id,
+                        room_id=self.room_id,
                     )
+                    await self._notify_participant_removed(event)
+
+                # Call execution handler as a cancellable cycle. A control signal
+                # can abort just this turn; when it does, status is handled inside
+                # _run_cycle and we send nothing further. Only message-driven
+                # cycles report the working signal (see _invoke_handler);
+                # participant add/remove events are housekeeping and skip it.
+                if not await self._run_cycle(scope, event, msg_id):
+                    return not scope.stop_observed
+
+                # For messages: record ack-pending BEFORE the awaited mark_processed
+                # call, synchronously, so a cancellation landing inside that await
+                # still leaves the message correctly ack-pending -- redelivery then
+                # retries only the ack, never re-running the handler.
+                # remember_completed clears this on success below.
+                if isinstance(event, MessageEvent) and msg_id:
+                    self.claims.remember_ack_pending(self.room_id, msg_id)
+                    durable_processed = await self.link.mark_processed(
+                        self.room_id, msg_id
+                    )
+                    if durable_processed:
+                        self._retry_tracker.mark_success(msg_id)
+                        self.claims.remember_completed(self.room_id, msg_id)
+                    else:
+                        logger.warning(
+                            "ExecutionContext %s: Local execution completed but durable processed mark failed for message %s",
+                            self.room_id,
+                            msg_id,
+                        )
+                        return False
+
+                if msg_id == self._deferred_message_id:
+                    self._set_deferred_head(None)
+                logger.debug("Event %s processed successfully", event.type)
+                return True
+
+            except InputNotAccepted:
+                self._defer_unaccepted_input(msg_id)
+                return False
+
+            except RoomExecutionStoppedError:
+                if msg_id and not self.claims.is_ack_pending(self.room_id, msg_id):
                     self._retry_tracker.discard_attempt(msg_id)
-                    self.claims.remember_completed(self.room_id, msg_id)
-                    return True
+                return False
 
-                # From admission a control terminates this scope, even before
-                # its handler starts.
-                scope.admitted = True
+            except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
+                _log_turn_error(e, "Error processing %s", event.type)
+                if isinstance(event, MessageEvent) and msg_id:
+                    await self._handle_turn_failure(msg_id, attempts, e)
+                return True
 
-                # For messages: mark as processing on server
-                if not await self._claim(msg_id):
-                    logger.warning(
-                        "ExecutionContext %s: Could not claim message %s",
-                        self.room_id,
-                        msg_id,
-                    )
-                    return False
-
-            # Hydrate context on first event (loads participants always,
-            # history only if enable_context_hydration is True)
-            await self._ensure_fresh_context()
-
-            # Handle participant events internally; the callback below still
-            # fires either way since it reports the platform event, not roster state.
-            if isinstance(event, ParticipantAddedEvent) and event.payload:
-                payload = event.payload
-                log_roster_call(
-                    logger,
-                    call=self.add_participant,
-                    arg=payload.model_dump(),
-                    room_id=self.room_id,
-                )
-                await self._notify_participant_added(event)
-            elif isinstance(event, ParticipantRemovedEvent) and event.payload:
-                payload = event.payload
-                log_roster_call(
-                    logger,
-                    call=self.remove_participant,
-                    arg=payload.id,
-                    room_id=self.room_id,
-                )
-                await self._notify_participant_removed(event)
-
-            # Call execution handler as a cancellable cycle. A control signal
-            # can abort just this turn; when it does, status is handled inside
-            # _run_cycle and we send nothing further. Only message-driven
-            # cycles report the working signal (see _invoke_handler);
-            # participant add/remove events are housekeeping and skip it.
-            if not await self._run_cycle(scope, event, msg_id):
-                return not scope.stop_observed
-
-            # For messages: record ack-pending BEFORE the awaited mark_processed
-            # call, synchronously, so a cancellation landing inside that await
-            # still leaves the message correctly ack-pending -- redelivery then
-            # retries only the ack, never re-running the handler.
-            # remember_completed clears this on success below.
-            if isinstance(event, MessageEvent) and msg_id:
-                self.claims.remember_ack_pending(self.room_id, msg_id)
-                durable_processed = await self.link.mark_processed(self.room_id, msg_id)
-                if durable_processed:
-                    self._retry_tracker.mark_success(msg_id)
-                    self.claims.remember_completed(self.room_id, msg_id)
-                else:
-                    logger.warning(
-                        "ExecutionContext %s: Local execution completed but durable processed mark failed for message %s",
-                        self.room_id,
-                        msg_id,
-                    )
-                    return False
-
-            if msg_id == self._deferred_message_id:
-                self._set_deferred_head(None)
-            logger.debug("Event %s processed successfully", event.type)
-            return True
-
-        except InputNotAccepted:
-            self._defer_unaccepted_input(msg_id)
-            return False
-
-        except RoomExecutionStoppedError:
-            if msg_id and not self.claims.is_ack_pending(self.room_id, msg_id):
-                self._retry_tracker.discard_attempt(msg_id)
-            return False
-
-        except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
-            _log_turn_error(e, "Error processing %s", event.type)
-            if isinstance(event, MessageEvent) and msg_id:
-                await self._handle_turn_failure(msg_id, attempts, e)
-            return True
-
-        finally:
-            scope.settled = True
-            self._turn_failure_reported = False
-            self._set_state(ExecutionState.IDLE)
+            finally:
+                self._turn_failure_reported = False
+                self._set_state(ExecutionState.IDLE)
 
 
 def _backlog_event(msg: PlatformMessage) -> MessageEvent:

@@ -166,32 +166,34 @@ class TestStoppedPosts:
             ctx = ExecutionContext(
                 "room-123", mock_link, AsyncMock(), agent_id="agent-123"
             )
-            await ctx._begin_scope()
-            tools = AgentTools.from_context(ctx)
-            refused = asyncio.Event()
-            refused_at: list[float] = []
+            async with ctx._turn_scope():
+                tools = AgentTools.from_context(ctx)
+                refused = asyncio.Event()
+                refused_at: list[float] = []
 
-            async def released_worker() -> None:
-                # Provider tool calls post from their own task, so the refusal
-                # cannot unwind the worker itself.
-                post = asyncio.create_task(
-                    tools.send_message(
-                        "late", mentions=[{"id": "user-1", "handle": "user"}]
+                async def released_worker() -> None:
+                    # Provider tool calls post from their own task, so the refusal
+                    # cannot unwind the worker itself.
+                    post = asyncio.create_task(
+                        tools.send_message(
+                            "late", mentions=[{"id": "user-1", "handle": "user"}]
+                        )
                     )
-                )
-                await asyncio.wait({post})
-                refused_at.append(asyncio.get_running_loop().time())
-                refused.set()
-                await asyncio.Future[None]()
+                    await asyncio.wait({post})
+                    refused_at.append(asyncio.get_running_loop().time())
+                    refused.set()
+                    await asyncio.Future[None]()
 
-            worker = bind_turn_task(tools, asyncio.create_task(released_worker()))
-            await ctx._begin_scope()
-            await refused.wait()
-            await asyncio.wait({worker.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS)
+                worker = bind_turn_task(tools, asyncio.create_task(released_worker()))
+                async with ctx._turn_scope():
+                    await refused.wait()
+                    await asyncio.wait(
+                        {worker.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS
+                    )
 
-            assert peer.posts == ["messages"]
-            assert worker.task.cancelled()
-            assert (
-                asyncio.get_running_loop().time() - refused_at[0]
-                == CYCLE_CANCEL_GRACE_SECONDS
-            )
+                    assert peer.posts == ["messages"]
+                    assert worker.task.cancelled()
+                    assert (
+                        asyncio.get_running_loop().time() - refused_at[0]
+                        == CYCLE_CANCEL_GRACE_SECONDS
+                    )
