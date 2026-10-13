@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import pytest
 from nooa import Agent
+from nooa.config.execution_config import ExecutionConfig
 from pydantic import BaseModel, create_model
 
 from band.adapters.nooa import NooaAdapter
 from band.testing import FakeAgentTools
 from band.testing.nooa import scripted_llm, scripted_room_agent
-from tests.adapters.nooa.kit import find_order, room_message
+from tests.adapters.nooa.kit import find_order, room_agent_with_execution, room_message
 
 
 class ClassInput(BaseModel):
@@ -52,3 +53,14 @@ class TestConstruction:
                 is_session_bootstrap=True,
                 room_id=room_message().room_id,
             )
+
+    async def test_the_agents_execution_settings_reach_every_room(self) -> None:
+        agent_class = room_agent_with_execution(ExecutionConfig(max_nesting_depth=37))
+        adapter = NooaAdapter(agent=agent_class)
+
+        await adapter.on_started("Agent", "A test agent")
+
+        # NOOA keeps class-level execution settings on this attribute only.
+        room_agent_class = adapter._room_agent_class
+        assert room_agent_class is not None
+        assert room_agent_class._execution_config.max_nesting_depth == 37

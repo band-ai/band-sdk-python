@@ -27,7 +27,7 @@ import logging
 from dotenv import load_dotenv
 from nooa.unifiedllm.registry import get_llm_client
 
-from band import Agent, configure_logging
+from band import Agent, Emit, configure_logging
 from band.adapters import NooaAdapter, NooaRoomAgent
 
 configure_logging(logging.INFO)
@@ -56,7 +56,8 @@ class NoteTaker(NooaRoomAgent, llm=get_llm_client("anthropic/claude-sonnet-5-5")
 async def main() -> None:
     load_dotenv()
 
-    adapter = NooaAdapter(agent=NoteTaker)
+    # Report tool calls to the room, but not per-turn token usage.
+    adapter = NooaAdapter(agent=NoteTaker, emit=Emit.TOOL_CALLS)
 
     logger.info("Starting NOOA agent...")
     async with Agent.from_config("nooa_agent", adapter=adapter) as agent:

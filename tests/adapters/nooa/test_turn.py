@@ -16,6 +16,7 @@ from tests.adapters.nooa.kit import (
     failing_llm,
     failing_report,
     prompt_text,
+    room_message,
     run_turn,
     started_adapter,
     tool_events,
@@ -131,3 +132,31 @@ class TestRoomTurn:
 
         with pytest.raises(BandToolError, match="only available while"):
             await getattr(room, BandTool.NO_REPLY)()
+
+    async def test_work_left_running_by_one_turn_cannot_act_in_the_next(self) -> None:
+        llm = FakeLLMClient(
+            [
+                code_turn(
+                    "async def later():\n"
+                    "    await asyncio.sleep(0.05)\n"
+                    f"    {room_call('band_send_message', {'content': 'late', 'mentions': ['Alice']})}\n"
+                    "leftover = asyncio.create_task(later())\n"
+                    f"{room_call('band_no_reply')}"
+                ),
+                result_turn(),
+                code_turn(f"await asyncio.sleep(0.2)\n{room_call('band_no_reply')}"),
+                result_turn(),
+            ]
+        )
+        adapter = await started_adapter(llm)
+        second_turn = FakeAgentTools()
+
+        await run_turn(adapter, FakeAgentTools(), message=room_message("first"))
+        await run_turn(
+            adapter,
+            second_turn,
+            message=room_message("second"),
+            is_session_bootstrap=False,
+        )
+
+        assert second_turn.chat == []

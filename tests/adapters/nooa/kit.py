@@ -12,11 +12,17 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from nooa.config.execution_config import ExecutionConfig
 from nooa.unifiedllm import FakeLLMClient
 from pydantic import BaseModel, Field
 from typing_extensions import Unpack
 
-from band.adapters.nooa import TOOLS_BLOCK, NooaAdapter, NooaAdapterConfig
+from band.adapters.nooa import (
+    TOOLS_BLOCK,
+    NooaAdapter,
+    NooaAdapterConfig,
+    NooaRoomAgent,
+)
 from band.core.types import FeatureKwargs, PlatformMessage, ToolEventKey
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
 from band.runtime.tools import TurnEffect
@@ -66,6 +72,17 @@ class TaggedInput(BaseModel):
 def tag_order(args: TaggedInput) -> list[str]:
     """A custom tool whose argument has a factory default."""
     return args.tags
+
+
+def room_agent_with_execution(execution: ExecutionConfig) -> type[NooaRoomAgent]:
+    """A room agent class declared with NOOA's class-level ``execution`` setting."""
+    return type(NooaRoomAgent)(
+        "ConfiguredRoomAgent",
+        (NooaRoomAgent,),
+        {"__doc__": "You are a configured test agent.", "__module__": __name__},
+        llm=FakeLLMClient(),
+        execution=execution,
+    )
 
 
 def declining_turns(count: int) -> FakeLLMClient:

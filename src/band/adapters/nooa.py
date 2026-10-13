@@ -15,6 +15,7 @@ import keyword
 import logging
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 from uuid import uuid4
@@ -106,6 +107,23 @@ class RoomToolSpec:
     run: ToolRunner
 
 
+@dataclass
+class TurnBinding:
+    """One turn's tools for one room, open only while that turn runs."""
+
+    room: RoomTools
+    tools: AgentToolsProtocol
+    open: bool = True
+
+
+# Context-local, not an attribute of the room's RoomTools: a task the model's code
+# starts copies the context of the turn that started it, so after that turn ends
+# it still sees that turn's (closed) binding rather than whichever turn is current.
+_turn_binding: ContextVar[TurnBinding | None] = ContextVar(
+    "nooa_room_turn_binding", default=None
+)
+
+
 class RoomTools:
     """Band tools for the current room. Every method is async: `await self.room.<method>(...)`."""
 
@@ -113,7 +131,6 @@ class RoomTools:
 
     def __init__(self, *, emit_tool_calls: bool) -> None:
         self._emit_tool_calls = emit_tool_calls
-        self._tools: AgentToolsProtocol | None = None
 
     def __repr__(self) -> str:
         return f"RoomTools({', '.join(self._specs)})"
@@ -121,19 +138,26 @@ class RoomTools:
     @hidden
     @contextmanager
     def bound_to(self, tools: AgentToolsProtocol) -> Iterator[None]:
-        """Route calls to one turn's tools for the duration of that turn."""
-        self._tools = tools
+        """Route calls made by this turn to its tools, and refuse them afterwards."""
+        binding = TurnBinding(self, tools)
+        token = _turn_binding.set(binding)
         try:
             yield
         finally:
-            self._tools = None
+            binding.open = False
+            _turn_binding.reset(token)
 
-    async def _invoke(self, name: str, arguments: dict[str, Any]) -> Any:
-        tools = self._tools
-        if tools is None:
+    def _turn_tools(self, name: str) -> AgentToolsProtocol:
+        """The tools of the turn this call belongs to, if that turn is still running."""
+        binding = _turn_binding.get()
+        if binding is None or not binding.open or binding.room is not self:
             raise BandToolError(
                 f"{name} is only available while a Band room message is being handled"
             )
+        return binding.tools
+
+    async def _invoke(self, name: str, arguments: dict[str, Any]) -> Any:
+        tools = self._turn_tools(name)
         spec = self._specs[name]
         call_id = uuid4().hex
         await self._report(
@@ -360,9 +384,16 @@ def with_room_tools(
         "__module__": agent_class.__module__,
         "__qualname__": agent_class.__qualname__,
     }
+    # NOOA's __init_subclass__ resets the execution config of every subclass to
+    # the default unless it is passed again; its other class settings inherit.
     return cast(
         type[NooaRoomAgent],
-        type(agent_class)(agent_class.__name__, (agent_class,), namespace),
+        type(agent_class)(
+            agent_class.__name__,
+            (agent_class,),
+            namespace,
+            execution=agent_class._execution_config,
+        ),
     )
 
 
