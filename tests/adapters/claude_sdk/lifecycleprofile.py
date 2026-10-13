@@ -14,8 +14,8 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import RetainedRoom
 from band.integrations.claude_sdk import transport
 from band.integrations.claude_sdk.session_manager import ClaudeRoomSession
-from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.process import WorkspacePeer
+from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     LifecycleBridge,
     LifecycleProfile,

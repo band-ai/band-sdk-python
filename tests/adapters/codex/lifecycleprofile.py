@@ -12,7 +12,7 @@ from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import RetainedRoom
 from band.integrations.codex import CodexStdioClient
-from tests.adapters.claude_sdk.fakecli import Hold
+from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     LifecycleBridge,
     LifecycleProfile,

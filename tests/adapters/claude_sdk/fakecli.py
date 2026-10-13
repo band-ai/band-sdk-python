@@ -16,8 +16,7 @@ import re
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
-from types import TracebackType
+from dataclasses import dataclass
 from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
@@ -26,6 +25,7 @@ from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
 from band.integrations.mcp import BandMCPTransport
+from tests.adapters.hold import Hold
 from tests.baseline.decisions import ModelDecision, ToolCall
 from tests.mcpclient import mcp_session
 
@@ -94,31 +94,6 @@ class StreamFails:
     timeout would; the SDK re-raises it unchanged to the turn."""
 
     error: Exception
-
-
-@dataclass
-class Hold:
-    """Parks the turn at this step: ``async with hold`` waits for the turn to
-    reach it and lets the turn continue on exit."""
-
-    reached: asyncio.Event = field(default_factory=asyncio.Event)
-    released: asyncio.Event = field(default_factory=asyncio.Event)
-
-    async def __aenter__(self) -> None:
-        await self.reached.wait()
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self.released.set()
-
-    async def wait(self) -> None:
-        """Signal the step is reached and park until the test releases it."""
-        self.reached.set()
-        await self.released.wait()
 
 
 Step = (

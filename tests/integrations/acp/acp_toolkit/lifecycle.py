@@ -24,7 +24,7 @@ from band.core.retention import RetainedRoom
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.omp import OMP_ACP_SUBCOMMAND
-from tests.adapters.claude_sdk.fakecli import Hold
+from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import LifecycleBridge, RetentionHost, pause_at
 from tests.paths import REPO_ROOT
 

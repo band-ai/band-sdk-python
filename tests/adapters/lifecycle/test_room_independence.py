@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from tests.adapters.claude_sdk.fakecli import Hold
+from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.roompeer import PeerCommand, write_instruction
 

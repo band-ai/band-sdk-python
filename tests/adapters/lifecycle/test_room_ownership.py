@@ -9,7 +9,7 @@ import pytest
 
 from band.adapters.codex import CodexAdapter
 from band.core.exceptions import InputNotAccepted
-from tests.adapters.claude_sdk.fakecli import Hold
+from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     RetentionHost,
 )

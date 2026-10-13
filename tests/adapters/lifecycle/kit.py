@@ -20,7 +20,7 @@ import pytest
 from band.core.protocols import FrameworkAdapter
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
-from tests.adapters.claude_sdk.fakecli import Hold
+from tests.adapters.hold import Hold
 from tests.framework_conformance.turnprobes import DispatchingFakeTools
 
 # A transition settles in a few loop turns; this bounds a wait that never would.
