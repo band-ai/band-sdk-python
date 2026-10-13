@@ -19,16 +19,21 @@ model id. Any other provider is constructed explicitly and passed as `llm=`.
 
 ```python notest
 from strands.models import BedrockModel
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
 
-StrandsAdapter(llm=OpenAIModel(model_id="gpt-6-luna"))  # OpenAI
+StrandsAdapter(llm=OpenAIResponsesModel(model_id="gpt-6-luna"))  # OpenAI
 StrandsAdapter(
     StrandsAdapterConfig(model="us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 )  # Bedrock id
 StrandsAdapter(llm=BedrockModel(model_id="...", region_name="us-east-1"))
 ```
+
+These OpenAI examples use the Responses provider because the shared default model
+supports native function tools through that API. Leave `stateful` disabled: Band
+owns room history. Callers can still pass `OpenAIModel` for Chat Completions with
+a compatible model and configuration.
 
 Providers beyond `openai` need their own Strands extra (e.g.
 `strands-agents[anthropic]`).

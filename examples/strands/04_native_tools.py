@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=4.0.0"]
+# dependencies = ["band-sdk[strands]>=5.0.1"]
 # ///
 """
 Strands agent with framework-native tools.
@@ -27,7 +27,7 @@ import logging
 
 from dotenv import load_dotenv
 from strands import tool
-from strands.models.openai import OpenAIModel
+from strands.models.openai_responses import OpenAIResponsesModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter, StrandsAdapterConfig
@@ -67,7 +67,7 @@ async def main() -> None:
             custom_section="You convert currencies with the convert_from_usd tool. Escalate to a "
             "human only when the request is outside currency conversion."
         ),
-        llm=OpenAIModel(model_id="gpt-6-luna"),
+        llm=OpenAIResponsesModel(model_id="gpt-6-luna"),
         additional_tools=[convert_from_usd, escalate_to_human],
         emit=Emit.TOOL_CALLS,
     )

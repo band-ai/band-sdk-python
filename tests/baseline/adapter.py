@@ -33,6 +33,7 @@ class Adapter(StrEnum):
     OPENCODE = "opencode"
     LETTA = "letta"
     STRANDS = "strands"
+    NOOA = "nooa"
 
 
 # These modules bridge Band to another protocol or require a bespoke external

@@ -8,6 +8,7 @@ import pytest
 from band.core.exceptions import InputNotAccepted
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
+from tests.conftest import eager_tasks, requires_eager_tasks
 
 OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
@@ -34,6 +35,20 @@ async def test_a_room_bootstraps_once_then_keeps_talking_in_the_same_session(
     assert "Are you there?" in second
     assert len(room.claude.sessions) == 1
     assert room.chat == ["hi Bob", "still here"]
+    assert room.failures == []
+
+
+@requires_eager_tasks
+async def test_a_turn_runs_under_an_eager_task_factory(claude_room: OpenRoom) -> None:
+    """The worker can start inside ``create_task`` before the adapter records
+    it, and still runs under its own owner."""
+    room = await claude_room()
+    room.claude.script([room.model_reply("Hello.")])
+
+    with eager_tasks():
+        await room.send("hi")
+
+    assert room.chat == ["Hello."]
     assert room.failures == []
 
 

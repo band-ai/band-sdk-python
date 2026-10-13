@@ -6,18 +6,21 @@ dispatch-boundary result types (``ToolCallOutcome``, ``serialize_tool_result``).
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, create_model
 
+from band.core.exceptions import InvalidToolArgumentsError
 from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
 
-_JSON_VALUE = TypeAdapter(Any)
+# URL-safe base64 preserves binary bytes, including non-UTF-8 content.
+_JSON_VALUE = TypeAdapter(Any, config=ConfigDict(ser_json_bytes="base64"))
 
 
 def resolve_tool_model(name: str) -> type[BaseModel] | None:
@@ -83,7 +86,14 @@ def get_tool_docstring_with_args(name: str) -> str:
     model = resolve_tool_model(name)
     if model is None:
         return description
+    return docstring_with_args(description, model)
 
+
+def docstring_with_args(description: str, model: type[BaseModel]) -> str:
+    """*description* plus a Google-style ``Args:`` section from *model*'s fields.
+
+    Fields without a description are left out of ``Args:``.
+    """
     arg_lines = [
         format_arg_doc(field_name, field.description)
         for field_name, field in model.model_fields.items()
@@ -182,7 +192,9 @@ def validate_tool_arguments(
     try:
         validated = input_model.model_validate(arguments)
     except ValidationError as error:
-        raise ValueError(format_tool_validation_error(tool_name, error)) from error
+        raise InvalidToolArgumentsError(
+            format_tool_validation_error(tool_name, error)
+        ) from error
 
     return validated.model_dump(exclude_none=True)
 
@@ -222,6 +234,8 @@ def serialize_tool_result(result: Any) -> Any:
     payload adapters receive. Test fakes that mirror the dispatch boundary
     (e.g. the baseline ``BaselineTools``) must use this same helper so their
     output shape cannot drift from the real one.
+
+    Model bytes use padded URL-safe base64, including UTF-8 bytes.
     """
     if hasattr(result, "model_dump"):
         return _JSON_VALUE.dump_python(result.model_dump(), mode="json")
@@ -233,3 +247,16 @@ def serialize_tool_result(result: Any) -> Any:
             for item in result
         ]
     return result
+
+
+def tool_result_text(result: Any) -> str:
+    """A tool result as text: a string verbatim, else JSON.
+
+    Bytes, including nested model bytes, use padded URL-safe base64.
+    """
+    if isinstance(result, str):
+        return result
+    # The python pass turns nested models into plain data, so the JSON pass
+    # applies this adapter's rules to all of it: text keys, base64 bytes.
+    plain = _JSON_VALUE.dump_python(serialize_tool_result(result))
+    return json.dumps(_JSON_VALUE.dump_python(plain, mode="json", fallback=str))

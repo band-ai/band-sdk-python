@@ -19,6 +19,7 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.claude_sdk import transport
@@ -96,6 +97,11 @@ class WorkspaceHost:
         )
         return [message["content"] for message in tools.messages_sent]
 
+    async def settled(self, room_id: str) -> None:
+        owner = self.adapter._turn_tasks.get(room_id)
+        if owner is not None:
+            await asyncio.wait({owner.task})
+
     @property
     def exited(self) -> list[bool]:
         return [child.exited for child in self.children]
@@ -169,6 +175,19 @@ async def host(
                 await child.close()
 
 
+async def test_completed_turns_retain_children_until_explicit_cleanup(
+    host: WorkspaceHost,
+) -> None:
+    host.shared = False
+    for room in ("room-a", "room-b", "room-c"):
+        assert await host.send(room, write_instruction(room)) == [room]
+    assert host.exited == [False, False, False]
+    assert await host.send("room-a", PeerCommand.READ) == ["Read: room-a"]
+    assert host.exited == [False, False, False]
+    await host.adapter.cleanup_all()
+    assert host.exited == [True, True, True]
+
+
 async def test_failed_cleanup_retains_ownership_and_blocks_replacement(
     host: WorkspaceHost,
 ) -> None:
@@ -178,7 +197,7 @@ async def test_failed_cleanup_retains_ownership_and_blocks_replacement(
         await host.adapter.on_cleanup("room-a")
     with pytest.raises(ValueError, match="both"):
         await host.send("room-b", write_instruction("bravo"))
-    with pytest.raises(RuntimeError, match="cleanup failed"):
+    with pytest.raises(InputNotAccepted, match="closing"):
         await host.send("room-a", write_instruction("changed"))
     assert host.exited == [False]
     assert (Path(host.workspace("room-a")) / "notes.txt").read_text() == "alpha"
@@ -211,6 +230,7 @@ async def test_failed_room_cleanup_can_recover_in_the_same_workspace(
     with pytest.raises(RuntimeError, match="cleanup failed"):
         await host.adapter.on_cleanup("room-a")
     host.children[0].refuse_close = False
+    await host.adapter.on_cleanup("room-a")
     assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
     assert host.exited == [True, False]
     with pytest.raises(ValueError, match="both"):
@@ -228,6 +248,7 @@ async def test_cancelled_startup_keeps_ownership_and_can_recover(
     with pytest.raises(asyncio.CancelledError):
         await opening
     host.hold_startup.unlink()
+    await host.settled("room-a")
     with pytest.raises(ValueError, match="both"):
         await host.send("room-b", write_instruction("bravo"))
     assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
@@ -347,7 +368,7 @@ async def test_close_timeout_retains_ownership_until_retry(host: WorkspaceHost) 
     assert host.exited == [False]
     with pytest.raises(ValueError, match="both"):
         await host.send("room-b", write_instruction("bravo"))
-    with pytest.raises(TimeoutError):
+    with pytest.raises(InputNotAccepted, match="closing"):
         await host.send("room-a", write_instruction("changed"))
     assert host.exited == [False]
     host.adapter.config = host.adapter.config.model_copy(
