@@ -71,6 +71,7 @@ class FakeCodexClient(RecordedRequests):
         resume_error: Exception | None = None,
         turn_start_error: Exception | None = None,
         turn_start_error_once: bool = True,
+        interrupt_error: Exception | None = None,
         model_list_result: dict[str, Any] | None = None,
         model_list_error: Exception | None = None,
         skill_roots_error: Exception | None = None,
@@ -89,6 +90,7 @@ class FakeCodexClient(RecordedRequests):
         self._resume_error = resume_error
         self._turn_start_error = turn_start_error
         self._turn_start_error_once = turn_start_error_once
+        self._interrupt_error = interrupt_error
         self._model_list_result = model_list_result
         self._model_list_error = model_list_error
         self._skill_roots_error = skill_roots_error
@@ -153,6 +155,9 @@ class FakeCodexClient(RecordedRequests):
                 self._thread_counter += 1
                 thread_id = f"thr-{self._thread_counter}"
                 return {"thread": {"id": thread_id}, **self._started_settings}
+            case CodexRequestMethod.TURN_INTERRUPT:
+                if self._interrupt_error is not None:
+                    raise self._interrupt_error
             case CodexRequestMethod.TURN_START:
                 if self._turn_start_error is not None:
                     err = self._turn_start_error

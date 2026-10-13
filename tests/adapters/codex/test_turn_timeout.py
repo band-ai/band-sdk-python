@@ -7,7 +7,7 @@ import pytest
 from band.adapters.codex import (
     CodexAdapterConfig,
 )
-from band.core.protocols import TurnResultAlreadyReported
+from band.core.protocols import FAILURE_CODE_TIMEOUT, TurnResultAlreadyReported
 from band.integrations.codex.types import (
     CodexRequestMethod,
 )
@@ -84,3 +84,31 @@ class TestTurnTimeout:
         assert len(lifecycle_events) == 2
         assert lifecycle_events[0]["metadata"]["codex_turn_status"] == "started"
         assert lifecycle_events[1]["metadata"]["codex_turn_status"] == "failed"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "interrupt_error",
+        [None, ConnectionResetError("Codex process is gone")],
+        ids=["interrupted", "interrupt-failed"],
+    )
+    async def test_a_timed_out_turn_is_reported_once_and_the_room_serves_on(
+        self, interrupt_error: Exception | None
+    ) -> None:
+        """Whether or not Codex takes the interrupt, the timeout is the turn's
+        one failure and the room's next message still reaches Codex."""
+        client = FakeCodexClient(events=[], interrupt_error=interrupt_error)
+        adapter = make_codex_adapter(
+            client, config=CodexAdapterConfig(turn_timeout_s=0.01)
+        )
+        deliveries = [ToolSchemaFakeTools(), ToolSchemaFakeTools()]
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        for tools in deliveries:
+            with pytest.raises(TurnResultAlreadyReported):
+                await send_bootstrap(adapter, tools=tools)
+
+        assert [
+            [failure["code"] for failure in reported_failures(tools)]
+            for tools in deliveries
+        ] == [[FAILURE_CODE_TIMEOUT], [FAILURE_CODE_TIMEOUT]]
+        assert len(client.params_of(CodexRequestMethod.TURN_START)) == 2
