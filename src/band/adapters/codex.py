@@ -920,7 +920,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        self._admit_turn(room_id, "Codex")
+        await self._admit_turn(room_id, "Codex")
         self._room_client(room_id)
         self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)

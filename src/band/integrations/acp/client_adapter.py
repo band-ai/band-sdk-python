@@ -50,6 +50,7 @@ from band.core.protocols import (
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -171,6 +172,14 @@ class SessionMcpServers:
 
     servers: list[object]
     band_url: str | None
+
+
+@dataclass(frozen=True)
+class ACPTurn:
+    """What stopping one room's in-flight prompt needs."""
+
+    runtime: ACPRuntime
+    session_id: str
 
 
 class ACPTurnTimeoutError(TimeoutError):
@@ -438,6 +447,9 @@ class ACPClientAdapter(
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
         self._runtimes: dict[str, ACPRuntime] = {}
+        self._backend_turns = BackendTurns[ACPTurn](
+            self._cancel_agent_turn, provider=_PROVIDER
+        )
         self._workspaces = RoomWorkspaces(self._workspace_for_room)
 
         self._room_to_session: dict[str, RoomSession] = {}
@@ -640,6 +652,10 @@ class ACPClientAdapter(
         # Agent.start() reuses this instance after cleanup_all(final=True).
         await self._mcp.reopen()
 
+    @property
+    def backend_turns(self) -> BackendTurns[ACPTurn]:
+        return self._backend_turns
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -717,50 +733,44 @@ class ACPClientAdapter(
                     session_id=session_id,
                 )
                 turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
-                try:
-                    async with turn_deadline:
-                        await runtime.prompt(
-                            session_id=session_id,
-                            prompt_text=prompt_text,
-                            on_chunk=emitter.emit,
-                        )
-                        session.bootstrap_pending = False
-                        session.replay_pending = False
-                except RequestError as error:
-                    if (
-                        error.code == -32003
-                        and isinstance(error.data, dict)
-                        and error.data.get("reason") == "session_busy"
-                    ):
-                        raise InputNotAccepted("ACP session is busy") from error
-                    raise
-                except asyncio.CancelledError:
-                    # Cancelling the local request leaves the agent running the
-                    # prompt; it only stops on session/cancel.
-                    await self._await_shielded(
-                        asyncio.create_task(
-                            self._cancel_agent_turn(
-                                runtime, room_id=room_id, session_id=session_id
-                            )
-                        )
-                    )
-                    raise
-                except TimeoutError:
-                    if not turn_deadline.expired():
-                        raise
-                    await self._await_shielded(
-                        asyncio.create_task(
-                            self._handle_turn_timeout(
-                                runtime,
-                                room_id=room_id,
+                # session/cancel is what stops the agent's prompt; cancelling
+                # the local request alone leaves it running.
+                async with self.backend_turns.running(
+                    room_id, ACPTurn(runtime, session_id)
+                ):
+                    try:
+                        async with turn_deadline:
+                            await runtime.prompt(
                                 session_id=session_id,
-                                tools=tools,
+                                prompt_text=prompt_text,
+                                on_chunk=emitter.emit,
+                            )
+                            session.bootstrap_pending = False
+                            session.replay_pending = False
+                    except RequestError as error:
+                        if (
+                            error.code == -32003
+                            and isinstance(error.data, dict)
+                            and error.data.get("reason") == "session_busy"
+                        ):
+                            raise InputNotAccepted("ACP session is busy") from error
+                        raise
+                    except TimeoutError:
+                        if not turn_deadline.expired():
+                            raise
+                        await self._await_shielded(
+                            asyncio.create_task(
+                                self._handle_turn_timeout(
+                                    runtime,
+                                    room_id=room_id,
+                                    session_id=session_id,
+                                    tools=tools,
+                                )
                             )
                         )
-                    )
-                    raise ACPTurnTimeoutError(
-                        f"ACP turn timed out after {self.config.turn_timeout_s}s"
-                    ) from None
+                        raise ACPTurnTimeoutError(
+                            f"ACP turn timed out after {self.config.turn_timeout_s}s"
+                        ) from None
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.
@@ -790,7 +800,8 @@ class ACPClientAdapter(
             room_id,
             session_id,
         )
-        await self._cancel_agent_turn(runtime, room_id=room_id, session_id=session_id)
+        self.backend_turns.cancel(room_id)
+        await self.backend_turns.settled(room_id)
         await self.on_cleanup(room_id)
         await tools.send_failure(
             AgentFailure(
@@ -814,14 +825,9 @@ class ACPClientAdapter(
             raise
 
     @staticmethod
-    async def _cancel_agent_turn(
-        runtime: ACPRuntime, *, room_id: str, session_id: str
-    ) -> None:
-        """Tell the agent to stop this room's prompt; best effort."""
-        try:
-            await runtime.cancel_turn(session_id)
-        except Exception:
-            logger.exception("ACP turn cancellation failed (room=%s)", room_id)
+    async def _cancel_agent_turn(turn: ACPTurn) -> None:
+        """Tell the agent to stop this room's prompt."""
+        await turn.runtime.cancel_turn(turn.session_id)
 
     def _install_turn_handlers(
         self,
@@ -1512,6 +1518,7 @@ class ACPClientAdapter(
 
         try:
             await self._cancel_session_initializers(initializer)
+            await self.backend_turns.settled(room_id)
             if runtime is not None:
                 await runtime.stop()
         finally:
@@ -1550,6 +1557,7 @@ class ACPClientAdapter(
                 self._workspaces.release(room_id)
         await self._cancel_session_initializers(*initializers)
         await self._drain_background_tasks()
+        await self.backend_turns.drain()
         await self._mcp.close(final=final)
         await self._stop_runtimes(runtimes)
         logger.info("ACP client adapter stopped")

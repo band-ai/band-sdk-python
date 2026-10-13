@@ -109,9 +109,6 @@ class SimpleAdapter(ABC, Generic[H]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
-    # Set by an adapter that drives an external backend, so an interrupt, a
-    # cancelled turn and teardown stop that backend's turn too.
-    backend_turns: BackendTurns[Any] | None = None
 
     def __init__(
         self,
@@ -293,6 +290,15 @@ class SimpleAdapter(ABC, Generic[H]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""
+
+    @property
+    def backend_turns(self) -> BackendTurns[Any] | None:
+        """The room turns of the external backend this adapter drives, if any.
+
+        An adapter that drives one overrides this, so an interrupt, a cancelled
+        turn and teardown stop that backend's turn too.
+        """
+        return None
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
         """Stop the room's work that outlives the runtime's own interrupt/stop.

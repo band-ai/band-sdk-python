@@ -909,7 +909,8 @@ class TestACPClientAdapterOnMessage:
     async def test_cancelling_the_turn_survives_repeated_cancel(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """A second STOP during session/cancel still finishes that cancel."""
+        """A second STOP during session/cancel neither repeats nor drops it, and
+        room cleanup waits for it before stopping the runtime."""
         prompt_started = asyncio.Event()
         cancel_started = asyncio.Event()
         release_cancel = asyncio.Event()
@@ -940,11 +941,13 @@ class TestACPClientAdapterOnMessage:
         turn.cancel()
         await cancel_started.wait()
         turn.cancel()
-        await asyncio.sleep(0)
-        assert not turn.done()
-        release_cancel.set()
         with pytest.raises(asyncio.CancelledError):
             await turn
+        cleanup = asyncio.create_task(adapter_with_mocks.on_cleanup("room-123"))
+        await asyncio.sleep(0)
+        assert not cleanup.done()
+        release_cancel.set()
+        await cleanup
 
         conn.cancel.assert_awaited_once_with("acp-session-123")
 

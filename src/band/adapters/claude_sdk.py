@@ -92,7 +92,12 @@ from band.core.protocols import (
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    ApprovalInterruptMixin,
+    BackendTurns,
+    TurnTask,
+    bind_turn_task,
+)
 from band.core.types import (
     ApprovalMode,
     Capability,
@@ -659,6 +664,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._room_cleanup: dict[str, asyncio.Task[None]] = {}
         self._closing_rooms: set[str] = set()
         self._closing_all = False
+        # A turn's CLI keeps generating after its worker is cancelled; the
+        # handle is the room, whose client _retire_client closes.
+        self._backend_turns = BackendTurns[str](self._retire_client, provider=_PROVIDER)
 
     @property
     def _approvals(self) -> ClaudeApprovalOptions:
@@ -806,6 +814,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         return True
 
     # --- Adapted from BandClaudeSDKAgent._handle_message ---
+    @property
+    def backend_turns(self) -> BackendTurns[str]:
+        return self._backend_turns
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -831,7 +843,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        self._admit_turn(room_id, "Claude")
+        await self._admit_turn(room_id, "Claude")
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
                 "id": msg.sender_id,
@@ -1001,9 +1013,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         owner = await owner_ready
         try:
             try:
-                await self._query_within_deadline(
-                    owner, client, room_id, tools, full_message
-                )
+                async with self.backend_turns.running(room_id, room_id):
+                    await self._query_within_deadline(
+                        owner, client, room_id, tools, full_message
+                    )
 
             except TurnResultAlreadyReported:
                 # The failure was already reported via send_failure deeper in
@@ -1030,10 +1043,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
-                await self._retire_client(room_id)
-                raise
-
-            except asyncio.CancelledError:
                 await self._retire_client(room_id)
                 raise
 
@@ -1609,6 +1618,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 errors.append(result)
         if errors:
             raise ExceptionGroup("Claude session cleanup failed", errors)
+        await self.backend_turns.drain()
         if self._session_manager:
             await self._session_manager.stop()
         await self._mcp.close(final=True)

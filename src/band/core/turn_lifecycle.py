@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
@@ -223,10 +223,15 @@ class BackendTurns(Generic[H]):
         if turn.handle is not None:
             self._stop(room_id, turn.handle)
 
-    async def settled(self, room_id: str) -> None:
-        """Wait until the room's backend stop has been sent or timed out."""
+    def stopping(self, room_id: str) -> bool:
+        """Whether the room's backend stop is still in flight."""
+        return room_id in self._stopping
+
+    async def settled(self, room_id: str, *, timeout: float | None = None) -> None:
+        """Wait until the room's backend stop has been sent or timed out, or
+        until ``timeout`` passes."""
         if (task := self._stopping.get(room_id)) is not None:
-            await asyncio.wait({task})
+            await asyncio.wait({task}, timeout=timeout)
 
     async def drain(self) -> None:
         """Wait until every room's backend stop has been sent or timed out."""
@@ -259,16 +264,32 @@ class ApprovalInterruptMixin:
     _room_cleanup: dict[str, asyncio.Task[None]]
     _closing_rooms: set[str]
 
-    def _turn_running(self, room_id: str) -> bool:
-        owner = self._turn_tasks.get(room_id)
-        return owner is not None and not owner.task.done()
+    if TYPE_CHECKING:
 
-    def _admit_turn(self, room_id: str, provider: str) -> None:
-        """Refuse new input while the room closes or its worker still runs."""
+        @property
+        def backend_turns(self) -> BackendTurns[Any] | None: ...
+
+    def _turn_running(self, room_id: str) -> bool:
+        """The room's worker, or the stop of its backend turn, is unfinished."""
+        owner = self._turn_tasks.get(room_id)
+        if owner is not None and not owner.task.done():
+            return True
+        return self.backend_turns is not None and self.backend_turns.stopping(room_id)
+
+    async def _admit_turn(self, room_id: str, provider: str) -> None:
+        """Refuse new input while the room closes or its turn still runs."""
         if room_id in self._closing_rooms:
             raise InputNotAccepted(f"The room's {provider} session is closing")
+        await self._join_backend_stop(room_id)
         if self._turn_running(room_id):
             raise InputNotAccepted(f"The room already has an active {provider} turn")
+
+    async def _join_backend_stop(self, room_id: str) -> None:
+        """Give the room's backend stop one cleanup grace to finish."""
+        if self.backend_turns is not None:
+            await self.backend_turns.settled(
+                room_id, timeout=CYCLE_CANCEL_GRACE_SECONDS
+            )
 
     async def _cancel_turn(self, room_id: str) -> None:
         owner = self._turn_tasks.get(room_id)
@@ -283,13 +304,15 @@ class ApprovalInterruptMixin:
         settle: Callable[[str], Awaitable[None]],
         close: Callable[[], Awaitable[None]],
     ) -> None:
-        """Fence the room, end its worker, then join the room's one close.
+        """Fence the room, end its worker and backend turn, then join the
+        room's one close.
 
         A failed close is retried; only a successful close readmits the room.
         """
         self._closing_rooms.add(room_id)
         self._clear_pending_approvals_for_room(room_id)
         await settle(room_id)
+        await self._join_backend_stop(room_id)
         if self._turn_running(room_id):
             raise CleanupIncompleteError(f"Room {room_id}: turn is still cleaning up")
         task = self._room_cleanup.get(room_id)
