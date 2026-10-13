@@ -33,6 +33,7 @@ try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
         ClaudeAgentOptions,
         ClaudeSDKClient,
+        CLIConnectionError,
         ResultMessage,
     )
     from claude_agent_sdk._internal.transport import Transport
@@ -49,6 +50,11 @@ except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# A room's CLI starts as an owned acquisition that its turn waits on for at
+# most ``transition_timeout_s``; the SDK waits at least this long for the CLI
+# to initialize, so a shorter budget would discard healthy starts.
+CLI_STARTUP_TIMEOUT_S = 60.0
 
 
 class ClaudeSessionManagerStoppedError(RuntimeError):
@@ -295,10 +301,11 @@ class ClaudeRoomSession:
         if (turn := self._listener(generation)) is not None:
             turn.end(error)
             return
-        # No turn will read this end, and only the CLI itself ends its output
-        # while the room still speaks for it: a crash, so it gets the crash policy.
+        # No turn will read this end. A dead process gets the crash policy, as
+        # inside a turn; a read failure from a running CLI keeps the session.
+        crashed = error is None or isinstance(error, CLIConnectionError)
         reason = "CLI output ended outside a turn" + (f": {error}" if error else "")
-        if self._retire(generation, reason, forget_session=True):
+        if self._retire(generation, reason, forget_session=crashed):
             logger.warning(
                 "Room %s: %s; retiring its CLI", self.room_id, reason, exc_info=error
             )
@@ -354,13 +361,16 @@ class ClaudeSessionManager:
                 ``mcp_servers``, replacing ``base_options.mcp_servers``.
             workspaces: Adapter-local claims; omit to preserve base_options.cwd.
             retention: Residency settings, including the transition reporting
-                budget; idle release stays with the adapter's validation.
+                budget, which defaults to ``CLI_STARTUP_TIMEOUT_S``; idle
+                release stays with the adapter's validation.
         """
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
         self._workspaces = workspaces
-        self._retention = RoomRetention(retention or RoomRetentionConfig())
+        self._retention = RoomRetention(
+            retention or RoomRetentionConfig(transition_timeout_s=CLI_STARTUP_TIMEOUT_S)
+        )
         self._rooms: dict[str, ClaudeRoomSession] = {}
 
     @property

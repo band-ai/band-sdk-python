@@ -110,6 +110,7 @@ from band.integrations.claude_sdk.dedup_tools import (
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import (
+    CLI_STARTUP_TIMEOUT_S,
     ClaudeRoomSession,
     ClaudeSessionManager,
     ClaudeSessionManagerStoppedError,
@@ -268,11 +269,6 @@ class ClaudeCLIOptions(BaseAdapterConfig):
 # Upper bound on draining the interrupted turn's final result after a
 # timeout, so the next turn on the same client does not read it as its own.
 _TIMEOUT_DRAIN_SECONDS = 10.0
-
-# A room's CLI starts as an owned acquisition that its turn waits on for at
-# most ``retention.transition_timeout_s``; the SDK allows its initialize
-# handshake at least this long, so a slower bound would discard healthy starts.
-CLI_STARTUP_TIMEOUT_S = 60.0
 
 
 ApprovalDecision = Literal["accept", "decline"]
@@ -1716,11 +1712,17 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 )
                 if session.speaks_for(generation):
                     return decision
-            logger.warning(
-                "Room %s: denied %s requested by a retired Claude session",
-                session.room_id,
-                tool_name,
-            )
+                logger.warning(
+                    "Room %s: denied %s, decided after its Claude session retired",
+                    session.room_id,
+                    tool_name,
+                )
+            else:
+                logger.warning(
+                    "Room %s: denied %s requested by a retired Claude session",
+                    session.room_id,
+                    tool_name,
+                )
             return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
 
         return _can_use_tool

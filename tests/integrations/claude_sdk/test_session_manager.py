@@ -316,9 +316,11 @@ async def test_a_read_failure_after_a_result_retires_the_cli(
 ) -> None:
     """The SDK ends its message stream on a malformed line while the CLI runs
     on. The turn already has its result and reads no further, so the reader
-    retires the CLI instead of leaving the next turn on a stream nobody reads."""
+    retires the CLI instead of leaving the next turn on a stream nobody reads;
+    the process did not crash, so the next CLI resumes the conversation."""
     manager = new_manager()
     session = manager.room("room-a")
+    session.adopt("sess-1")
     malformed = asyncio.Event()
     unreadable = CLIJSONDecodeError("{", ValueError("Buffer size exceeds limit"))
     claude.script(
@@ -340,7 +342,7 @@ async def test_a_read_failure_after_a_result_retires_the_cli(
         await manager.stop()
 
     assert thoughts(second) == ["two"]
-    assert len(claude.sessions) == 2
+    assert claude.resumed == ["sess-1", "sess-1"]
 
 
 async def test_a_startup_that_fails_twice_keeps_the_conversation(

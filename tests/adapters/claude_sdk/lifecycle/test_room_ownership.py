@@ -158,4 +158,9 @@ async def test_shutdown_steps_share_one_budget(
 
     with pytest.raises(CleanupIncompleteError):
         await shutdown
+    [cli] = room.claude.sessions
+    room_closed_first = not cli.alive
+    monkeypatch.undo()
     await room.adapter.cleanup_all()
+
+    assert room_closed_first

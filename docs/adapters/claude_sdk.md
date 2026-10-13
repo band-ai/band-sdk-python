@@ -148,8 +148,9 @@ so a slow CLI in one room never holds up another.
 - **CLI startup and close are bounded.** A turn waits for its room's CLI to
   start, and leaving waits for it to close, for at most
   `retention.transition_timeout_s`. Claude defaults it to
-  `CLI_STARTUP_TIMEOUT_S` (60 s), the shortest startup the SDK itself allows;
-  a lower budget fails turns whose CLI starts slower and discards that start.
+  `CLI_STARTUP_TIMEOUT_S` (60 s), the least time the SDK itself waits for a CLI
+  to initialize; a lower budget fails turns whose CLI starts slower and
+  discards that start.
 - **Shutdown shares one budget.** `cleanup_all` closes every room, then the
   shared Band MCP server, within one `retention.transition_timeout_s`. An
   unfinished or failed step raises, stays owned, and a retry joins it; the
