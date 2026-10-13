@@ -74,6 +74,7 @@ from band.integrations.acp.client_types import (
     ACPRoom,
     BandACPClient,
     RoomSession,
+    is_session_busy,
 )
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.model_selection import (
@@ -859,11 +860,7 @@ class ACPClientAdapter(
                         session.bootstrap_pending = False
                         session.replay_pending = False
                 except RequestError as error:
-                    if (
-                        error.code == -32003
-                        and isinstance(error.data, dict)
-                        and error.data.get("reason") == "session_busy"
-                    ):
+                    if is_session_busy(error):
                         raise InputNotAccepted("ACP session is busy") from error
                     raise
                 except asyncio.CancelledError:

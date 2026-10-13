@@ -5,10 +5,29 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+from acp.exceptions import RequestError
+
 from band.core.protocols import AgentToolsProtocol
 from band.core.retention import RetainedRoom
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.collecting import ACPCollectingClient
+
+# An agent's refusal of a prompt while its session runs another one.
+SESSION_BUSY_CODE = -32003
+SESSION_BUSY_REASON = "session_busy"
+
+
+def session_busy_error(message: str = "Session is busy") -> RequestError:
+    """The ``session_busy`` refusal an agent answers a concurrent prompt with."""
+    return RequestError(SESSION_BUSY_CODE, message, {"reason": SESSION_BUSY_REASON})
+
+
+def is_session_busy(error: RequestError) -> bool:
+    return (
+        error.code == SESSION_BUSY_CODE
+        and isinstance(error.data, dict)
+        and error.data.get("reason") == SESSION_BUSY_REASON
+    )
 
 
 @dataclass

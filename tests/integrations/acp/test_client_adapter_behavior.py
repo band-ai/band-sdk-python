@@ -33,7 +33,12 @@ from band.integrations.acp.client_adapter import (
     NEW_MESSAGE_MARKER_PREFIX,
     ACPClientAdapter,
 )
-from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.client_types import (
+    SESSION_BUSY_CODE,
+    SESSION_BUSY_REASON,
+    ACPClientSessionState,
+    session_busy_error,
+)
 from band.runtime.formatters import build_participants_message
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
@@ -1326,7 +1331,7 @@ async def test_busy_first_prompt_preserves_session_context(restored: bool) -> No
     @agent.on_prompt
     async def reject_once(peer: FakeACPAgent, sid: str) -> None:
         if len(peer.prompts) == 1:
-            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+            raise session_busy_error()
         await peer.say(sid, "Blue.")
 
     async with acp_adapter(agent) as session:
@@ -1357,9 +1362,9 @@ async def test_busy_first_prompt_preserves_session_context(restored: bool) -> No
 @pytest.mark.parametrize(
     ("code", "data"),
     [
-        (-32003, None),
-        (-32003, {"reason": "other"}),
-        (-32603, {"reason": "session_busy"}),
+        (SESSION_BUSY_CODE, None),
+        (SESSION_BUSY_CODE, {"reason": "other"}),
+        (-32603, {"reason": SESSION_BUSY_REASON}),
     ],
 )
 async def test_only_exact_typed_busy_response_preserves_session(
@@ -1393,7 +1398,7 @@ async def test_rejected_acp_activity_cannot_complete_incoming_turn() -> None:
             sid, update_tool_call("other-work", raw_output="Done", status="completed")
         )
         await peer.say(sid, "Autonomous final text")
-        raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        raise session_busy_error()
 
     tools = FakeAgentTools()
     async with acp_adapter(agent) as session:

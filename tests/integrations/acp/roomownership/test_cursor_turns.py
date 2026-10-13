@@ -9,6 +9,7 @@ from acp import RequestError
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
+from band.integrations.acp.client_types import session_busy_error
 from tests.conftest import eager_tasks, requires_eager_tasks
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
@@ -121,7 +122,7 @@ class TestCursorTurns:
                 await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
                 await cancelled.wait()
                 return
-            raise RequestError(-32003, "busy", {"reason": "session_busy"})
+            raise session_busy_error()
 
         async with cursor(agent) as session:
             await session.send("long task")
@@ -144,7 +145,7 @@ class TestCursorTurns:
         [
             # The agent's error is reported, then judged once that post is lost.
             (RequestError.internal_error(), 1),
-            (RequestError(-32003, "busy", {"reason": "session_busy"}), 0),
+            (session_busy_error(), 0),
         ],
         ids=["agent-error", "session-busy"],
     )
@@ -191,7 +192,7 @@ class TestCursorTurns:
         async def busy_then_ask(peer: FakeACPAgent, session_id: str) -> None:
             if len(peer.prompts) == 1:
                 await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
-                raise RequestError(-32003, "busy", {"reason": "session_busy"})
+                raise session_busy_error()
             answers.append(
                 await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
             )
