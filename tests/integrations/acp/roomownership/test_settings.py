@@ -6,8 +6,9 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConfigError, RoomClosingError
 from band.core.model_catalog import ModelSelection
+from tests.adapters.waiting import until
 from tests.integrations.acp.acp_toolkit import DEFAULT_ROOM, acp_adapter
 from tests.integrations.acp.acp_toolkit.agent import MODEL_OPTION_ID
 from tests.integrations.acp.acp_toolkit.harness import spin
@@ -126,6 +127,34 @@ class TestSettings:
                 with pytest.raises(BandConfigError, match="ended mid-switch"):
                     await switch
                 await asyncio.gather(held, return_exceptions=True)
+
+        assert agent.config_selections(session_id) == []
+
+    @pytest.mark.asyncio
+    async def test_a_switch_on_a_leaving_room_is_refused_before_it_runs(
+        self,
+    ) -> None:
+        agent = models("a", "a", "b")
+        prompting = holds_prompt(agent, 2)
+        async with acp_adapter(agent) as session:
+            await session.send("bootstrap")
+            session_id = session.session_id(DEFAULT_ROOM)
+            held = asyncio.create_task(session.send("held"))
+            await prompting.received.wait()
+            async with asyncio.timeout(TEST_GUARD_S):
+                leaving = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
+                await until(
+                    lambda: session.room().retained.closing,
+                    failure="the room never started leaving",
+                )
+                try:
+                    with pytest.raises(RoomClosingError):
+                        await session.adapter.apply_model_selection(
+                            ModelSelection(model="b"), room_id=DEFAULT_ROOM
+                        )
+                finally:
+                    prompting.release.set()
+                    await asyncio.gather(leaving, held, return_exceptions=True)
 
         assert agent.config_selections(session_id) == []
 

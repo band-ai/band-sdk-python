@@ -477,9 +477,11 @@ class ACPClientAdapter(
         if room is None:
             raise _no_live_session(room_id)
         # Owned by the room, so its disposal cancels and joins the switch
-        # instead of closing the process under it.
+        # instead of closing the process under it. A closing room refuses the
+        # switch here, before it ever runs.
+        switch = room.retained.start_owned(partial(self._switch_room, room, selection))
         try:
-            await room.retained.start_owned(partial(self._switch_room, room, selection))
+            await switch
         except (asyncio.CancelledError, RuntimeError):
             current = asyncio.current_task()
             if current is not None and current.cancelling():
