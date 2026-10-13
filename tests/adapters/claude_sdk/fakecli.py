@@ -14,16 +14,18 @@ import itertools
 import json
 import re
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import patch
 
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
+from band.integrations.claude_sdk import session_manager
 from band.integrations.mcp import BandMCPTransport
 from tests.adapters.hold import Hold
 from tests.baseline.decisions import ModelDecision, ToolCall
@@ -175,6 +177,19 @@ class FakeClaude:
         if self.errors:
             raise self.errors[0]
         assert not self._turns, f"{len(self._turns)} scripted turn(s) never ran"
+
+
+@contextmanager
+def scripted_claude() -> Iterator[FakeClaude]:
+    """The scripted Claude CLI behind every ``ClaudeSDKClient`` opened inside.
+
+    The transport factory is the one seam patched: past it the SDK would
+    spawn the real CLI subprocess.
+    """
+    claude = FakeClaude()
+    with patch.object(session_manager, "create_transport", claude.transport):
+        yield claude
+    claude.assert_done()
 
 
 class FakeCLISession(Transport):

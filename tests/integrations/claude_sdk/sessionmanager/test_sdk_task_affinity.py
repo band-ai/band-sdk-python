@@ -13,10 +13,10 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
-from band.integrations.claude_sdk import transport
 from band.integrations.claude_sdk.session_manager import (
     ClaudeSessionManager,
 )
+from tests.adapters.claude_sdk.process import launch_children
 from tests.integrations.claude_sdk.sessionmanager.kit import (
     TaskRecordingPeer,
     allow_everything,
@@ -29,14 +29,7 @@ class TestSdkTaskAffinity:
     ) -> None:
         """Connect, query and close each run in a different task on one loop,
         against a real child process: the SDK floor needs no task-affine actor."""
-        children: list[TaskRecordingPeer] = []
-
-        def launch(*, prompt: str, options: ClaudeAgentOptions) -> TaskRecordingPeer:
-            child = TaskRecordingPeer(prompt=prompt, options=options)
-            children.append(child)
-            return child
-
-        monkeypatch.setattr(transport, "SubprocessCLITransport", launch)
+        children = launch_children(monkeypatch, TaskRecordingPeer)
         manager = ClaudeSessionManager(
             ClaudeAgentOptions(cli_path=sys.executable, cwd=tmp_path),
             can_use_tool_factory=allow_everything,

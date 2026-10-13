@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from unittest.mock import patch
 
 import pytest
 
-from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.adapters.claude_sdk.fakecli import FakeClaude, scripted_claude
 
 
 @pytest.fixture
 def claude() -> Iterator[FakeClaude]:
-    claude = FakeClaude()
-    with patch(
-        "band.integrations.claude_sdk.session_manager.create_transport",
-        claude.transport,
-    ):
+    with scripted_claude() as claude:
         yield claude
-    claude.assert_done()

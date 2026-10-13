@@ -17,14 +17,13 @@ from claude_agent_sdk.types import (
     ToolPermissionContext,
 )
 
-from band.integrations.claude_sdk import transport
 from band.integrations.claude_sdk.session_manager import (
     ClaudeRoomSession,
     ClaudeSessionManager,
 )
 from band.workspaces import RoomWorkspaces, create_room_workspace_resolver
 from tests.adapters.claude_sdk.helpers import exchange
-from tests.adapters.claude_sdk.process import WorkspacePeer
+from tests.adapters.claude_sdk.process import WorkspacePeer, launch_children
 
 
 async def file_operation(
@@ -41,13 +40,8 @@ class TestWorkspaceRestarts:
     async def test_real_sdk_permissions_and_files_survive_room_restart(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        children: list[WorkspacePeer] = []
+        children = launch_children(monkeypatch, WorkspacePeer)
         requests: list[tuple[str, str]] = []
-
-        def launch(*, prompt: str, options: ClaudeAgentOptions) -> WorkspacePeer:
-            child = WorkspacePeer(prompt=prompt, options=options)
-            children.append(child)
-            return child
 
         def permissions(session: ClaudeRoomSession, generation: int) -> CanUseTool:
             async def decide(
@@ -65,7 +59,6 @@ class TestWorkspaceRestarts:
 
             return decide
 
-        monkeypatch.setattr(transport, "SubprocessCLITransport", launch)
         workspaces = RoomWorkspaces(create_room_workspace_resolver(tmp_path))
 
         def new_manager() -> ClaudeSessionManager:

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from typing import TypeVar
 
+import pytest
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
+from band.integrations.claude_sdk import transport
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.paths import REPO_ROOT
@@ -42,6 +47,12 @@ class WorkspaceProcess(SubprocessCLITransport):
         return [sys.executable, "-u", "-c", PROBE, self._options.env["PROBE_MARKER"]]
 
     @property
+    def workspace(self) -> str | None:
+        """The directory the SDK starts this child in, if the options set one."""
+        cwd = self._options.cwd
+        return str(cwd) if cwd else None
+
+    @property
     def exited(self) -> bool:
         return self._child.returncode is not None
 
@@ -66,3 +77,27 @@ class WorkspacePeer(WorkspaceProcess):
         if server := self._options.mcp_servers.get(BAND_MCP_SERVER_NAME):
             command.extend(["--band-url", str(server["url"])])
         return command
+
+
+Child = TypeVar("Child", bound=SubprocessCLITransport)
+
+
+def launch_children(
+    monkeypatch: pytest.MonkeyPatch,
+    child_type: type[Child],
+    on_launch: Callable[[Child], None] | None = None,
+) -> list[Child]:
+    """Start every CLI the SDK launches as a real ``child_type`` process;
+    ``on_launch`` prepares each one before it starts. Returns the children,
+    in launch order, as they are launched."""
+    children: list[Child] = []
+
+    def launch(*, prompt: str, options: ClaudeAgentOptions) -> Child:
+        child = child_type(prompt=prompt, options=options)
+        if on_launch is not None:
+            on_launch(child)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(transport, "SubprocessCLITransport", launch)
+    return children

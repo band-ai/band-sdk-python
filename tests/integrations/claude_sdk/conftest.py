@@ -11,10 +11,9 @@ import pytest
 import pytest_asyncio
 from claude_agent_sdk import ClaudeAgentOptions
 
-from band.integrations.claude_sdk import transport
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.workspaces import RoomWorkspaces
-from tests.adapters.claude_sdk.process import WorkspaceProcess
+from tests.adapters.claude_sdk.process import WorkspaceProcess, launch_children
 
 
 @dataclass
@@ -37,13 +36,10 @@ async def launches(
     )
     launched = Launches(manager=manager)
 
-    def launch(*, prompt: str, options: ClaudeAgentOptions) -> WorkspaceProcess:
-        child = WorkspaceProcess(prompt=prompt, options=options)
+    def inherit_refusal(child: WorkspaceProcess) -> None:
         child.refuse_close = launched.refuse_close
-        launched.children.append(child)
-        return child
 
-    monkeypatch.setattr(transport, "SubprocessCLITransport", launch)
+    launched.children = launch_children(monkeypatch, WorkspaceProcess, inherit_refusal)
     monkeypatch.setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "invalid")
     try:
         yield launched

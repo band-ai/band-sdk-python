@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions
 
 from band.adapters.claude_sdk import (
     ClaudeApprovalOptions,
@@ -12,9 +11,8 @@ from band.adapters.claude_sdk import (
 )
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import RetainedRoom
-from band.integrations.claude_sdk import transport
 from band.integrations.claude_sdk.session_manager import ClaudeRoomSession
-from tests.adapters.claude_sdk.process import WorkspacePeer
+from tests.adapters.claude_sdk.process import WorkspacePeer, launch_children
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     ExpectedFailure,
@@ -51,13 +49,11 @@ def install(host: RetentionHost, monkeypatch: pytest.MonkeyPatch) -> LifecycleBr
         workspace_for_room=host.workspace,
     )
 
-    def child(*, prompt: str, options: ClaudeAgentOptions) -> ClaudePeer:
-        peer = ClaudePeer(prompt=prompt, options=options)
+    def hosted(peer: ClaudePeer) -> None:
         peer.arguments = host.peer_arguments
-        host.spawned(peer, str(options.cwd) if options.cwd else None)
-        return peer
+        host.spawned(peer, peer.workspace)
 
-    monkeypatch.setattr(transport, "SubprocessCLITransport", child)
+    launch_children(monkeypatch, ClaudePeer, hosted)
 
     def session(room_id: str) -> ClaudeRoomSession | None:
         manager = adapter._session_manager
