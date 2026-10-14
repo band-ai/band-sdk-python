@@ -27,6 +27,21 @@ class TestRedelivery:
 
         assert session.progress == RAN_ONCE
 
+    async def test_a_duplicate_arriving_while_the_original_runs_does_not_rerun_it(
+        self, peer: RestPeer, batching: bool
+    ) -> None:
+        event = peer.post("m1")
+
+        async with started_session(peer, batching=batching, gate=True) as session:
+            await session.until(lambda: session.turns.ids == [("m1",)])
+            await session.deliver(event)
+            await session.ctx.request_resync()
+            session.turns.release.set()
+            await session.settled("m1")
+            await session.resync()
+
+        assert session.progress == RAN_ONCE
+
     async def test_an_original_awaiting_its_terminal_write_is_not_reopened(
         self, peer: RestPeer, batching: bool
     ) -> None:

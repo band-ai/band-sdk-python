@@ -22,9 +22,9 @@ from band.client.streaming import DeliveryStatus
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import Execution, ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import SessionConfig
+from band.runtime.types import ACTIONABLE_PAGE_SIZE, SessionConfig
 from tests.conftest import make_message_event
-from tests.platform.settlement.kit import link_over
+from tests.platform.settlement.kit import Reply, link_over
 from tests.runtime.batching.kit import ControlScript, Turns
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, rest_client_over
@@ -32,6 +32,8 @@ from tests.runtime.helpers import AGENT_ID, ROOM_ID, rest_client_over
 EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
 SENDER_ID = "user-1"
 OTHER_AGENT_ID = "agent-2"
+# A full page of failed rows and half of the next, ahead of any new input.
+FAILED_ROWS = ACTIONABLE_PAGE_SIZE + ACTIONABLE_PAGE_SIZE // 2
 WAIT_SECONDS = 5.0
 # Longer than any step the room takes and shorter than its periodic wake: on
 # the virtual clock the loop only gets here once nothing is runnable.
@@ -65,6 +67,14 @@ def control(message_id: str) -> str:
 def write(action: DeliveryStatus, message_id: str, *, confirmed: bool = True) -> str:
     """Journal entry: a lifecycle write reached the platform, confirmed or not."""
     return f"{action} {message_id}" + ("" if confirmed else " (unconfirmed)")
+
+
+def failed_row_id(index: int) -> str:
+    return f"failed-{index:03d}"
+
+
+LAST_ON_FIRST_PAGE = failed_row_id(ACTIONABLE_PAGE_SIZE - 1)
+EARLIER_ROW = failed_row_id(7)
 
 
 def delivery_entry(status: DeliveryStatus) -> dict[str, Any]:
@@ -168,7 +178,10 @@ class RestPeer:
         self.journal: list[str] = []
         self.refuse_processing: set[str] = set()
         self.confirm_terminal = True
+        # Answers every terminal write verbatim, confirming none of them.
+        self.terminal_error: Reply | None = None
         self.runaway_limit = runaway_limit
+        self.runaway = False
         self._served: dict[int, asyncio.Event] = {}
 
     def post(
@@ -193,6 +206,11 @@ class RestPeer:
             sender_id=SENDER_ID,
             inserted_at=moment.isoformat(),
         )
+
+    def post_failed(self, count: int) -> None:
+        """Store ``count`` messages this agent has already failed."""
+        for index in range(count):
+            self.post(failed_row_id(index), status=DeliveryStatus.FAILED)
 
     def set_status(self, message_id: str, status: DeliveryStatus | None) -> None:
         """Change this agent's status as another runtime would, outside the room."""
@@ -259,9 +277,14 @@ class RestPeer:
             key=lambda row: row.key,
         )
 
-    def _list(self, request: httpx.Request) -> httpx.Response:
-        if len(self.reads) >= self.runaway_limit:
+    def _guard_against_runaway(self) -> None:
+        """Fail a room that polls without end, so it cannot hang the test."""
+        if self.polls >= self.runaway_limit:
+            self.runaway = True
             raise RunawayRescan
+
+    def _list(self, request: httpx.Request) -> httpx.Response:
+        self._guard_against_runaway()
         cursor = request.url.params.get("cursor")
         limit = int(request.url.params["limit"])
         rows = self._outstanding()
@@ -284,6 +307,7 @@ class RestPeer:
         )
 
     def _next(self) -> httpx.Response:
+        self._guard_against_runaway()
         self.nexts.append(asyncio.get_running_loop().time())
         rows = [row for row in self._outstanding()]
         if not rows:
@@ -291,15 +315,23 @@ class RestPeer:
         return httpx.Response(200, json={"data": rows[0].wire})
 
     def _write(self, message_id: str, action: DeliveryStatus) -> httpx.Response:
-        confirmed = (
-            message_id not in self.refuse_processing
-            if action is DeliveryStatus.PROCESSING
-            else self.confirm_terminal
+        terminal = action is not DeliveryStatus.PROCESSING
+        failure = self.terminal_error if terminal else None
+        confirmed = failure is None and (
+            self.confirm_terminal
+            if terminal
+            else message_id not in self.refuse_processing
         )
         self.writes.append(
             Write(message_id, action, asyncio.get_running_loop().time(), confirmed)
         )
         self.journal.append(write(action, message_id, confirmed=confirmed))
+        if failure is not None:
+            return httpx.Response(
+                failure.status,
+                content=failure.body,
+                headers={"content-type": "application/json"},
+            )
         if confirmed:
             self.rows[message_id].statuses[AGENT_ID] = action
         return httpx.Response(
@@ -450,7 +482,7 @@ async def started_session(
             ),
             agent_id=AGENT_ID,
             claim_registry=claims,
-            on_execute_batch=turns.batch if batching else None,
+            on_execute_batch=turns.batch,
             on_message_control=scripted.handle if controls else None,
             is_message_control=scripted.recognizes if controls else None,
         )
@@ -478,7 +510,7 @@ async def runtime_room(
             AGENT_ID,
             turns.single,
             session_config=session_config(batching=batching),
-            on_execute_batch=turns.batch if batching else None,
+            on_execute_batch=turns.batch,
         )
         runtime.rooms.accepting = True
         await runtime.rooms.admit(ROOM_ID)
