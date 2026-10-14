@@ -29,6 +29,7 @@ from tests.adapters.codex.kit import (  # noqa: F401
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
+    patch_codex_client,
     turn_completed,
 )
 
@@ -104,14 +105,16 @@ async def two_rooms() -> AsyncIterator[TwoRooms]:
 
 
 @pytest_asyncio.fixture(loop_scope="function")
-async def started_codex() -> AsyncIterator[
-    Callable[[FakeCodexClient], Awaitable[CodexAdapter]]
-]:
-    """Start Codex adapters over fake app-servers; each is shut down at the end."""
+async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]]]:
+    """Start Codex adapters configured by ``config`` whose processes are the
+    fake app-servers ``clients`` in start order; each is shut down at the end."""
     adapters: list[CodexAdapter] = []
 
-    async def start(client: FakeCodexClient) -> CodexAdapter:
-        adapter = make_codex_adapter(client)
+    async def start(
+        client: FakeCodexClient, *replacements: FakeCodexClient, **config: Any
+    ) -> CodexAdapter:
+        adapter = CodexAdapter(CodexAdapterConfig(**config))
+        patch_codex_client(adapter, client, *replacements)
         await adapter.on_started("Codex Agent", "A coding agent")
         adapters.append(adapter)
         return adapter

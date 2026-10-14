@@ -619,7 +619,6 @@ class RoomCodexClient:
     client: CodexClientProtocol | None = None
     reader: asyncio.Task[None] | None = None
     turn: NativeTurn | None = None
-    model_override: str | None = None
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
@@ -1031,7 +1030,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         def _handle_set_model(inp: SetModelInput) -> str:
             if not adapter._rpc_lock.locked():
                 raise RuntimeError("_handle_set_model must run under _rpc_lock")
-            adapter._require_active_client_state().model_override = inp.model
             adapter._selected_model = inp.model
             return f"Model changed to {inp.model} for subsequent turns."
 
@@ -1894,7 +1892,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         )
         await self._register_skill_roots(client)
         if room.selected_model is None:
-            room.selected_model = await self._select_model(room, client)
+            room.selected_model = await self._select_model(client)
             logger.info(
                 "Room %s: Codex model selected: %s", room.room_id, room.selected_model
             )
@@ -2150,11 +2148,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             env=self.config.codex_env,
         )
 
-    async def _select_model(
-        self, room: RoomCodexClient, client: CodexClientProtocol
-    ) -> str:
-        if room.model_override:
-            return room.model_override
+    async def _select_model(self, client: CodexClientProtocol) -> str:
         if self.config.model:
             return self.config.model
 
@@ -3697,9 +3691,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     )
                 return True
 
-            # Model selection belongs to the room's process, never adapter-wide config.
-            state = self._require_active_client_state()
-            state.model_override = model_arg
+            # The room's choice outlives its process; never adapter-wide config.
             self._selected_model = model_arg
             await deliver_notice(
                 tools,
@@ -4422,7 +4414,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """The room's model and the efforts Codex reports for it (empty if unknown)."""
         room = self._require_active_client_state()
         client = room.require_client()
-        model_id = room.selected_model or await self._select_model(room, client)
+        model_id = room.selected_model or await self._select_model(client)
         try:
             result = await client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:

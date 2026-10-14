@@ -9,27 +9,18 @@ from pathlib import Path
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
 )
 from band.integrations.codex import CodexRequestMethod
-from band.runtime.tools import BandTool
 from band.workspaces import RoomWorkspaces, is_host_absolute, resolve_room_workspace
 from tests.adapters.codex.kit import (
-    PROCESS_EXITED,
-    CodexRoom,
     answered_turn,
     patch_codex_clients_by_room,
     send_bootstrap,
 )
-from tests.adapters.codexturns import (
-    FakeCodexClient,
-    patch_codex_client,
-    tool_call_request,
-    turn_completed,
-)
+from tests.adapters.codexturns import FakeCodexClient
 
 
 class TestRoomWorkspaceIsolation:
@@ -125,25 +116,6 @@ class TestRoomWorkspaceIsolation:
         workspaces.claim("room-b")
 
         assert workspaces.rooms == ("room-b",)
-
-    @pytest.mark.asyncio
-    async def test_model_override_survives_codex_client_rebuild(self) -> None:
-        lost = FakeCodexClient(events=[PROCESS_EXITED])
-        replacement = FakeCodexClient(
-            events=[tool_call_request(1, BandTool.NO_REPLY), turn_completed()]
-        )
-        adapter = CodexAdapter(CodexAdapterConfig(model=None))
-        patch_codex_client(adapter, lost, replacement)
-        await adapter.on_started("Codex Agent", "A coding agent")
-        room = CodexRoom(adapter, lost)
-
-        await room.send("/model room-model")
-        with pytest.raises(TurnResultAlreadyReported):
-            await room.send("work")
-        await room.send("more work")
-
-        (turn,) = replacement.params_of(CodexRequestMethod.TURN_START)
-        assert turn["model"] == "room-model"
 
     def test_codex_rejects_the_former_shared_cwd_option(self) -> None:
         with pytest.raises(ValueError, match="workspace_for_room or the default"):
