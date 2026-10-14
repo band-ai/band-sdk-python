@@ -2230,15 +2230,6 @@ class ExecutionContext:
             logger.debug("Retrying terminal write for backlog message: %s", msg_id)
             return await self._retry_ack_outcome(msg_id)
 
-        if self._delivery_status_for_agent(msg.metadata) == DeliveryStatus.PROCESSED:
-            logger.info(
-                "Skipping stale /next message %s in room %s because it is already processed",
-                msg_id,
-                self.room_id,
-            )
-            self.claims.remember_completed(self.room_id, msg_id)
-            return TurnOutcome.ADVANCED
-
         return await self._run_message_attempt(
             (_backlog_event(msg),),
             revision=self._control_revision if revision is None else revision,

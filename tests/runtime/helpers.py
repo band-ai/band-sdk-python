@@ -179,7 +179,12 @@ class LifecyclePlatform:
         self.activity_reports: list[ActivityReport] = []
 
     def add_message(
-        self, message_id: str, *, content: str = "hello", listed: bool = True
+        self,
+        message_id: str,
+        *,
+        content: str = "hello",
+        listed: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Store a message and return its row; an unlisted one is on the WebSocket only."""
         row = {
@@ -190,7 +195,7 @@ class LifecyclePlatform:
             "sender_type": "User",
             "sender_name": "User",
             "message_type": "text",
-            "metadata": {},
+            "metadata": metadata or {},
             "inserted_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
         }
