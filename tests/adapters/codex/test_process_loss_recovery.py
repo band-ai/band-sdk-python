@@ -27,6 +27,7 @@ from tests.adapters.codex.kit import (
     CodexRoom,
     ToolSchemaFakeTools,
     send_bootstrap,
+    thread_of,
 )
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
@@ -117,7 +118,7 @@ class TestProcessLossRecovery:
 
         assert client.request_methods.count(CodexRequestMethod.THREAD_RESUME) == 2
         assert CodexRequestMethod.THREAD_START not in client.request_methods
-        assert adapter._room_threads[ROOM_ID] == "thr-history"
+        assert thread_of(adapter, ROOM_ID) == "thr-history"
 
     @pytest.mark.asyncio
     async def test_transport_closed_after_error_does_not_double_report(self) -> None:

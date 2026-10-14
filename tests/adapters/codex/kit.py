@@ -189,6 +189,11 @@ def residency_of(adapter: CodexAdapter, room_id: str) -> RetainedRoom | None:
     return room.retained if room is not None else None
 
 
+def thread_of(adapter: CodexAdapter, room_id: str) -> str | None:
+    """The Codex thread the room is on, or None while it has none."""
+    return adapter._room_threads.get(room_id)
+
+
 def wire_codex_room(
     adapter: CodexAdapter,
     client: FakeCodexClient,

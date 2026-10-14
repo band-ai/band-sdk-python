@@ -55,6 +55,7 @@ from tests.adapters.codex.kit import (
     residency_of,
     send_bootstrap,
     started_sub_agent,
+    thread_of,
 )
 from tests.adapters.codexturns import (
     FIRST_THREAD_ID,
@@ -396,6 +397,6 @@ class TestNativeTurnOwnership:
         with pytest.raises(error, match=refusal):
             await send_bootstrap(adapter, tools=tools)
 
-        assert adapter._room_threads[ROOM_ID] == FIRST_THREAD_ID
+        assert thread_of(adapter, ROOM_ID) == FIRST_THREAD_ID
         assert client.request_methods.count(CodexRequestMethod.THREAD_START) == 1
         assert refusal in reported_failures(tools)[0]["message"]

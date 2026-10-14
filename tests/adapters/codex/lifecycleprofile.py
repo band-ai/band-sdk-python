@@ -12,7 +12,7 @@ import pytest
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError, CodexStdioClient
-from tests.adapters.codex.kit import residency_of
+from tests.adapters.codex.kit import residency_of, thread_of
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     ExpectedFailure,
@@ -85,7 +85,7 @@ def install(
     return LifecycleBridge(
         adapter=adapter,
         residency=partial(residency_of, adapter),
-        native_id=adapter._room_threads.get,
+        native_id=partial(thread_of, adapter),
     )
 
 
