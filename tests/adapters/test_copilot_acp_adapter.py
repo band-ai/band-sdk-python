@@ -42,6 +42,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     DEFAULT_ROOM,
     AcpSession,
     launch_for,
+    room_holder,
     started_acp_adapter,
 )
 
@@ -94,7 +95,7 @@ class TestCopilotACPAdapterConstruction:
         # collecting client the runtime builds falls back to the no-op profile.
         adapter = CopilotACPAdapter()
         assert adapter._profile is None
-        client = adapter._build_runtime()._client_factory()
+        client = adapter._build_runtime(room_holder(adapter), 1)._client_factory()
         assert isinstance(client._profile, NoopACPClientProfile)
 
     @pytest.mark.parametrize(
@@ -158,6 +159,11 @@ COPILOT_EFFORTS = {
     "gpt-5.4": ("none", "low", "medium", "high", "xhigh"),
     "claude-haiku-4.5": (),
 }
+
+# Event-loop ticks that cover every step of a model+effort switch, with
+# headroom: a cleanup after tick 15 finds the switch already done.
+SWITCH_SWEEP_TICKS = 24
+ENDED_MID_SWITCH = f"room {DEFAULT_ROOM}'s ACP session ended mid-switch"
 
 
 def copilot(current: str = "claude-sonnet-5") -> FakeACPAgent:
@@ -475,7 +481,7 @@ class TestCopilotACPModelSelection:
     ) -> None:
         agent = copilot()
 
-        async with copilot_room(agent) as session:
+        async with copilot_room(agent, turn_settle_timeout_s=0) as session:
             await session.send("Hello")
             gate = agent.holds_config_replies()
             first = asyncio.create_task(switch_room(session, model="gpt-5.4"))
@@ -486,7 +492,7 @@ class TestCopilotACPModelSelection:
             results = await asyncio.gather(first, queued, return_exceptions=True)
 
         assert isinstance(results[1], BandConfigError)
-        assert str(results[1]) == "room room-1's ACP session ended mid-switch"
+        assert str(results[1]) == ENDED_MID_SWITCH
 
     @pytest.mark.asyncio
     async def test_a_cleanup_at_any_point_of_a_switch_names_the_ended_session(
@@ -494,15 +500,30 @@ class TestCopilotACPModelSelection:
     ) -> None:
         # Sweeps where the cleanup lands: before the model reply, between the
         # model and effort steps, and after the switch completes.
-        outcomes = {await self._switch_cleaned_up_after(ticks) for ticks in range(12)}
+        outcomes = {
+            await self._switch_cleaned_up_after(ticks, turn_settle_timeout_s=0)
+            for ticks in range(SWITCH_SWEEP_TICKS)
+        }
 
-        assert outcomes <= {"ok", "room room-1's ACP session ended mid-switch"}
-        assert "room room-1's ACP session ended mid-switch" in outcomes
+        assert outcomes == {"ok", ENDED_MID_SWITCH}
+
+    @pytest.mark.asyncio
+    async def test_a_cleanup_at_any_point_of_a_switch_lets_it_finish(
+        self,
+    ) -> None:
+        """Within the settle grace a running switch completes before its
+        session ends, wherever the cleanup lands."""
+        outcomes = {
+            await self._switch_cleaned_up_after(ticks)
+            for ticks in range(SWITCH_SWEEP_TICKS)
+        }
+
+        assert outcomes == {"ok"}
 
     @staticmethod
-    async def _switch_cleaned_up_after(ticks: int) -> str:
+    async def _switch_cleaned_up_after(ticks: int, **config: Any) -> str:
         agent = copilot()
-        async with copilot_room(agent) as session:
+        async with copilot_room(agent, **config) as session:
             await session.send("Hello")
             gate = agent.holds_config_replies()
             switch = asyncio.create_task(

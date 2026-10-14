@@ -15,12 +15,13 @@ import json
 import logging
 import re
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Self, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -92,7 +93,14 @@ from band.core.protocols import (
 from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    TURN_SETTLE_GRACE_S,
+    ApprovalInterruptMixin,
+    TurnSettleTimeout,
+    TurnTask,
+    bind_turn_task,
+    start_releasable_turn,
+)
 from band.core.types import (
     ApprovalMode,
     Capability,
@@ -109,8 +117,11 @@ from band.integrations.claude_sdk.dedup_tools import (
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import (
+    CLI_STARTUP_TIMEOUT_S,  # noqa: F401 -- re-exported for adapter configs
+    ClaudeRoomSession,
     ClaudeSessionManager,
-    ClaudeSessionManagerStoppedError,
+    TurnStream,
+    default_claude_retention,
 )
 from band.integrations.mcp import (
     BandMCPBackendSettings,
@@ -131,6 +142,7 @@ from band.runtime.formatters import (
     format_tokens,
     strip_leading_mentions,
 )
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BAND_MCP_SERVER_NAME,
@@ -169,6 +181,8 @@ _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 _PROVIDER = "claude_sdk"
+#: What a Claude turn that failed in the provider reports to the room.
+_TURN_FAILURE = AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 # Flags the SDK emits from the options the adapter builds (pinned against the
 # SDK's real command by test_cli_options.py).
@@ -333,6 +347,9 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
             ``"haiku"``, ``"inherit"``). ``None`` pins
             ``band.core.defaultmodels.ANTHROPIC_MODEL``.
         fallback_model: Model the CLI uses when ``model`` is unavailable.
+        retention: Room residency settings. Idle retention is unavailable;
+            ``transition_timeout_s`` bounds each CLI startup and close a caller
+            waits on, and defaults to ``CLI_STARTUP_TIMEOUT_S``.
         custom_section: Extra instructions appended to the system prompt.
         max_thinking_tokens: Extended-thinking budget; ``None`` disables it.
         effort: Response effort level; ``None`` uses the model default.
@@ -357,7 +374,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
     model: str | None = None
     fallback_model: str | None = None
-    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
+    retention: RoomRetentionConfig = Field(default_factory=default_claude_retention)
     custom_section: str | None = None
     max_thinking_tokens: PositiveInt | None = None
     effort: EffortLevel | None = None
@@ -365,6 +382,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     cwd: DirectoryPath | None = None
     setting_sources: tuple[SettingSource, ...] = ()
     turn_timeout_s: PositiveFloat | None = None
+    turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     send_message_dedup_ttl_seconds: NonNegativeFloat = DEFAULT_DEDUP_TTL_SECONDS
     cli: ClaudeCLIOptions = Field(default_factory=ClaudeCLIOptions)
     approvals: ClaudeApprovalOptions | None = None
@@ -434,6 +452,8 @@ APPROVAL_UNKNOWN_TOKEN_TEMPLATE = (
     "Unknown approval token `{token}`. Available: {available}."
 )
 APPROVAL_UNAUTHORIZED_MESSAGE = "You are not authorized to approve or decline tool use."
+# A permission request from a CLI whose residency was retired or replaced.
+RETIRED_SESSION_DENIAL = "This Claude session was retired"
 
 # Commands recognised as local (not forwarded to Claude)
 _APPROVAL_CMDS = frozenset(
@@ -530,6 +550,20 @@ class PendingApproval:
     future: asyncio.Future[ApprovalReply | None]
 
 
+async def _fail_turn(
+    session: ClaudeRoomSession,
+    tools: AgentToolsProtocol,
+    error: Exception,
+    *,
+    reason: str,
+    forget_session: bool = False,
+) -> NoReturn:
+    """Recover the room's CLI, report the turn's failure, and mark it reported."""
+    session.recover(reason, forget_session=forget_session)
+    await tools.send_failure(_TURN_FAILURE)
+    raise TurnResultAlreadyReported(str(error)) from error
+
+
 def __getattr__(name: str) -> Any:
     if name == "BAND_TOOLS":
         warnings.warn(
@@ -620,11 +654,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._mcp_room_tools: dict[str, AgentToolsProtocol] = {}
 
-        # Per-room session context (text history for Claude SDK)
-        self._session_context: dict[str, str] = {}
-
-        # Per-room session IDs (for SDK session resume)
-        self._session_ids: dict[str, str] = {}
+        # The session id each room last recorded as a task event; the room's
+        # ClaudeRoomSession owns the id it resumes.
+        self._recorded_session_ids: dict[str, str] = {}
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
@@ -661,11 +693,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # {room_id: the current turn's release future}
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         # {room_id: the owner of the current turn's background worker}, so
-        # on_message can refuse to start a second concurrent turn on the same client.
+        # on_message can refuse to start a second concurrent turn on the same
+        # client. The TurnTask cancels it for STOP and interrupts; leaving the
+        # room cancels it through the RetainedRoom, which fences admission first.
         self._turn_tasks: dict[str, TurnTask] = {}
-        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
-        self._closing_rooms: set[str] = set()
-        self._closing_all = False
 
     @property
     def _approvals(self) -> ClaudeApprovalOptions:
@@ -673,6 +704,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if (approvals := self.config.approvals) is None:
             raise RuntimeError("chat-based approvals are disabled")
         return approvals
+
+    async def _stop_sessions(self) -> None:
+        if self._session_manager is not None:
+            await self._session_manager.stop()
 
     @property
     def _approval_label(self) -> str:
@@ -682,9 +717,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
-        await super().on_started(agent_name, agent_description)
+        # A stop is terminal for its manager: finish it before starting anew.
         if self._session_manager is not None:
             await self.cleanup_all()
+        await super().on_started(agent_name, agent_description)
 
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()
@@ -750,12 +786,14 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         can_use_tool_factory = (
             self._make_can_use_tool if self.config.approvals is not None else None
         )
-        self._closing_all = False
         self._session_manager = ClaudeSessionManager(
             sdk_options,
             can_use_tool_factory=can_use_tool_factory,
             mcp_servers_factory=self._room_mcp_servers,
             workspaces=self._workspaces,
+            retention=self.config.retention,
+            settle_grace_s=self.config.turn_settle_timeout_s,
+            on_disposed=self._forget_room,
         )
 
         logger.info(
@@ -860,8 +898,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """
         Handle one turn over its original messages.
 
-        - Store tools for MCP server access
-        - Get or create ClaudeSDKClient for this room
+        - Reserve the room's turn task before anything awaits
+        - Bind the turn's tools, then reuse or start the room's CLI
         - Stream response and log events (tools execute via MCP)
         """
         message_ids = [msg.id for msg in messages]
@@ -873,85 +911,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
 
         self._admit_turn(room_id, "Claude")
+        session = self._session_manager.room(room_id)
 
-        # The running turn's approvals and MCP calls keep their original tools.
-        self._room_tools[room_id] = tools
-        await self._bind_mcp_tools(room_id, tools)
-        await self._mcp.ensure()
-
-        # The manager only resumes when it has to create the client: on
-        # bootstrap, or after a retired client (see _retire_client).
-        stored_session_id = (
-            history.session_id if is_session_bootstrap else None
-        ) or self._session_ids.get(room_id)
-
-        try:
-            client = await self._open_session(
-                manager=self._session_manager,
-                room_id=room_id,
-                resume_session_id=stored_session_id,
-            )
-        except ClaudeSessionManagerStoppedError:
-            raise
-        except Exception:
-            logger.exception("Room %s: Session creation failed", room_id)
-            await tools.send_failure(
-                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-            )
-            raise
-
-        # Initialize history for this room on first message
-        if is_session_bootstrap:
-            if history.text:  # Already converted to text by SimpleAdapter
-                self._session_context[room_id] = history.text
-                logger.info(
-                    "Room %s: Loaded historical context (%s chars)",
-                    room_id,
-                    len(history.text),
-                )
-            else:
-                self._session_context[room_id] = ""
-        elif room_id not in self._session_context:
-            # Safety: ensure context exists even if not first message
-            self._session_context[room_id] = ""
-
-        # Build message with context
-        messages_to_send = []
-
-        # Include historical context on first message. Frame it as authoritative
-        # memory, not a passive quote: under the claude_code preset the model treats a
-        # "previous context" aside weakly, so a fact another participant stated (or that
-        # you stated) while you were offline gets missed on recall. Tell it plainly this
-        # is its own memory of the room and to answer from it.
-        if is_session_bootstrap and self._session_context.get(room_id):
-            messages_to_send.append(
-                "Your memory of this room so far — real earlier messages from you and "
-                "from other participants and agents, including ones sent while you were "
-                "offline. Treat these as facts you know and answer questions about the "
-                f"conversation directly from them:\n"
-                f"{self._session_context[room_id]}"
-            )
-
-        # Inject participants message if changed
-        if participants_msg:
-            messages_to_send.append(f"[System]: {participants_msg}")
-            logger.info("Room %s: Participants updated", room_id)
-
-        # Inject contacts message if present
-        if contacts_msg:
-            messages_to_send.append(f"[System]: {contacts_msg}")
-            logger.info("Room %s: Contacts broadcast received", room_id)
-
-        messages_to_send.append(format_current_inputs(messages))
-
-        # Send combined message to Claude
-        full_message = "\n\n".join(messages_to_send)
-
-        logger.info(
-            "Room %s: Sending query to Claude SDK (first_msg=%s, parts=%s)",
-            room_id,
-            is_session_bootstrap,
-            len(messages_to_send),
+        full_message = self._compose_prompt(
+            messages,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
         )
 
         # Run the turn as a detached task and only await its *release* --
@@ -959,26 +927,28 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # early (see _resolve_manual_approval / _release_turn) so on_message
         # can return and Band's strictly-sequential per-room message loop can
         # dispatch the reply that will eventually resolve the approval. When
-        # nothing needs a human, the turn finishes before release fires and
-        # this is equivalent to the previous synchronous await.
-        self._require_running()
+        # nothing needs a human, the turn finishes before release fires.
         loop = asyncio.get_running_loop()
         release_future: asyncio.Future[None] = loop.create_future()
-        self._turn_release[room_id] = release_future
-        # An eager task factory runs the turn before create_task returns.
+        # The turn's own TurnTask exists only once its task does.
         owner_ready: asyncio.Future[TurnTask] = loop.create_future()
-        turn_task = asyncio.create_task(
-            self._run_turn(
+        turn_task = start_releasable_turn(
+            session.retained,
+            partial(
+                self._run_turn,
                 owner_ready,
-                client,
-                room_id,
+                session,
                 tools,
                 full_message,
                 message_ids,
                 distinct_sender_ids(messages),
                 release_future,
-            )
+                resume_from=history.session_id if is_session_bootstrap else None,
+            ),
+            tools=tools,
+            room_id=room_id,
         )
+        self._turn_release[room_id] = release_future
         self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn_task)
         owner_ready.set_result(owner)
         try:
@@ -987,8 +957,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
             if turn_task.done():
                 # The turn finished before release fired (the common, no-approval
-                # case) -- await it so a failure still propagates through
-                # on_message exactly as it did before this turn ran detached.
+                # case) -- await it so a failure propagates through on_message.
                 await turn_task
         except asyncio.CancelledError:
             await self._cancel_turn(room_id)
@@ -997,91 +966,165 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
 
-    async def _open_session(
-        self, manager: ClaudeSessionManager, room_id: str, resume_session_id: str | None
-    ) -> ClaudeSDKClient:
-        """The room's client, starting a fresh session when the resume fails."""
-        try:
-            return await manager.get_or_create_session(
-                room_id, resume_session_id=resume_session_id
-            )
-        except ClaudeSessionManagerStoppedError:
-            raise
-        except Exception as resume_exc:
-            if not resume_session_id:
-                raise
-            logger.warning(
-                "Room %s: Session resume failed (session_id=%s): %s. "
-                "Creating new session",
-                room_id,
-                resume_session_id,
-                resume_exc,
-            )
-        self._require_running()
-        return await manager.get_or_create_session(room_id, resume_session_id=None)
+    def _compose_prompt(
+        self,
+        messages: Sequence[PlatformMessage],
+        history: ClaudeSDKSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> str:
+        """The text sent to Claude: bootstrap memory, system updates, the turn's inputs."""
+        messages_to_send = []
 
-    def _require_running(self) -> None:
-        if self._closing_all:
-            raise ClaudeSessionManagerStoppedError("Claude adapter is stopping")
+        # Include historical context on first message. Frame it as authoritative
+        # memory, not a passive quote: under the claude_code preset the model treats a
+        # "previous context" aside weakly, so a fact another participant stated (or that
+        # you stated) while you were offline gets missed on recall. Tell it plainly this
+        # is its own memory of the room and to answer from it.
+        if is_session_bootstrap and history.text:  # Already text via SimpleAdapter
+            logger.info(
+                "Room %s: Loaded historical context (%s chars)",
+                room_id,
+                len(history.text),
+            )
+            messages_to_send.append(
+                "Your memory of this room so far — real earlier messages from you and "
+                "from other participants and agents, including ones sent while you were "
+                "offline. Treat these as facts you know and answer questions about the "
+                f"conversation directly from them:\n"
+                f"{history.text}"
+            )
+
+        if participants_msg:
+            messages_to_send.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
+            logger.info("Room %s: Participants updated", room_id)
+
+        if contacts_msg:
+            messages_to_send.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
+            logger.info("Room %s: Contacts broadcast received", room_id)
+
+        messages_to_send.append(format_current_inputs(messages))
+
+        logger.info(
+            "Room %s: Sending query to Claude SDK (first_msg=%s, parts=%s)",
+            room_id,
+            is_session_bootstrap,
+            len(messages_to_send),
+        )
+        return "\n\n".join(messages_to_send)
 
     async def _run_turn(
         self,
         owner_ready: asyncio.Future[TurnTask],
-        client: ClaudeSDKClient,
-        room_id: str,
+        session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
         full_message: str,
         message_ids: list[str],
         audience: tuple[str, ...],
         release_future: asyncio.Future[None],
+        *,
+        resume_from: str | None,
     ) -> None:
-        """Run one turn to completion; always releases ``release_future``."""
+        """Run one turn under the room's lease; always releases ``release_future``."""
         owner = await owner_ready
-        self._turn_audience[room_id] = audience
+        self._turn_audience[session.room_id] = audience
         try:
-            try:
-                await self._query_within_deadline(
-                    owner, client, room_id, tools, full_message
-                )
-
-            except TurnResultAlreadyReported:
-                # The failure was already reported via send_failure deeper in
-                # the call stack; propagate without reporting it a second time.
-                raise
-
-            except CLIConnectionError as e:
-                # CLI process is dead — evict the cached session so the next
-                # message creates a fresh one instead of reusing the corpse.
-                logger.error(
-                    "Room %s: CLI process terminated: %s — invalidating session",
-                    room_id,
-                    e,
-                )
-                await self._invalidate_session(room_id)
-
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                raise
-
-            except Exception:
-                logger.exception("Error processing message")
-                await tools.send_failure(
-                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                await self._retire_client(room_id)
-                raise
-
-            except asyncio.CancelledError:
-                await self._retire_client(room_id)
-                raise
-
+            async with self._turn_lease(session, tools, resume_from) as client:
+                await self._converse(owner, session, client, tools, full_message)
             logger.debug("Messages %s processed successfully", message_ids)
         finally:
-            self._turn_audience.pop(room_id, None)
-            self._release_turn(room_id, release_future)
-            if self._turn_tasks.get(room_id) is owner:
-                del self._turn_tasks[room_id]
+            self._turn_audience.pop(session.room_id, None)
+            self._release_turn(session.room_id, release_future)
+            if self._turn_tasks.get(session.room_id) is owner:
+                del self._turn_tasks[session.room_id]
+
+    @asynccontextmanager
+    async def _turn_lease(
+        self,
+        session: ClaudeRoomSession,
+        tools: AgentToolsProtocol,
+        resume_from: str | None,
+    ) -> AsyncIterator[ClaudeSDKClient]:
+        """Lease the room for one turn: bind its tools, then reuse or start
+        the CLI. The room hears here about a session that failed to start;
+        failures inside the turn are reported where they happen."""
+        started = False
+        try:
+            # Before the lease: a replaced server retires the room's CLI, and
+            # that recovery runs only while no operation leases the room.
+            await self._mcp.ensure()
+            session.retire_outdated()
+            prepare = partial(self._bind_turn, session, tools, resume_from)
+            async with session.using(prepare) as client:
+                started = True
+                yield client
+        except Exception:
+            if not started and not session.retained.closing:
+                logger.exception("Room %s: Session creation failed", session.room_id)
+                await tools.send_failure(_TURN_FAILURE)
+            raise
+
+    async def _bind_turn(
+        self,
+        session: ClaudeRoomSession,
+        tools: AgentToolsProtocol,
+        resume_from: str | None,
+    ) -> None:
+        """Bind a leased turn before the CLI that will call its tools starts."""
+        session.adopt(resume_from)
+        # The running turn's approvals and MCP calls keep their original tools.
+        self._room_tools[session.room_id] = tools
+        await self._bind_mcp_tools(session.room_id, tools)
+
+    async def _converse(
+        self,
+        owner: TurnTask,
+        session: ClaudeRoomSession,
+        client: ClaudeSDKClient,
+        tools: AgentToolsProtocol,
+        full_message: str,
+    ) -> None:
+        """Query and stream one turn; a turn that stops short of its result
+        retires the CLI once the turn's lease unwinds."""
+        try:
+            await self._query_within_deadline(
+                owner, session, client, tools, full_message
+            )
+
+        except TurnResultAlreadyReported:
+            # The failure was already reported via send_failure deeper in
+            # the call stack; propagate without reporting it a second time.
+            raise
+
+        except CLIConnectionError as e:
+            # The CLI process is dead: the next message starts a new session.
+            logger.error(
+                "Room %s: CLI process terminated: %s — retiring session",
+                session.room_id,
+                e,
+            )
+            await _fail_turn(
+                session,
+                tools,
+                e,
+                reason=f"CLI process terminated: {e}",
+                forget_session=True,
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Room %s: error processing message (generation %s)",
+                session.room_id,
+                session.generation,
+            )
+            await _fail_turn(session, tools, e, reason="Turn failed before its result")
+
+        except asyncio.CancelledError:
+            session.recover("Turn cancelled before its result")
+            raise
 
     def _release_turn(
         self, room_id: str, release_future: asyncio.Future[None] | None = None
@@ -1104,8 +1147,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def _query_within_deadline(
         self,
         owner: TurnTask,
+        session: ClaudeRoomSession,
         client: ClaudeSDKClient,
-        room_id: str,
         tools: AgentToolsProtocol,
         full_message: str,
     ) -> None:
@@ -1115,31 +1158,40 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         propagates as an ordinary turn failure.
         """
         deadline: asyncio.Timeout | None = None
-        try:
-            async with owner.timed(self.config.turn_timeout_s) as deadline:
-                await client.query(full_message)
-                # MCP tools handle execution; this dispatches the stream.
-                await self._process_response(client, room_id, tools)
-        except TimeoutError:
-            if deadline is None or not deadline.expired():
-                raise
-            detail = await self._abandon_timed_out_turn(owner, client, room_id)
-            await tools.send_failure(
-                AgentFailure(_PROVIDER, detail, FAILURE_CODE_TIMEOUT)
-            )
-            raise TurnResultAlreadyReported(detail) from None
+        with session.listening() as stream:
+            try:
+                async with owner.timed(self.config.turn_timeout_s) as deadline:
+                    await client.query(full_message)
+                    # MCP tools handle execution; this dispatches the stream.
+                    await self._process_response(stream, session, tools)
+            except TimeoutError:
+                if deadline is None or not deadline.expired():
+                    raise
+                detail = await self._abandon_timed_out_turn(
+                    owner, session, client, stream
+                )
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, detail, FAILURE_CODE_TIMEOUT)
+                )
+                raise TurnResultAlreadyReported(detail) from None
 
     async def _abandon_timed_out_turn(
-        self, owner: TurnTask, client: ClaudeSDKClient, room_id: str
+        self,
+        owner: TurnTask,
+        session: ClaudeRoomSession,
+        client: ClaudeSDKClient,
+        stream: TurnStream,
     ) -> str:
         """Interrupt a turn that outlived ``turn_timeout_s``; return the notice.
 
         The interrupted turn still streams a final ResultMessage, which the
         next turn on this client would otherwise read as its own. It is
-        drained here. A client whose process died is evicted; one that is
-        still running but will not stop is closed, keeping any captured
-        session id so the next message resumes it on a fresh process.
+        drained here from the same reader. A client whose process died is
+        retired with its session; one that is still running but will not stop
+        is retired keeping its session id, so the next message resumes it on
+        a fresh process.
         """
+        room_id = session.room_id
         logger.warning(
             "Room %s: Claude turn timed out after %ss",
             room_id,
@@ -1148,23 +1200,24 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         try:
             async with owner.timed(_TIMEOUT_DRAIN_SECONDS, cleanup=True):
                 await client.interrupt()
-                async for sdk_message in client.receive_response():
-                    if isinstance(sdk_message, ResultMessage):
-                        break
+                async for _ in stream.until_result():
+                    pass
+                if not stream.completed:
+                    raise CLIConnectionError(self._stream_ended_without_result_error())
         except CLIConnectionError:
             logger.warning(
-                "Room %s: timed-out Claude turn's CLI is gone; invalidating session",
+                "Room %s: timed-out Claude turn's CLI is gone; retiring session",
                 room_id,
                 exc_info=True,
             )
-            await self._invalidate_session(room_id)
+            session.recover("Timed-out turn's CLI is gone", forget_session=True)
         except Exception:
             logger.warning(
                 "Room %s: timed-out Claude turn did not stop; closing its client",
                 room_id,
                 exc_info=True,
             )
-            await self._retire_client(room_id)
+            session.recover("Timed-out turn did not stop")
         return f"Claude turn timed out after {self.config.turn_timeout_s}s"
 
     async def _bind_mcp_tools(self, room_id: str, tools: AgentToolsProtocol) -> None:
@@ -1193,36 +1246,18 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             ),
         )
 
-    async def _retire_client(self, room_id: str) -> None:
-        """Close a live client whose turn stopped before its ResultMessage.
-
-        The CLI keeps that turn's remaining messages queued, and the next
-        ``receive_response`` would read them as its own. The session id stays,
-        so the next client resumes the conversation.
-        """
-        if self._session_manager:
-            await self._session_manager.cleanup_session(
-                room_id, release_workspace=False
-            )
-
-    async def _invalidate_session(self, room_id: str) -> None:
-        """Evict the cached session and client so the next message for this
-        room creates a fresh one instead of reusing a corpse."""
-        if self._session_manager:
-            await self._session_manager.invalidate_session(room_id)
-        self._session_ids.pop(room_id, None)
-
     async def _process_response(
-        self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
+        self, stream: TurnStream, session: ClaudeRoomSession, tools: AgentToolsProtocol
     ) -> None:
         """Dispatch the turn's streamed messages until its terminal ResultMessage.
 
         MCP tools handle actual execution - we log and optionally report events here.
         """
+        room_id = session.room_id
         # The room's pending-call map (see __init__) — persists across turns
         # so a result replayed by a resumed session still resolves its name.
         pending_tool_names = self._pending_tool_names.setdefault(room_id, {})
-        async for sdk_message in client.receive_response():
+        async for sdk_message in stream.until_result():
             match sdk_message:
                 case AssistantMessage():
                     await self._on_assistant_message(
@@ -1249,20 +1284,19 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                         self.config.permission_mode,
                     )
                 case ResultMessage():
-                    await self._on_turn_complete(sdk_message, room_id, tools)
+                    await self._on_turn_complete(sdk_message, session, tools)
                     return
-        # ``receive_response`` is documented to terminate only after its
-        # ResultMessage. Reaching EOF first means the CLI transport died.
+        # The stream ended before the turn's ResultMessage: the CLI died.
         if tools.turn.complete:
             # The turn already answered or did its work. Failing it would mark
             # the message FAILED, which a later process or context runs again,
             # repeating that work. Drop the dead session; the turn is done.
             logger.warning(
                 "Room %s: CLI stream ended without a result after the turn "
-                "completed — invalidating session",
+                "completed — retiring session",
                 room_id,
             )
-            await self._invalidate_session(room_id)
+            session.recover("CLI stream ended after the turn", forget_session=True)
             return
         # The turn is incomplete: use the normal dead-client path so the
         # runtime marks it failed and the cached client is not reused.
@@ -1419,7 +1453,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def _on_turn_complete(
         self,
         sdk_message: ResultMessage,
-        room_id: str,
+        session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
     ) -> None:
         """Close out the turn: persist session id, emit usage, surface failure.
@@ -1427,6 +1461,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         A turn released early for an approval is judged here, at its real end;
         any other turn is judged by ``judged_turn`` once ``on_turn`` returns.
         """
+        room_id = session.room_id
         logger.info(
             "Room %s: Complete - %sms, $%.4f",
             room_id,
@@ -1434,7 +1469,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             sdk_message.total_cost_usd or 0,
         )
         if sdk_message.session_id:
-            await self._persist_session_id(sdk_message.session_id, room_id, tools)
+            await self._persist_session_id(sdk_message.session_id, session, tools)
         # The ResultMessage carries the turn's total usage (the SDK runs
         # its own tool loop internally, so this is already aggregated).
         await self.emit_usage(tools, self._usage_from_result(sdk_message))
@@ -1504,15 +1539,16 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
 
     async def _persist_session_id(
-        self, session_id: str, room_id: str, tools: AgentToolsProtocol
+        self, session_id: str, session: ClaudeRoomSession, tools: AgentToolsProtocol
     ) -> None:
-        """Cache the session id for resume and, when it changed, persist it as
+        """Keep the session id for resume and, when it changed, persist it as
         a task event (best-effort)."""
-        prev_session_id = self._session_ids.get(room_id)
-        self._session_ids[room_id] = session_id
+        room_id = session.room_id
+        session.session_id = session_id
         logger.debug("Room %s: Captured session_id %s", room_id, session_id)
-        if session_id == prev_session_id:
+        if self._recorded_session_ids.get(room_id) == session_id:
             return
+        self._recorded_session_ids[room_id] = session_id
         try:
             await tools.send_event(
                 content="Claude SDK session",
@@ -1611,54 +1647,40 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         )
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Clean up Claude SDK session and stored tools when agent leaves a room."""
-        await self._retire_room(
-            room_id,
-            settle=self._cancel_turn,
-            close=partial(self._close_room, room_id),
-        )
+        """Leave a room: admission closes at once, its turn gets
+        ``turn_settle_timeout_s`` to wind down before it and any startup are
+        cancelled, its CLI closes, then its state is dropped. A failed
+        cleanup keeps everything for a retry to join; an unfinished one still
+        drops the state once it finishes."""
+        self._clear_pending_approvals_for_room(room_id)
+        manager = self._session_manager
+        if manager is None or manager.session(room_id) is None:
+            self._forget_room(room_id)
+            return
+        await manager.cleanup_session(room_id)
 
-    async def _close_room(self, room_id: str) -> None:
-        if self._session_manager:
-            await self._session_manager.cleanup_session(room_id)
+    def _forget_room(self, room_id: str) -> None:
         self._room_tools.pop(room_id, None)
         self._mcp_room_tools.pop(room_id, None)
-        self._session_context.pop(room_id, None)
-        self._session_ids.pop(room_id, None)
+        self._recorded_session_ids.pop(room_id, None)
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
         self._turn_release.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     async def cleanup_all(self) -> None:
-        """Cleanup all sessions (call on stop)."""
-        self._closing_all = True
-        # Decline all pending approvals across rooms
+        """Stop the session manager, then the shared Band MCP server, within
+        one ``retention.transition_timeout_s`` budget.
+
+        Stopping closes admission for every room at once; rooms close first
+        because their CLIs dial the server until they do. An unfinished or
+        failed step stays owned for a retry.
+        """
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        rooms = set(self._room_tools) | set(self._turn_tasks) | self._closing_rooms
-        results = await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in rooms), return_exceptions=True
+        await self._mcp.close_after(
+            self._stop_sessions(), retention=self.config.retention
         )
-        errors: list[Exception] = []
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, Exception):
-                errors.append(result)
-        if errors:
-            raise ExceptionGroup("Claude session cleanup failed", errors)
-        if self._session_manager:
-            await self._session_manager.stop()
-        await self._mcp.close(final=True)
-        self._room_tools.clear()
-        self._mcp_room_tools.clear()
-        self._session_context.clear()
-        self._session_ids.clear()
-        self._notified_declines.clear()
-        self._pending_tool_names.clear()
-        self._turn_release.clear()
-        self._turn_tasks.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
@@ -1676,17 +1698,29 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """
         return sdk_tool_name.removeprefix(MCP_TOOL_PREFIX)
 
-    def _make_can_use_tool(self, room_id: str) -> CanUseTool:
-        """Return a room-bound ``can_use_tool`` callback for the Claude SDK."""
+    def _make_can_use_tool(
+        self, session: ClaudeRoomSession, generation: int
+    ) -> CanUseTool:
+        """A ``can_use_tool`` callback bound to one residency of one room; a
+        retired residency's late request is denied without reaching the room."""
 
         async def _can_use_tool(
             tool_name: str,
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
-            return await self._resolve_tool_permission(
-                room_id, tool_name, tool_input, context
-            )
+            # Checked again after deciding: the residency may retire meanwhile.
+            if session.speaks_for(generation):
+                decision = await self._resolve_tool_permission(
+                    session.room_id, tool_name, tool_input, context
+                )
+                if session.speaks_for(generation):
+                    return decision
+                why = "decided after its Claude session retired"
+            else:
+                why = "requested by a retired Claude session"
+            logger.warning("Room %s: denied %s, %s", session.room_id, tool_name, why)
+            return PermissionResultDeny(message=RETIRED_SESSION_DENIAL)
 
         return _can_use_tool
 
@@ -2032,10 +2066,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         sender: dict[str, str],
     ) -> None:
         """Handle the ``/status`` command."""
-        session_count = (
-            self._session_manager.get_session_count() if self._session_manager else 0
-        )
-        session_id = self._session_ids.get(room_id, "—")
+        manager = self._session_manager
+        session_count = manager.get_session_count() if manager else 0
+        session = manager.session(room_id) if manager else None
+        session_id = (session.session_id if session else None) or "—"
         registry = self._pending_approvals.get(room_id)
         pending_count = registry.unclaimed_count() if registry else 0
 

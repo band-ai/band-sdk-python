@@ -20,7 +20,10 @@ class TestBatchInterrupts:
         self, codex_room: OpenRoom, mode: ControlMode
     ) -> None:
         room = await codex_room(
-            approval_request(10), reply_to_room(), turn_completed("turn-2")
+            approval_request(10),
+            turn_completed(),
+            reply_to_room(),
+            turn_completed("turn-2"),
         )
         await room.send_batch(*room.alice_helper_alice())
         parked = room.turn
@@ -29,7 +32,4 @@ class TestBatchInterrupts:
         tools = await room.send_batch(*room.alice_helper_alice())
 
         assert parked.done()
-        assert (tools.turn.replied, ROOM_ID in room.adapter._pending_approvals) == (
-            True,
-            False,
-        )
+        assert (tools.turn.replied, room.pending_approval_count) == (True, 0)

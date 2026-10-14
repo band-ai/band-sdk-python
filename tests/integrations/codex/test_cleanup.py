@@ -4,6 +4,7 @@ stops everything the launched process spawned."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import textwrap
 from collections.abc import AsyncIterator
@@ -13,7 +14,10 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
-from tests.paths import REPO_ROOT
+from tests.integrations.codex.cleanup import cleanup_snapshot
+from tests.paths import ROOM_PEER
+
+logger = logging.getLogger(__name__)
 
 HEARTBEAT_S = 0.05
 HEARTBEAT_FILE = "heartbeat"
@@ -50,7 +54,7 @@ async def child(
         command=[
             sys.executable,
             "-u",
-            str(REPO_ROOT / "tests/adapters/roompeer.py"),
+            str(ROOM_PEER),
             "--stay",
         ],
         cwd=str(tmp_path),
@@ -92,7 +96,13 @@ class TestSubprocessCleanup:
         else:
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(client.close(), timeout=0.05)
-        await asyncio.wait_for(process.wait(), timeout=3)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3)
+        except TimeoutError:
+            logger.error(
+                "Codex cleanup deadline: %s", cleanup_snapshot(client, process)
+            )
+            raise
         await client.close()
         assert process.returncode is not None
 

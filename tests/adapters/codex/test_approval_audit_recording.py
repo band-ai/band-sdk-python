@@ -1,0 +1,29 @@
+"""Codex adapter: approval audit recording."""
+
+from __future__ import annotations
+
+from band.adapters.codex import (
+    CodexAdapter,
+    CodexAdapterConfig,
+)
+from band.integrations.codex.types import CodexApprovalMethod
+from tests.adapters.codex.kit import ROOM_ID
+
+
+class TestApprovalAuditRecording:
+    """_record_approval_audit API surface."""
+
+    def test_record_approval_audit_returns_entry(self) -> None:
+        """_record_approval_audit returns the entry it appended."""
+        adapter = CodexAdapter(config=CodexAdapterConfig())
+        entry = adapter._record_approval_audit(
+            room_id=ROOM_ID,
+            request_id="req-1",
+            method=CodexApprovalMethod.COMMAND_EXECUTION,
+            decision="accept",
+            decided_by="tester",
+            summary="command: ls",
+        )
+        assert entry.request_id == "req-1"
+        assert entry.decision == "accept"
+        assert adapter._approval_audit[ROOM_ID][-1] is entry

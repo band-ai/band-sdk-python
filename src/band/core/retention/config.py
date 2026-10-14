@@ -11,7 +11,8 @@ class RoomRetentionConfig(BaseAdapterConfig):
     """Automatic suspension is opt-in and requires a qualified provider.
 
     ``transition_timeout_s`` bounds how long a caller waits to learn the result
-    of one owned acquisition or cleanup; an unfinished one stays owned.
+    of one owned acquisition or cleanup; an unfinished one stays owned, and an
+    acquisition its caller stopped waiting for is cancelled for recovery.
     """
 
     idle_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)

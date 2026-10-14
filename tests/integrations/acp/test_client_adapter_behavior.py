@@ -14,7 +14,6 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -33,10 +32,13 @@ from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
     ACPClientAdapter,
-    SessionInitializer,
 )
-from band.integrations.acp.client_types import ACPClientSessionState
-from band.integrations.mcp import BandMCPBackendStoppedError
+from band.integrations.acp.client_types import (
+    SESSION_BUSY_CODE,
+    SESSION_BUSY_REASON,
+    ACPClientSessionState,
+    session_busy_error,
+)
 from band.runtime.formatters import build_participants_message
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
@@ -727,9 +729,9 @@ async def test_band_tool_call_without_chat_id_lands_in_its_own_room(
 
 @pytest.mark.asyncio
 async def test_a_turn_after_shutdown_is_refused(fake_agent) -> None:
-    """``cleanup_all()`` (as ``Agent.stop()`` calls it) closes the Band MCP
-    backend for good: a late turn fails instead of starting a server nothing
-    would stop."""
+    """``cleanup_all()`` (as ``Agent.stop()`` calls it) stops room residency
+    and the Band MCP backend for good: a late turn is refused before it starts
+    a process or a server nothing would stop."""
     fake_agent.will_say("ok")
     with backends_created_by() as starts:
         async with acp_adapter(
@@ -738,10 +740,11 @@ async def test_a_turn_after_shutdown_is_refused(fake_agent) -> None:
             await session.send("before shutdown", room="room-1")
             await session.adapter.cleanup_all()
 
-            with pytest.raises(BandMCPBackendStoppedError):
+            with pytest.raises(InputNotAccepted, match="retention is stopping"):
                 await session.send("after shutdown", room="room-2")
 
     assert len(starts.requested) == 1
+    assert fake_agent.session_ids() == ["fake-session-1"]
 
 
 @pytest.mark.asyncio
@@ -779,7 +782,7 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
 
         reply = await session.send("after the crash", room="room-1")
         live_url = band_mcp_url(fake_agent, session.session_id("room-1"))
-        await session.adapter._drain_background_tasks()
+        await session.retired_sessions_closed("room-1")
 
         assert fake_agent.closed_sessions == [stale_session]
         assert not session.runtime_keeps_output_of(stale_session, room="room-1")
@@ -787,32 +790,6 @@ async def test_an_open_rooms_band_reply_survives_a_crash(fake_agent) -> None:
     assert reply.texts == ["Reply from the agent"]
     assert "error" not in reply.outline
     assert urlsplit(live_url).port != urlsplit(crashed_url).port
-
-
-@pytest.mark.asyncio
-async def test_a_retired_sessions_unreleased_setup_is_never_reused(fake_agent) -> None:
-    """A turn that finished creating the room's session may not have released
-    its setup yet; the next turn, after the Band URL went stale, must not be
-    handed that retired session."""
-    async with acp_adapter(
-        fake_agent, fake_agent_config(inject_band_tools=True)
-    ) as session:
-        await session.send("before the crash", room="room-1")
-        retired = session.session_id("room-1")
-        unreleased = asyncio.create_task(_finished_setup(retired))
-        await unreleased
-        session.adapter._session_initializers["room-1"] = SessionInitializer(
-            task=unreleased, waiters=1
-        )
-        await crash_backend(session.adapter._mcp)
-
-        await session.send("after the crash", room="room-1")
-
-        assert session.session_id("room-1") != retired
-
-
-async def _finished_setup(session_id: str) -> tuple[str, bool]:
-    return session_id, True
 
 
 @pytest.mark.asyncio
@@ -852,7 +829,7 @@ async def test_a_bootstrap_after_a_crash_never_restores_the_retired_session() ->
         await session.send("before the crash", bootstrap=True, history=history)
         await crash_backend(session.adapter._mcp)
         await session.send("after the crash", bootstrap=True, history=history)
-        await session.adapter._drain_background_tasks()
+        await session.retired_sessions_closed("room-1")
 
         assert session.session_id("room-1") != "persisted"
 
@@ -1354,7 +1331,7 @@ async def test_busy_first_prompt_preserves_session_context(restored: bool) -> No
     @agent.on_prompt
     async def reject_once(peer: FakeACPAgent, sid: str) -> None:
         if len(peer.prompts) == 1:
-            raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+            raise session_busy_error()
         await peer.say(sid, "Blue.")
 
     async with acp_adapter(agent) as session:
@@ -1385,9 +1362,9 @@ async def test_busy_first_prompt_preserves_session_context(restored: bool) -> No
 @pytest.mark.parametrize(
     ("code", "data"),
     [
-        (-32003, None),
-        (-32003, {"reason": "other"}),
-        (-32603, {"reason": "session_busy"}),
+        (SESSION_BUSY_CODE, None),
+        (SESSION_BUSY_CODE, {"reason": "other"}),
+        (-32603, {"reason": SESSION_BUSY_REASON}),
     ],
 )
 async def test_only_exact_typed_busy_response_preserves_session(
@@ -1421,7 +1398,7 @@ async def test_rejected_acp_activity_cannot_complete_incoming_turn() -> None:
             sid, update_tool_call("other-work", raw_output="Done", status="completed")
         )
         await peer.say(sid, "Autonomous final text")
-        raise RequestError(-32003, "Session is busy", {"reason": "session_busy"})
+        raise session_busy_error()
 
     tools = FakeAgentTools()
     async with acp_adapter(agent) as session:

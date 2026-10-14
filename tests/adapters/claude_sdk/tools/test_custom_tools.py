@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 from pydantic import BaseModel, Field
 
@@ -11,11 +9,9 @@ from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import TurnEffect
 from tests.adapters.claude_sdk.helpers import (
     MISSING_REPLY_TEXT,
-    ClaudeRoom,
+    OpenRoom,
     with_approvals,
 )
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 class EchoInput(BaseModel):

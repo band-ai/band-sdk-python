@@ -90,21 +90,22 @@ class TestControlRecognition:
     ) -> None:
         room = await codex_room(approval_request(10), turn_completed())
         await room.send("run tests")
+        token = await room.approval_token()
         before = tables_of(room.adapter)
         posted = list(room.chat)
 
         recognized = [
             room.adapter.is_control_message(room.message(content))
-            for content in ("/approve req-10", "/decline req-10", "/approvals")
+            for content in (f"/approve {token}", f"/decline {token}", "/approvals")
         ]
 
         pending = room.adapter._pending_approvals[ROOM_ID]
         assert recognized == [True] * 3
-        assert [entry.token for entry in pending.unclaimed()] == ["req-10"]
-        assert not pending.get("req-10").future.done()
+        assert [entry.token for entry in pending.unclaimed()] == [token]
+        assert not pending[token].future.done()
         assert room.decisions == []
         assert room.chat == posted
         assert tables_of(room.adapter) == before
-        await room.control("/approve req-10")
+        await room.control(f"/approve {token}")
         await room.settled()
         assert room.decisions == [(10, "accept")]

@@ -48,12 +48,11 @@ class TestApprovalAudience:
             turn_completed(),
         )
 
-        turn_tools = await room.send_batch(*room.alice_helper_alice())
+        await room.send_batch(*room.alice_helper_alice())
         with pytest.raises(InputNotAccepted):
             await room.send("one more thing", sender=CAROL)
-        await room.control("/approve req-10", sender=ADMIN)
-        await turn_tools.until_said("req-11")
-        await room.control("/approve req-11", sender=ADMIN)
+        await room.control(f"/approve {await room.approval_token(1)}", sender=ADMIN)
+        await room.control(f"/approve {await room.approval_token(2)}", sender=ADMIN)
         await room.settled()
 
         assert room.mentions("Approval requested") == BATCH_AUDIENCE * 2
@@ -70,7 +69,7 @@ class TestApprovalAudience:
         )
 
         await room.send_batch(*room.alice_helper_alice())
-        await room.control("/approve req-10", sender=ADMIN)
+        await room.control(f"/approve {await room.approval_token()}", sender=ADMIN)
         await room.settled()
         await room.send("run tests again", sender=CAROL)
 

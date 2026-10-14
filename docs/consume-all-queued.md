@@ -218,9 +218,9 @@ that each input was answered.
 - **Long failed history is re-read.** Failed deliveries ahead of new work are
   scanned 100 per pass; nothing hides them, so a later scan can find one another
   runtime reopened.
-- **Cursor runs one turn at a time.** A busy Cursor adapter returns ordinary
-  input to the room's scheduler instead of batching it into the running turn; see
-  [Cursor provider slot](acp.md#cursor-provider-slot).
+- **Cursor runs one turn per room.** A Cursor room with a running turn returns
+  ordinary input to the room's scheduler instead of batching it into that turn; see
+  [Cursor room turns](acp.md#cursor-room-turns).
 
 ## Approvals and controls
 

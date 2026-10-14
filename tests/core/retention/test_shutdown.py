@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention import (
     ReleaseCause,
 )
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.adapters.hold import Hold
+from tests.adapters.waiting import spin
+from tests.core.retention.kit import RETENTION_LOGGER, ResidenceHost, retention_logs
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -43,9 +47,9 @@ class TestShutdown:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.leaving = Barrier()
+        resident.leaving = Hold()
         stopping = asyncio.create_task(host.owner.stop())
-        await resident.leaving.reached.wait()
+        await resident.leaving.arrived()
         stopping.cancel()
         with pytest.raises(asyncio.CancelledError):
             await stopping
@@ -62,8 +66,59 @@ class TestShutdown:
         resident = host.room()
         wake = asyncio.create_task(resident.turn())
         stopping = asyncio.create_task(host.owner.stop())
-        with pytest.raises(RuntimeError, match="closing"):
+        with pytest.raises(RoomClosingError):
             await wake
         await stopping
         assert resident.resume_requests == []
         assert not resident.live
+
+    async def test_concurrent_stops_and_a_leave_join_one_close(
+        self,
+        host: ResidenceHost,
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        resident.closing = Hold()
+        callers = [
+            asyncio.create_task(host.owner.stop()),
+            asyncio.create_task(host.owner.stop()),
+            asyncio.create_task(resident.room.dispose()),
+        ]
+        await resident.closing.arrived()
+        await spin()
+        assert not any(caller.done() for caller in callers)
+        resident.closing.released.set()
+        await asyncio.gather(*callers)
+        assert resident.releases == [ReleaseCause.FINAL]
+        assert resident.identity is None
+
+    async def test_stops_that_stopped_waiting_leave_one_shutdown_failure(
+        self,
+        impatient_host: ResidenceHost,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Every caller gives up before the held disposal fails, so only the
+        shutdown they all joined is left to log that failure."""
+        caplog.set_level(logging.WARNING, logger=RETENTION_LOGGER)
+        resident = impatient_host.room()
+        await resident.turn()
+        resident.leaving = Hold()
+        resident.fail_dispose = True
+        callers = [
+            asyncio.create_task(impatient_host.owner.stop()),
+            asyncio.create_task(impatient_host.owner.stop()),
+            asyncio.create_task(resident.room.dispose()),
+        ]
+        outcomes = await asyncio.gather(*callers, return_exceptions=True)
+        assert [type(outcome) for outcome in outcomes] == [CleanupIncompleteError] * 3
+        resident.leaving.released.set()
+        await spin()
+        assert retention_logs(caplog.records) == [
+            (
+                logging.WARNING,
+                (
+                    "Room retention shutdown failed: "
+                    "Room cleanup remains incomplete (1 sub-exception)"
+                ),
+            )
+        ]

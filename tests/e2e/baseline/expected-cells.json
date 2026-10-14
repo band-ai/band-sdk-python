@@ -2834,6 +2834,51 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/inspection/test_events.py::test_event_emitted[error]",
       "adapter": "suite",
       "lanes": [

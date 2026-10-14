@@ -276,8 +276,7 @@ class TestACPCollectingClientProfiles:
                 }
             }
 
-        profile = CursorACPClientProfile(resolve)
-        profile.bind_session("sess-1")
+        profile = CursorACPClientProfile(resolve, active_session=lambda: "sess-1")
         client = ACPCollectingClient(profile=profile)
 
         ask_result = await client.ext_method(
@@ -1196,22 +1195,6 @@ class TestACPRuntime:
         assert runtime._conn is None
         assert runtime._ctx is None
         mock_ctx.__aexit__.assert_awaited_once_with(None, None, None)
-
-    @pytest.mark.asyncio
-    async def test_ensure_connection_respawns_when_allowed(self) -> None:
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock(return_value=MagicMock())
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
-        runtime = ACPRuntime(
-            command=["codex"],
-            spawn_process=lambda *args, **kwargs: mock_ctx,
-        )
-
-        conn = await runtime.ensure_connection(can_respawn=True)
-
-        assert conn is mock_conn
-        mock_conn.initialize.assert_awaited_once_with(protocol_version=1)
 
     @pytest.mark.asyncio
     async def test_set_permission_handler_delegates_to_client(self) -> None:

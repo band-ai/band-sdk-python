@@ -24,11 +24,9 @@ class TestIndividualApprovals:
             turn_completed(),
         )
 
-        tools = await room.send_batch(*room.alice_helper_alice())
-        await tools.until_said("req-10")
-        await room.control("/decline req-10", sender=HELPER)
-        await tools.until_said("req-11")
-        await room.control("/approve req-11", sender=ALICE)
+        await room.send_batch(*room.alice_helper_alice())
+        await room.control(f"/decline {await room.approval_token(1)}", sender=HELPER)
+        await room.control(f"/approve {await room.approval_token(2)}", sender=ALICE)
         await room.settled()
 
         assert room.decisions == [(10, "decline"), (11, "accept")]
@@ -43,11 +41,13 @@ class TestIndividualApprovals:
             turn_completed(),
         )
 
-        tools = await room.send_batch(*room.alice_helper_alice())
-        await tools.until_said("req-10")
-        declined = await room.control("/decline req-10", sender=HELPER)
-        await tools.until_said("req-11")
-        approved = await room.control("/approve req-11", sender=ADMIN)
+        await room.send_batch(*room.alice_helper_alice())
+        declined = await room.control(
+            f"/decline {await room.approval_token(1)}", sender=HELPER
+        )
+        approved = await room.control(
+            f"/approve {await room.approval_token(2)}", sender=ADMIN
+        )
         await room.settled()
 
         assert [

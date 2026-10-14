@@ -4,20 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine, Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, ClassVar, Literal, Self
+from typing import ClassVar, Literal, Self
 
 from band_sdk_core import is_authorized_sender
 from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
-from band.core.protocols import AgentToolsProtocol
+from band.core.exceptions import InputNotAccepted
+from band.core.protocols import (
+    TURN_FAILURE_PROVIDER,
+    AgentToolsProtocol,
+    generic_provider_failure,
+)
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import finished_within_grace
+from band.core.turn_lifecycle import start_releasable_turn
 from band.core.types import (
     ApprovalMode,
     FeatureKwargs,
@@ -37,7 +42,7 @@ from band.integrations.acp.client_profiles import (
     parse_cursor_questions,
 )
 from band.integrations.acp.client_runtime import ACPRuntime
-from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.client_types import ACPClientSessionState, ACPRoom
 from band.integrations.acp.cursor import (
     CURSOR_CLI_BINARY,
     DECISION_NOT_PENDING_TEMPLATE,
@@ -104,8 +109,8 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
             ``turn_timeout_s``.
         turn_timeout_s: Turn deadline, with headroom above
             ``decision_timeout_s``.
-        max_pending_decisions: Open manual decisions kept; the oldest is
-            dropped when a new one would exceed it.
+        max_pending_decisions: Open manual decisions kept per room; the
+            room's oldest is dropped when a new one would exceed it.
         decision_authorized_senders: Sender ids allowed to resolve decisions.
             ``None`` admits any room participant.
     """
@@ -138,48 +143,28 @@ class CursorACPAdapterConfig(ACPClientAdapterConfig):
 
 @dataclass
 class CursorTurn:
-    """The room context for the one Cursor extension-capable prompt.
+    """One room message's prompt, from acceptance until its actual end.
 
-    The active turn owns the adapter-wide provider slot from reservation until
-    its ``task`` terminates.
+    ``generation`` is the residency it prompts on, set when it takes the
+    room; only the room's holder is extension-capable.
     """
 
-    room_id: str
+    room: ACPRoom
     tools: AgentToolsProtocol
     # Who the turn's own notices address: the senders of the inputs it was
     # admitted with. Later messages never change it.
     audience: tuple[str, ...]
     release: asyncio.Future[None]
-    session_id: str | None = None
-    closed: bool = False
     task: asyncio.Task[None] | None = None
     cancel_requested: bool = False
+    generation: int | None = None
+    session_id: str | None = None
+    closed: bool = False
     # Cursor sends parallel tool calls' permission requests together and does
     # not apply an "allow always" to one already outstanding, so the room is
     # asked one at a time and a granted tool settles its queued repeats.
     permission_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     always_allowed: set[str] = field(default_factory=set)
-
-    def request_cancel(self) -> None:
-        """Ask the provider task to stop, once; ACP's cancel path then sends
-        ``session/cancel``. Termination is confirmed only by ``terminated``."""
-        if self.cancel_requested:
-            return
-        self.cancel_requested = True
-        if self.task is not None:
-            self.task.cancel()
-
-    async def terminated(self) -> None:
-        """Wait up to one cleanup grace for the provider task to end, without
-        cancelling it; a task that outlives it keeps the provider slot.
-
-        Raises:
-            CleanupIncompleteError: The task is still running after the grace.
-        """
-        if self.task is not None and not await finished_within_grace(self.task):
-            raise CleanupIncompleteError(
-                f"Room {self.room_id}: Cursor turn is still cleaning up"
-            )
 
 
 @dataclass
@@ -191,6 +176,36 @@ class PendingDecision:
     future: asyncio.Future[object]
     choices: dict[str, tuple[str, ...]] = field(default_factory=dict)
     multi_select: frozenset[str] = frozenset()
+
+
+def _close_turn(turn: CursorTurn) -> None:
+    turn.closed = True
+    turn.session_id = None
+
+
+def _cancel(turn: CursorTurn) -> None:
+    """Cancel the turn's task once, so a repeated STOP never re-enters the
+    task's own cancellation, which is what sends ``session/cancel``."""
+    _close_turn(turn)
+    if turn.task is not None and not turn.cancel_requested:
+        turn.cancel_requested = True
+        turn.task.cancel()
+
+
+async def _report_unreported_failure(
+    tools: AgentToolsProtocol, error: Exception
+) -> None:
+    """Report a detached turn's failure that nothing reported yet, as the
+    runtime reports a failed attached turn."""
+    if tools.turn.detached and not tools.turn.complete:
+        await tools.send_failure(generic_provider_failure(TURN_FAILURE_PROVIDER, error))
+
+
+def _detach(turn: CursorTurn) -> None:
+    """Hand the room's message queue back while the turn keeps running."""
+    if not turn.release.done():
+        turn.tools.turn.detach()
+        turn.release.set_result(None)
 
 
 class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
@@ -215,19 +230,17 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             resolve_session_config: Picks session config options.
         """
         config = config or CursorACPAdapterConfig()
-        self._cursor_profile = CursorACPClientProfile(self._resolve_extension_method)
-        self._active_turn: CursorTurn | None = None
-        # room id -> generation of its capacity request, oldest first; a room
-        # has at most one, so insertion order is the line.
-        self._capacity_requests: dict[str, int] = {}
-        self._pending_decisions: DecisionRegistry[PendingDecision] = DecisionRegistry(
-            max_pending=config.max_pending_decisions
-        )
+        # Each room's one accepted turn, from acceptance until it actually
+        # ends; independent rooms prompt concurrently.
+        self._turns: dict[str, CursorTurn] = {}
+        # The turn holding each room's lease, set and cleared inside that lease.
+        self._holders: dict[str, CursorTurn] = {}
+        # One capped registry per room, so no room evicts another's decision.
+        self._pending_decisions: dict[str, DecisionRegistry[PendingDecision]] = {}
         super().__init__(
             config,
             additional_tools=additional_tools,
             workspace_for_room=workspace_for_room,
-            profile=self._cursor_profile,
             resolve_session_config=resolve_session_config,
             resolve_permission=self._resolve_cursor_permission,
             **features,
@@ -242,18 +255,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
 
     def _canonical_tool_name(self, name: str) -> str:
         return canonicalize_cursor_tool_name(name, self._own_tool_names)
-
-    async def try_handle_control(
-        self, msg: PlatformMessage, tools: AgentToolsProtocol
-    ) -> bool:
-        """Handle a ``/cursor`` command; it never takes the provider slot."""
-        handled = await self._handle_control_message(msg, tools, msg.room_id)
-        if handled:
-            tools.turn.settle()
-        return handled
-
-    def is_control_message(self, msg: PlatformMessage) -> bool:
-        return room_command_words(msg.content) is not None
 
     async def on_message(
         self,
@@ -291,211 +292,210 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        # Detached from the caller: on_turn returns once a decision opens so
-        # the room can deliver its reply, while the turn keeps the provider slot.
-        turn = self._reserve_provider_slot(
-            room_id=room_id, tools=tools, audience=distinct_sender_ids(messages)
+        # A message never waits behind the room's turn: that turn may be parked
+        # on a decision whose reply arrives after it, so the host keeps the
+        # message and retries it once the room is free.
+        if room_id in self._turns:
+            raise InputNotAccepted("The room already has an active Cursor turn")
+
+        # The turn runs detached for the same reason: on_turn returns the
+        # moment a decision opens, while the task keeps the room's reservation
+        # and lease through the turn's actual end.
+        room = self._room(room_id)
+        loop = asyncio.get_running_loop()
+        release: asyncio.Future[None] = loop.create_future()
+        turn = CursorTurn(
+            room=room,
+            tools=tools,
+            audience=distinct_sender_ids(messages),
+            release=release,
         )
-        turn_task = self._launch_turn(
-            turn,
-            self._run_turn(
+        turn_task = turn.task = start_releasable_turn(
+            room.retained,
+            partial(
+                self._run_turn,
+                turn,
                 messages,
-                tools,
                 history,
                 participants_msg,
                 contacts_msg,
                 is_session_bootstrap=is_session_bootstrap,
-                room_id=room_id,
             ),
+            tools=tools,
+            room_id=room_id,
         )
-        done, _ = await asyncio.wait(
-            {turn.release, turn_task}, return_when=asyncio.FIRST_COMPLETED
-        )
+        # Registered before it runs, so an interrupt during startup reaches it.
+        self._accept(turn)
+        turn_task.add_done_callback(partial(self._on_turn_task_done, turn=turn))
+        try:
+            done, _ = await asyncio.wait(
+                {release, turn_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            # Until it detaches, the turn belongs to this delivery and ends
+            # with it, as an inline OMP or Copilot turn does.
+            _cancel(turn)
+            await asyncio.wait({turn_task})
+            raise
         if turn_task in done:
-            # No decision opened: surface the turn's completion or failure.
+            # No decision ever opened: completion or failure is this turn's.
             await turn_task
 
-    def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
-        if self._capacity_requests.get(room_id) == generation:
-            return
-        self._capacity_requests.pop(room_id, None)
-        self._capacity_requests[room_id] = generation
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        """Resolve or list the room's Cursor decisions without starting work."""
+        if not await self._handle_control_message(msg, tools, msg.room_id):
+            return False
+        tools.turn.settle()
+        return True
 
-    def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
-        if self._capacity_requests.get(room_id) == generation:
-            del self._capacity_requests[room_id]
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return room_command_words(msg.content) is not None
 
-    def _room_is_next_in_line(self, room_id: str) -> bool:
-        """Whether no other room's request is ahead of ``room_id``'s input."""
-        return next(iter(self._capacity_requests), room_id) == room_id
+    def _accept(self, turn: CursorTurn) -> None:
+        """Make ``turn`` its room's one accepted turn."""
+        self._turns[turn.room.room_id] = turn
 
-    def _reserve_provider_slot(
-        self, *, room_id: str, tools: AgentToolsProtocol, audience: tuple[str, ...]
-    ) -> CursorTurn:
-        """Claim the one provider slot, or refuse the input without side effects.
+    def _forget_turn(self, turn: CursorTurn) -> None:
+        if self._turns.get(turn.room.room_id) is turn:
+            del self._turns[turn.room.room_id]
 
-        Cursor binds session-less notifications to the active turn, so one
-        provider turn runs per adapter. Synchronous, so no await separates the
-        check from the claim. Only the room at the head of the capacity line
-        may take a free slot; a room with no request is served only when the
-        line is empty.
-        """
-        if self._active_turn is not None:
-            raise InputNotAccepted("Cursor is already running a turn")
-        if not self._room_is_next_in_line(room_id):
-            raise InputNotAccepted("Cursor is reserved for a room waiting longer")
-        self._capacity_requests.pop(room_id, None)
-        turn = CursorTurn(
-            room_id=room_id,
-            tools=tools,
-            audience=audience,
-            release=asyncio.get_running_loop().create_future(),
-        )
-        self._active_turn = turn
-        return turn
-
-    def _launch_turn(
-        self, turn: CursorTurn, run: Coroutine[Any, Any, None]
-    ) -> asyncio.Task[None]:
-        try:
-            task = asyncio.create_task(run)
-        except BaseException:
-            run.close()
-            self._retire_turn(turn)
-            raise
-        turn.task = task
-        self._background_tasks.add(task)
-        task.add_done_callback(partial(self._on_turn_task_done, turn))
-        return task
-
-    def _on_turn_task_done(self, turn: CursorTurn, task: asyncio.Task[None]) -> None:
-        """Free the provider slot at the task's real end, even when it was
-        cancelled before running; log a background failure with its room."""
-        self._background_tasks.discard(task)
-        self._retire_turn(turn)
+    def _on_turn_task_done(self, task: asyncio.Task[None], *, turn: CursorTurn) -> None:
+        """Forget a turn that never ran and log a failure with its room."""
+        self._forget_turn(turn)
+        room_id = turn.room.room_id
         if task.cancelled():
             return
         error = task.exception()
         if error is not None:
             logger.warning(
                 "Cursor turn for room %s failed in the background",
-                turn.room_id,
+                room_id,
                 exc_info=error,
             )
 
-    def _retire_turn(self, turn: CursorTurn) -> None:
-        """End ``turn``'s hold on the slot; a stale turn leaves its successor alone."""
-        if not turn.release.done():
-            turn.release.set_result(None)
-        if self._active_turn is not turn:
-            return
-        self._active_turn = None
-        self._cursor_profile.bind_session(None)
-        self._cancel_room_decisions(turn.room_id)
-
     async def _run_turn(
         self,
+        turn: CursorTurn,
         messages: Sequence[PlatformMessage],
-        tools: AgentToolsProtocol,
         history: ACPClientSessionState,
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
         is_session_bootstrap: bool,
-        room_id: str,
     ) -> None:
-        await super().on_turn(
-            messages,
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-        # A failed or cancelled turn never gets here.
-        await judge_detached_turn(tools, room_id=room_id)
+        room = turn.room
+        try:
+            async with (
+                self._using_room(room, turn.tools) as runtime,
+                self._holding(turn),
+            ):
+                await self._prompt_room(
+                    room,
+                    runtime,
+                    messages,
+                    turn.tools,
+                    history,
+                    participants_msg,
+                    contacts_msg,
+                    is_session_bootstrap=is_session_bootstrap,
+                )
+                # A failed or cancelled turn never gets here.
+                await judge_detached_turn(turn.tools, room_id=room.room_id)
+        finally:
+            _close_turn(turn)
+            self._forget_turn(turn)
+            if not turn.release.done():
+                turn.release.set_result(None)
 
     async def _get_or_create_session(
         self,
+        room: ACPRoom,
         runtime: ACPRuntime,
-        room_id: str,
         history: ACPClientSessionState | None,
-    ) -> tuple[str, bool]:
-        session_id, created = await super()._get_or_create_session(
-            runtime, room_id, history
-        )
-        turn = self._active_turn
-        if turn is not None and turn.room_id == room_id:
+    ) -> str:
+        session_id = await super()._get_or_create_session(room, runtime, history)
+        turn = self._holders.get(room.room_id)
+        if turn is not None and turn.room is room:
             if turn.closed:
                 raise asyncio.CancelledError
             turn.session_id = session_id
-            self._cursor_profile.bind_session(session_id)
-        return session_id, created
+        return session_id
 
-    async def on_cleanup(
-        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
-    ) -> None:
-        """Room retirement: stop the room's provider turn before its runtime.
+    def _client_profile(self, room: ACPRoom, generation: int) -> CursorACPClientProfile:
+        """A profile bound to one residency: Cursor's extension requests carry
+        no session id, so their origin is the process that sent them."""
+        return CursorACPClientProfile(
+            partial(self._resolve_extension_method, room, generation),
+            active_session=partial(self._extension_session, room, generation),
+        )
 
-        Waits, within one cleanup grace, for the turn's task so ``session/cancel``
-        leaves before the connection closes; a retry joins the same task. Only
-        external callers reach this, never the turn's own cleanup, which would
-        otherwise wait on itself.
+    @asynccontextmanager
+    async def _holding(self, turn: CursorTurn) -> AsyncIterator[None]:
+        """Make ``turn`` its room's holder for exactly its lease.
+
+        Its failure is reported before the lease ends, so the next turn
+        never takes the room while this one still answers for it.
         """
-        if await self._owns_runtime(room_id, expected_runtime):
-            turn = self._close_room_turn(room_id)
-            if turn is not None:
-                turn.request_cancel()
-                await turn.terminated()
-        await super().on_cleanup(room_id, expected_runtime=expected_runtime)
+        room_id = turn.room.room_id
+        self._take_room(turn)
+        try:
+            yield
+        except Exception as error:
+            await _report_unreported_failure(turn.tools, error)
+            raise
+        finally:
+            self._cancel_room_decisions(room_id)
+            del self._holders[room_id]
 
-    async def _teardown_room(
-        self, room_id: str, *, expected_runtime: ACPRuntime | None = None
-    ) -> None:
-        if await self._owns_runtime(room_id, expected_runtime):
-            self._close_room_turn(room_id)
-        await super()._teardown_room(room_id, expected_runtime=expected_runtime)
+    def _take_room(self, turn: CursorTurn) -> None:
+        """Make ``turn`` the holder of its room's current residency."""
+        turn.generation = turn.room.generation
+        self._holders[turn.room.room_id] = turn
 
-    async def _owns_runtime(
-        self, room_id: str, expected_runtime: ACPRuntime | None
-    ) -> bool:
-        """False for a cleanup aimed at a runtime the room has since replaced."""
-        if expected_runtime is None:
-            return True
-        async with self._session_lock:
-            return self._runtimes.get(room_id) is expected_runtime
-
-    def _close_room_turn(self, room_id: str) -> CursorTurn | None:
-        """Unbind the room's active turn from the shared profile and wake its
-        decisions. This does not stop the provider; ``request_cancel`` does."""
-        self._cancel_room_decisions(room_id)
-        turn = self._active_turn
-        if turn is None or turn.room_id != room_id:
+    def _turn_of(self, room: ACPRoom, generation: int) -> CursorTurn | None:
+        """The open prompt of exactly this room holder and of a residency
+        recovery has not retired."""
+        turn = self._holders.get(room.room_id)
+        if (
+            turn is None
+            or turn.room is not room
+            or turn.generation != generation
+            or not room.retained.has_authority(generation)
+            or turn.closed
+        ):
             return None
-        turn.closed = True
-        turn.session_id = None
-        self._cursor_profile.bind_session(None)
         return turn
 
-    def _forget_session(self, session_id: str) -> None:
-        self._cursor_profile.forget_session(session_id)
+    def _extension_session(self, room: ACPRoom, generation: int) -> str | None:
+        turn = self._turn_of(room, generation)
+        return None if turn is None else turn.session_id
+
+    async def on_cleanup(self, room_id: str) -> None:
+        # Wakes any decision the turn is parked on; disposal then settles the
+        # turn before the room's process closes.
+        if (turn := self._turns.get(room_id)) is not None:
+            _close_turn(turn)
+        self._cancel_room_decisions(room_id)
+        await super().on_cleanup(room_id)
 
     async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
-        """A room /stop or interrupt cancels the room's provider turn, also when
-        it was already released to wait on a decision. The interrupt ends that
-        turn, so it is settled and never reported as a missing reply."""
-        turn = self._close_room_turn(room_id)
-        if turn is not None:
-            turn.tools.turn.settle()
-            turn.request_cancel()
+        """End the room's accepted turn, starting, prompting or parked.
 
-    async def cleanup_all(self, *, final: bool = True) -> None:
+        The runtime's own interrupt cancels only the handler task, which a
+        detached turn has already left. The turn is settled, so it is never
+        reported as a missing reply, and cancelled; a cancelled prompt sends
+        ``session/cancel``.
+        """
+        if (turn := self._turns.get(room_id)) is not None:
+            turn.tools.turn.settle()
+            _cancel(turn)
+        self._cancel_room_decisions(room_id)
+
+    async def cleanup_all(self) -> None:
         self._cancel_all_decisions()
-        self._cursor_profile.clear_sessions()
-        if self._active_turn is not None:
-            self._active_turn.request_cancel()
-        await super().cleanup_all(final=final)
+        await super().cleanup_all()
 
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
@@ -552,9 +552,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         return result
 
     async def _resolve_extension_method(
-        self, method: str, params: dict[str, object]
+        self,
+        room: ACPRoom,
+        generation: int,
+        method: str,
+        params: dict[str, object],
     ) -> dict[str, object]:
-        turn = self._active_turn
+        turn = self._turn_of(room, generation)
         if turn is None or turn.session_id is None:
             return {"outcome": {"outcome": "cancelled"}}
         match method:
@@ -648,14 +652,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
         pending = PendingDecision(
             kind=kind,
-            room_id=turn.room_id,
+            room_id=turn.room.room_id,
             future=future,
             choices=choices or {},
             multi_select=multi_select,
         )
-        registration = self._pending_decisions.register_minted(
-            pending, room_id=turn.room_id
-        )
+        decisions = self._room_decisions(turn.room.room_id)
+        registration = decisions.register_minted(pending)
         if registration.evicted is not None:
             self._resolve_evicted_decision(registration.evicted)
         entry = registration.entry
@@ -667,17 +670,15 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
             logger.warning("Could not deliver Cursor %s decision prompt", kind)
             # A reply that claimed it meanwhile owns the answer; wait for it.
-            if self._pending_decisions.withdraw(entry):
+            if decisions.withdraw(entry):
                 return None
         finally:
-            # Release on_message here, not only in _run_turn's finally --
+            # Release on_turn here, not only in _run_turn's finally --
             # the room needs its queue back the instant a decision is
             # outstanding, whether or not the prompt itself landed.
-            if not turn.release.done():
-                turn.tools.turn.detach()
-                turn.release.set_result(None)
+            _detach(turn)
 
-        result = await self._pending_decisions.wait(
+        result = await decisions.wait(
             entry, future, timeout_s=self.config.decision_timeout_s
         )
         if result is Timeout.TIMED_OUT:
@@ -715,8 +716,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             )
             return True
         action, token = words[1].lower(), words[2]
-        pending = self._pending_decisions.get(token)
-        if pending is None or pending.room_id != room_id:
+        decisions = self._pending_decisions.get(room_id)
+        pending = decisions.get(token) if decisions else None
+        if decisions is None or pending is None:
             await tools.send_notice(
                 DECISION_NOT_PENDING_TEMPLATE.format(token=token), mentions=mentions
             )
@@ -732,7 +734,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self.config.decision_authorized_senders, msg.sender_id
         ):
             reply = DECISION_UNAUTHORIZED_MESSAGE
-        elif self._pending_decisions.try_claim(token) is None:
+        elif decisions.try_claim(token) is None:
             reply = DECISION_NOT_PENDING_TEMPLATE.format(token=token)
         else:
             pending.future.set_result(result)
@@ -810,13 +812,17 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         )
 
     def _active_turn_for(self, room_id: str, session_id: str) -> CursorTurn | None:
-        turn = self._active_turn
-        return (
-            turn
-            if turn
-            and not turn.closed
-            and (turn.room_id, turn.session_id) == (room_id, session_id)
-            else None
+        """The open prompt serving ``session_id`` in ``room_id``, as ``_turn_of``
+        judges its holder."""
+        holder = self._holders.get(room_id)
+        if holder is None or holder.generation is None:
+            return None
+        turn = self._turn_of(holder.room, holder.generation)
+        return turn if turn is not None and turn.session_id == session_id else None
+
+    def _room_decisions(self, room_id: str) -> DecisionRegistry[PendingDecision]:
+        return self._pending_decisions.setdefault(
+            room_id, DecisionRegistry(max_pending=self.config.max_pending_decisions)
         )
 
     @staticmethod
@@ -831,35 +837,39 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         evicted.payload.future.set_result(None)
 
     def _cancel_room_decisions(self, room_id: str) -> None:
-        for entry in self._pending_decisions.cancel_room(room_id):
-            logger.info(
-                "Cancelling pending Cursor %s decision `%s` in room %s (room cleanup)",
-                entry.payload.kind,
-                entry.token,
-                room_id,
-            )
-            entry.payload.future.set_result(None)
+        decisions = self._pending_decisions.pop(room_id, None)
+        if decisions is not None:
+            _cancel_decisions(decisions, reason="room cleanup")
 
     def _cancel_all_decisions(self) -> None:
-        for entry in self._pending_decisions.cancel_all():
-            logger.info(
-                "Cancelling pending Cursor %s decision `%s` in room %s "
-                "(adapter shutdown)",
-                entry.payload.kind,
-                entry.token,
-                entry.payload.room_id,
-            )
-            entry.payload.future.set_result(None)
+        rooms, self._pending_decisions = self._pending_decisions, {}
+        for decisions in rooms.values():
+            _cancel_decisions(decisions, reason="adapter shutdown")
 
     async def _list_decisions(
         self, tools: AgentToolsProtocol, room_id: str, *, mentions: list[str]
     ) -> None:
+        decisions = self._pending_decisions.get(room_id)
         pending = [
             f"`{entry.token}` ({entry.payload.kind})"
-            for entry in self._pending_decisions.unclaimed_in_room(room_id)
+            for entry in (decisions.unclaimed() if decisions else [])
         ]
         content = "Pending Cursor decisions: " + (", ".join(pending) or "none")
         await tools.send_notice(content, mentions=mentions)
+
+
+def _cancel_decisions(
+    decisions: DecisionRegistry[PendingDecision], *, reason: str
+) -> None:
+    for entry in decisions.cancel_all():
+        logger.info(
+            "Cancelling pending Cursor %s decision `%s` in room %s (%s)",
+            entry.payload.kind,
+            entry.token,
+            entry.payload.room_id,
+            reason,
+        )
+        entry.payload.future.set_result(None)
 
 
 def _audience_mentions(turn: CursorTurn) -> list[str] | None:

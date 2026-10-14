@@ -26,6 +26,19 @@ class TestBatchTurn:
             m.id for m in originals
         ]
 
+    async def test_a_command_inside_a_batch_is_text_for_the_model_not_a_command(
+        self, codex_room: OpenRoom
+    ) -> None:
+        room = await codex_room(reply_to_room(), turn_completed())
+        originals = (room.message("/help"), room.message("list the files"))
+
+        await room.send_batch(*originals)
+
+        (turn_input,) = room.turn_inputs
+        assert [record["message_id"] for record in current_records(turn_input)] == [
+            m.id for m in originals
+        ]
+
     async def test_one_reply_completes_the_whole_batch(
         self, codex_room: OpenRoom
     ) -> None:

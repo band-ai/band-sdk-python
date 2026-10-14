@@ -6,16 +6,21 @@ import asyncio
 import copy
 import itertools
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+from claude_agent_sdk.types import Message
+
 from band.adapters.claude_sdk import (
+    APPROVAL_REQUESTED_TEMPLATE,
     ClaudeApprovalOptions,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
 )
 from band.converters.claude_sdk import SESSION_ID_METADATA_KEY
+from band.core.retention import RoomRetentionConfig
 from band.core.turn import Turn
 from band.core.types import (
     AgentInput,
@@ -24,19 +29,44 @@ from band.core.types import (
     MessageType,
     PlatformMessage,
 )
+from band.integrations.claude_sdk.session_manager import (
+    ClaudeRoomSession,
+    ClaudeSessionManager,
+)
+from band.integrations.mcp.backends import BandMCPBackend
 from band.runtime.tools import BAND_MCP_SERVER_NAME, MCP_TOOL_PREFIX
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools
-from tests.adapters.claude_sdk.fakecli import FakeClaude
+from tests.adapters.claude_sdk.fakecli import FakeClaude, Hold
 from tests.adapters.dispatch import deliver_event
 from tests.baseline.decisions import ModelDecision
 from tests.mcpclient import crash_backend
 
+# The agent metadata every test adapter is started with.
+AGENT_NAME = "Test Agent"
+AGENT_DESCRIPTION = "An agent under test"
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 # What the runtime reports for a turn that ended without completing.
 MISSING_REPLY_TEXT = MISSING_REPLY_FAILURE[1]
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
+# The room's approval prompt for WRITE_NOTE as the first request of a turn.
+WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
+    summary="Write: notes.md", token="a-1"
+)
+# Short enough that a held transition reports quickly, long enough for a real
+# CLI child to start and the Band MCP server to shut down on a slow runner.
+REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
+# A turn still running when its room closes is cancelled at once.
+NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
+
+
+async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
+    """One leased query through the room's single reader, up to its result."""
+    async with session.using() as client:
+        with session.listening() as stream:
+            await client.query(prompt)
+            return [message async for message in stream.until_result()]
 
 
 def with_approvals(
@@ -207,14 +237,19 @@ class ClaudeRoom:
         """The adapter's Band MCP server dies on its own, between turns."""
         await crash_backend(self.adapter._mcp)
 
+    async def restart(self) -> None:
+        """Start the room's adapter again, as the runtime does after a stop."""
+        await self.adapter.on_started(AGENT_NAME, AGENT_DESCRIPTION)
+
     def beside(self, room_id: str) -> ClaudeRoom:
         """Another room served by the same adapter."""
         return ClaudeRoom(self.adapter, self.claude, room_id)
 
     async def leave(self) -> None:
-        """The agent leaves the room; a later message bootstraps it afresh."""
-        await self.adapter.on_cleanup(self.room_id)
+        """The agent leaves the room; a later message bootstraps it afresh,
+        even if this leave stops waiting before its cleanup finishes."""
         self._bootstrapped = False
+        await self.adapter.on_cleanup(self.room_id)
 
     def model_call(self, tool: str, **arguments: Any) -> ModelDecision:
         """The model calling a Band-server tool, by bare name, for this room."""
@@ -242,9 +277,12 @@ class ClaudeRoom:
     def _turn_input(
         self,
         messages: tuple[PlatformMessage, ...],
+        *,
         history: tuple[dict[str, Any], ...],
         session_id: str | None,
         tools: FakeAgentTools | None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> AgentInput:
         bootstrap, self._bootstrapped = not self._bootstrapped, True
         raw_history = [*history]
@@ -255,8 +293,8 @@ class ClaudeRoom:
             messages=messages,
             tools=tools or self.fresh_tools(),
             history=HistoryProvider(raw=raw_history),
-            participants_msg=None,
-            contacts_msg=None,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=self.room_id,
         )
@@ -269,6 +307,8 @@ class ClaudeRoom:
         history: tuple[dict[str, Any], ...] = (),
         session_id: str | None = None,
         tools: FakeAgentTools | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> None:
         """Deliver one room message through the runtime's entry point, so the
         turn is judged as in production; returns once the adapter hands the
@@ -276,10 +316,16 @@ class ClaudeRoom:
 
         ``history`` is the room's raw history, ``session_id`` a Claude session
         it persisted, and ``tools`` the message's own tools (``fresh_tools()``
-        by default, as the runtime builds per message).
+        by default, as the runtime builds per message). ``participants_msg``
+        and ``contacts_msg`` are the runtime's pending room updates.
         """
         inp = self._turn_input(
-            (self.message(content, sender=sender),), history, session_id, tools
+            (self.message(content, sender=sender),),
+            history=history,
+            session_id=session_id,
+            tools=tools,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
         )
         await deliver_event(self.adapter, inp)
 
@@ -293,7 +339,9 @@ class ClaudeRoom:
         """Deliver several originals as one turn, as the runtime does for a
         batch; like ``send``, returns once the adapter hands the turn back."""
         await self.adapter.on_messages(
-            self._turn_input(messages, history, session_id, tools)
+            self._turn_input(
+                messages, history=history, session_id=session_id, tools=tools
+            )
         )
 
     def send_in_background(self, content: str) -> asyncio.Task[None]:
@@ -304,7 +352,59 @@ class ClaudeRoom:
         """Wait until ``times`` room messages contain ``fragment``."""
         await self.tools.until_said(fragment, times=times)
 
+    @property
+    def session_manager(self) -> ClaudeSessionManager:
+        manager = self.adapter._session_manager
+        assert manager is not None, "the adapter was never started"
+        return manager
+
+    @property
+    def mcp_backend(self) -> BandMCPBackend:
+        backend = self.adapter._mcp.current
+        assert backend is not None, "no Band MCP server is running"
+        return backend
+
+    @property
+    def disposed(self) -> bool:
+        """Whether the room's final cleanup finished and erased its session."""
+        return self.session_manager.session(self.room_id) is None
+
+    @property
+    def turn_running(self) -> bool:
+        """Whether the room's detached turn is still running."""
+        return self.adapter._turn_running(self.room_id)
+
     async def settled(self) -> None:
         """Wait for a turn still running after ``send`` returned."""
         if (turn := self.adapter._turn_tasks.get(self.room_id)) is not None:
             await asyncio.wait([turn.task])
+
+
+OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+
+
+async def band_server_replaced(room: ClaudeRoom) -> None:
+    """Retire the room's CLI by crashing the Band MCP server it dials."""
+    await room.crash_band_server()
+
+
+async def left(room: ClaudeRoom) -> None:
+    """Close the room by leaving it."""
+    await room.leave()
+
+
+async def shut_down(room: ClaudeRoom) -> None:
+    """Close the room by shutting the whole adapter down."""
+    await room.adapter.cleanup_all()
+
+
+async def turn_cancelled(room: ClaudeRoom) -> None:
+    """Retire the room's CLI by cancelling the turn that holds it."""
+    abandoned = Hold()
+    room.claude.script([abandoned, room.model_reply("never sent")])
+    message = room.send_in_background("long job")
+    async with abandoned:
+        message.cancel()
+    await asyncio.wait({message})
+    if not message.cancelled():
+        raise AssertionError("the abandoned message was not cancelled")

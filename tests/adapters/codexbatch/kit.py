@@ -12,6 +12,7 @@ from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.codex import RpcEvent
 from band.integrations.codex.types import CodexRequestMethod
 from band.testing import FakeAgentTools
+from tests.adapters.codex.kit import approval_tokens_from_chat
 from tests.adapters.codexturns import (
     FakeCodexClient,
     await_released_turn,
@@ -19,6 +20,7 @@ from tests.adapters.codexturns import (
     tool_call_request,
 )
 from tests.adapters.dispatch import deliver_event
+from tests.adapters.waiting import until
 
 ROOM_ID = "room-1"
 ALICE = {"id": "alice", "name": "Alice"}
@@ -28,7 +30,7 @@ ADMIN = {"id": "admin-1", "name": "Admin"}
 
 
 def approval_request(request_id: int) -> RpcEvent:
-    """Codex asking the room to approve one command; its token is ``req-<id>``."""
+    """Codex asking the room to approve one command; the room is told its id."""
     return event_request(
         request_id, "item/commandExecution/requestApproval", {"command": "ls"}
     )
@@ -131,6 +133,14 @@ class CodexBatchRoom:
             if fragment in message["content"]
         ]
 
+    async def approval_token(self, nth: int = 1) -> str:
+        """The id the room's ``nth`` approval prompt advertised, once posted."""
+        await until(
+            lambda: len(approval_tokens_from_chat(self.chat)) >= nth,
+            failure=f"The room never posted approval prompt {nth}",
+        )
+        return approval_tokens_from_chat(self.chat)[nth - 1]
+
     @property
     def turn_inputs(self) -> list[str]:
         """The text each ``turn/start`` sent the app-server, in order."""
@@ -147,6 +157,10 @@ class CodexBatchRoom:
             for request_id, result in self.client.responses
             if "decision" in result
         ]
+
+    @property
+    def pending_approval_count(self) -> int:
+        return self.adapter._open_approval_count(ROOM_ID)
 
     @property
     def turn(self) -> asyncio.Task[None]:

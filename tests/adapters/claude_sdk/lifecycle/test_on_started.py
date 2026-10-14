@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 
 from band.adapters.claude_sdk import (
@@ -11,10 +9,8 @@ from band.adapters.claude_sdk import (
 )
 from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.runtime.tools import MAX_INLINE_IMAGE_BYTES
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, with_approvals
+from tests.adapters.claude_sdk.helpers import OpenRoom, with_approvals
 from tests.baseline.decisions import ModelDecision
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 # claude_agent_sdk's stdio transport default (subprocess_cli._DEFAULT_MAX_BUFFER_SIZE).
 SDK_DEFAULT_BUFFER_BYTES = 1024 * 1024
