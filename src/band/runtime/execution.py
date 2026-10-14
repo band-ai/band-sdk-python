@@ -1498,14 +1498,17 @@ class ExecutionContext:
             self._deferred_message_id = message_id
             self._control_cursor = None
 
-    def _defer_unaccepted_input(self, message_id: str | None) -> None:
+    def _defer_unaccepted_input(
+        self, message_id: str | None, *, reason: InputNotAccepted
+    ) -> None:
         if message_id:
             self._set_deferred_head(message_id)
         logger.debug(
-            "ExecutionContext %s: Input %s not accepted; "
+            "ExecutionContext %s: Input %s not accepted (%s); "
             "keeping it pending for scheduler recovery",
             self.room_id,
             message_id or "synthetic",
+            reason,
         )
 
     def _retain(self, event: PlatformEvent, *, first: bool = False) -> None:
@@ -2313,10 +2316,12 @@ class ExecutionContext:
             scope.admitted = True
             return await self._execute_attempt(scope, revision)
 
-        except InputNotAccepted:
+        except InputNotAccepted as refusal:
             if scope.admitted:
                 self._discard_attempts(attempts)
-            self._defer_unaccepted_input(_event_message_id(scope.originals[0]))
+            self._defer_unaccepted_input(
+                _event_message_id(scope.originals[0]), reason=refusal
+            )
             return TurnOutcome.NOT_ACCEPTED
 
         except RoomExecutionStoppedError:
@@ -2988,8 +2993,8 @@ class ExecutionContext:
             logger.debug("Event %s processed successfully", event.type)
             return TurnOutcome.ADVANCED
 
-        except InputNotAccepted:
-            self._defer_unaccepted_input(None)
+        except InputNotAccepted as refusal:
+            self._defer_unaccepted_input(None, reason=refusal)
             return TurnOutcome.NOT_ACCEPTED
 
         except RoomExecutionStoppedError:

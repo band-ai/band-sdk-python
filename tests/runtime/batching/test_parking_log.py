@@ -77,3 +77,15 @@ class TestParkingLog:
         assert room_debug(
             "Message m1 is held by another claim; deferring behind it"
         ) in execution_lines(caplog)
+
+    async def test_a_refused_input_carries_the_hosts_reason(
+        self, platform: FakeRoom, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async with started_room(platform) as room:
+            room.turns.accepting = False
+            await room.deliver(platform.post("m1"))
+            await room.quiesce()
+
+        assert room_debug(
+            "Input m1 not accepted (busy); keeping it pending for scheduler recovery"
+        ) in execution_lines(caplog)
