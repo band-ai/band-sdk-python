@@ -16,5 +16,5 @@ def ctx() -> MagicMock:
 
 
 @pytest.fixture
-def platform() -> FakeRoom:
-    return FakeRoom()
+def platform(mock_rest_client: MagicMock) -> FakeRoom:
+    return FakeRoom(rest=mock_rest_client)

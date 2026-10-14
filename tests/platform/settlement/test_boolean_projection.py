@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.client.streaming import DeliveryStatus
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
 from tests.platform.settlement.kit import (
@@ -15,7 +16,12 @@ from tests.platform.settlement.kit import (
 )
 
 PROJECTIONS = [
-    pytest.param(accepted("processed"), SettlementResult.ACCEPTED, True, id="accepted"),
+    pytest.param(
+        accepted(DeliveryStatus.PROCESSED),
+        SettlementResult.ACCEPTED,
+        True,
+        id="accepted",
+    ),
     pytest.param(Reply(404), SettlementResult.NOT_FOUND, False, id="not-found"),
     pytest.param(MISSING_ATTEMPT, SettlementResult.REJECTED, False, id="rejected"),
     pytest.param(Reply(401), SettlementResult.UNCONFIRMED, False, id="unconfirmed"),

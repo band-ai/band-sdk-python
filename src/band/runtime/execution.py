@@ -150,13 +150,6 @@ class ExecutionState(StrEnum):
     PROCESSING = "processing"
 
 
-def _event_message_id(event: MessageEvent) -> str:
-    """The platform id of a message event that carries a real delivery."""
-    if event.payload is None:
-        raise ValueError("a message event without a payload has no delivery id")
-    return event.payload.id
-
-
 # One number per room scheduler incarnation: a replacement's capacity request
 # can never be cancelled by cleanup from the incarnation it replaced.
 _GENERATIONS = itertools.count(1)
@@ -167,13 +160,6 @@ PARKED_REASONS = {
 }
 
 
-def _delivery_id(event: PlatformEvent) -> str | None:
-    """The platform id of a message delivery; ``None`` for any other event."""
-    if isinstance(event, MessageEvent) and event.payload is not None:
-        return event.payload.id
-    return None
-
-
 def _payload(event: MessageEvent) -> MessageCreatedPayload:
     """The payload of a message event that carries a real delivery."""
     if event.payload is None:
@@ -181,13 +167,25 @@ def _payload(event: MessageEvent) -> MessageCreatedPayload:
     return event.payload
 
 
+def _event_message_id(event: MessageEvent) -> str:
+    """The platform id of a message event that carries a real delivery."""
+    return _payload(event).id
+
+
+def _message_ids(events: Iterable[MessageEvent]) -> tuple[str, ...]:
+    return tuple(_event_message_id(event) for event in events)
+
+
+def _delivery_id(event: PlatformEvent) -> str | None:
+    """The platform id of a message delivery; ``None`` for any other event."""
+    if isinstance(event, MessageEvent) and event.payload is not None:
+        return event.payload.id
+    return None
+
+
 def _is_ordinary(event: PlatformEvent) -> bool:
     """Whether the event is a real delivery a turn can include."""
-    return (
-        isinstance(event, MessageEvent)
-        and event.payload is not None
-        and not _is_synthetic(event)
-    )
+    return _delivery_id(event) is not None and not _is_synthetic(event)
 
 
 def _is_synthetic(event: PlatformEvent) -> bool:
@@ -400,7 +398,8 @@ class ExecutionContext:
         Raises:
             BandConfigError: ``config.consume_all_queued`` without a batch host.
         """
-        if (config or SessionConfig()).consume_all_queued and on_execute_batch is None:
+        self.config = config or SessionConfig()
+        if self.config.consume_all_queued and on_execute_batch is None:
             raise BandConfigError(
                 "consume_all_queued needs a host that runs a turn over several "
                 "originals (on_execute_batch)"
@@ -413,7 +412,6 @@ class ExecutionContext:
         self._is_message_control = is_message_control
         self._capacity = capacity
         self._generation = next(_GENERATIONS)
-        self.config = config or SessionConfig()
         self._agent_id = agent_id
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
@@ -666,8 +664,8 @@ class ExecutionContext:
         write cannot starve its siblings.
         """
         results = [
-            await self._write_pending(_event_message_id(event))
-            for event in scope.originals
+            await self._write_pending(message_id)
+            for message_id in _message_ids(scope.originals)
         ]
         return SettlementResult.UNCONFIRMED not in results
 
@@ -1393,11 +1391,12 @@ class ExecutionContext:
             message_id or "synthetic",
         )
 
-    def _retain(self, event: PlatformEvent | None, *, first: bool = False) -> None:
+    def _retain(self, event: PlatformEvent, *, first: bool = False) -> None:
         """Keep a message delivery's payload until its lifecycle settles it."""
-        if not isinstance(event, MessageEvent) or event.payload is None:
+        delivery_id = _delivery_id(event)
+        if delivery_id is None:
             return
-        if any(_delivery_id(item) == _delivery_id(event) for item in self._pending):
+        if any(_delivery_id(item) == delivery_id for item in self._pending):
             return
         if first:
             self._pending.appendleft(event)
@@ -1470,15 +1469,7 @@ class ExecutionContext:
             return ControlOutcome.DECLINED
         payload = event.payload
         msg_id = payload.id
-        if self._agent_id and is_self_echo(
-            sender_id=payload.sender_id or "",
-            sender_type=payload.sender_type or "",
-            agent_id=self._agent_id,
-        ):
-            return ControlOutcome.DECLINED
-        if self.claims.is_completed(
-            self.room_id, msg_id
-        ) or self._retry_tracker.is_permanently_failed(msg_id):
+        if self._is_nonrunnable(payload):
             return ControlOutcome.DECLINED
         if self.claims.is_ack_pending(self.room_id, msg_id):
             await self._retry_terminal_ack(msg_id)
@@ -1576,7 +1567,7 @@ class ExecutionContext:
                 return ResyncOutcome.BLOCKED
             if candidate is None:
                 return ResyncOutcome.STOPPED
-            if self._backlog_is_nonrunnable(candidate):
+            if self._is_nonrunnable(candidate):
                 return ResyncOutcome.STOPPED
             self._resume_room()
             revision = self._control_revision
@@ -1619,7 +1610,7 @@ class ExecutionContext:
                 if (
                     next_msg is not None
                     and next_msg.id == previous_id
-                    and self._backlog_is_nonrunnable(next_msg)
+                    and self._is_nonrunnable(next_msg)
                 ):
                     break
                 previous_id = next_msg.id if next_msg is not None else None
@@ -1741,8 +1732,7 @@ class ExecutionContext:
                         else ResyncOutcome.EMPTY
                     )
                 if (
-                    next_msg.id == previous_id
-                    and self._backlog_is_nonrunnable(next_msg)
+                    next_msg.id == previous_id and self._is_nonrunnable(next_msg)
                 ) or self._retry_tracker.is_permanently_failed(next_msg.id):
                     return ResyncOutcome.BLOCKED
                 previous_id = next_msg.id
@@ -1768,20 +1758,17 @@ class ExecutionContext:
             )
             return ResyncOutcome.RETRY
 
-    def _backlog_is_nonrunnable(self, msg: PlatformMessage) -> bool:
-        return self._is_nonrunnable(msg.id, msg.sender_id, msg.sender_type)
-
     def _is_nonrunnable(
-        self, message_id: str, sender_id: str | None, sender_type: str | None
+        self, delivery: PlatformMessage | MessageCreatedPayload
     ) -> bool:
         return (
-            self.claims.is_completed(self.room_id, message_id)
-            or self._retry_tracker.is_permanently_failed(message_id)
+            self.claims.is_completed(self.room_id, delivery.id)
+            or self._retry_tracker.is_permanently_failed(delivery.id)
             or bool(
                 self._agent_id
                 and is_self_echo(
-                    sender_id=sender_id or "",
-                    sender_type=sender_type or "",
+                    sender_id=delivery.sender_id or "",
+                    sender_type=delivery.sender_type or "",
                     agent_id=self._agent_id,
                 )
             )
@@ -1808,12 +1795,10 @@ class ExecutionContext:
         live: list[MessageEvent] = []
         dead: list[str] = []
         for event in self._pending:
-            if not isinstance(event, MessageEvent) or event.payload is None:
+            if not (isinstance(event, MessageEvent) and _is_ordinary(event)):
                 continue
-            payload = event.payload
-            if _is_synthetic(event):
-                continue
-            if self._is_nonrunnable(payload.id, payload.sender_id, payload.sender_type):
+            payload = _payload(event)
+            if self._is_nonrunnable(payload):
                 dead.append(payload.id)
             else:
                 live.append(event)
@@ -1892,12 +1877,8 @@ class ExecutionContext:
         if revision != self._control_revision:
             return ResyncOutcome.BLOCKED
         segment, limit = self._local_segment()
-        rest = [
-            self._candidate(_backlog_event(msg), msg.metadata) for msg in page.messages
-        ]
-        retained = [
-            self._candidate(event, _payload(event).metadata) for event in segment
-        ]
+        rest = [self._candidate(_backlog_event(msg)) for msg in page.messages]
+        retained = [self._candidate(event) for event in segment]
         selection = select_prefix(
             rest,
             retained,
@@ -1933,11 +1914,8 @@ class ExecutionContext:
             segment.append(event)
         return segment, None
 
-    def _candidate(self, event: MessageEvent, metadata: Any) -> Candidate:
-        payload = _payload(event)
-        disposition = self._disposition(
-            payload.id, payload.sender_id, payload.sender_type, metadata
-        )
+    def _candidate(self, event: MessageEvent) -> Candidate:
+        disposition = self._disposition(_payload(event))
         if (
             disposition is Disposition.RUNNABLE
             and self._on_message_control is not None
@@ -1946,24 +1924,18 @@ class ExecutionContext:
             disposition = Disposition.CONTROL
         return Candidate(MessageKey.of_event(event), event, disposition)
 
-    def _disposition(
-        self,
-        message_id: str,
-        sender_id: str | None,
-        sender_type: str | None,
-        metadata: Any,
-    ) -> Disposition:
+    def _disposition(self, payload: MessageCreatedPayload) -> Disposition:
         """What a batch may do with an original; durable FAILED is never retried."""
-        if self._is_nonrunnable(
-            message_id, sender_id, sender_type
-        ) or self.claims.is_ack_pending(self.room_id, message_id):
+        if self._is_nonrunnable(payload) or self.claims.is_ack_pending(
+            self.room_id, payload.id
+        ):
             return Disposition.SKIP
-        if self._delivery_status_for_agent(metadata) in {
+        if self._delivery_status_for_agent(payload.metadata) in {
             DeliveryStatus.PROCESSED,
             DeliveryStatus.FAILED,
         }:
             return Disposition.SKIP
-        if message_id in self.claims.inflight_ids(self.room_id):
+        if payload.id in self.claims.inflight_ids(self.room_id):
             return Disposition.HELD
         return Disposition.RUNNABLE
 
@@ -1994,7 +1966,7 @@ class ExecutionContext:
         self, selection: Selection, revision: int
     ) -> ResyncOutcome | None:
         events = selection.events
-        ids = tuple(_event_message_id(event) for event in events)
+        ids = _message_ids(events)
         if ids == self._last_selection:
             return ResyncOutcome.BLOCKED
         self._last_selection = ids
@@ -2080,10 +2052,9 @@ class ExecutionContext:
         events: tuple[MessageEvent, ...],
         *,
         revision: int,
-        handler: Callable[[], Awaitable[bool]] | None = None,
     ) -> BacklogProcessResult:
         """Claim, admit, run and settle the originals of one attempt together."""
-        ids = tuple(_event_message_id(event) for event in events)
+        ids = _message_ids(events)
         with self._claim_messages(ids) as claimed:
             if not claimed:
                 logger.debug(
@@ -2093,7 +2064,7 @@ class ExecutionContext:
                 )
                 self._withdraw_capacity_wait()
                 return BacklogProcessResult.RETRY_LATER
-            outcome = await self._run_claimed_attempt(events, revision, handler)
+            outcome = await self._run_claimed_attempt(events, revision)
             match outcome:
                 case BacklogProcessResult.ADVANCED:
                     self._release(ids)
@@ -2104,10 +2075,7 @@ class ExecutionContext:
             return outcome
 
     async def _run_claimed_attempt(
-        self,
-        events: tuple[MessageEvent, ...],
-        revision: int,
-        handler: Callable[[], Awaitable[bool]] | None,
+        self, events: tuple[MessageEvent, ...], revision: int
     ) -> BacklogProcessResult:
         """Run one attempt whose originals this execution has all claimed."""
         members = self._without_processed(events)
@@ -2133,7 +2101,7 @@ class ExecutionContext:
             if not await self._confirm_processing(scope, revision):
                 return BacklogProcessResult.RETRY_LATER
             scope.admitted = True
-            return await self._execute_attempt(scope, revision, handler)
+            return await self._execute_attempt(scope, revision)
 
         except InputNotAccepted:
             self._discard_attempts(attempts)
@@ -2157,16 +2125,13 @@ class ExecutionContext:
             self._set_state(ExecutionState.IDLE)
 
     async def _execute_attempt(
-        self,
-        scope: TurnScope,
-        revision: int,
-        handler: Callable[[], Awaitable[bool]] | None,
+        self, scope: TurnScope, revision: int
     ) -> BacklogProcessResult:
         """Run an admitted scope's handler once, then write its stored intents."""
         await self._ensure_fresh_context()
         if revision != self._control_revision:
             return await self._defer_superseded(scope)
-        if not await self._run_cycle(scope, scope.originals[0], handler=handler):
+        if not await self._run_cycle(scope, scope.originals[0]):
             if scope.stop_observed:
                 return BacklogProcessResult.RETRY_LATER
             return BacklogProcessResult.ADVANCED
@@ -2205,11 +2170,7 @@ class ExecutionContext:
         return True
 
     def _owns_attempt(self, scope: TurnScope, revision: int) -> bool:
-        return (
-            self.current_scope is scope
-            and revision == self._control_revision
-            and not scope.terminating
-        )
+        return self._owns_control_revision(scope, revision) and not scope.terminating
 
     def _without_processed(
         self,
@@ -2221,7 +2182,7 @@ class ExecutionContext:
         for event in events:
             message_id = _event_message_id(event)
             if not self._message_processed_for_agent(
-                message_id, event.payload.metadata if event.payload else None
+                message_id, _payload(event).metadata
             ):
                 pending.append(event)
                 continue
@@ -2266,13 +2227,13 @@ class ExecutionContext:
         )
 
     def _clear_deferred_head_for(self, events: tuple[MessageEvent, ...]) -> None:
-        if self._deferred_message_id in {_event_message_id(e) for e in events}:
+        if self._deferred_message_id in _message_ids(events):
             self._set_deferred_head(None)
 
     async def _defer_superseded(self, scope: TurnScope) -> BacklogProcessResult:
         """Unwind an admitted scope a control superseded before its handler ran."""
         if scope.kind is None:
-            self._discard_attempts(_event_message_id(e) for e in scope.originals)
+            self._discard_attempts(_message_ids(scope.originals))
             return BacklogProcessResult.RETRY_LATER
         self._select_intent(scope, None, timed_out=False)
         await self._abort_cycle(scope.kind, scope, event=scope.originals[0])
@@ -2556,7 +2517,7 @@ class ExecutionContext:
         kind: ControlMode,
         scope: TurnScope,
         *,
-        event: PlatformEvent | None = None,
+        event: PlatformEvent,
     ) -> bool:
         """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
 
@@ -2569,7 +2530,7 @@ class ExecutionContext:
         # `record_attempt` already billed before this cycle started — otherwise
         # a message that's merely stopped/interrupted a couple of times gets
         # poisoned into permanently_failed before it's ever actually attempted.
-        self._discard_attempts(_event_message_id(e) for e in scope.originals)
+        self._discard_attempts(_message_ids(scope.originals))
         await self._clear_activity()
         if kind is ControlMode.STOP:
             for retained in reversed(scope.originals or (event,)):
@@ -2656,15 +2617,11 @@ class ExecutionContext:
                 logger.debug("Skipping self-message %s", msg_id)
                 return True
 
-            # Detect synthetic messages (e.g., contact events injected into hub room)
-            # These don't exist in the database, so skip all tracking and marking
-            is_synthetic = is_contact_hub_turn(
-                sender_type=payload.sender_type, sender_id=payload.sender_id
-            )
-            if is_synthetic:
+            # Synthetic messages (e.g., contact events injected into hub room)
+            # don't exist in the database, so they skip all tracking and
+            # marking and go directly to processing.
+            if _is_synthetic(event):
                 logger.debug("Processing synthetic contact event message")
-                msg_id = None  # Clear to skip message marking later
-                # Skip all tracking for synthetic messages - go directly to processing
             else:
                 # Only track retries and duplicates for real messages
                 # Skip permanently failed messages
@@ -2702,15 +2659,14 @@ class ExecutionContext:
     async def _handle_turn_failure(
         self,
         msg_id: str,
-        attempts: int | None,
+        attempts: int,
         error: Exception,
     ) -> None:
         """Mark a failed turn failed and, on its final attempt, report it to
         the room as an ``error`` event.
 
         An event mentions no one and is never delivered as a turn, so it is
-        safe for agent senders too. ``attempts`` is None when the failure
-        preceded ``record_attempt``, which can't be judged final.
+        safe for agent senders too.
         """
         try:
             if not await self.link.mark_failed(
@@ -2728,7 +2684,7 @@ class ExecutionContext:
             )
             return
         await self._report_turn_failure(
-            final=attempts is not None and attempts >= self._retry_tracker.max_retries
+            final=attempts >= self._retry_tracker.max_retries
         )
 
     async def _report_turn_failure(self, *, final: bool) -> None:

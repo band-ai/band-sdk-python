@@ -89,10 +89,13 @@ One-shot keeps its one-event-per-invocation drain; it never batches.
 
 ## Supported adapters
 
-An adapter opts in by setting `supports_batch_input = True` and implementing
-`on_messages(inp: AgentInput)`. The runtime hands such a turn to `on_messages`,
-and `AgentInput` carries every original; `msg` stays the first one, so a
-singleton consumer keeps working:
+An adapter opts in by setting `supports_batch_input = True`. A `SimpleAdapter`
+overrides `on_turn(messages, ...)`, its one model-input builder, and makes
+`on_message` call `on_turn((msg,), ...)`, so a singleton and a batch share one
+tool loop and one judge. A bare `FrameworkAdapter` implements
+`on_messages(inp: AgentInput)` itself. The runtime hands a batch to
+`on_messages`, and `AgentInput` carries every original; `msg` stays the first
+one, so a singleton consumer keeps working:
 
 ```python
 from datetime import UTC, datetime

@@ -2,10 +2,11 @@
 
 Every message pushed to an agent @mentions it, so every turn owes the room an
 answer: a reply, or a deliberate decision not to reply.
-`SimpleAdapter.run_judged_turn`, which `on_event` and the Slack adapter's
-inbound path both call, judges each turn with one rule from `band-sdk-core`,
+`SimpleAdapter.judged_turn` judges each turn with one rule from `band-sdk-core`,
 shared with the TypeScript SDK, and tells the platform honestly whether the
-delivery succeeded.
+delivery succeeded. A singleton reaches it through `run_judged_turn`, which
+`on_event` and the Slack adapter's inbound path both call; a batch
+([consuming queued messages](consume-all-queued.md)) through `on_messages`.
 
 ## The rule
 
@@ -327,7 +328,7 @@ from band.testing.fake_tools import FakeAgentTools, reported_failures
 
 async def main() -> None:
     tools = FakeAgentTools()
-    tools.turn.judged = True  # set by SimpleAdapter.run_judged_turn
+    tools.turn.judged = True  # set by SimpleAdapter.judged_turn
     tools.turn.detach()  # released while waiting for an approval
 
     # ...later, on the turn's normal completion path (never a ``finally``):

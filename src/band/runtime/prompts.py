@@ -21,8 +21,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from band_sdk_core import no_reply_tool
-
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemorySegment,
@@ -33,10 +31,11 @@ from band.core.memory_types import (
 )
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools.inputs.chat import MENTION_IDENTIFIERS
+from band.runtime.tools.schema import get_tool_description
 from band.runtime.tools.types import BandTool
 
 COMMUNICATION_INSTRUCTIONS = f"""Use `{BandTool.SEND_MESSAGE}(content, mentions)` to respond — a `{BandTool.SEND_MESSAGE}` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `{BandTool.SEND_MESSAGE}`; a turn that ends with the answer written as plain text delivers nothing.
-{BandTool.NO_REPLY}: {no_reply_tool()["description"]}
+{BandTool.NO_REPLY}: {get_tool_description(BandTool.NO_REPLY)}
 End every turn with one of the two.
 {MENTION_IDENTIFIERS}"""
 

@@ -30,9 +30,7 @@ from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.formatters import CURRENT_INPUTS_HEADING, InputField
 from band.testing.fake_tools import FakeAgentTools
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import ROOM_ID, room_context
-
-AGENT_ID = "agent-1"
+from tests.runtime.batching.kit import AGENT_ID, ROOM_ID, room_context
 
 
 @dataclass(frozen=True)

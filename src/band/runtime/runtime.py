@@ -143,7 +143,7 @@ class AgentRuntime:
 
         Raises:
             BandConfigError: ``consume_all_queued`` with a custom execution
-                factory (it cannot be validated) or without a batch callback.
+                factory, whose batch support cannot be validated.
         """
         self.link = link
         self.agent_id = agent_id

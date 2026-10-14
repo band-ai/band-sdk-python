@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from band.preprocessing.default import DefaultPreprocessor
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import room_context
-
-AGENT_ID = "agent-1"
+from tests.runtime.batching.kit import AGENT_ID, room_context
 
 
 def stored(message_id: str) -> dict[str, Any]:
@@ -31,13 +27,11 @@ async def history_contents(*, stored_ids: list[str]) -> list[str]:
 
 
 class TestBatchHistory:
-    @pytest.mark.asyncio
     async def test_history_stops_before_the_earliest_original(self) -> None:
         stored_ids = ["h1", "h2", "m1", "m2", "m3"]
 
         assert await history_contents(stored_ids=stored_ids) == ["h1", "h2"]
 
-    @pytest.mark.asyncio
     async def test_a_later_original_is_not_repeated_when_the_first_is_not_yet_stored(
         self,
     ) -> None:

@@ -77,18 +77,15 @@ def _failure_result(error: Exception) -> SettlementResult:
     ``ParsingError`` is not an ``ApiError``: the generated client raises it for
     an error body that misses its schema, but it still carries the status.
     """
-    match error:
-        case (
-            ApiError(status_code=HTTPStatus.NOT_FOUND)
-            | ParsingError(status_code=HTTPStatus.NOT_FOUND)
-        ):
+    if not isinstance(error, ApiError | ParsingError):
+        return SettlementResult.UNCONFIRMED
+    match error.status_code:
+        case HTTPStatus.NOT_FOUND:
             return SettlementResult.NOT_FOUND
-        case (
-            ApiError(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, body=body)
-            | ParsingError(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, body=body)
-        ) if _names_missing_attempt(body):
+        case HTTPStatus.UNPROCESSABLE_ENTITY if _names_missing_attempt(error.body):
             return SettlementResult.REJECTED
-    return SettlementResult.UNCONFIRMED
+        case _:
+            return SettlementResult.UNCONFIRMED
 
 
 def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:

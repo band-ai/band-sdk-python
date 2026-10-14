@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
-import pytest
-
 from band.client.streaming import DeliveryStatus
 from tests.runtime.batching.kit import FakeRoom, started_room
+from tests.runtime.helpers import runtime_failures
 
 
 class TestFailedExclusion:
-    @pytest.mark.asyncio
     async def test_a_failed_input_is_skipped_and_a_processing_one_is_taken_up(
-        self, platform: FakeRoom, mock_rest_client: MagicMock
+        self, platform: FakeRoom
     ) -> None:
         platform.post("failed", status=DeliveryStatus.FAILED)
         platform.post("interrupted", status=DeliveryStatus.PROCESSING)
         platform.post("fresh")
 
-        async with started_room(platform, mock_rest_client) as room:
+        async with started_room(platform) as room:
             await room.settled("interrupted", "fresh")
 
         assert (room.turns.ids, platform.status_of("failed")) == (
@@ -27,32 +23,15 @@ class TestFailedExclusion:
             DeliveryStatus.FAILED,
         )
 
-    @pytest.mark.asyncio
     async def test_a_failed_batch_fails_every_member_once_and_is_not_replayed(
-        self, platform: FakeRoom, mock_rest_client: MagicMock
+        self, platform: FakeRoom
     ) -> None:
         for message_id in ("m1", "m2", "m3"):
             platform.post(message_id)
 
-        async with started_room(
-            platform, mock_rest_client, fail_on=frozenset({"m2"})
-        ) as room:
-            await room.until(
-                lambda: all(
-                    platform.status_of(m) == DeliveryStatus.FAILED
-                    for m in ("m1", "m2", "m3")
-                )
-            )
-            reads = room.ctx.link.get_actionable_page.await_count
-            await room.ctx.request_resync()
-            await room.until(
-                lambda: room.ctx.link.get_actionable_page.await_count > reads
-            )
+        async with started_room(platform, fail_on=frozenset({"m2"})) as room:
+            await room.reached(DeliveryStatus.FAILED, "m1", "m2", "m3")
+            await room.resync()
 
-        assert (
-            room.turns.ids,
-            mock_rest_client.agent_api_events.create_agent_chat_event.await_count,
-        ) == (
-            [("m1", "m2", "m3")],
-            1,
-        )
+        assert room.turns.ids == [("m1", "m2", "m3")]
+        assert len(runtime_failures(room.ctx.link)) == 1

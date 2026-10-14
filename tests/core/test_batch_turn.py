@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import pytest
@@ -14,20 +13,9 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from band.testing.fake_tools import FakeAgentTools
+from tests.runtime.conftest import platform_msg
 
-
-def original(message_id: str, sender_id: str) -> PlatformMessage:
-    return PlatformMessage(
-        id=message_id,
-        room_id="room-1",
-        content=message_id,
-        sender_id=sender_id,
-        sender_type="User",
-        sender_name=None,
-        message_type="text",
-        metadata={},
-        created_at=datetime(2024, 1, 1, tzinfo=UTC),
-    )
+Entry = Callable[[SimpleAdapter[Any], AgentInput], Awaitable[None]]
 
 
 def turn_input(*messages: PlatformMessage) -> AgentInput:
@@ -40,6 +28,13 @@ def turn_input(*messages: PlatformMessage) -> AgentInput:
         contacts_msg=None,
         is_session_bootstrap=True,
         room_id="room-1",
+    )
+
+
+def batch_input() -> AgentInput:
+    """A turn over two originals from different senders."""
+    return turn_input(
+        platform_msg("m1", sender_id="alice"), platform_msg("m2", sender_id="bob")
     )
 
 
@@ -81,34 +76,30 @@ class TestBatchTurn:
     async def test_an_adapter_that_never_declared_batch_support_refuses_a_batch(
         self,
     ) -> None:
-        inp = turn_input(original("m1", "alice"), original("m2", "bob"))
+        inp = batch_input()
 
         with pytest.raises(BandConfigError, match="LegacyAdapter does not support"):
             await LegacyAdapter().on_messages(inp)
 
     @pytest.mark.parametrize(
-        "messages",
+        ("entry", "message_ids"),
         [
-            [original("m1", "alice")],
-            [original("m1", "alice"), original("m2", "bob")],
+            pytest.param(SimpleAdapter.on_event, ("m1",), id="singleton"),
+            pytest.param(SimpleAdapter.on_messages, ("m1", "m2"), id="batch"),
         ],
-        ids=["singleton", "batch"],
     )
     async def test_every_entry_reaches_the_one_turn_builder(
-        self, messages: list[PlatformMessage]
+        self, entry: Entry, message_ids: tuple[str, ...]
     ) -> None:
         adapter = BatchAdapter(declines=True)
-        inp = turn_input(*messages)
+        inp = turn_input(*(platform_msg(message_id) for message_id in message_ids))
 
-        if len(messages) > 1:
-            await adapter.on_messages(inp)
-        else:
-            await adapter.on_event(inp)
+        await entry(adapter, inp)
 
-        assert adapter.turns == [tuple(m.id for m in messages)]
+        assert adapter.turns == [message_ids]
 
     async def test_a_batch_that_did_nothing_is_reported_once_and_failed(self) -> None:
-        inp = turn_input(original("m1", "alice"), original("m2", "bob"))
+        inp = batch_input()
 
         with pytest.raises(TurnResultAlreadyReported):
             await BatchAdapter(declines=False).on_messages(inp)
@@ -116,14 +107,14 @@ class TestBatchTurn:
         assert failure_reports(inp.tools) == [MISSING_REPLY_FAILURE]
 
     async def test_a_batch_that_declined_as_a_whole_completes(self) -> None:
-        inp = turn_input(original("m1", "alice"), original("m2", "bob"))
+        inp = batch_input()
 
         await BatchAdapter(declines=True).on_messages(inp)
 
         assert failure_reports(inp.tools) == []
 
     async def test_a_batch_the_provider_refused_is_not_judged(self) -> None:
-        inp = turn_input(original("m1", "alice"), original("m2", "bob"))
+        inp = batch_input()
 
         with pytest.raises(InputNotAccepted):
             await RejectingAdapter(declines=False).on_messages(inp)
@@ -137,7 +128,7 @@ class TestBatchTurn:
         class Unbuilt(LegacyAdapter):
             supports_batch_input = True
 
-        inp = turn_input(original("m1", "alice"), original("m2", "bob"))
+        inp = batch_input()
 
         with pytest.raises(BandConfigError, match="on_turn"):
             await Unbuilt().on_messages(inp)

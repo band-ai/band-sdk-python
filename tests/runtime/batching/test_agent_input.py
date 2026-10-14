@@ -2,36 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import UTC, datetime
+from typing import Any
 
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.testing import FakeAgentTools
+from tests.runtime.batching.kit import ROOM_ID
+from tests.runtime.conftest import platform_msg
 
 
-def message(message_id: str, sender_id: str) -> PlatformMessage:
-    return PlatformMessage(
-        id=message_id,
-        room_id="room-1",
-        content=message_id,
-        sender_id=sender_id,
-        sender_type="User",
-        sender_name=None,
-        message_type="text",
-        metadata={},
-        created_at=datetime(2024, 1, 1, tzinfo=UTC),
-    )
-
-
-def turn_input(*messages: PlatformMessage) -> AgentInput:
+def turn_input(msg: PlatformMessage, **fields: Any) -> AgentInput:
     return AgentInput(
-        msg=messages[0],
-        messages=messages,
-        tools=None,  # type: ignore[arg-type]
+        msg=msg,
+        tools=FakeAgentTools(),
         history=HistoryProvider(raw=[]),
         participants_msg=None,
         contacts_msg=None,
         is_session_bootstrap=False,
-        room_id="room-1",
+        room_id=ROOM_ID,
+        **fields,
     )
 
 
@@ -39,21 +27,26 @@ class TestAgentInput:
     def test_a_turn_without_explicit_originals_is_the_singleton_of_its_message(
         self,
     ) -> None:
-        only = message("m1", "alice")
+        only = platform_msg("m1")
 
         assert turn_input(only).messages == (only,)
-        assert replace(turn_input(only), messages=()).messages == (only,)
+        assert turn_input(only, messages=()).messages == (only,)
 
     def test_senders_are_distinct_in_order_of_first_appearance(self) -> None:
-        originals = [
-            message("m1", "alice"),
-            message("m2", "bob"),
-            message("m3", "alice"),
-        ]
+        originals = (
+            platform_msg("m1", sender_id="alice"),
+            platform_msg("m2", sender_id="bob"),
+            platform_msg("m3", sender_id="alice"),
+        )
 
-        assert turn_input(*originals).sender_ids == ("alice", "bob")
+        inp = turn_input(originals[0], messages=originals)
+
+        assert inp.sender_ids == ("alice", "bob")
 
     def test_a_message_without_a_sender_adds_no_audience(self) -> None:
-        originals = [message("m1", ""), message("m2", "bob")]
+        anonymous = platform_msg("m1", sender_id="")
+        originals = (anonymous, platform_msg("m2", sender_id="bob"))
 
-        assert turn_input(*originals).sender_ids == ("bob",)
+        inp = turn_input(anonymous, messages=originals)
+
+        assert inp.sender_ids == ("bob",)

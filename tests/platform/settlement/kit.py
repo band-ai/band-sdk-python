@@ -17,6 +17,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from band.client.rest import AsyncRestClient
+from band.client.streaming import DeliveryStatus
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
 from band.platform.message_lifecycle import (
@@ -55,7 +56,7 @@ def error_body(
     }
 
 
-def accepted(action: str, *, success: bool = True) -> Reply:
+def accepted(action: DeliveryStatus, *, success: bool = True) -> Reply:
     return Reply.of_json(
         200,
         {
@@ -136,15 +137,15 @@ def link_over(rest: AsyncRestClient) -> BandLink:
 class Terminal:
     """One terminal write, reachable through both the detailed and bool APIs."""
 
-    action: str
+    action: DeliveryStatus
 
     async def detailed(self, link: BandLink) -> SettlementResult:
-        if self.action == "processed":
+        if self.action is DeliveryStatus.PROCESSED:
             return await link.mark_processed_result(ROOM_ID, MESSAGE_ID)
         return await link.mark_failed_result(ROOM_ID, MESSAGE_ID, "boom")
 
     async def legacy(self, link: BandLink) -> bool:
-        if self.action == "processed":
+        if self.action is DeliveryStatus.PROCESSED:
             return await link.mark_processed(ROOM_ID, MESSAGE_ID)
         return await link.mark_failed(ROOM_ID, MESSAGE_ID, "boom")
 

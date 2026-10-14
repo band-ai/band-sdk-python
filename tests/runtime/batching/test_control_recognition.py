@@ -9,26 +9,13 @@ from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from tests.conftest import make_message_event
-
-AGENT_ID = "agent-1"
-
-
-class PlainAdapter(SimpleAdapter[Any]):
-    async def on_message(self, *args: Any, **kwargs: Any) -> None: ...
-
-
-class HandlerOnlyAdapter(PlainAdapter):
-    async def try_handle_control(self, *args: Any, **kwargs: Any) -> bool:
-        return False
-
-
-class RecognizingAdapter(HandlerOnlyAdapter):
-    def is_control_message(self, msg: Any) -> bool:
-        return msg.content == "approve"
-
-
-class RewritingPreprocessor(DefaultPreprocessor):
-    """A subclass may transform content, so its projection is not trusted."""
+from tests.runtime.batching.kit import (
+    AGENT_ID,
+    ControlHandlingAdapter,
+    LegacyAdapter,
+    RecognizingAdapter,
+    RewritingPreprocessor,
+)
 
 
 def classify(
@@ -49,12 +36,12 @@ class TestControlRecognition:
     def test_an_adapter_without_a_control_handler_has_no_controls(
         self, ctx: MagicMock
     ) -> None:
-        assert classify(PlainAdapter(), ctx, "approve") is False
+        assert classify(LegacyAdapter(), ctx, "approve") is False
 
     def test_a_handler_without_a_recognizer_is_probed_for_every_message(
         self, ctx: MagicMock
     ) -> None:
-        assert classify(HandlerOnlyAdapter(), ctx, "hello") is True
+        assert classify(ControlHandlingAdapter(), ctx, "hello") is True
 
     def test_a_recognizer_decides_from_the_message_it_is_given(
         self, ctx: MagicMock

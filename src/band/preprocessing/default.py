@@ -155,13 +155,10 @@ class DefaultPreprocessor(Preprocessor):
             # turns of their own; replaying them exposes future requests and
             # duplicates them when their own turn arrives. A later original is
             # dropped even when the earliest is not stored yet.
+            earlier = messages_before(context.messages, messages[0].id)
             original_ids = {msg.id for msg in messages}
             history = format_history_for_llm(
-                [
-                    stored
-                    for stored in messages_before(context.messages, messages[0].id)
-                    if stored.get("id") not in original_ids
-                ],
+                [stored for stored in earlier if stored.get("id") not in original_ids],
                 participants=ctx.participants,
             )
             logger.info(

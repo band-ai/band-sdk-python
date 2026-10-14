@@ -19,17 +19,18 @@ class TestSessionConfig:
 
         assert (config.consume_all_queued, config.max_queued_messages) == (False, 10)
 
-    @pytest.mark.parametrize("ceiling", [1, DEFAULT_MAX_QUEUED_MESSAGES, 100])
+    @pytest.mark.parametrize(
+        "ceiling", [1, DEFAULT_MAX_QUEUED_MESSAGES, ACTIONABLE_PAGE_SIZE]
+    )
     def test_a_ceiling_inside_the_page_size_is_accepted(self, ceiling: int) -> None:
-        assert ACTIONABLE_PAGE_SIZE == 100
         config = SessionConfig(consume_all_queued=True, max_queued_messages=ceiling)
 
         assert config.max_queued_messages == ceiling
 
-    @pytest.mark.parametrize("ceiling", [0, -1, 101, 10.0, "10", True, None])
-    def test_a_ceiling_outside_one_to_one_hundred_is_rejected(
-        self, ceiling: object
-    ) -> None:
+    @pytest.mark.parametrize(
+        "ceiling", [0, -1, ACTIONABLE_PAGE_SIZE + 1, 10.0, "10", True, None]
+    )
+    def test_a_ceiling_outside_the_page_size_is_rejected(self, ceiling: object) -> None:
         with pytest.raises(ValueError, match="max_queued_messages"):
             SessionConfig(max_queued_messages=ceiling)  # type: ignore[arg-type]
 

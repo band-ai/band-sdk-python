@@ -304,8 +304,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             {turn.release, turn_task}, return_when=asyncio.FIRST_COMPLETED
         )
         if turn_task in done:
-            # No decision ever opened -- surface completion/failure exactly
-            # as before this turn body ran detached.
+            # No decision opened: surface the turn's completion or failure.
             await turn_task
 
     def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
@@ -317,9 +316,6 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
         if self._capacity_requests.get(room_id) == generation:
             del self._capacity_requests[room_id]
-
-    def _provider_slot_free(self) -> bool:
-        return self._active_turn is None
 
     def _room_is_next_in_line(self, room_id: str) -> bool:
         """Whether no other room's request is ahead of ``room_id``'s input."""
@@ -336,7 +332,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         may take a free slot; a room with no request is served only when the
         line is empty.
         """
-        if not self._provider_slot_free():
+        if self._active_turn is not None:
             raise InputNotAccepted("Cursor is already running a turn")
         if not self._room_is_next_in_line(room_id):
             raise InputNotAccepted("Cursor is reserved for a room waiting longer")
@@ -464,14 +460,13 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     def _close_room_turn(self, room_id: str) -> CursorTurn | None:
         """Unbind the room's active turn from the shared profile and wake its
         decisions. This does not stop the provider; ``request_cancel`` does."""
-        turn = self._active_turn
-        if turn is not None and turn.room_id == room_id:
-            turn.closed = True
-            turn.session_id = None
-            self._cursor_profile.bind_session(None)
-        else:
-            turn = None
         self._cancel_room_decisions(room_id)
+        turn = self._active_turn
+        if turn is None or turn.room_id != room_id:
+            return None
+        turn.closed = True
+        turn.session_id = None
+        self._cursor_profile.bind_session(None)
         return turn
 
     def _forget_session(self, session_id: str) -> None:

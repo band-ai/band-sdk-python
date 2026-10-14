@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Collection, Iterator
+from collections.abc import Awaitable, Callable, Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -12,6 +12,7 @@ from typing import Any, Literal
 from acp.schema import AllowedOutcome, ToolCallUpdate
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorTurn
+from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from band.integrations.acp.client_runtime import ACPRuntime
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate, allow_or_reject
@@ -32,6 +33,7 @@ BATCH_INPUT_SENDERS = ("alice", "bob", "alice")
 WAIT_S = 5.0
 
 BusyKind = Literal["prompt", "approval"]
+TurnEnd = Callable[[CursorACPAdapter, str], Awaitable[None]]
 
 
 @dataclass
@@ -78,6 +80,18 @@ def busy_provider(
 def cursor_adapter(session: AcpSession) -> CursorACPAdapter:
     assert isinstance(session.adapter, CursorACPAdapter)
     return session.adapter
+
+
+async def stop(adapter: CursorACPAdapter, room_id: str) -> None:
+    await adapter.on_interrupt(room_id, ControlMode.STOP)
+
+
+async def interrupt(adapter: CursorACPAdapter, room_id: str) -> None:
+    await adapter.on_interrupt(room_id, ControlMode.INTERRUPT)
+
+
+async def retire(adapter: CursorACPAdapter, room_id: str) -> None:
+    await adapter.on_cleanup(room_id)
 
 
 def active_turn(session: AcpSession) -> CursorTurn:

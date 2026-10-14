@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 import pytest
 from band_rest.core import http_client
 
+from band.client.streaming import DeliveryStatus
 from band.platform.link import BandLink
 from tests.platform.settlement.kit import (
     SettlementPeer,
@@ -22,7 +23,7 @@ def instant_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
 
 
-@pytest.fixture(params=["processed", "failed"])
+@pytest.fixture(params=[DeliveryStatus.PROCESSED, DeliveryStatus.FAILED])
 def terminal(request: pytest.FixtureRequest) -> Terminal:
     return Terminal(action=request.param)
 

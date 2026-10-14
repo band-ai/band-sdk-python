@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from tests.adapters.cursorslot.conftest import OpenCursor
 from tests.adapters.cursorslot.kit import (
@@ -19,6 +18,7 @@ from tests.adapters.cursorslot.kit import (
     hold_cancellation,
     occupy,
     refusing_turn_tasks,
+    stop,
 )
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
@@ -49,7 +49,7 @@ class TestCursorProviderAdmission:
         sending = await occupy(session, provider)
         turn = active_turn(session)
 
-        await cursor_adapter(session).on_interrupt(ROOM_A, ControlMode.STOP)
+        await stop(cursor_adapter(session), ROOM_A)
         await teardown.received.wait()
         with pytest.raises(InputNotAccepted):
             await session.send("hello", room=ROOM_B)

@@ -7,14 +7,19 @@ fails when an adapter declares batch support without a probe registered.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from tests.framework_conformance.batchprobes import (
+    FINAL_TEXT,
     BatchProbe,
+    Original,
     acp,
     agentloops,
     claudesdk,
     codex,
     copilotsdk,
     crewai,
+    delivery_input,
     gemini,
     googleadk,
     letta,
@@ -39,3 +44,9 @@ BATCH_PROBES: dict[str, BatchProbe] = {
     **parlant.PROBES,
     **toolloop.PROBES,
 }
+
+
+async def provider_received(framework_id: str, originals: Sequence[Original]) -> str:
+    """Everything the provider received for one turn over ``originals``."""
+    inp = await delivery_input(originals)
+    return await BATCH_PROBES[framework_id].run(inp, FINAL_TEXT)
