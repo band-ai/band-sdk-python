@@ -25,8 +25,8 @@ CYCLE_CANCEL_GRACE_SECONDS = 1.0
 # How long a room's final disposal lets its accepted turn wind down on its own
 # before cancelling it.
 TURN_SETTLE_GRACE_S = 10.0
-# The adapter config field that sets a room's settle grace; each config
-# defaults it to TURN_SETTLE_GRACE_S.
+# The adapter config field that sets a room's settle grace. Each config assigns
+# TURN_SETTLE_GRACE_S itself: type checkers miss a default inside Annotated.
 TurnSettleTimeout = Annotated[
     NonNegativeFloat,
     Field(
