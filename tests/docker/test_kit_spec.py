@@ -96,8 +96,8 @@ class TestKitSpec:
         """The `sbx secret set-custom --placeholder` value in the shipped kit docs
         must equal the SDK's PROXY_MANAGED_API_KEY — the single origin of the
         sentinel. YAML/shell can't import the constant, so this guard fails CI if a
-        doc mirror drifts from it. spec.yaml's comment block carries the same
-        command, so it is scanned too."""
+        doc mirror drifts from it. Scan the spec too, so any inline setup
+        examples obey the same contract."""
         docs = [
             KIT_DIR / "README.md",
             KIT_DIR / "echo-agent" / "README.md",
