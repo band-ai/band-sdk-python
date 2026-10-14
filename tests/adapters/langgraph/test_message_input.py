@@ -12,6 +12,7 @@ from langgraph.prebuilt import ToolNode
 
 from band.adapters.langgraph import LangGraphAdapter, LangGraphAdapterConfig
 from band.core.types import Capability, Emit, PlatformMessage
+from band.runtime.formatters import format_current_inputs
 
 from .helpers import make_capture_graph
 
@@ -448,7 +449,7 @@ class TestOnMessage:
             assert messages[1].content == "Previous question"
             assert messages[2] is history[1]
             assert messages[2].content == "Previous answer"
-            assert messages[3] == ("user", "[Alice]: Hello, agent!")
+            assert messages[3] == ("user", format_current_inputs([sample_message]))
 
     @pytest.mark.asyncio
     async def test_bootstrap_injects_hydrated_own_reply_once(
@@ -500,7 +501,7 @@ class TestOnMessage:
             ("system", adapter._system_prompt),
             history[0],
             history[1],
-            ("user", "[Alice]: What word did I ask you to remember?"),
+            ("user", format_current_inputs([current_message])),
         ]
 
     @pytest.mark.asyncio
