@@ -57,6 +57,8 @@ WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
 # Short enough that a held transition reports quickly, long enough for a real
 # CLI child to start and the Band MCP server to shut down on a slow runner.
 REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
+# A turn still running when its room closes is cancelled at once.
+NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
 
 
 async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:
