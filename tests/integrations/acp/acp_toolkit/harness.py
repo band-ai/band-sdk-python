@@ -209,10 +209,6 @@ def pending_decisions(adapter: CursorACPAdapter) -> dict[str, list[str]]:
     }
 
 
-# Loop turns ``spin`` gives runnable tasks; a bound, not a delay.
-SPIN_TURNS = 200
-
-
 async def started_runtime(
     adapter: ACPClientAdapter, room: str = DEFAULT_ROOM
 ) -> ACPRuntime:
@@ -220,13 +216,6 @@ async def started_runtime(
     runtime = adapter._build_runtime(room_holder(adapter, room), 1)
     await runtime.start()
     return runtime
-
-
-async def spin() -> None:
-    """Give every runnable task its loop turns, for a "nothing happened"
-    check on a step that exposes no state to wait for."""
-    for _ in range(SPIN_TURNS):
-        await asyncio.sleep(0)
 
 
 async def released(room: ACPRoom) -> None:

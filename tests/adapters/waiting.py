@@ -9,6 +9,8 @@ from collections.abc import Callable
 # wait that would otherwise never end instead of counting loop turns.
 UNTIL_TIMEOUT_S = 15.0
 POLL_STEP_S = 0.001
+# Loop turns ``spin`` gives runnable tasks; a bound, not a delay.
+SPIN_TURNS = 200
 
 
 async def until(done: Callable[[], bool], *, failure: str) -> None:
@@ -19,3 +21,10 @@ async def until(done: Callable[[], bool], *, failure: str) -> None:
                 await asyncio.sleep(POLL_STEP_S)
     except TimeoutError:
         raise AssertionError(failure) from None
+
+
+async def spin() -> None:
+    """Give every runnable task its loop turns, for a "nothing happened"
+    check on a step that exposes no state to wait for."""
+    for _ in range(SPIN_TURNS):
+        await asyncio.sleep(0)

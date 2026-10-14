@@ -19,6 +19,7 @@ from tests.adapters.roompeer import (
     PeerCommand,
     write_instruction,
 )
+from tests.adapters.waiting import spin
 
 
 class TestRoomOwnership:
@@ -132,8 +133,8 @@ class TestRoomOwnership:
         first = asyncio.create_task(host.leave("room-a"))
         await barrier.reached.wait()
         second = asyncio.create_task(host.leave("room-a"))
-        done, _ = await asyncio.wait({second}, timeout=0.05)
-        assert not done
+        await spin()
+        assert not second.done()
         with pytest.raises(InputNotAccepted, match="is closing"):
             await host.send("room-a", write_instruction("changed"))
         with workspace_still_claimed():

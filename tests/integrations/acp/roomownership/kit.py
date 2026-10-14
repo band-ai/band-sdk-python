@@ -26,7 +26,7 @@ from band.integrations.acp.client_adapter import (
 from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.model_selection import MODEL_CATEGORY
-from tests.adapters.waiting import until
+from tests.adapters.waiting import spin, until
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     AcpSession,
@@ -44,7 +44,6 @@ from tests.integrations.acp.acp_toolkit.agent import (
     Gate,
     allow_or_reject,
 )
-from tests.integrations.acp.acp_toolkit.harness import spin
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
 # A transition bound short enough that waiting it out costs nothing.

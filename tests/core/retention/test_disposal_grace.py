@@ -9,7 +9,7 @@ import pytest
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention import ReleaseCause, Residency
-from tests.adapters.waiting import until
+from tests.adapters.waiting import spin, until
 from tests.core.retention.kit import (
     SETTLE_GRACE_S,
     Barrier,
@@ -32,10 +32,6 @@ async def parked_work(resident: Resident, barrier: Barrier) -> asyncio.Task[None
     resident.room.own(task)
     await barrier.reached.wait()
     return task
-
-
-# Loop turns a disposal may take to decide on its grace; a bound, not a delay.
-GRACE_TURNS = 20
 
 
 async def grace_started(host: ResidenceHost, rooms: int = 1) -> None:
@@ -229,8 +225,7 @@ class TestDisposalGrace:
         work.cancel()
         await cleanup.reached.wait()
         disposal = asyncio.create_task(resident.room.dispose())
-        for _ in range(GRACE_TURNS):
-            await asyncio.sleep(0)
+        await spin()
 
         # No grace is armed for it, and disposal does not cancel it again.
         assert armed(graceful_host.clock) == []

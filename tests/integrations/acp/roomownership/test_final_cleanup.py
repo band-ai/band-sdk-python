@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from tests.adapters.waiting import spin
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     FakeACPAgent,
@@ -14,7 +15,6 @@ from tests.integrations.acp.acp_toolkit import (
     fake_agent_config,
 )
 from tests.integrations.acp.acp_toolkit.agent import AGENT_EXIT_FAILURE
-from tests.integrations.acp.acp_toolkit.harness import spin
 from tests.integrations.acp.roomownership.kit import stop_budget
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 from tests.mcpclient import crash_backend
