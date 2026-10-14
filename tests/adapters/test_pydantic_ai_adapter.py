@@ -34,6 +34,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstrumentationSettings,
+    PydanticAIDeprecationWarning,
     RunContext,
     UnexpectedModelBehavior,
     _tool_execution,
@@ -53,6 +54,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 
@@ -66,6 +68,7 @@ from band.adapters.pydantic_ai import (
     _is_replayable_history_message,
     _log_native_progress,
     _native_turn,
+    _resolve_pydantic_ai_model,
 )
 from band.core.exceptions import BandToolError
 from band.core.protocols import (
@@ -346,6 +349,31 @@ class TestInitialization:
 
         assert adapter._agent.model is llm
 
+    def test_non_openai_models_skip_the_legacy_http_patch(self):
+        llm = TestModel()
+
+        assert _resolve_pydantic_ai_model(llm) is llm
+        assert _resolve_pydantic_ai_model("anthropic:claude") == "anthropic:claude"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("model_name", "model_type"),
+        [
+            ("openai:gpt-4o-mini", OpenAIResponsesModel),
+            ("openai-chat:gpt-4o-mini", OpenAIChatModel),
+        ],
+    )
+    async def test_openai_model_strings_use_the_legacy_http_client(
+        self, monkeypatch: pytest.MonkeyPatch, model_name: str, model_type: type[Any]
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+        with pytest.warns(PydanticAIDeprecationWarning, match="httpx.AsyncClient"):
+            model = _resolve_pydantic_ai_model(model_name)
+
+        assert isinstance(model, model_type)
+        await model.provider.client.close()
+
     @pytest.mark.parametrize(
         ("config", "llm"),
         [
@@ -366,7 +394,7 @@ class TestInitialization:
         an empty/thinking-only response within a single turn, and pydantic-ai would
         otherwise replay it to the provider as assistant content:null.
         """
-        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="test"))
         adapter.agent_name = "TestBot"
 
         with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
@@ -697,7 +725,7 @@ class TestOnStarted:
         """Should persist rendered prompt for capability-gating visibility."""
         with patch("band.adapters.pydantic_ai.Agent"):
             adapter = PydanticAIAdapter(
-                PydanticAIAdapterConfig(model="openai:gpt-5.4"),
+                PydanticAIAdapterConfig(model="test"),
                 capabilities=Capability.MEMORY,
             )
             await adapter.on_started(
@@ -734,6 +762,13 @@ class TestOnStarted:
             assert tool in tool_names, f"Tool {tool} not found"
 
 
+def _wire_tool_call_args(args: Any) -> dict[str, Any] | str:
+    """Shape tool args the way providers send them on the wire (JSON text or object)."""
+    if isinstance(args, dict | str):
+        return args
+    return json.dumps(args)
+
+
 def _scripted_tool_calls(*calls: tuple[str, Any]) -> FunctionModel:
     """A model that makes ``calls``, one per turn, then answers in plain text.
 
@@ -746,7 +781,7 @@ def _scripted_tool_calls(*calls: tuple[str, Any]) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if pending:
             name, args = pending.pop(0)
-            return ModelResponse(parts=[ToolCallPart(name, args)])
+            return ModelResponse(parts=[ToolCallPart(name, _wire_tool_call_args(args))])
         return ModelResponse(parts=[TextPart("done")])
 
     return FunctionModel(respond)
@@ -2969,7 +3004,7 @@ class TestCustomTools:
             return f"Echo: {message}"
 
         adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4"), additional_tools=[my_echo]
+            PydanticAIAdapterConfig(model="test"), additional_tools=[my_echo]
         )
 
         # Mock the Agent class to track tool registrations
