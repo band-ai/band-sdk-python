@@ -18,7 +18,7 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
@@ -780,6 +780,24 @@ class ExecutionContext:
         self.current_scope = TurnScope(self._control_revision)
         return self.current_scope
 
+    @contextlib.asynccontextmanager
+    async def _turn_scope(self) -> AsyncIterator[TurnScope | None]:
+        """A block-scoped turn that controls can terminate; settled on exit.
+
+        Yields None, deferring the turn, while the previous turn's platform-stop
+        observer is still running. Admission is immediate so a signal during the
+        block is not dropped.
+        """
+        scope = await self._begin_scope()
+        if scope is None:
+            yield None
+            return
+        scope.admitted = True
+        try:
+            yield scope
+        finally:
+            scope.settled = True
+
     async def _begin_turn(self, revision: int | None = None) -> TurnScope | None:
         """Begin a message turn that controls terminate from this point on."""
         if revision is None:
@@ -1255,6 +1273,19 @@ class ExecutionContext:
         ):
             self._pending_synthetic.append(event)
         return True
+
+    def _retain_unadvanced_synthetic(
+        self, event: PlatformEvent, outcome: TurnOutcome
+    ) -> TurnOutcome:
+        """Keep a contact event queued until its turn advances.
+
+        The drain leaves the head in place, so an event already queued is left
+        where it is. A direct ``_process_event`` call has not queued it yet; a
+        STOP or deferral would otherwise drop it.
+        """
+        if outcome is not TurnOutcome.ADVANCED:
+            self._enqueue_synthetic(event)
+        return outcome
 
     async def _drain_synthetic(self) -> ResyncOutcome | None:
         """Run queued synthetic turns in receive order; None once the queue is empty.
@@ -2054,7 +2085,7 @@ class ExecutionContext:
                 self.room_id,
                 event.payload.id if event.payload else None,
             )
-            return TurnOutcome.PAUSED
+            return self._retain_unadvanced_synthetic(event, TurnOutcome.PAUSED)
 
         payload = event.payload if isinstance(event, MessageEvent) else None
         msg_id = payload.id if payload else None
@@ -2108,9 +2139,14 @@ class ExecutionContext:
                             msg_id,
                         )
                         return TurnOutcome.RETRY_LATER
-                    return await self._process_event_body(event, msg_id, payload)
+                    return self._retain_unadvanced_synthetic(
+                        event,
+                        await self._process_event_body(event, msg_id, payload),
+                    )
 
-        return await self._process_event_body(event, msg_id, payload)
+        return self._retain_unadvanced_synthetic(
+            event, await self._process_event_body(event, msg_id, payload)
+        )
 
     def note_turn_failure_reported(self) -> None:
         """Record that the adapter already told the room this turn failed."""

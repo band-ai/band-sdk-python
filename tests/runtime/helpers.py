@@ -125,6 +125,16 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
             )
 
 
+def contact_event(event_id: str) -> MessageEvent:
+    """A synthetic contact event, as the SDK injects one into the hub room."""
+    return make_message_event(
+        room_id=ROOM_ID,
+        msg_id=event_id,
+        sender_type=SYNTHETIC_SENDER_TYPE,
+        sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    )
+
+
 def failure_posts(link: MagicMock) -> list[tuple[str, str]]:
     """Every attempted failure post, as (provider, text), in order."""
     return [
@@ -169,26 +179,32 @@ class LifecyclePlatform:
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
+        # The room history the context endpoint returns.
+        self.context: list[dict[str, Any]] = []
 
     def add_message(self, message_id: str, *, content: str = "hello") -> None:
-        self.messages.append(
-            {
-                "id": message_id,
-                "chat_room_id": ROOM_ID,
-                "content": content,
-                "sender_id": "user-1",
-                "sender_type": "User",
-                "sender_name": "User",
-                "message_type": "text",
-                "metadata": {},
-                "inserted_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-            }
+        self.messages.append(_message_record(message_id, content=content))
+
+    def add_processed_history(self, message_id: str) -> None:
+        """Room history that records ``message_id`` as processed by the agent."""
+        self.context.append(
+            _message_record(
+                message_id,
+                metadata={"delivery_status": {AGENT_ID: {"status": "processed"}}},
+            )
         )
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         tail = path.rsplit("/", 1)[-1]
+        if tail == "context":
+            return httpx.Response(
+                200,
+                json={
+                    "data": self.context,
+                    "metadata": {"has_more": False, "limit": 50},
+                },
+            )
         if tail == "activity":
             working = json.loads(request.content)["working"]
             recorded = working and not self.stopped
@@ -279,6 +295,23 @@ class LifecyclePlatform:
 
     def requested(self, status: str) -> list[str]:
         return [mid for mid, mark in self.requested_marks if mark == status]
+
+
+def _message_record(
+    message_id: str, *, content: str = "hello", metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "chat_room_id": ROOM_ID,
+        "content": content,
+        "sender_id": "user-1",
+        "sender_type": "User",
+        "sender_name": "User",
+        "message_type": "text",
+        "metadata": metadata or {},
+        "inserted_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
 
 
 class ClaimGate:

@@ -77,11 +77,11 @@ class TestRoomShutdown:
         ctx = ExecutionContext(
             "room-123", mock_link, AsyncMock(), on_platform_stop=observer
         )
-        await ctx._begin_scope()
-        ctx.observe_platform_stop(ctx.current_scope)
-        await entered.wait()
-        await ctx.stop()
-        assert cancelled.is_set()
+        async with ctx._turn_scope():
+            ctx.observe_platform_stop(ctx.current_scope)
+            await entered.wait()
+            await ctx.stop()
+            assert cancelled.is_set()
 
     async def test_retried_stop_cancels_an_observer_that_swallowed_the_first(
         self, mock_link, monkeypatch
@@ -103,13 +103,13 @@ class TestRoomShutdown:
         ctx = ExecutionContext(
             "room-123", mock_link, AsyncMock(), on_platform_stop=observer
         )
-        await ctx._begin_scope()
-        ctx.observe_platform_stop(ctx.current_scope)
-        await entered.wait()
-        with pytest.raises(CleanupIncompleteError):
+        async with ctx._turn_scope():
+            ctx.observe_platform_stop(ctx.current_scope)
+            await entered.wait()
+            with pytest.raises(CleanupIncompleteError):
+                await ctx.stop()
             await ctx.stop()
-        await ctx.stop()
-        assert cancels == 2
+            assert cancels == 2
 
     async def test_interrupted_drain_still_keeps_the_stubborn_task_for_stop(
         self, mock_link

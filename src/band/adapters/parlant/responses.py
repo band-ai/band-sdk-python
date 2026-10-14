@@ -119,13 +119,16 @@ async def relay_agent_response(
     sender_name: str,
     timeout: float,
     poll: float,
-) -> None:
+) -> bool:
     """Relay the engine's final reply to *sender_name*, waiting up to *timeout*.
 
     Waiting polls in *poll*-second windows and keeps going past empty ones,
     so a slow (cold-start) turn is still answered. If the budget elapses with
     no final message the turn is given up honestly: Parlant intermittently
     stalls after a preamble, and a preamble is not an answer.
+
+    Returns whether the turn was given up that way, with the engine possibly
+    still working on it.
     """
     offset = min_offset
     # perf_counter keeps its resolution on Windows, where monotonic() is coarse.
@@ -140,9 +143,9 @@ async def relay_agent_response(
         )
         match polled:
             case PollMiss.FAILED:
-                return
+                return False
             case PollMiss.NO_UPDATE if tools.turn.replied:
-                return
+                return False
             case PollMiss():
                 await _back_off(deadline)
                 continue
@@ -157,13 +160,15 @@ async def relay_agent_response(
                 mentions=[sender_name],
             )
         if batch.final_seen or tools.turn.replied:
-            return
+            return False
         logger.debug("Room %s: only a preamble so far; still waiting", room_id)
 
-    if not tools.turn.replied:
-        logger.warning(
-            "Room %s: timed out after %ss waiting for agent response", room_id, timeout
-        )
+    if tools.turn.replied:
+        return False
+    logger.warning(
+        "Room %s: timed out after %ss waiting for agent response", room_id, timeout
+    )
+    return True
 
 
 def _message_parts(data: Any) -> tuple[str, list[str]]:

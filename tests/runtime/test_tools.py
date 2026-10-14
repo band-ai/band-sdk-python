@@ -1518,25 +1518,25 @@ class TestAgentToolsSendEvent:
         ctx = ExecutionContext(
             "room-123", MagicMock(rest=mock_rest_client), AsyncMock()
         )
-        await ctx._begin_scope()
-        tools = AgentTools.from_context(ctx)
-        mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
-            ForbiddenError(
-                body=Error(
-                    error=ErrorError(
-                        code="forbidden",
-                        message="Agent execution is stopped; cannot post events",
-                        request_id="req-1",
+        async with ctx._turn_scope():
+            tools = AgentTools.from_context(ctx)
+            mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
+                ForbiddenError(
+                    body=Error(
+                        error=ErrorError(
+                            code="forbidden",
+                            message="Agent execution is stopped; cannot post events",
+                            request_id="req-1",
+                        )
                     )
                 )
             )
-        )
-        for content in ("first", "later"):
-            with pytest.raises(asyncio.CancelledError):
-                await tools.send_event(content, "thought")
-        assert not ctx.is_stopped
-        assert not tools.turn.complete
-        mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
+            for content in ("first", "later"):
+                with pytest.raises(asyncio.CancelledError):
+                    await tools.send_event(content, "thought")
+            assert not ctx.is_stopped
+            assert not tools.turn.complete
+            mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
 
     async def test_send_event_without_an_execution_still_raises_the_typed_error(
         self, mock_rest_client

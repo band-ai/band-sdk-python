@@ -8,9 +8,11 @@ by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 from uuid import uuid4
@@ -332,3 +334,63 @@ def make_mock_async_stream(*messages: MagicMock) -> Any:
                 yield stream_message
 
     return _AsyncStream(list(messages))
+
+
+class RecordingLettaClient:
+    """A Letta server that records each turn sent and each run cancelled.
+
+    ``hold()`` keeps every create in flight until ``release`` is set, as a
+    Letta agent mid-turn does. ``reject_cancels`` answers each cancel with the
+    server error Letta returns without Redis.
+    """
+
+    def __init__(self) -> None:
+        self.journal: list[str] = []
+        self.release = asyncio.Event()
+        self.release.set()
+        self.reject_cancels = False
+        self.agents = SimpleNamespace(
+            messages=SimpleNamespace(
+                create=self._create_agent_turn, cancel=self._cancel_agent_runs
+            )
+        )
+        self.conversations = SimpleNamespace(
+            messages=SimpleNamespace(create=self._create_conversation_turn),
+            cancel=self._cancel_conversation_runs,
+        )
+
+    def hold(self) -> None:
+        self.release.clear()
+
+    @property
+    def sent(self) -> list[str]:
+        return [entry for entry in self.journal if entry.startswith("send ")]
+
+    @property
+    def cancels(self) -> list[str]:
+        return [entry for entry in self.journal if entry.startswith("cancel ")]
+
+    async def _create_agent_turn(
+        self, *, agent_id: str, messages: list[dict[str, str]]
+    ) -> MagicMock:
+        self.journal.append(f"send agent {agent_id}")
+        await self.release.wait()
+        return make_letta_response(make_assistant_message())
+
+    async def _create_conversation_turn(
+        self, *, conversation_id: str, messages: list[dict[str, str]]
+    ) -> Any:
+        self.journal.append(f"send conversation {conversation_id}")
+        await self.release.wait()
+        return make_mock_async_stream(make_assistant_message())
+
+    async def _cancel_agent_runs(self, agent_id: str) -> None:
+        await self._cancel(f"cancel agent {agent_id}")
+
+    async def _cancel_conversation_runs(self, conversation_id: str) -> None:
+        await self._cancel(f"cancel conversation {conversation_id}")
+
+    async def _cancel(self, entry: str) -> None:
+        self.journal.append(entry)
+        if self.reject_cancels:
+            raise RuntimeError("Run cancellation requires Redis on the Letta server")

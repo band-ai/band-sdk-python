@@ -498,6 +498,8 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
     with suppress(asyncio.CancelledError):
         await interrupted
 
+    # The abort is sent from its own task, which the room's next turn joins.
+    await wait_for(lambda: bool(fake_client.aborted_sessions))
     assert fake_client.aborted_sessions == ["sess-1"], "OpenCode kept working"
     assert tools.messages_sent == [], "posted the reply the user interrupted"
 
