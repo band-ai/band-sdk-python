@@ -8,7 +8,8 @@ import pytest
 
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_participant_added_event
-from tests.runtime.batching.kit import AGENT_ID, ROOM_ID, FakeRoom, started_room
+from tests.runtime.batching.kit import FakeRoom, started_room
+from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
 pytestmark = pytest.mark.looptime
 

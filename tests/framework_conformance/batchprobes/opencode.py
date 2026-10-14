@@ -16,7 +16,7 @@ from tests.adapters.opencode.helpers import (
 )
 from tests.framework_conformance.batchprobes import BatchProbe, deliver
 from tests.mcpbackends import backends_created_by
-from tests.runtime.batching.kit import ROOM_ID
+from tests.runtime.helpers import ROOM_ID
 
 SESSION_ID = "sess-1"
 MESSAGE_ID = "msg-1"

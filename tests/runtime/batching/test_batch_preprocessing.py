@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from band.preprocessing.default import DefaultPreprocessor
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import AGENT_ID
+from tests.runtime.helpers import AGENT_ID
 
 
 class TestBatchPreprocessing:

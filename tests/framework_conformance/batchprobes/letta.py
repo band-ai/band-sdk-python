@@ -12,7 +12,7 @@ import pytest
 
 from band.core.types import AgentInput
 from tests.framework_conformance.batchprobes import BatchProbe, deliver
-from tests.runtime.batching.kit import ROOM_ID
+from tests.runtime.helpers import ROOM_ID
 
 
 async def run_letta(inp: AgentInput, final_text: str) -> str:

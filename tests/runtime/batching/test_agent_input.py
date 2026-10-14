@@ -2,25 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import replace
 
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
-from band.testing import FakeAgentTools
-from tests.runtime.batching.kit import ROOM_ID
+from tests.framework_conformance.invocationkit import turn_input
 from tests.runtime.conftest import platform_msg
-
-
-def turn_input(msg: PlatformMessage, **fields: Any) -> AgentInput:
-    return AgentInput(
-        msg=msg,
-        tools=FakeAgentTools(),
-        history=HistoryProvider(raw=[]),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=False,
-        room_id=ROOM_ID,
-        **fields,
-    )
 
 
 class TestAgentInput:
@@ -29,5 +14,4 @@ class TestAgentInput:
     ) -> None:
         only = platform_msg("m1")
 
-        assert turn_input(only).messages == (only,)
-        assert turn_input(only, messages=()).messages == (only,)
+        assert replace(turn_input(only), messages=()).messages == (only,)

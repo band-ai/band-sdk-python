@@ -24,7 +24,7 @@ from tests.framework_conformance.batchprobes import (
 from tests.framework_conformance.batchprobes.acp import ADAPTERS
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import started_acp_adapter
-from tests.runtime.batching.kit import ROOM_ID
+from tests.runtime.helpers import ROOM_ID
 
 # Alice's two inputs with a message of someone else's between them.
 AROUND_HELPER = (ALICE_FIRST, ALICE_SECOND)

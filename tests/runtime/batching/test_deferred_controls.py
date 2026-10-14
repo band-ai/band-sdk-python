@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from tests.runtime.batching.kit import ROOM_ID, ControlScript, FakeRoom, started_room
+from tests.runtime.batching.kit import ControlScript, FakeRoom, started_room
+from tests.runtime.helpers import ROOM_ID
 
 pytestmark = pytest.mark.looptime
 

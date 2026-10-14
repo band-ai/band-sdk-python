@@ -29,8 +29,9 @@ from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.formatters import InputField
 from band.testing.fake_tools import FakeAgentTools
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import AGENT_ID, ROOM_ID, room_context
+from tests.runtime.batching.kit import room_context
 from tests.runtime.currentrecords import current_records as current_records
+from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
 
 @dataclass(frozen=True)

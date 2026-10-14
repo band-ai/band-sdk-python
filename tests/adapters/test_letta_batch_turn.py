@@ -10,7 +10,7 @@ from tests.adapters.lettakit import (
     ready_letta_adapter,
 )
 from tests.framework_conformance.batchprobes import BATCH, deliver, delivery_input
-from tests.runtime.batching.kit import ROOM_ID
+from tests.runtime.helpers import ROOM_ID
 
 
 class TestLettaBatchTurn:

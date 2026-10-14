@@ -9,7 +9,8 @@ import pytest
 from band.adapters.codex import CodexAdapter
 from band.agent import Agent
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import AGENT_ID, room_context
+from tests.runtime.batching.kit import room_context
+from tests.runtime.helpers import AGENT_ID
 
 
 def is_control(ctx: MagicMock, content: str) -> bool:

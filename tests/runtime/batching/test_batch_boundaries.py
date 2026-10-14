@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from tests.conftest import make_participant_added_event
-from tests.runtime.batching.kit import ROOM_ID, FakeRoom, started_room
+from tests.runtime.batching.kit import FakeRoom, started_room
+from tests.runtime.helpers import ROOM_ID
 
 
 class TestBatchBoundaries:

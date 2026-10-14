@@ -10,7 +10,8 @@ from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.agent import Agent
 from tests.adapters.claude_sdk.helpers import with_approvals
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import AGENT_ID, room_context
+from tests.runtime.batching.kit import room_context
+from tests.runtime.helpers import AGENT_ID
 
 
 def is_control(adapter: ClaudeSDKAdapter, ctx: MagicMock, content: str) -> bool:
