@@ -74,7 +74,7 @@ assert adapter.config.command == ("codex-acp",)
   room context owed. Fresh sessions also keep transcript replay owed; restored
   sessions already hold their history and receive only Band context. Replay uses
   a nonce'd boundary marker so history cannot spoof the live message, and stops
-  strictly before the triggering message (`messages_before`).
+  strictly before the turn's earliest stored original (`messages_before`).
 
 ## Upgrading from SDK 4.x to 5.x
 

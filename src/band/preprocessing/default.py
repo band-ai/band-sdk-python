@@ -151,16 +151,8 @@ class DefaultPreprocessor(Preprocessor):
         try:
             logger.info("Room %s: Loading history...", ctx.room_id)
             context = await ctx.get_context()
-            # Strictly before the earliest original: later entries are pending
-            # turns of their own; replaying them exposes future requests and
-            # duplicates them when their own turn arrives. A later original is
-            # dropped even when the earliest is not stored yet.
-            earlier = messages_before(context.messages, messages[0].id)
-            original_ids = {msg.id for msg in messages}
-            history = format_history_for_llm(
-                [stored for stored in earlier if stored.get("id") not in original_ids],
-                participants=ctx.participants,
-            )
+            earlier = messages_before(context.messages, {msg.id for msg in messages})
+            history = format_history_for_llm(earlier, participants=ctx.participants)
             logger.info(
                 "Room %s: Got %s messages",
                 ctx.room_id,

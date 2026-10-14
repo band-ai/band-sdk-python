@@ -1719,9 +1719,10 @@ class ACPClientAdapter(
                 exc_info=True,
             )
             return None
-        current_ids = {message.id for message in messages}
-        raw = messages_before(context.get("data") or [], messages[0].id)
-        return build_replay_messages([m for m in raw if m.get("id") not in current_ids])
+        raw = messages_before(
+            context.get("data") or [], {message.id for message in messages}
+        )
+        return build_replay_messages(raw)
 
 
 def _no_live_session(room_id: str) -> BandConfigError:

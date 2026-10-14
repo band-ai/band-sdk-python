@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Sequence
+from collections.abc import Set as AbstractSet
 from enum import StrEnum
 
 from band.core.types import PlatformMessage
@@ -150,17 +151,16 @@ def format_current_inputs(messages: Sequence[PlatformMessage]) -> str:
     return f"{CURRENT_INPUTS_HEADING} ({len(messages)})\n{_CURRENT_INPUTS_GUIDE}\n{records}"
 
 
-def messages_before(messages: list[dict], message_id: str | None) -> list[dict]:
-    """The prefix of ``messages`` strictly before ``message_id``.
+def messages_before(messages: list[dict], message_ids: AbstractSet[str]) -> list[dict]:
+    """The prefix of ``messages`` strictly before the first one in ``message_ids``.
 
-    Bootstrap history must stop at the triggering message: entries after it
-    are pending turns of their own, and replaying them both exposes future
-    requests and duplicates them when their own turn arrives. An absent or
-    unknown id returns the list unchanged (callers still pass ``exclude_id``
-    so the trigger itself never slips through).
+    Bootstrap history must stop at the turn's earliest stored original: entries
+    after it are pending turns of their own, and replaying them both exposes
+    future requests and duplicates them when their own turn arrives. When none
+    of the ids is stored the list is returned unchanged.
     """
     for index, message in enumerate(messages):
-        if message.get("id") == message_id:
+        if message.get("id") in message_ids:
             return messages[:index]
     return messages
 

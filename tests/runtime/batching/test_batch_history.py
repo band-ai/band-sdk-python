@@ -15,3 +15,10 @@ class TestBatchHistory:
         self,
     ) -> None:
         assert await history_contents(stored_ids=["h1", "m2"]) == ["h1"]
+
+    async def test_entries_after_a_stored_later_original_are_pending_turns_too(
+        self,
+    ) -> None:
+        stored_ids = ["h1", "m2", "after"]
+
+        assert await history_contents(stored_ids=stored_ids) == ["h1"]
