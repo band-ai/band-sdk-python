@@ -2795,6 +2795,9 @@ class ExecutionContext:
                 self.room_id,
                 event.payload.id if event.payload else None,
             )
+            # The platform replays a listed message on PLAY; only the retained
+            # payload can bring back one it omits.
+            self._retain(event)
             return TurnOutcome.PAUSED
 
         payload = event.payload if isinstance(event, MessageEvent) else None
@@ -2841,7 +2844,7 @@ class ExecutionContext:
                 outcome = await self._run_message_attempt(
                     (event,), revision=self._control_revision
                 )
-                if outcome in DEFERRED_OUTCOMES:
+                if outcome is not TurnOutcome.ADVANCED:
                     self._retain(event)
                 return outcome
 

@@ -178,21 +178,25 @@ class LifecyclePlatform:
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
 
-    def add_message(self, message_id: str, *, content: str = "hello") -> None:
-        self.messages.append(
-            {
-                "id": message_id,
-                "chat_room_id": ROOM_ID,
-                "content": content,
-                "sender_id": "user-1",
-                "sender_type": "User",
-                "sender_name": "User",
-                "message_type": "text",
-                "metadata": {},
-                "inserted_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-            }
-        )
+    def add_message(
+        self, message_id: str, *, content: str = "hello", listed: bool = True
+    ) -> dict[str, Any]:
+        """Store a message and return its row; an unlisted one is on the WebSocket only."""
+        row = {
+            "id": message_id,
+            "chat_room_id": ROOM_ID,
+            "content": content,
+            "sender_id": "user-1",
+            "sender_type": "User",
+            "sender_name": "User",
+            "message_type": "text",
+            "metadata": {},
+            "inserted_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        if listed:
+            self.messages.append(row)
+        return row
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path

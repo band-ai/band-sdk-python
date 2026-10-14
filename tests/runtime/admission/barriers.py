@@ -19,13 +19,14 @@ from typing import Any
 import httpx
 from band_sdk_core import ClaimRegistry
 
-from band.client.streaming import DeliveryStatus
+from band.client.streaming import AgentControlPayload, ControlMode, DeliveryStatus
 from band.platform.event import MessageEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import WAIT_SECONDS, Turns
+from tests.runtime.batching.kit import QUIET_SECONDS, WAIT_SECONDS, Turns
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
 
@@ -167,12 +168,14 @@ class Platform:
         self.scripts: dict[Call, Answer] = {}
         self.holds: dict[Call, Hold] = {}
 
-    def post(self, *message_ids: str) -> list[MessageEvent]:
-        """Store the messages and return the WebSocket event for each."""
+    def post(self, *message_ids: str, listed: bool = True) -> list[MessageEvent]:
+        """Store the messages and return the WebSocket event for each.
+
+        An unlisted message is one REST and /next omit, such as a thread reply.
+        """
         events: list[MessageEvent] = []
         for message_id in message_ids:
-            self.peer.add_message(message_id)
-            row = self.peer.messages[-1]
+            row = self.peer.add_message(message_id, listed=listed)
             self.posted.append(message_id)
             events.append(
                 make_message_event(
@@ -380,9 +383,9 @@ class Room:
     link: BandLink
     settings: dict[str, Any]
 
-    async def arrive(self) -> None:
+    async def arrive(self, *, listed: bool = True) -> None:
         """Post the case's originals and deliver them over the socket together."""
-        for event in self.platform.post(*self.case.ids):
+        for event in self.platform.post(*self.case.ids, listed=listed):
             await self.ctx.on_event(event)
 
     async def until(self, condition: Callable[[], bool]) -> None:
@@ -400,6 +403,10 @@ class Room:
         """Wait for the room to finish the attempt it is in."""
         await self.until(lambda: not self.ctx.is_processing)
 
+    async def quiesce(self) -> None:
+        """Let the room run until it has nothing left to do, on the virtual clock."""
+        await asyncio.sleep(QUIET_SECONDS)
+
     async def recover(self) -> None:
         """Ask the room to read the platform again, as a periodic pass would."""
         await self.ctx.request_resync()
@@ -410,6 +417,16 @@ class Room:
 
     def interrupt(self) -> None:
         self.ctx.interrupt()
+
+    async def signal(self, mode: ControlMode) -> None:
+        """An ``agent.control`` signal reaching the room through its runtime."""
+        runtime = AgentRuntime(self.link, AGENT_ID, self.model.single)
+        runtime.executions[ROOM_ID] = self.ctx
+        await runtime.handle_control(
+            AgentControlPayload(
+                mode=mode, scope="room", agent_id=AGENT_ID, room_id=ROOM_ID
+            )
+        )
 
     def stop(self) -> None:
         """A native STOP: the platform stops the room and the control reaches it."""
