@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from tests.framework_conformance.batchprobes import (
     BatchProbe,
+    acp,
     agentloops,
     claudesdk,
     codex,
@@ -24,6 +25,7 @@ from tests.framework_conformance.batchprobes import (
 )
 
 BATCH_PROBES: dict[str, BatchProbe] = {
+    **acp.PROBES,
     **agentloops.PROBES,
     **claudesdk.PROBES,
     **codex.PROBES,

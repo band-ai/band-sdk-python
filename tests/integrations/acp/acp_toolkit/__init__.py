@@ -40,6 +40,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     inject_acp_spawn,
     launch_for,
     live_line,
+    live_message,
     make_acp_connection,
     started_acp_adapter,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "inject_acp_spawn",
     "launch_for",
     "live_line",
+    "live_message",
     "make_acp_connection",
     "select_option",
     "started_acp_adapter",

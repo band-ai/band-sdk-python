@@ -908,8 +908,8 @@ async def test_replay_injected_when_remote_session_is_gone() -> None:
     assert prompt.count("What is my favorite color?") == 1, (
         "the live message must appear exactly once (replay must not duplicate it)"
     )
-    assert "[Peer]: What is my favorite color?" in prompt, (
-        "the live message must carry sender attribution like the transcript lines"
+    assert live_line("What is my favorite color?") in prompt, (
+        "the live message must carry its sender, as the transcript lines do"
     )
     assert (
         prompt.index("[System Context]")
@@ -917,7 +917,7 @@ async def test_replay_injected_when_remote_session_is_gone() -> None:
         < prompt.index("[Marco]:")
         < replay_boundary(prompt)
     ), "prompt must read: system context, then replay, then the boundary marker"
-    assert prompt.rstrip().endswith("What is my favorite color?"), (
+    assert closes_the_prompt(prompt, live_line("What is my favorite color?")), (
         "the live message must come last so the model answers it, not the transcript"
     )
 
@@ -1268,7 +1268,7 @@ async def test_replay_after_midrun_respawn() -> None:
     assert (
         REPLAY_HEADER_LINE in prompt and "[Marco]: My favorite color is blue." in prompt
     ), "a session created after a respawn must be re-seeded from the transcript"
-    assert prompt.rstrip().endswith("What is my favorite color?"), (
+    assert closes_the_prompt(prompt, live_line("What is my favorite color?")), (
         "the live message must come last so the model answers it, not the transcript"
     )
 
