@@ -2036,7 +2036,9 @@ class ExecutionContext:
         if self._stopped:
             return ResyncOutcome.STOPPED
         if revision != self._control_revision:
-            return ResyncOutcome.BLOCKED
+            # A control landed during the read, so the page is stale; unlike a
+            # STOP it leaves the room running, which reads again.
+            return None
         segment, limit = self._local_segment()
         rest = [self._candidate(_backlog_event(msg)) for msg in page.messages]
         retained = [self._candidate(event) for event in segment]
@@ -2148,9 +2150,14 @@ class ExecutionContext:
         outcome = await self._run_message_attempt(events, revision=revision)
         if self._stopped:
             return ResyncOutcome.STOPPED
-        if revision != self._control_revision:
-            return ResyncOutcome.BLOCKED
         match outcome:
+            case TurnOutcome.ADVANCED:
+                # An INTERRUPT that consumed the attempt only bumped the
+                # revision; the room runs on and what queued behind it is due.
+                self._clear_deferred_head_for(events)
+                return None
+            case _ if revision != self._control_revision:
+                return ResyncOutcome.BLOCKED
             case TurnOutcome.NOT_ACCEPTED:
                 return ResyncOutcome.BLOCKED
             case TurnOutcome.RETRY_LATER:
@@ -2158,9 +2165,6 @@ class ExecutionContext:
                 return ResyncOutcome.RETRY
             case TurnOutcome.PAUSED:
                 return ResyncOutcome.STOPPED
-            case TurnOutcome.ADVANCED:
-                self._clear_deferred_head_for(events)
-                return None
 
     async def _process_backlog_message(
         self, msg: PlatformMessage, *, revision: int | None = None

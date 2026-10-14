@@ -73,6 +73,8 @@ class FakeRoom:
     page_reads: int = 0
     # Events the WebSocket delivers while the next page read is in flight.
     during_read: list[Any] = field(default_factory=list)
+    # Control signals that reach the room while the next page read is in flight.
+    read_actions: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
     deliver: Callable[[Any], Awaitable[None]] | None = None
 
     def post(
@@ -116,6 +118,10 @@ class FakeRoom:
     def status_of(self, message_id: str) -> str | None:
         return self.deliveries[message_id].status
 
+    def statuses(self) -> dict[str, str | None]:
+        """Every stored message's delivery status, in posting order."""
+        return {message_id: d.status for message_id, d in self.deliveries.items()}
+
     def outstanding(self) -> list[PlatformMessage]:
         return [
             replace(d.message, metadata=self.metadata(d.status))
@@ -131,6 +137,8 @@ class FakeRoom:
     ) -> ActionablePage:
         self.page_reads += 1
         messages = self.outstanding()
+        while self.read_actions:
+            await self.read_actions.pop(0)()
         while self.during_read and self.deliver is not None:
             await self.deliver(self.during_read.pop(0))
         if cursor is not None:
@@ -291,6 +299,10 @@ class Room:
 
     async def until(self, condition: Callable[[], bool]) -> None:
         await wait_for_condition(condition, timeout=WAIT_SECONDS)
+
+    async def interrupt(self) -> None:
+        """An INTERRUPT control signal; between turns it is a no-op."""
+        self.ctx.interrupt()
 
     async def reached(self, status: DeliveryStatus, *message_ids: str) -> None:
         await self.until(
