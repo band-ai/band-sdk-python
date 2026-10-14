@@ -18,6 +18,7 @@ Covered:
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -413,6 +414,105 @@ def test_failed_atomic_replacement_preserves_the_previous_scorecard(
         write_json([ScorecardRow("m.py::test_fail", SUITE_ADAPTER, "fail")], path)
     assert read_scorecard(path) == prior
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_scorecard_write_error_is_retried_at_session_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "scorecard.json"
+    collector = ScorecardCollector(path)
+    nodeid = "m.py::t[anthropic]"
+    collector.pytest_runtest_logreport(_report(nodeid, "call", outcome="passed"))
+    prior = read_scorecard(path)
+
+    real_replace = Path.replace
+
+    def refuse_scorecard(self: Path, target: Path) -> Path:
+        if target == path:
+            raise OSError("destination unavailable")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", refuse_scorecard)
+    caplog.set_level(logging.WARNING)
+    failed = _report("m.py::t[crewai]", "call", outcome="failed")
+    failed.longrepr = "kept for the next checkpoint"
+    collector.pytest_runtest_logreport(failed)
+    assert read_scorecard(path) == prior
+    assert any(
+        record.levelno == logging.WARNING and "checkpoint failed" in record.getMessage()
+        for record in caplog.records
+    )
+
+    monkeypatch.undo()
+    collector.pytest_sessionfinish(SimpleNamespace())  # type: ignore[arg-type]
+    assert read_scorecard(path) == [
+        ScorecardRow("m.py::t", "anthropic", "pass"),
+        ScorecardRow("m.py::t", "crewai", "fail"),
+    ]
+    (detail,) = read_failures(collector.diagnostics_path)
+    assert detail.longrepr == "kept for the next checkpoint"
+
+
+def test_diagnostics_reset_error_still_checkpoints_collection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "scorecard.json"
+    collector = ScorecardCollector(path)
+    real_write_text = Path.write_text
+
+    def refuse_reset(self: Path, *args: object, **kwargs: object) -> int:
+        if self == collector.diagnostics_path:
+            raise OSError("failure log busy")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", refuse_reset)
+    collector.pytest_collection_finish(SimpleNamespace(items=[]))
+    assert read_scorecard(path) == []
+
+
+def test_failure_log_write_error_keeps_the_verdict_and_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "scorecard.json"
+    collector = ScorecardCollector(path)
+    real_open = Path.open
+    blocked = True
+
+    def block_append(
+        self: Path, mode: str = "r", *args: object, **kwargs: object
+    ) -> object:
+        nonlocal blocked
+        if (
+            blocked
+            and self == collector.diagnostics_path
+            and "a" in mode
+            and "b" not in mode
+        ):
+            blocked = False
+            raise OSError("failure log busy")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", block_append)
+    caplog.set_level(logging.WARNING)
+    failed = _report("m.py::t[anthropic]", "call", outcome="failed")
+    failed.longrepr = "detail survives the busy file"
+    collector.pytest_runtest_logreport(failed)
+    assert read_scorecard(path) == [ScorecardRow("m.py::t", "anthropic", "fail")]
+    assert read_failures(collector.diagnostics_path) == []
+    assert any(
+        record.levelno == logging.WARNING
+        and "failure log append failed" in record.getMessage()
+        for record in caplog.records
+    )
+
+    monkeypatch.undo()
+    collector.pytest_sessionfinish(SimpleNamespace())  # type: ignore[arg-type]
+    (detail,) = read_failures(collector.diagnostics_path)
+    assert detail.longrepr == "detail survives the busy file"
 
 
 def test_merge_prefers_real_outcome_over_skip_and_keeps_na() -> None:

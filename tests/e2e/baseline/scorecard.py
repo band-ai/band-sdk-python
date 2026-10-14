@@ -188,6 +188,8 @@ class ScorecardCollector:
         self._outcomes: dict[tuple[str, str], ScorecardRow] = {}
         self._na: dict[tuple[str, str], ScorecardRow] = {}
         self._credentials = tuple(credentials)
+        self._unwritten_failures: list[dict[str, str | bool]] = []
+        self._diagnostics_ready = False
 
     @property
     def diagnostics_path(self) -> Path:
@@ -196,9 +198,8 @@ class ScorecardCollector:
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         self._na = na_rows(session.items)
         self._checkpoint()
-        self.diagnostics_path.write_text("", encoding="utf-8")
 
-    def _failure_details(self, report: pytest.TestReport) -> None:
+    def _queue_failure(self, report: pytest.TestReport) -> None:
         detail = "\n".join(
             [
                 report.longreprtext,
@@ -206,26 +207,26 @@ class ScorecardCollector:
             ]
         )
         detail = redact_credentials(detail, known_values=self._credentials)
-        record = {
-            "nodeid": report.nodeid,
-            "phase": report.when,
-            "longrepr": detail[:FAILURE_DETAIL_LIMIT],
-            "truncated": len(detail) > FAILURE_DETAIL_LIMIT,
-        }
-        self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.diagnostics_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record) + "\n")
-            stream.flush()
+        self._unwritten_failures.append(
+            {
+                "nodeid": report.nodeid,
+                "phase": report.when,
+                "longrepr": detail[:FAILURE_DETAIL_LIMIT],
+                "truncated": len(detail) > FAILURE_DETAIL_LIMIT,
+            }
+        )
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         row = outcome_row(report)
         if row is None:
             return
         if row[1].status == "fail":
-            self._failure_details(report)
+            self._queue_failure(report)
         previous = self._outcomes.get(row[0])
         # A later report can never rescue a failed first attempt.
         if previous is not None and (previous.status == "fail" or previous == row[1]):
+            if self._unwritten_failures:
+                self._checkpoint()
             return
         self._outcomes[row[0]] = row[1]
         self._checkpoint()
@@ -239,10 +240,74 @@ class ScorecardCollector:
         return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
 
     def _checkpoint(self) -> None:
-        write_json(self.scorecard(), self._path)
+        self._flush_failures()
+
+        def write_scorecard() -> None:
+            write_json(self.scorecard(), self._path)
+
+        self._persist("checkpoint", write_scorecard)
 
     def pytest_sessionfinish(self, session: pytest.Session) -> None:
         self._checkpoint()
+
+    def _flush_failures(self) -> None:
+        if not self._diagnostics_ready and not self._persist(
+            "failure log reset", self._reset_diagnostics
+        ):
+            return
+        self._diagnostics_ready = True
+        if not self._unwritten_failures:
+            return
+        path = self.diagnostics_path
+        payload = "".join(
+            json.dumps(record) + "\n" for record in self._unwritten_failures
+        )
+        boundary: list[int] = []
+
+        def append() -> None:
+            boundary.append(path.stat().st_size)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(payload)
+                stream.flush()
+
+        def rollback() -> None:
+            if not boundary:
+                return
+            with path.open("a+b") as stream:
+                stream.truncate(boundary[0])
+
+        if self._persist("failure log append", append, rollback=rollback):
+            self._unwritten_failures.clear()
+
+    def _reset_diagnostics(self) -> None:
+        self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        self.diagnostics_path.write_text("", encoding="utf-8")
+
+    def _persist(
+        self,
+        action: str,
+        write: Callable[[], None],
+        *,
+        rollback: Callable[[], None] | None = None,
+    ) -> bool:
+        """Keep checkpoint IO from escaping a pytest hook.
+
+        An exception there is an internal error and stops the session, so a
+        locked or full disk must not drop every cell that has not run yet.
+        """
+        try:
+            write()
+        except OSError as exc:
+            if rollback is not None:
+                try:
+                    rollback()
+                except OSError as restore_exc:
+                    logger.warning(
+                        "scorecard %s restore failed: %s", action, restore_exc
+                    )
+            logger.warning("scorecard %s failed: %s", action, exc)
+            return False
+        return True
 
 
 def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:

@@ -691,7 +691,9 @@ nodeid. Excluded adapters get explicit N/A rows.
   emits nothing. Active and unreached cells stay absent, so the manifest gate remains
   red after a watchdog kills the process. Failed setup/call/teardown reports also
   append their nodeid, phase and bounded longrepr (including captured logs) to
-  `<scorecard-stem>.failures.jsonl`, flushed at report time. Configured credentials
+  `<scorecard-stem>.failures.jsonl`, flushed at report time. An `OSError` from a
+  checkpoint or the failure log is logged and retried at the next checkpoint,
+  including session end, instead of aborting the lane. Configured credentials
   and credential-shaped text are redacted before truncation (32,768 characters).
   CI uploads that companion artifact separately from the merge's JSON inputs.
 - **CI checks every supported lane and OS pair.** Each lane writes
