@@ -11,8 +11,8 @@ or duplicates on its way to the model is caught.
 the production path. ``deliver`` dispatches as the runtime does: one original
 through ``on_event``, several through ``on_messages``.
 
-Framework imports stay inside each probe function: not every lane's venv has
-every framework installed.
+A framework that only some lanes install is imported inside its probe function,
+not at module top, so collection works in every lane's venv.
 """
 
 from __future__ import annotations
