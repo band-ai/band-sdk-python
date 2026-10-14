@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from tests.runtime.parking.harness import REFUSED, Cell, Harness, RoomPeer
-
-LATER_ARRIVALS = ("x1", "x2", "x3")
+from tests.runtime.parking.harness import (
+    LATER_ARRIVALS,
+    REFUSED,
+    Cell,
+    Harness,
+    RoomPeer,
+)
 
 
 @pytest.fixture

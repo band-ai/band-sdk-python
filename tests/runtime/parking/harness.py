@@ -45,6 +45,9 @@ SENDER_ID = "user-1"
 # An input that arrives independently of the originals the room starts with.
 OTHER = "other"
 
+# Inputs that arrive one by one after the room's first turn.
+LATER_ARRIVALS = ("x1", "x2", "x3")
+
 # The room's periodic reconciliation interval: the cadence of every paced retry.
 RECONCILE_SECONDS = SessionConfig().idle_resync_seconds
 

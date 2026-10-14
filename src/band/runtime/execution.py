@@ -2335,6 +2335,7 @@ class ExecutionContext:
                 self.room_id,
                 len(scope.originals),
             )
+            self._set_deferred_head(_event_message_id(scope.originals[0]))
             return TurnOutcome.RETRY_LATER
         self._clear_deferred_head_for(scope.originals)
         return TurnOutcome.ADVANCED
