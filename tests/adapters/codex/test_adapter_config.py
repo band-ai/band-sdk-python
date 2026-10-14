@@ -1,13 +1,11 @@
-"""Codex adapter: configuration defaults and retired settings."""
+"""Codex adapter: configuration defaults and rejected settings."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import CodexAdapterConfig
 
 
 class TestAdapterConfig:
@@ -24,3 +22,9 @@ class TestAdapterConfig:
     def test_retired_delivery_config_is_rejected(self, field: str) -> None:
         with pytest.raises(ValidationError, match="Extra inputs"):
             CodexAdapterConfig.model_validate({field: True})
+
+    def test_a_negative_settle_timeout_is_rejected(self) -> None:
+        """A negative grace would expire before a leftover native request is
+        answered."""
+        with pytest.raises(ValidationError, match="greater than or equal to 0"):
+            CodexAdapterConfig(turn_settle_timeout_s=-1)

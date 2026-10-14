@@ -96,6 +96,7 @@ from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
+    TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
     start_releasable_turn,
@@ -358,8 +359,6 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
         turn_timeout_s: Seconds a turn may run before it is interrupted and
             a ``timeout`` failure is posted to the room; ``None`` leaves turns
             unbounded.
-        turn_settle_timeout_s: Seconds a leave or stop lets the room's turn
-            wind down on its own before cancelling it.
         send_message_dedup_ttl_seconds: Window in which identical
             ``band_send_message`` calls collapse into one post, absorbing CLI
             or MCP transport retries; ``0`` disables it.
@@ -378,7 +377,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
     cwd: DirectoryPath | None = None
     setting_sources: tuple[SettingSource, ...] = ()
     turn_timeout_s: PositiveFloat | None = None
-    turn_settle_timeout_s: NonNegativeFloat = TURN_SETTLE_GRACE_S
+    turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     send_message_dedup_ttl_seconds: NonNegativeFloat = DEFAULT_DEDUP_TTL_SECONDS
     cli: ClaudeCLIOptions = Field(default_factory=ClaudeCLIOptions)
     approvals: ClaudeApprovalOptions | None = None

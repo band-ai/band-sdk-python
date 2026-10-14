@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, NonNegativeFloat
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
@@ -23,6 +25,17 @@ CYCLE_CANCEL_GRACE_SECONDS = 1.0
 # How long a room's final disposal lets its accepted turn wind down on its own
 # before cancelling it.
 TURN_SETTLE_GRACE_S = 10.0
+# The adapter config field that sets a room's settle grace; each config
+# defaults it to TURN_SETTLE_GRACE_S.
+TurnSettleTimeout = Annotated[
+    NonNegativeFloat,
+    Field(
+        description=(
+            "Seconds a leave or stop lets the room's turn wind down on its own "
+            "before cancelling it."
+        ),
+    ),
+]
 
 
 def terminal_deadline() -> float:

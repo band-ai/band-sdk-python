@@ -34,7 +34,6 @@ from acp.schema import (
 from band_sdk_core import AgentFailure
 from pydantic import (
     Field,
-    NonNegativeFloat,
     PositiveFloat,
     field_validator,
     model_validator,
@@ -66,7 +65,7 @@ from band.core.retention import (
 from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
-from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S, TurnSettleTimeout
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -313,8 +312,6 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         use_unstable_protocol: Speak ACP's unstable protocol methods.
         turn_timeout_s: Seconds a prompt may run before the turn is cancelled
             and a ``timeout`` failure is posted to the room.
-        turn_settle_timeout_s: Seconds a leave or stop lets the room's turn
-            wind down on its own before cancelling it.
         model: Model selected from each session's advertised catalog; a value
             the catalog does not offer fails the turn.
         reasoning_effort: Reasoning effort selected the same way.
@@ -339,7 +336,7 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     custom_section: str = ""
     use_unstable_protocol: bool = False
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
-    turn_settle_timeout_s: NonNegativeFloat = TURN_SETTLE_GRACE_S
+    turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     model: str | None = None
     reasoning_effort: str | None = None
 

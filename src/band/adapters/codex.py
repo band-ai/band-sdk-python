@@ -66,6 +66,7 @@ from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
+    TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
     start_releasable_turn,
@@ -792,14 +793,10 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # disables the bound (legacy behavior); ``retention.transition_timeout_s``
     # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
-    # Upper bound for letting a still-running turn wind down on its own during
-    # a leave or stop (the residency owner's settle grace) before it is
-    # cancelled, and for answering a finished turn's leftover native requests.
-    # Deliberately not Optional like client_close_timeout_s above: that
-    # field's "disable the bound" is a legacy allowance for a rarely-slow
-    # transport close, not something a turn possibly stuck on real work
-    # should ever be allowed to defeat.
-    turn_settle_timeout_s: float = TURN_SETTLE_GRACE_S
+    # Also bounds answering a finished turn's leftover native requests. Not
+    # Optional like client_close_timeout_s: a turn possibly stuck on real work
+    # must never defeat its bound.
+    turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
     # ``"full_command"`` (default, more restrictive) — the key is the exact
