@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import BacklogProcessResult, ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
@@ -49,7 +49,7 @@ class TestControlSignalInClaimWindow:
         release.set()
         result = await proc
 
-        assert result is False  # deferred for recovery
+        assert result is TurnOutcome.RETRY_LATER
         assert handler.invoked == []  # handler never ran
         mock_link.mark_processed.assert_not_awaited()
         assert "w1" not in ctx.claims.completed_ids(ctx.room_id)
@@ -69,7 +69,7 @@ class TestControlSignalInClaimWindow:
         release.set()
         result = await proc
 
-        assert result is False
+        assert result is TurnOutcome.PAUSED
         assert handler.invoked == []
         assert ctx._stopped is True
         mock_link.mark_processed.assert_not_awaited()  # left for replay on play
@@ -91,7 +91,7 @@ class TestControlSignalInClaimWindow:
         release.set()
         result = await proc
 
-        assert result == BacklogProcessResult.RETRY_LATER
+        assert result is TurnOutcome.RETRY_LATER
         assert handler.invoked == []
         mock_link.mark_processed.assert_not_awaited()
 
@@ -105,5 +105,5 @@ class TestControlSignalInClaimWindow:
 
         # The next message runs to completion, unaffected.
         result = await ctx._process_event(make_message_event(msg_id="n1"))
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         assert handler.completed == ["n1"]

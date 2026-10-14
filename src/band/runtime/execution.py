@@ -122,10 +122,20 @@ class ResyncRequest:
     type: str = "_resync"  # Matches the .type attribute pattern of PlatformEvent
 
 
-class BacklogProcessResult(Enum):
+class TurnOutcome(Enum):
+    """Where one delivery attempt left its message."""
+
     ADVANCED = "advanced"
+    """Settled: handled, skipped, failed and marked, or interrupted."""
+    PAUSED = "paused"
+    """A STOP left it for replay on PLAY."""
     RETRY_LATER = "retry_later"
+    """Not settled; reconciliation retries it."""
     NOT_ACCEPTED = "not_accepted"
+    """The adapter refused the input (``InputNotAccepted``)."""
+
+
+DEFERRED_OUTCOMES = frozenset({TurnOutcome.RETRY_LATER, TurnOutcome.NOT_ACCEPTED})
 
 
 class ControlOutcome(Enum):
@@ -622,6 +632,11 @@ class ExecutionContext:
             )
         return False
 
+    async def _retry_ack_outcome(self, message_id: str) -> TurnOutcome:
+        if await self._retry_terminal_ack(message_id):
+            return TurnOutcome.ADVANCED
+        return TurnOutcome.RETRY_LATER
+
     async def _write_pending(self, message_id: str) -> SettlementResult:
         """Send the one write a pending entry owes and record what it established."""
         pending = self.claims.pending_ack(self.room_id, message_id)
@@ -940,6 +955,43 @@ class ExecutionContext:
             return None
         self.current_scope = TurnScope(self._control_revision)
         return self.current_scope
+
+    async def _begin_turn(self, revision: int | None = None) -> TurnScope | None:
+        """Begin a message turn that controls terminate from this point on."""
+        if revision is None:
+            revision = self._control_revision
+        scope = await self._begin_scope()
+        if scope is None:
+            return None
+        if revision != self._control_revision:
+            logger.debug(
+                "ExecutionContext %s: control changed while admitting the turn; deferring",
+                self.room_id,
+            )
+            return None
+        scope.admitted = True
+        return scope
+
+    def _pre_admission_outcome(self) -> TurnOutcome:
+        """A control before admission leaves the originals recoverable.
+
+        STOP must not read as a retry: the process loop would reconcile, and
+        a platform that still lists the message would clear the pause and run it.
+        """
+        if self._stopped:
+            return TurnOutcome.PAUSED
+        return TurnOutcome.RETRY_LATER
+
+    @staticmethod
+    def _aborted_outcome(scope: TurnScope) -> TurnOutcome:
+        match scope:
+            case TurnScope(kind=ControlMode.INTERRUPT):
+                return TurnOutcome.ADVANCED
+            case TurnScope(stop_observed=True):
+                # No STOP push arrived; reconciliation learns the room's state.
+                return TurnOutcome.RETRY_LATER
+            case _:
+                return TurnOutcome.PAUSED
 
     async def _stop_retained_tasks(self, deadline: float) -> None:
         owners = tuple(self._detached_cycle_tasks.values())
@@ -1348,8 +1400,11 @@ class ExecutionContext:
                 ):
                     await self._retain_or_handle_control(event)
                     continue
+                if self._enqueue_synthetic(event):
+                    await self._drain_synthetics()
+                    continue
                 if (
-                    await self._process_event(event) is False
+                    await self._process_event(event) in DEFERRED_OUTCOMES
                     and not self._has_pending_work
                 ):
                     await self._reconcile()
@@ -1481,10 +1536,10 @@ class ExecutionContext:
             return ControlOutcome.DECLINED
         if not self._recognizes_control(event):
             return ControlOutcome.DECLINED
+        revision = self._control_revision
         with self._claim_message(msg_id) as acquired:
-            if not acquired or (scope := await self._begin_scope()) is None:
+            if not acquired or (scope := await self._begin_turn(revision)) is None:
                 return ControlOutcome.DEFERRED
-            revision = self._control_revision
             scope.originals = (event,)
 
             async def probe() -> bool:
@@ -1494,8 +1549,10 @@ class ExecutionContext:
                 if not await self.link.mark_processing(self.room_id, msg_id):
                     return ControlOutcome.DEFERRED
                 if not self._owns_attempt(scope, revision):
+                    if scope.kind is not None:
+                        self._select_intent(scope, None, timed_out=False)
+                        await self._abort_cycle(scope.kind, scope)
                     return ControlOutcome.DEFERRED
-                scope.admitted = True
                 await self._ensure_fresh_context()
                 if revision != self._control_revision:
                     return ControlOutcome.DEFERRED
@@ -1644,10 +1701,7 @@ class ExecutionContext:
                 result = await self._process_backlog_message(
                     next_msg, revision=revision
                 )
-                if result in {
-                    BacklogProcessResult.RETRY_LATER,
-                    BacklogProcessResult.NOT_ACCEPTED,
-                }:
+                if result in DEFERRED_OUTCOMES:
                     self._set_deferred_head(next_msg.id)
                     return False
                 if at_sync_point:
@@ -1657,7 +1711,7 @@ class ExecutionContext:
                     self._sync_complete = True
                     return True
 
-                if self._stopped:
+                if self._stopped or result is TurnOutcome.PAUSED:
                     # A stop control signal landed mid-cycle: the message was
                     # deliberately left in 'processing' for replay on play, but
                     # /next excludes only 'processed' messages, so the next
@@ -1703,10 +1757,11 @@ class ExecutionContext:
         self._resync_handled_work = False
         if self.config.consume_all_queued:
             return await self._drain_pending()
-        if self._deferred_message_id is None:
-            while (event := self._pop_synthetic()) is not None:
-                if not await self._process_event(event):
-                    return ResyncOutcome.BLOCKED
+        if (
+            self._deferred_message_id is None
+            and (outcome := await self._drain_synthetics()) is not None
+        ):
+            return outcome
         previous_id: str | None = None
         try:
             while True:
@@ -1719,8 +1774,13 @@ class ExecutionContext:
                     return ResyncOutcome.BLOCKED
                 if (retained := self._retained_before(next_msg)) is not None:
                     candidate = next_msg
-                    if not await self._process_event(retained):
-                        return ResyncOutcome.BLOCKED
+                    match await self._process_event(retained):
+                        case TurnOutcome.ADVANCED:
+                            pass
+                        case TurnOutcome.PAUSED:
+                            return ResyncOutcome.STOPPED
+                        case _:
+                            return ResyncOutcome.BLOCKED
                     if self._stopped:
                         return ResyncOutcome.STOPPED
                     continue
@@ -1745,11 +1805,14 @@ class ExecutionContext:
                     return ResyncOutcome.STOPPED
                 if revision != self._control_revision:
                     return ResyncOutcome.BLOCKED
-                if result is BacklogProcessResult.NOT_ACCEPTED:
-                    return ResyncOutcome.BLOCKED
-                if result is BacklogProcessResult.RETRY_LATER:
-                    self._set_deferred_head(next_msg.id)
-                    return ResyncOutcome.RETRY
+                match result:
+                    case TurnOutcome.NOT_ACCEPTED:
+                        return ResyncOutcome.BLOCKED
+                    case TurnOutcome.RETRY_LATER:
+                        self._set_deferred_head(next_msg.id)
+                        return ResyncOutcome.RETRY
+                    case TurnOutcome.ADVANCED | TurnOutcome.PAUSED:
+                        pass
                 if next_msg.id == self._deferred_message_id:
                     self._set_deferred_head(None)
                 if self._has_synthetic:
@@ -1785,13 +1848,43 @@ class ExecutionContext:
     def _has_synthetic(self) -> bool:
         return any(_is_synthetic(event) for event in self._pending)
 
-    def _pop_synthetic(self) -> MessageEvent | None:
-        """Remove and return the oldest retained synthetic turn."""
+    def _oldest_synthetic(self) -> MessageEvent | None:
+        """The oldest retained synthetic turn, still sitting in the queue."""
         for event in self._pending:
             if isinstance(event, MessageEvent) and _is_synthetic(event):
-                self._pending.remove(event)
                 return event
         return None
+
+    def _enqueue_synthetic(self, event: PlatformEvent) -> bool:
+        if not _is_synthetic(event):
+            return False
+        self._retain(event)
+        return True
+
+    async def _drain_synthetics(self) -> ResyncOutcome | None:
+        """Run retained synthetic turns in receive order.
+
+        The head stays queued until its turn advances, so a pause cannot
+        read the same message as progress and spin.
+        """
+        while self._oldest_synthetic() is not None:
+            if (outcome := await self._finish_synthetic()) is not None:
+                return outcome
+        return None
+
+    async def _finish_synthetic(self) -> ResyncOutcome | None:
+        """Advance the oldest synthetic turn; None once that one settled."""
+        event = self._oldest_synthetic()
+        if event is None:
+            return None
+        match await self._process_event(event):
+            case TurnOutcome.ADVANCED:
+                self._release((_event_message_id(event),))
+                return None
+            case TurnOutcome.PAUSED:
+                return ResyncOutcome.STOPPED
+            case _:
+                return ResyncOutcome.BLOCKED
 
     def _retained_before(self, next_msg: PlatformMessage | None) -> MessageEvent | None:
         """The oldest retained original that precedes ``next_msg`` (or any, if none).
@@ -1901,12 +1994,17 @@ class ExecutionContext:
         return await self._run_selection(selection, revision)
 
     async def _run_boundary(self) -> ResyncOutcome | None:
-        """Execute the head non-message event or synthetic turn on its own."""
-        event = self._pending.popleft()
-        if await self._process_event_body(event):
-            return None
+        """Execute the head non-message event or synthetic turn on its own.
+
+        A synthetic stays at the head until it advances. Anything else leaves
+        the line once this pass has attempted it.
+        """
+        event = self._pending[0]
         if _is_synthetic(event):
-            self._pending.appendleft(event)
+            return await self._finish_synthetic()
+        self._pending.popleft()
+        if await self._process_event_body(event) is TurnOutcome.ADVANCED:
+            return None
         return ResyncOutcome.BLOCKED
 
     def _local_segment(self) -> tuple[list[MessageEvent], MessageKey | None]:
@@ -1991,18 +2089,20 @@ class ExecutionContext:
         if revision != self._control_revision:
             return ResyncOutcome.BLOCKED
         match outcome:
-            case BacklogProcessResult.NOT_ACCEPTED:
+            case TurnOutcome.NOT_ACCEPTED:
                 return ResyncOutcome.BLOCKED
-            case BacklogProcessResult.RETRY_LATER:
+            case TurnOutcome.RETRY_LATER:
                 self._set_deferred_head(ids[0])
                 return ResyncOutcome.RETRY
-            case BacklogProcessResult.ADVANCED:
+            case TurnOutcome.PAUSED:
+                return ResyncOutcome.STOPPED
+            case TurnOutcome.ADVANCED:
                 self._clear_deferred_head_for(events)
                 return None
 
     async def _process_backlog_message(
         self, msg: PlatformMessage, *, revision: int | None = None
-    ) -> BacklogProcessResult:
+    ) -> TurnOutcome:
         """
         Process a backlog message from /next during sync.
 
@@ -2023,23 +2123,21 @@ class ExecutionContext:
             agent_id=self._agent_id,
         ):
             logger.debug("Skipping self-message %s", msg_id)
-            return BacklogProcessResult.ADVANCED
+            return TurnOutcome.ADVANCED
 
         # Skip permanently failed messages
         if self._retry_tracker.is_permanently_failed(msg_id):
             logger.debug("Skipping permanently failed message %s", msg_id)
-            return BacklogProcessResult.ADVANCED
+            return TurnOutcome.ADVANCED
 
         # Skip if already processed (dedupe)
         if self.claims.is_completed(self.room_id, msg_id):
             logger.debug("Skipping duplicate backlog message: %s", msg_id)
-            return BacklogProcessResult.ADVANCED
+            return TurnOutcome.ADVANCED
 
         if self.claims.is_ack_pending(self.room_id, msg_id):
             logger.debug("Retrying terminal write for backlog message: %s", msg_id)
-            if await self._retry_terminal_ack(msg_id):
-                return BacklogProcessResult.ADVANCED
-            return BacklogProcessResult.RETRY_LATER
+            return await self._retry_ack_outcome(msg_id)
 
         if self._delivery_status_for_agent(msg.metadata) == DeliveryStatus.PROCESSED:
             logger.info(
@@ -2048,7 +2146,7 @@ class ExecutionContext:
                 self.room_id,
             )
             self.claims.remember_completed(self.room_id, msg_id)
-            return BacklogProcessResult.ADVANCED
+            return TurnOutcome.ADVANCED
 
         return await self._run_message_attempt(
             (_backlog_event(msg),),
@@ -2060,7 +2158,7 @@ class ExecutionContext:
         events: tuple[MessageEvent, ...],
         *,
         revision: int,
-    ) -> BacklogProcessResult:
+    ) -> TurnOutcome:
         """Claim, admit, run and settle the originals of one attempt together."""
         ids = _message_ids(events)
         with self._claim_messages(ids) as claimed:
@@ -2071,27 +2169,29 @@ class ExecutionContext:
                     ids,
                 )
                 self._withdraw_capacity_wait()
-                return BacklogProcessResult.RETRY_LATER
+                return TurnOutcome.RETRY_LATER
             outcome = await self._run_claimed_attempt(events, revision)
             match outcome:
-                case BacklogProcessResult.ADVANCED:
+                case TurnOutcome.ADVANCED:
                     self._release(ids)
-                case BacklogProcessResult.NOT_ACCEPTED:
+                case TurnOutcome.NOT_ACCEPTED:
                     self._register_capacity_wait()
-                case BacklogProcessResult.RETRY_LATER:
+                case TurnOutcome.RETRY_LATER:
                     self._withdraw_capacity_wait()
+                case TurnOutcome.PAUSED:
+                    pass
             return outcome
 
     async def _run_claimed_attempt(
         self, events: tuple[MessageEvent, ...], revision: int
-    ) -> BacklogProcessResult:
+    ) -> TurnOutcome:
         """Run one attempt whose originals this execution has all claimed."""
         members = self._without_processed(events)
         if not members:
-            return BacklogProcessResult.ADVANCED
+            return TurnOutcome.ADVANCED
         scope = await self._begin_scope()
         if scope is None or revision != self._control_revision:
-            return BacklogProcessResult.RETRY_LATER
+            return TurnOutcome.RETRY_LATER
         self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing %s message(s) in room %s", len(members), self.room_id)
 
@@ -2102,29 +2202,31 @@ class ExecutionContext:
                 await self._ensure_fresh_context()
                 members = self._without_processed(members, attempts)
             if not members:
-                return BacklogProcessResult.ADVANCED
+                return TurnOutcome.ADVANCED
             if revision != self._control_revision:
-                return BacklogProcessResult.RETRY_LATER
+                return self._pre_admission_outcome()
             scope.originals = members
             if not await self._confirm_processing(scope, revision):
-                return BacklogProcessResult.RETRY_LATER
+                return self._pre_admission_outcome()
             scope.admitted = True
             return await self._execute_attempt(scope, revision)
 
         except InputNotAccepted:
-            self._discard_attempts(attempts)
+            if scope.admitted:
+                self._discard_attempts(attempts)
             self._defer_unaccepted_input(_event_message_id(scope.originals[0]))
-            return BacklogProcessResult.NOT_ACCEPTED
+            return TurnOutcome.NOT_ACCEPTED
 
         except RoomExecutionStoppedError:
-            self._discard_unsettled_attempts(attempts)
-            return BacklogProcessResult.RETRY_LATER
+            if scope.admitted:
+                self._discard_unsettled_attempts(attempts)
+            return TurnOutcome.RETRY_LATER
 
         except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
             _log_turn_error(e, "Error processing messages in room %s", self.room_id)
             if not await self._fail_attempt(scope, attempts, e):
-                return BacklogProcessResult.RETRY_LATER
-            return BacklogProcessResult.ADVANCED
+                return TurnOutcome.RETRY_LATER
+            return TurnOutcome.ADVANCED
 
         finally:
             if not scope.admitted:
@@ -2133,17 +2235,13 @@ class ExecutionContext:
             self._turn_failure_reported = False
             self._set_state(ExecutionState.IDLE)
 
-    async def _execute_attempt(
-        self, scope: TurnScope, revision: int
-    ) -> BacklogProcessResult:
+    async def _execute_attempt(self, scope: TurnScope, revision: int) -> TurnOutcome:
         """Run an admitted scope's handler once, then write its stored intents."""
         await self._ensure_fresh_context()
         if revision != self._control_revision:
             return await self._defer_superseded(scope)
         if not await self._run_cycle(scope, scope.originals[0]):
-            if scope.stop_observed:
-                return BacklogProcessResult.RETRY_LATER
-            return BacklogProcessResult.ADVANCED
+            return self._aborted_outcome(scope)
         if not await self._settle_originals(scope):
             logger.warning(
                 "ExecutionContext %s: Local execution completed but the durable "
@@ -2151,9 +2249,9 @@ class ExecutionContext:
                 self.room_id,
                 len(scope.originals),
             )
-            return BacklogProcessResult.RETRY_LATER
+            return TurnOutcome.RETRY_LATER
         self._clear_deferred_head_for(scope.originals)
-        return BacklogProcessResult.ADVANCED
+        return TurnOutcome.ADVANCED
 
     async def _confirm_processing(self, scope: TurnScope, revision: int) -> bool:
         """Mark every original processing in order; any refusal defers them all.
@@ -2239,14 +2337,16 @@ class ExecutionContext:
         if self._deferred_message_id in _message_ids(events):
             self._set_deferred_head(None)
 
-    async def _defer_superseded(self, scope: TurnScope) -> BacklogProcessResult:
+    async def _defer_superseded(self, scope: TurnScope) -> TurnOutcome:
         """Unwind an admitted scope a control superseded before its handler ran."""
-        if scope.kind is None:
+        if scope.kind is None or not scope.originals:
             self._discard_attempts(_message_ids(scope.originals))
-            return BacklogProcessResult.RETRY_LATER
+            if scope.kind is None:
+                return TurnOutcome.RETRY_LATER
+            return self._aborted_outcome(scope)
         self._select_intent(scope, None, timed_out=False)
-        await self._abort_cycle(scope.kind, scope, event=scope.originals[0])
-        return BacklogProcessResult.ADVANCED
+        await self._abort_cycle(scope.kind, scope)
+        return self._aborted_outcome(scope)
 
     async def _fail_attempt(
         self, scope: TurnScope, attempts: dict[str, int], error: Exception
@@ -2399,7 +2499,7 @@ class ExecutionContext:
         """
         if scope.kind is not None:
             self._select_intent(scope, None, timed_out=False)
-            return await self._abort_cycle(scope.kind, scope, event=event)
+            return await self._abort_cycle(scope.kind, scope)
         scope.admitted = True
 
         async def invoke() -> None:
@@ -2445,7 +2545,7 @@ class ExecutionContext:
         if scope.shutdown:
             raise asyncio.CancelledError
         if scope.kind is not None:
-            return await self._abort_cycle(scope.kind, scope, event=event)
+            return await self._abort_cycle(scope.kind, scope)
         if timed_out:
             raise TimeoutError(
                 f"cycle exceeded max_cycle_seconds={self.config.max_cycle_seconds}"
@@ -2525,13 +2625,7 @@ class ExecutionContext:
             raise asyncio.CancelledError
         return accepted
 
-    async def _abort_cycle(
-        self,
-        kind: ControlMode,
-        scope: TurnScope,
-        *,
-        event: PlatformEvent,
-    ) -> bool:
+    async def _abort_cycle(self, kind: ControlMode, scope: TurnScope) -> bool:
         """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
 
         Used by ``_run_cycle`` for a scope terminated by STOP/INTERRUPT after
@@ -2545,9 +2639,6 @@ class ExecutionContext:
         # poisoned into permanently_failed before it's ever actually attempted.
         self._discard_attempts(_message_ids(scope.originals))
         await self._clear_activity()
-        if kind is ControlMode.STOP:
-            for retained in reversed(scope.originals or (event,)):
-                self._retain(retained, first=True)
         # Consume an interrupted message so the idle /next resync does not
         # re-return it and re-fire the cycle the user just interrupted. A
         # failed write stays retained as a pending intent.
@@ -2583,7 +2674,7 @@ class ExecutionContext:
         except RoomExecutionStoppedError:
             return False
 
-    async def _process_event(self, event: PlatformEvent) -> bool:
+    async def _process_event(self, event: PlatformEvent) -> TurnOutcome:
         """
         Process single event through execution callback.
 
@@ -2596,21 +2687,20 @@ class ExecutionContext:
         """
         if isinstance(event, ReconnectedEvent):
             await self._reconcile()
-            return True
+            return TurnOutcome.ADVANCED
 
         # While stopped, leave message triggers actionable for replay on play.
         # Suppression is platform-authoritative; skipping here is a local
         # efficiency short-circuit that avoids claiming/marking (mark->204) and
-        # never reaches the adapter (reply->403). The message is left untouched
-        # so /next replays it on play.
+        # never reaches the adapter (reply->403). A real message stays on the
+        # platform for /next; a synthetic one stays at the head of its queue.
         if self._stopped and isinstance(event, MessageEvent):
-            self._retain(event)
             logger.debug(
                 "ExecutionContext %s: stopped, skipping message %s (left for replay)",
                 self.room_id,
                 event.payload.id if event.payload else None,
             )
-            return True
+            return TurnOutcome.PAUSED
 
         payload = event.payload if isinstance(event, MessageEvent) else None
         msg_id = payload.id if payload else None
@@ -2628,7 +2718,7 @@ class ExecutionContext:
                 agent_id=self._agent_id,
             ):
                 logger.debug("Skipping self-message %s", msg_id)
-                return True
+                return TurnOutcome.ADVANCED
 
             # Synthetic messages (e.g., contact events injected into hub room)
             # don't exist in the database, so they skip all tracking and
@@ -2640,30 +2730,30 @@ class ExecutionContext:
                 # Skip permanently failed messages
                 if self._retry_tracker.is_permanently_failed(msg_id):
                     logger.debug("Skipping permanently failed message %s", msg_id)
-                    return True
+                    return TurnOutcome.ADVANCED
 
                 # Skip duplicates
                 if self.claims.is_completed(self.room_id, msg_id):
                     logger.debug("Skipping duplicate message %s", msg_id)
-                    return True
+                    return TurnOutcome.ADVANCED
 
                 if self.claims.is_ack_pending(self.room_id, msg_id):
                     logger.debug("Retrying terminal write for message %s", msg_id)
-                    return bool(await self._retry_terminal_ack(msg_id))
+                    return await self._retry_ack_outcome(msg_id)
 
                 # An owned or refused message stays unfinished: the resync
                 # safety net re-checks deferred work, so it is never lost.
                 outcome = await self._run_message_attempt(
                     (event,), revision=self._control_revision
                 )
-                if outcome is not BacklogProcessResult.ADVANCED:
+                if outcome in DEFERRED_OUTCOMES:
                     self._retain(event)
-                return outcome is BacklogProcessResult.ADVANCED
+                return outcome
 
-        processed = await self._process_event_body(event)
-        if not processed:
+        outcome = await self._process_event_body(event)
+        if outcome in DEFERRED_OUTCOMES:
             self._retain(event, first=True)
-        return processed
+        return outcome
 
     def note_turn_failure_reported(self) -> None:
         """Record that the adapter already told the room this turn failed."""
@@ -2729,11 +2819,17 @@ class ExecutionContext:
                 self.room_id,
             )
 
-    async def _process_event_body(self, event: PlatformEvent) -> bool:
+    async def _process_event_body(self, event: PlatformEvent) -> TurnOutcome:
         """Run an event that owes no delivery write: housekeeping or a synthetic message."""
-        scope = await self._begin_scope()
+        # Participant events are housekeeping, admitted only once their
+        # handler starts. A synthetic message admits immediately so a control
+        # during its setup is not lost.
+        if isinstance(event, MessageEvent):
+            scope = await self._begin_turn()
+        else:
+            scope = await self._begin_scope()
         if scope is None:
-            return False
+            return TurnOutcome.RETRY_LATER
 
         self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
@@ -2770,21 +2866,21 @@ class ExecutionContext:
             # cycles report the working signal (see _invoke_handler);
             # participant add/remove events are housekeeping and skip it.
             if not await self._run_cycle(scope, event):
-                return not scope.stop_observed
+                return self._aborted_outcome(scope)
 
             logger.debug("Event %s processed successfully", event.type)
-            return True
+            return TurnOutcome.ADVANCED
 
         except InputNotAccepted:
             self._defer_unaccepted_input(None)
-            return False
+            return TurnOutcome.NOT_ACCEPTED
 
         except RoomExecutionStoppedError:
-            return False
+            return TurnOutcome.RETRY_LATER
 
         except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
             _log_turn_error(e, "Error processing %s", event.type)
-            return True
+            return TurnOutcome.ADVANCED
 
         finally:
             scope.settled = True

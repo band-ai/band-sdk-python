@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from band.runtime.execution import BacklogProcessResult, ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from tests.runtime.batching.kit import FakeRoom, started_room
 
 
@@ -14,7 +14,7 @@ class TestUnproductiveAttempt:
         self, platform: FakeRoom
     ) -> None:
         platform.post("m1")
-        advanced_without_effect = AsyncMock(return_value=BacklogProcessResult.ADVANCED)
+        advanced_without_effect = AsyncMock(return_value=TurnOutcome.ADVANCED)
 
         with patch.object(
             ExecutionContext, "_run_message_attempt", advanced_without_effect
