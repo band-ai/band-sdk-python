@@ -10,10 +10,11 @@ import pytest
 from claude_agent_sdk import CLIConnectionError
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import RoomClosingError
 from band.workspaces import create_room_workspace_resolver
 from tests.adapters.claude_sdk.fakecli import CLEANUP_FAILED, FakeClaude, Hold
 from tests.adapters.claude_sdk.helpers import OpenRoom
+from tests.adapters.lifecycle.kit import workspace_still_claimed
 
 
 class TestRoomWorkspaces:
@@ -93,7 +94,7 @@ class TestRoomWorkspaces:
         second = first.beside("room-2")
         claude.script([first.model_reply("First.")], [second.model_reply("Second.")])
         await first.send("hi")
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await second.send("hi")
         assert second.chat == []
         assert len(second.failures) == 1
@@ -115,7 +116,7 @@ class TestRoomWorkspaces:
             opening.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await opening
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await room.beside("room-2").send("hi")
         claude.script([room.model_reply("Connected.")])
         await room.send("again")
@@ -135,7 +136,7 @@ class TestRoomWorkspaces:
                 await room.send("hi")
             assert not claude.sessions[0].alive
             assert len(room.failures) == 1
-            with pytest.raises(ValueError, match="both"):
+            with workspace_still_claimed():
                 await second.send("hi")
             await room.leave()
         finally:
@@ -156,9 +157,9 @@ class TestRoomWorkspaces:
         try:
             with pytest.raises(RuntimeError, match=re.escape(CLEANUP_FAILED)):
                 await room.leave()
-            with pytest.raises(ValueError, match="both"):
+            with workspace_still_claimed():
                 await second.send("hi")
-            with pytest.raises(InputNotAccepted, match="closing"):
+            with pytest.raises(RoomClosingError):
                 await room.send("again")
             assert len(claude.sessions) == 1
             assert claude.sessions[0].alive

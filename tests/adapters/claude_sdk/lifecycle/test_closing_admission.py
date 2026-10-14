@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import RoomClosingError
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import OpenRoom
 
@@ -24,7 +24,7 @@ class TestClosingAdmission:
         leaving = asyncio.create_task(room.leave())
 
         async with closing:
-            with pytest.raises(InputNotAccepted, match="closing"):
+            with pytest.raises(RoomClosingError):
                 await room.send("are you there?")
         await leaving
 

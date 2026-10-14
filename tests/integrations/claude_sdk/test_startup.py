@@ -7,6 +7,7 @@ import re
 import pytest
 
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from tests.adapters.lifecycle.kit import workspace_still_claimed
 from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.integrations.claude_sdk.conftest import Launches
 
@@ -40,7 +41,7 @@ class TestPreQueryStartup:
         [child] = launches.children
         assert not child.exited
         assert manager.has_session("room-a")
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await start(manager, "room-b")
         with pytest.raises(RuntimeError, match=re.escape(CLEANUP_FAILURE)):
             await start(manager, "room-a")
