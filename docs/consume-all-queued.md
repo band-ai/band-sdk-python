@@ -200,9 +200,9 @@ that each input was answered.
   [terminal intents and settlement](turn-outcome.md#terminal-intents-and-settlement).
   Intents are held in memory, so a process exit can lose them.
 - **STOP and INTERRUPT.** An INTERRUPT before every original is admitted
-  consumes nothing; after admission it consumes them all. STOP leaves them
-  recoverable. With batching off, singleton turns follow the same admission
-  order.
+  consumes nothing; after admission it consumes them all, and the input queued
+  behind them runs next. STOP leaves them recoverable. With batching off,
+  singleton turns follow the same admission order.
 
 ## Limitations
 
@@ -230,6 +230,10 @@ delivery and the existing authorization rules, never inside a batch. A reply
 recognised as a control ends the batch before it. Recognition alone never
 consumes or acknowledges a message, and every approval request keeps its own
 identity.
+
+A control that settles (handled, interrupted, or failed for good) leaves the line
+at once. Only one that could not be attempted yet stays the deferred head, and
+input behind it waits for the scheduler.
 
 An adapter that overrides `try_handle_control` without `is_control_message`
 is treated conservatively: every message is a control, so nothing batches.
