@@ -13,10 +13,14 @@ from acp import RequestError
 from band.core.turn import MISSING_REPLY
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from tests.integrations.acp.acp_toolkit import DEFAULT_ROOM, FakeACPAgent
-from tests.integrations.acp.roomownership.kit import TEST_GUARD_S, cursor
+from tests.integrations.acp.roomownership.kit import (
+    TEST_GUARD_S,
+    ask_mode,
+    cursor,
+)
 
 
-async def stop(adapter: ACPClientAdapter) -> None:
+async def shut_down(adapter: ACPClientAdapter) -> None:
     await adapter.cleanup_all()
 
 
@@ -24,7 +28,7 @@ async def leave(adapter: ACPClientAdapter) -> None:
     await adapter.on_cleanup(DEFAULT_ROOM)
 
 
-CLOSINGS = pytest.mark.parametrize("closing", [stop, leave])
+CLOSINGS = pytest.mark.parametrize("closing", [shut_down, leave])
 
 
 class TestDetachedTurnOnClose:
@@ -37,7 +41,7 @@ class TestDetachedTurnOnClose:
 
         @agent.on_prompt
         async def ask_then_fail(peer: FakeACPAgent, session_id: str) -> None:
-            await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+            await ask_mode(peer, session_id)
             raise failure
 
         async with cursor(agent) as session:
@@ -55,7 +59,7 @@ class TestDetachedTurnOnClose:
 
         @agent.on_prompt
         async def ask_then_hang(peer: FakeACPAgent, session_id: str) -> None:
-            await peer.ask_cursor_question(session_id, "mode", "agent", "plan")
+            await ask_mode(peer, session_id)
             await asyncio.Event().wait()
 
         async with cursor(agent, turn_settle_timeout_s=0) as session:
