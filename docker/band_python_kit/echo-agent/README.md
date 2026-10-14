@@ -33,8 +33,8 @@ a trusted proxy injects them; the sandbox sees only a sentinel. See the kit
 README's [Credential custody](../README.md#credential-custody):
 
 ```bash
-# LLM provider (built-in sbx services — pick the one your agent uses):
-sbx secret set -g anthropic          # or openai, google, groq, mistral, …
+# Only needed when you replace the echo adapter with a Claude-backed agent:
+sbx secret set anthropic
 # Band key (wildcard follows whichever Band host BAND_REST_URL points at).
 # Pass --value from an exported var so the key isn't a literal in shell history:
 export BAND_API_KEY=<your-band-key>
@@ -86,13 +86,17 @@ The whole change is three files. For Anthropic:
 
 ```bash
 # provide the backend key the adapter reads (proxy-managed — never in the VM)
-sbx secret set -g anthropic
+sbx secret set anthropic
 ```
+
+The kit already declares Anthropic network access and proxy-managed key
+injection; no local kit fork or additional network command is needed.
 
 Then `uv lock` and restart the sandbox. Every framework follows the same
 shape: the extra in `pyproject.toml`, the adapter in `main.py`, and its
-provider key stored with `sbx secret set -g <provider>` (or, on the fallback
-tier, in `.band/secrets.env`).
+provider key stored with `sbx secret set <provider>` (or, on the fallback
+tier, in `.band/secrets.env`). Other providers also need their host allowed
+as described in [Network access](../README.md#network-access).
 
 Workspace edits apply live (the workspace is a mount); dependency changes
 take effect at the next sandbox restart, when the launcher re-syncs the
