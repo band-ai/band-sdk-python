@@ -11,6 +11,7 @@ from tests.framework_conformance.batchprobes import (
     BATCH,
     FINAL_TEXT,
     HELPER,
+    SINGLETON,
     delivery_input,
     posted_messages,
 )
@@ -45,4 +46,16 @@ class TestBatchAudience:
 
         assert [mentioned_ids(post) for post in posted_messages(inp)] == [
             [ALICE_FIRST.sender_id, HELPER.sender_id]
+        ]
+
+    @pytest.mark.parametrize("framework_id", RELAYING)
+    async def test_a_relay_of_a_singleton_mentions_its_one_sender(
+        self, framework_id: str
+    ) -> None:
+        inp = await delivery_input(SINGLETON)
+
+        await BATCH_PROBES[framework_id].run(inp, FINAL_TEXT)
+
+        assert [mentioned_ids(post) for post in posted_messages(inp)] == [
+            [ALICE_FIRST.sender_id]
         ]
