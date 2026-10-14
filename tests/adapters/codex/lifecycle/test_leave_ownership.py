@@ -6,10 +6,10 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import InputNotAccepted, RoomClosingError
 from band.testing import failure_reports
 from tests.adapters.hold import Hold
-from tests.adapters.lifecycle.kit import RetentionHost
+from tests.adapters.lifecycle.kit import RetentionHost, workspace_still_claimed
 from tests.adapters.roompeer import (
     CLEANUP_FAILURE,
     PeerCommand,
@@ -33,7 +33,7 @@ class TestLifecycleLeave:
         with pytest.raises(RuntimeError, match=CLEANUP_FAILURE):
             await host.leave("room-a")
         host.children[0].refuse_close = False
-        with pytest.raises(InputNotAccepted, match="is closing"):
+        with pytest.raises(RoomClosingError):
             await host.send("room-a", PeerCommand.RECALL)
         assert host.native_id("room-a") == left_thread
         await host.leave("room-a")
@@ -41,7 +41,7 @@ class TestLifecycleLeave:
         assert await host.send("room-a", PeerCommand.RECALL) == ["Recalled: None"]
         assert host.native_id("room-a") not in (None, left_thread)
         assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         assert host.exited == [True, False]
         assert host.overlaps == 0
@@ -57,9 +57,9 @@ class TestLifecycleLeave:
             await host.leave("room-a")
         await barrier.reached.wait()
         assert host.exited == [False]
-        with pytest.raises(ValueError, match="both"):
+        with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
-        with pytest.raises(InputNotAccepted, match="is closing"):
+        with pytest.raises(RoomClosingError):
             await host.send("room-a", write_instruction("changed"))
         assert host.exited == [False]
         barrier.released.set()
