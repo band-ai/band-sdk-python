@@ -18,7 +18,7 @@ import pytest
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from tests.e2e.baseline.toolkit import capture as capture_module
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
-from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.e2e.baseline.toolkit.user_ops import MESSAGE_LOOKUP_PAGE_LIMIT, UserOps
 from tests.runtime.helpers import rest_client_over
 
 MSG = "msg-1"
@@ -251,6 +251,38 @@ async def test_snapshot_deadline_preserves_delivery_timeout(
 
     assert cancelled.is_set()
     assert "rest=None rest_error=TimeoutError" in caplog.text
+
+
+async def test_message_lookup_stops_after_page_limit() -> None:
+    """A missing id stops at the page ceiling instead of walking the room."""
+    requests = 0
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        cursor = request.url.params.get("cursor")
+        nxt = "1" if cursor is None else str(int(cursor) + 1)
+        message = _delivery_update("processed").model_dump()
+        message.update(id=f"other-{nxt}", inserted_at=None, updated_at=None)
+        # Stay paged through the ceiling. One page past it ends, so removing
+        # the limit returns no match instead of following a cursor forever.
+        return httpx.Response(
+            200,
+            json={
+                "data": [message],
+                "metadata": {
+                    "has_more": requests <= MESSAGE_LOOKUP_PAGE_LIMIT,
+                    "next_cursor": nxt,
+                    "limit": 100,
+                },
+            },
+        )
+
+    async with rest_client_over(answer) as rest:
+        with pytest.raises(ValueError, match="pages"):
+            await UserOps(rest).find_messages("room-1", ["missing"])
+
+    assert requests == MESSAGE_LOOKUP_PAGE_LIMIT
 
 
 async def test_cancellation_during_snapshot_propagates() -> None:

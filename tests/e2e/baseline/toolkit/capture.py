@@ -45,7 +45,6 @@ from typing import Any
 
 from band_rest import AsyncRestClient
 from phoenix_channels_python_client.exceptions import PHXClientError
-from pydantic import ValidationError
 
 from band.client.streaming import (
     DeliveryStatus,
@@ -239,8 +238,6 @@ class ReplyCapture:
                         [message_id], recipient_id
                     )
                 durable = statuses[message_id]
-            except ValidationError as exc:
-                error = type(exc).__name__
             except Exception as exc:  # noqa: BLE001 — diagnostics cannot replace the timeout
                 error = type(exc).__name__
         logger.warning(

@@ -101,24 +101,24 @@ def _observe_phase(
 ) -> Iterator[None]:
     """Record boundary completion separately from entry, without payloads."""
     started = monotonic()
-    logger.info(
-        "Turn phase=%s state=started room=%s message=%s at=%.6f",
+    logger.debug(
+        "Turn phase=%s state=started room=%s message=%s",
         phase,
         room_id,
         message_id,
-        started,
     )
     outcome = "returned"
     try:
         yield
-    except asyncio.CancelledError:
-        outcome = "cancelled"
-        raise
-    except Exception as error:
-        outcome = type(error).__name__
+    except BaseException as error:
+        outcome = (
+            "cancelled"
+            if isinstance(error, asyncio.CancelledError)
+            else type(error).__name__
+        )
         raise
     finally:
-        logger.info(
+        logger.debug(
             "Turn phase=%s state=%s room=%s message=%s elapsed=%.6f",
             phase,
             outcome,
@@ -1963,7 +1963,7 @@ class ExecutionContext:
     async def _acknowledge(self, message_id: str) -> bool:
         with _observe_phase("ack", self.room_id, message_id):
             accepted = await self.link.mark_processed(self.room_id, message_id)
-        logger.info(
+        logger.debug(
             "Ack room=%s message=%s accepted=%s", self.room_id, message_id, accepted
         )
         return accepted
@@ -1974,7 +1974,7 @@ class ExecutionContext:
         try:
             with _observe_phase("claim", self.room_id, msg_id):
                 accepted = await self.link.mark_processing(self.room_id, msg_id)
-            logger.info(
+            logger.debug(
                 "Claim room=%s message=%s accepted=%s", self.room_id, msg_id, accepted
             )
             if accepted:
@@ -2218,7 +2218,7 @@ class ExecutionContext:
             return False
 
         self._set_state(ExecutionState.PROCESSING)
-        logger.info(
+        logger.debug(
             "Dispatch source=websocket room=%s message=%s event=%s",
             self.room_id,
             msg_id,

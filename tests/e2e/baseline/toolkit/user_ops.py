@@ -31,6 +31,10 @@ from band_rest.core.api_error import ApiError
 from band.core.types import MessageType
 
 MESSAGE_PAGE_SIZE = 100
+# Newest-first lookup of a recent message. One turn's tool events can push it
+# past the first page; beyond this the id is not in recent history, and further
+# pages only walk a long-lived room.
+MESSAGE_LOOKUP_PAGE_LIMIT = 10
 
 
 class UserOps:
@@ -241,11 +245,21 @@ class UserOps:
     async def find_messages(
         self, room_id: str, message_ids: Iterable[str]
     ) -> list[ChatMessage]:
-        """Read cursor pages until the requested messages are found or exhausted."""
+        """Read cursor pages until the requested messages are found.
+
+        Stops after ``MESSAGE_LOOKUP_PAGE_LIMIT`` pages so a missing id cannot
+        walk the rest of a long-lived room.
+        """
         missing = set(message_ids)
         found: list[ChatMessage] = []
         options: dict[str, Any] = {}
+        pages = 0
         while missing:
+            if pages >= MESSAGE_LOOKUP_PAGE_LIMIT:
+                raise ValueError(
+                    f"Message lookup exceeded {MESSAGE_LOOKUP_PAGE_LIMIT} pages"
+                )
+            pages += 1
             response = await self._client.human_api_messages.list_my_chat_messages(
                 room_id, limit=MESSAGE_PAGE_SIZE, **options
             )

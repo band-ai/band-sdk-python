@@ -28,6 +28,7 @@ from band.runtime.execution import (
     ExecutionState,
     ResyncOutcome,
     _error_label,
+    _observe_phase,
 )
 from band.runtime.tools import AgentTools
 from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
@@ -2758,7 +2759,7 @@ async def test_turn_diagnostics_distinguish_running_handler_from_ack(
         entered.set()
         await release.wait()
 
-    caplog.set_level(logging.INFO, logger="band.runtime.execution")
+    caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
     async with rest_client_over(peer.answer) as rest:
         link = BandLink(agent_id="agent-123", api_key="test")
         link.rest = rest
@@ -2800,3 +2801,32 @@ async def test_turn_diagnostics_distinguish_running_handler_from_ack(
                 "Ack room=room-123 message=observed-turn accepted=True" in caplog.text
             )
         assert "private prompt" not in caplog.text
+
+
+class TestPhaseOutcome:
+    """Boundary traces stay at DEBUG and name interrupts that are not Exceptions."""
+
+    def test_completed_phase_is_debug_without_a_monotonic_stamp(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="band.runtime.execution")
+        with _observe_phase("handler", "room-1", "msg-1"):
+            pass
+        assert "phase=handler" not in caplog.text
+
+        caplog.clear()
+        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        with _observe_phase("handler", "room-1", "msg-1"):
+            pass
+        assert "phase=handler state=started room=room-1 message=msg-1" in caplog.text
+        assert "phase=handler state=returned room=room-1 message=msg-1" in caplog.text
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_interrupt_is_named(
+        self, caplog: pytest.LogCaptureFixture, interrupt: type[BaseException]
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        with pytest.raises(interrupt), _observe_phase("handler", "room-1", "msg-1"):
+            raise interrupt
+        assert f"phase=handler state={interrupt.__name__}" in caplog.text
+        assert "state=returned" not in caplog.text

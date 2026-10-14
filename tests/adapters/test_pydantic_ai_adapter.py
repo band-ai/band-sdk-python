@@ -64,6 +64,8 @@ from band.adapters.pydantic_ai import (
     _drop_non_replayable_messages,
     _is_output_retries_exhausted,
     _is_replayable_history_message,
+    _log_native_progress,
+    _native_turn,
 )
 from band.core.exceptions import BandToolError
 from band.core.protocols import (
@@ -1243,7 +1245,7 @@ class TestNativeDiagnostics:
                 )
             }
 
-        caplog.set_level(logging.INFO, logger="band.adapters.pydantic_ai")
+        caplog.set_level(logging.DEBUG, logger="band.adapters.pydantic_ai")
         tools = FakeAgentTools(room_id=sample_message.room_id)
         adapter = PydanticAIAdapter(
             llm=FunctionModel(stream_function=stream), emit=Emit.USAGE
@@ -1329,7 +1331,7 @@ class TestNativeDiagnostics:
     async def test_cancellation_closes_native_stream_without_reporting_failure(
         self, sample_message: PlatformMessage, caplog: pytest.LogCaptureFixture
     ) -> None:
-        caplog.set_level(logging.INFO, logger="band.adapters.pydantic_ai")
+        caplog.set_level(logging.DEBUG, logger="band.adapters.pydantic_ai")
         blocked = asyncio.Event()
         closed = asyncio.Event()
         release = asyncio.Event()
@@ -1365,7 +1367,7 @@ class TestNativeDiagnostics:
     async def test_long_stream_reports_bounded_progress(
         self, sample_message: PlatformMessage, caplog: pytest.LogCaptureFixture
     ) -> None:
-        caplog.set_level(logging.INFO, logger="band.adapters.pydantic_ai")
+        caplog.set_level(logging.DEBUG, logger="band.adapters.pydantic_ai")
 
         async def stream(
             messages: list[ModelMessage], info: AgentInfo
@@ -1381,6 +1383,19 @@ class TestNativeDiagnostics:
         assert 1 < caplog.text.count("phase=stream_progress") <= 9
         assert "phase=run_completed" in caplog.text
         assert "private token" not in caplog.text
+
+    def test_progress_lines_are_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Boundary traces stay off the default INFO log."""
+        token = _native_turn.set(("room-1", "msg-1", 0.0))
+        try:
+            caplog.set_level(logging.INFO, logger="band.adapters.pydantic_ai")
+            _log_native_progress("run_completed")
+            assert "phase=run_completed" not in caplog.text
+            caplog.set_level(logging.DEBUG, logger="band.adapters.pydantic_ai")
+            _log_native_progress("run_completed")
+        finally:
+            _native_turn.reset(token)
+        assert "phase=run_completed" in caplog.text
 
 
 class TestAdvertisedToolSchemas:
@@ -2585,7 +2600,10 @@ class TestEmptyFinalAnswer:
 
     @pytest.mark.asyncio
     async def test_empty_output_after_tool_is_benign(
-        self, sample_message, mock_pydantic_agent
+        self,
+        sample_message,
+        mock_pydantic_agent,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Output-retry exhaustion after the turn replied is swallowed."""
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
@@ -2599,6 +2617,7 @@ class TestEmptyFinalAnswer:
                 work=lambda: tools.send_message("hi", ["@Alice"]),
             )
         )
+        caplog.set_level(logging.WARNING, logger="band.adapters.pydantic_ai")
 
         # Must not raise: the reply already went out via the tool this turn.
         await adapter.on_message(
@@ -2623,6 +2642,7 @@ class TestEmptyFinalAnswer:
             for part in preserved[-1].parts
         )
         assert reported_failures(tools) == []
+        assert "Exceeded maximum output retries (1)" in caplog.text
 
     @pytest.mark.asyncio
     async def test_empty_output_preserves_full_captured_turn(

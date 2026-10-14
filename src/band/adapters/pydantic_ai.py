@@ -99,7 +99,7 @@ def _log_native_progress(
     if turn is None:
         return
     room_id, message_id, started = turn
-    logger.info(
+    logger.debug(
         "Pydantic native room=%s message=%s phase=%s elapsed=%.3f "
         "request=%s events=%s tool=%r error=%s",
         room_id,
@@ -711,7 +711,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     "the turn was already complete; treating as "
                     "non-fatal: %s",
                     room_id,
-                    type(e).__name__,
+                    e,
                 )
                 # No AgentRunResultEvent fired, so history was never recorded this
                 # turn — and it reloads from the platform only on bootstrap. Persist

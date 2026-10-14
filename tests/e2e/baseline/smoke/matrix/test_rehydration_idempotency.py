@@ -59,7 +59,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 def turn_diagnostics(caplog: pytest.LogCaptureFixture) -> None:
     """Keep boundary observations in pytest's existing failure report."""
     for name in ("band.runtime.execution", "band.adapters.pydantic_ai"):
-        caplog.set_level(logging.INFO, logger=name)
+        caplog.set_level(logging.DEBUG, logger=name)
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT, **EXECUTION_REPORTING)
