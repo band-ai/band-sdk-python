@@ -80,7 +80,7 @@ class TestOwnedWork:
         assert task.cancelled()
         assert resident.releases == [ReleaseCause.FINAL]
         rejected = asyncio.create_task(resident.turn())
-        with pytest.raises(RuntimeError, match="closing"):
+        with pytest.raises(RoomClosingError):
             resident.room.own(rejected)
         with pytest.raises(asyncio.CancelledError):
             await rejected

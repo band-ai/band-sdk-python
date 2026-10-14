@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from tests.adapters.waiting import spin
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
@@ -39,7 +39,7 @@ class TestFinalCleanup:
             room = session.room()
             assert room.runtime is runtime
             assert room.retained.snapshot.pending_cleanup
-            with pytest.raises(InputNotAccepted, match="closing"):
+            with pytest.raises(RoomClosingError):
                 await session.send("rejoin")
             assert agent.session_ids() == ["fake-session-1"]
 
@@ -62,7 +62,7 @@ class TestFinalCleanup:
             cleanup = asyncio.create_task(session.adapter.on_cleanup(DEFAULT_ROOM))
             await exiting.received.wait()
 
-            with pytest.raises(InputNotAccepted, match="closing"):
+            with pytest.raises(RoomClosingError):
                 await session.send("rejoin")
             cleanup.cancel()
             await asyncio.gather(cleanup, return_exceptions=True)

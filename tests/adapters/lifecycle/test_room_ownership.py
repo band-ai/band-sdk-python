@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import InputNotAccepted, RoomClosingError
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
     RetentionHost,
@@ -49,7 +49,7 @@ class TestRoomOwnership:
             await host.leave("room-a")
         with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
-        with pytest.raises(InputNotAccepted, match="is closing"):
+        with pytest.raises(RoomClosingError):
             await host.send("room-a", write_instruction("changed"))
         assert host.exited == [False]
         assert (Path(host.workspace("room-a")) / "notes.txt").read_text() == "alpha"
@@ -136,7 +136,7 @@ class TestRoomOwnership:
         second = asyncio.create_task(host.leave("room-a"))
         await spin()
         assert not second.done()
-        with pytest.raises(InputNotAccepted, match="is closing"):
+        with pytest.raises(RoomClosingError):
             await host.send("room-a", write_instruction("changed"))
         with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))

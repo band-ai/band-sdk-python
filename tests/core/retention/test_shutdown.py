@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from band.core.exceptions import RoomClosingError
 from band.core.retention import (
     ReleaseCause,
 )
@@ -62,7 +63,7 @@ class TestShutdown:
         resident = host.room()
         wake = asyncio.create_task(resident.turn())
         stopping = asyncio.create_task(host.owner.stop())
-        with pytest.raises(RuntimeError, match="closing"):
+        with pytest.raises(RoomClosingError):
             await wake
         await stopping
         assert resident.resume_requests == []
