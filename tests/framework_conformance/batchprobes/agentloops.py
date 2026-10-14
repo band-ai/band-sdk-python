@@ -8,6 +8,7 @@ excluded.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -51,6 +52,43 @@ async def run_langgraph(inp: AgentInput, final_text: str) -> str:
     return "\n".join(message.content for message in received)
 
 
+async def run_pydantic_ai(inp: AgentInput, final_text: str) -> str:
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai.messages import (  # noqa: PLC0415 -- pydantic_ai extra, absent from some lane venvs
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        UserPromptPart,
+    )
+    from pydantic_ai.models.function import (  # noqa: PLC0415 -- pydantic_ai extra, absent from some lane venvs
+        AgentInfo,
+        FunctionModel,
+    )
+
+    from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- pydantic_ai extra, absent from some lane venvs
+        PydanticAIAdapter,
+    )
+
+    received: list[str] = []
+
+    async def stream(
+        messages: list[ModelRequest | ModelResponse], info: AgentInfo
+    ) -> AsyncIterator[str]:
+        received[:] = [
+            str(part.content)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart | TextPart)
+        ]
+        yield final_text
+
+    adapter = PydanticAIAdapter(llm=FunctionModel(stream_function=stream))
+    await adapter.on_started("Agent", "A test agent")
+    await deliver(adapter, inp)
+    return "\n".join(received)
+
+
 PROBES: dict[str, BatchProbe] = {
     "langgraph": BatchProbe(run=run_langgraph),
+    "pydantic_ai": BatchProbe(run=run_pydantic_ai),
 }
