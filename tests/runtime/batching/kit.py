@@ -25,6 +25,25 @@ EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
 WAIT_SECONDS = 5.0
 
 
+def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
+    """An uninitialized room context with three known participants and
+    ``stored`` as the room's persisted messages."""
+    context = MagicMock()
+    context.room_id = ROOM_ID
+    context.is_llm_initialized = False
+    context.config = SessionConfig(consume_all_queued=True)
+    context.participants = [
+        {"id": "alice", "name": "Alice", "type": "User"},
+        {"id": "bob", "name": "Bob", "type": "User"},
+        {"id": "helper", "name": "Helper", "type": "Agent"},
+    ]
+    context.peek_pending_system_messages = MagicMock(return_value=[])
+    context.get_context = AsyncMock(
+        return_value=MagicMock(messages=stored or [], participants=[])
+    )
+    return context
+
+
 @dataclass
 class Delivery:
     message: PlatformMessage
