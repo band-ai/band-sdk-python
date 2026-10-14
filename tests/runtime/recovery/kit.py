@@ -51,6 +51,8 @@ DRAIN_SECONDS = 0.001
 RESYNC_SECONDS = SessionConfig().idle_resync_seconds
 # Text a failing model raises with; it must never reach the platform.
 SECRET = "secret-token-in-the-exception"
+# What the scripted model says when it replies.
+REPLY_TEXT = "done"
 # Content of a delivery the scripted adapter recognises and consumes as a control.
 CONTROL = "approve"
 # An ordinary delivery that arrives while earlier work is still owed.
@@ -152,8 +154,9 @@ class RoomPeer(SettlementPeer):
     Lifecycle writes follow the documented platform contract: ``processing``
     is idempotent while processing and reopens a terminal message; a terminal
     write needs an active attempt, repeats of the same terminal are accepted
-    and the opposite terminal is refused. ``faults`` make chosen messages'
-    terminal writes fail; ``heal`` ends the outage.
+    and the opposite terminal is answered with the no-active-attempt 422 and
+    listed in ``rejected``. ``fail_terminals`` makes terminal writes fail until
+    ``heal``.
     """
 
     def __init__(self) -> None:
@@ -163,7 +166,7 @@ class RoomPeer(SettlementPeer):
         self.outage: Fault | None = None
         self.errors: dict[str, list[str]] = {}
         self.reopened: list[str] = []
-        self.conflicts: list[str] = []
+        self.rejected: list[str] = []
         self.replies: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
         for path, endpoint in (
@@ -262,7 +265,7 @@ class RoomPeer(SettlementPeer):
         if row.status not in LIFECYCLE or (
             row.status in TERMINAL and row.status is not action
         ):
-            self.conflicts.append(f"{message_id}/{action}")
+            self.rejected.append(f"{message_id}/{action}")
             return self.reply_with(MISSING_ATTEMPT)
         match self.faults.get(message_id, self.outage):
             case Fault.REFUSED:
@@ -289,8 +292,8 @@ class RoomPeer(SettlementPeer):
         self.replies.append((await request.json())["message"])
         return self.reply_with(
             Reply.of_json(
-                201,
-                {
+                status=201,
+                payload={
                     "data": {
                         "id": f"reply-{len(self.replies)}",
                         "recipients": [
@@ -307,8 +310,8 @@ class RoomPeer(SettlementPeer):
         self.events.append(body)
         return self.reply_with(
             Reply.of_json(
-                201,
-                {
+                status=201,
+                payload={
                     "data": {
                         "id": f"event-{len(self.events)}",
                         "message_type": body["message_type"],
@@ -321,8 +324,8 @@ class RoomPeer(SettlementPeer):
     async def participants(self, request: Request) -> Response:
         return self.reply_with(
             Reply.of_json(
-                200,
-                {
+                status=200,
+                payload={
                     "data": [
                         {
                             "id": SENDER_ID,
@@ -360,8 +363,8 @@ class RoomPeer(SettlementPeer):
         page, rest = rows[:limit], rows[limit:]
         return self.reply_with(
             Reply.of_json(
-                200,
-                {
+                status=200,
+                payload={
                     "data": [self.wire(row) for row in page],
                     "metadata": {
                         "limit": limit,
@@ -375,7 +378,9 @@ class RoomPeer(SettlementPeer):
     async def next_row(self, request: Request) -> Response:
         if not (rows := self.actionable()):
             return Response(status_code=204)
-        return self.reply_with(Reply.of_json(200, {"data": self.wire(rows[0])}))
+        return self.reply_with(
+            Reply.of_json(status=200, payload={"data": self.wire(rows[0])})
+        )
 
     @staticmethod
     def wire(row: Row) -> dict[str, Any]:
@@ -450,7 +455,7 @@ class ScriptedAdapter(SimpleAdapter[Any]):
             case Ending.DECLINES:
                 await tools.no_reply("scripted")
             case Ending.RAISES:
-                await tools.send_message("done", mentions=[SENDER_ID])
+                await tools.send_message(REPLY_TEXT, mentions=[SENDER_ID])
                 raise RuntimeError(SECRET)
             case Ending.SILENT:
                 await tools.get_participants()
@@ -590,9 +595,9 @@ def wired_harness(
     """The real runtime for ``shape`` over ``peer``'s REST surface."""
     agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
     runtime = AgentRuntime(
-        link_over(rest),
-        AGENT_ID,
-        agent._on_execute,
+        link=link_over(rest),
+        agent_id=AGENT_ID,
+        on_execute=agent._on_execute,
         session_config=SessionConfig(
             consume_all_queued=shape.batching,
             enable_context_hydration=False,

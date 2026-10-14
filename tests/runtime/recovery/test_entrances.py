@@ -26,7 +26,7 @@ class TestRecoveryEntrances:
 
         assert harness.model_turns == [harness.members]
         assert harness.recovered_kinds <= {ending.intent}
-        assert (harness.peer.reopened, harness.peer.conflicts) == ([], [])
+        assert (harness.peer.reopened, harness.peer.rejected) == ([], [])
 
     async def test_reconciliation_then_settles_each_original_once(
         self, harness: Harness, ending: Ending, fault: Fault, entrance: Entrance

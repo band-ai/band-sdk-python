@@ -18,6 +18,7 @@ from tests.runtime.recovery.kit import (
     wired_harness,
 )
 
+# Re-exported so one fixture owns the generated client's retry timing.
 __all__ = ["instant_retries"]
 
 
@@ -54,7 +55,7 @@ async def harness(
     peer: RoomPeer, adapter: ScriptedAdapter, shape: Shape
 ) -> AsyncIterator[Harness]:
     async with peer.client() as rest:
-        room = wired_harness(peer, adapter, rest, shape)
+        room = wired_harness(peer=peer, adapter=adapter, rest=rest, shape=shape)
         try:
             yield room
         finally:

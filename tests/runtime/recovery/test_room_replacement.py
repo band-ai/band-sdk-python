@@ -48,4 +48,4 @@ class TestRoomReplacement:
         assert harness.model_turns == [harness.members]
         assert harness.recovery == {m: [ending.intent] for m in harness.members}
         assert harness.member_statuses == dict.fromkeys(harness.members, ending.intent)
-        assert (harness.peer.reopened, harness.peer.conflicts) == ([], [])
+        assert (harness.peer.reopened, harness.peer.rejected) == ([], [])

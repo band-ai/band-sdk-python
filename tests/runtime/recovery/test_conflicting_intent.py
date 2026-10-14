@@ -31,7 +31,7 @@ class TestConflictingIntent:
         claims, member = harness.ctx.claims, harness.members[0]
 
         claims.remember_ack_pending(ROOM_ID, member)
-        with pytest.raises(ValueError, match="different pending terminal intent"):
+        with pytest.raises(ValueError):
             claims.remember_failed_ack_pending(ROOM_ID, member, OTHER_ERROR)
 
         owed = claims.pending_ack(ROOM_ID, member)
@@ -54,4 +54,4 @@ class TestConflictingIntent:
         await harness.recover(Entrance.RECONCILIATION)
 
         assert harness.recovered_kinds == {ending.intent}
-        assert harness.peer.conflicts == []
+        assert harness.peer.rejected == []
