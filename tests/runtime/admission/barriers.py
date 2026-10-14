@@ -47,6 +47,12 @@ class Endpoint(StrEnum):
     FAILED = "failed"
     WORKING = "working"  # the working:true report that opens a turn
     CONTEXT = "context"  # the history read that hydrates a room
+    NEXT = "next"  # the /next read a singleton recovery pass polls
+    PAGE = "page"  # the actionable-list read a batching recovery pass selects from
+
+
+# Recovery polls are scriptable but are not part of a turn's timeline.
+POLLS = frozenset({Endpoint.NEXT, Endpoint.PAGE})
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,14 @@ class Call:
         return cls(endpoint=Endpoint.CONTEXT)
 
     @classmethod
+    def next(cls) -> Call:
+        return cls(endpoint=Endpoint.NEXT)
+
+    @classmethod
+    def page(cls) -> Call:
+        return cls(endpoint=Endpoint.PAGE)
+
+    @classmethod
     def of(cls, request: httpx.Request) -> Call | None:
         """The scriptable call a request is, or ``None`` for any other request."""
         path = request.url.path.split("/")
@@ -85,6 +99,10 @@ class Call:
                 return cls.working()
             case ("GET", "context"):
                 return cls.context()
+            case ("GET", "next"):
+                return cls.next()
+            case ("GET", "messages") if request.url.params.get("status") is None:
+                return cls.page()
         return None
 
     def __str__(self) -> str:
@@ -223,7 +241,8 @@ class Platform:
         if call is None:
             return self.peer.answer(request)
         self.calls.append(call)
-        self.journal.append(str(call))
+        if call.endpoint not in POLLS:
+            self.journal.append(str(call))
         held = self.holds.pop(call, None)
         answer = held.answer if held else self.scripts.get(call, Answer.ACCEPT)
         response = self.decide(request, call=call, answer=answer)
@@ -298,7 +317,30 @@ FIRST, MIDDLE, LAST = (
     for at, where in enumerate(("first", "middle", "last"))
 )
 SHAPES = (OFF, ON, BATCH)
+SINGLETONS = (OFF, ON)  # one original per turn, whatever the mode
 POSITIONS = (OFF, ON, FIRST, MIDDLE, LAST)
+
+# Two originals a recovery pass finds queued.
+QUEUED = ("m1", "m2")
+
+
+@dataclass(frozen=True)
+class Drain:
+    """How a room shape works through ``QUEUED``: the read a recovery pass makes
+    to find them and the model runs it ends in."""
+
+    case: Case
+    read: Call
+    runs: list[tuple[str, ...]]
+
+    def __str__(self) -> str:
+        return str(self.case)
+
+
+DRAINS = (
+    Drain(case=OFF, read=Call.next(), runs=[("m1",), ("m2",)]),
+    Drain(case=ON, read=Call.page(), runs=[("m1", "m2")]),
+)
 
 
 @dataclass(frozen=True)
@@ -340,6 +382,11 @@ class Observed:
     statuses: dict[str, str | None]
     runs: list[tuple[str, ...]]
     terminal_writes: list[str]
+
+    @property
+    def progress(self) -> tuple[dict[str, str | None], list[tuple[str, ...]]]:
+        """The originals' delivery states and the model runs, whatever writes got there."""
+        return self.statuses, self.runs
 
     @classmethod
     def recoverable(
@@ -385,7 +432,11 @@ class Room:
 
     async def arrive(self, *, listed: bool = True) -> None:
         """Post the case's originals and deliver them over the socket together."""
-        for event in self.platform.post(*self.case.ids, listed=listed):
+        await self.deliver(*self.platform.post(*self.case.ids, listed=listed))
+
+    async def deliver(self, *events: MessageEvent) -> None:
+        """Deliver already-posted messages over the socket."""
+        for event in events:
             await self.ctx.on_event(event)
 
     async def until(self, condition: Callable[[], bool]) -> None:

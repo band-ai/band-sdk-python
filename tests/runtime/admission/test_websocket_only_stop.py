@@ -6,8 +6,7 @@ import pytest
 
 from band.client.streaming import ControlMode
 from tests.runtime.admission.barriers import (
-    OFF,
-    ON,
+    SINGLETONS,
     WINDOWS,
     Case,
     Model,
@@ -18,9 +17,6 @@ from tests.runtime.admission.barriers import (
 )
 
 pytestmark = pytest.mark.looptime
-
-# REST and /next omit these originals, so only the room's own copy can rerun them.
-SINGLETONS = (OFF, ON)
 
 
 class TestWebSocketOnlyStop:
