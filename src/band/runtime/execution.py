@@ -1608,7 +1608,7 @@ class ExecutionContext:
                     await self._abort_cycle(scope.kind, scope)
                     return self._aborted_control_outcome(event, scope)
                 await self._ensure_fresh_context()
-                if revision != self._control_revision:
+                if scope.kind is None and revision != self._control_revision:
                     return ControlOutcome.DEFERRED
                 if not await self._run_cycle(scope, event, handler=probe):
                     return self._aborted_control_outcome(event, scope)

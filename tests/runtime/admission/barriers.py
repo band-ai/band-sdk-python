@@ -26,7 +26,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
-from tests.runtime.batching.kit import QUIET_SECONDS, WAIT_SECONDS, Turns
+from tests.runtime.batching.kit import QUIET_SECONDS, WAIT_SECONDS, ControlScript, Turns
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
 
@@ -429,6 +429,7 @@ class Room:
     registry: ClaimRegistry
     link: BandLink
     settings: dict[str, Any]
+    controls: ControlScript | None = None
 
     async def arrive(self, *, listed: bool = True) -> None:
         """Post the case's originals and deliver them over the socket together."""
@@ -473,6 +474,22 @@ class Room:
         self.platform.post(queued)
         return self.platform.hold(Call.processed(first))
 
+    async def hold_control_hydration(self) -> Hold:
+        """Park the first queued original as the refused, deferred head, then deliver
+        the second, a recognized control, and hold the hydration its probe starts.
+
+        The room must be warm with an expired cache, so a probe hydrates again.
+        """
+        head, control = QUEUED
+        self.model.accepting = False
+        await self.quiesce()
+        await self.deliver(*self.platform.post(head))
+        await self.quiesce()
+        pending = self.platform.hold(Call.context())
+        await self.deliver(*self.platform.post(control))
+        await self.reached(pending)
+        return pending
+
     async def settled(self) -> None:
         """Wait until the platform has every original processed."""
         await self.until(lambda: self.platform.statuses == all_processed(self.case.ids))
@@ -508,6 +525,7 @@ class Room:
             model=self.model,
             registry=self.registry,
             settings=self.settings,
+            controls=self.controls,
         )
         await self.ctx.start()
 
@@ -566,6 +584,7 @@ def build_context(
     model: Model,
     registry: ClaimRegistry,
     settings: dict[str, Any],
+    controls: ControlScript | None = None,
 ) -> ExecutionContext:
     return ExecutionContext(
         ROOM_ID,
@@ -574,6 +593,8 @@ def build_context(
         config=SessionConfig(consume_all_queued=case.batching, **settings),
         agent_id=AGENT_ID,
         on_execute_batch=model.batch if case.batching else None,
+        on_message_control=controls.handle if controls else None,
+        is_message_control=controls.recognizes if controls else None,
         claim_registry=registry,
     )
 
@@ -585,11 +606,13 @@ async def started_room(
     platform: Platform,
     model: Model,
     warm: bool = False,
+    controls: ControlScript | None = None,
     **settings: Any,
 ) -> AsyncIterator[Room]:
     """A started room over ``platform``; ``settings`` adjust its ``SessionConfig``.
 
     A ``warm`` room has already hydrated its context, as one that served before.
+    With ``controls`` the host also recognizes and handles control messages.
     """
     settings = {
         "enable_context_hydration": False,
@@ -600,7 +623,12 @@ async def started_room(
         link = BandLink(agent_id=AGENT_ID, api_key="test-key")
         link.rest = rest
         ctx = build_context(
-            case, link=link, model=model, registry=registry, settings=settings
+            case,
+            link=link,
+            model=model,
+            registry=registry,
+            settings=settings,
+            controls=controls,
         )
         if warm:
             await ctx.hydrate()
@@ -613,6 +641,7 @@ async def started_room(
             registry=registry,
             link=link,
             settings=settings,
+            controls=controls,
         )
         try:
             yield room
