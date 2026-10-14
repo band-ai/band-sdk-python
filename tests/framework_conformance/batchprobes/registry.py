@@ -10,6 +10,8 @@ from __future__ import annotations
 from tests.framework_conformance.batchprobes import (
     BatchProbe,
     agentloops,
+    claudesdk,
+    codex,
     copilotsdk,
     crewai,
     gemini,
@@ -23,6 +25,8 @@ from tests.framework_conformance.batchprobes import (
 
 BATCH_PROBES: dict[str, BatchProbe] = {
     **agentloops.PROBES,
+    **claudesdk.PROBES,
+    **codex.PROBES,
     **copilotsdk.PROBES,
     **crewai.PROBES,
     **gemini.PROBES,

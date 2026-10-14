@@ -49,6 +49,27 @@ def with_approvals(
 APPROVER = {"id": "u1", "name": "Bob", "handle": "@bob"}
 
 
+def room_message(
+    content: str,
+    *,
+    message_id: str,
+    room_id: str = "room-1",
+    sender: dict[str, str] = APPROVER,
+) -> PlatformMessage:
+    """One room message from ``sender``, as the platform delivers it."""
+    return PlatformMessage(
+        id=message_id,
+        room_id=room_id,
+        content=content,
+        sender_id=sender["id"],
+        sender_type="User",
+        sender_name=sender["name"],
+        message_type="text",
+        metadata={},
+        created_at=datetime.now(UTC),
+    )
+
+
 def said(sender_name: str, content: str) -> dict[str, Any]:
     """One earlier room message, as raw platform history."""
     return {
@@ -99,6 +120,14 @@ class ClaudeRoom:
     @property
     def chat(self) -> list[str]:
         return [message["content"] for message in self.tools.messages_sent]
+
+    def mentions(self, fragment: str) -> list[list[str]]:
+        """Whom each room message containing ``fragment`` mentions, in order."""
+        return [
+            message["mentions"]
+            for message in self.tools.messages_sent
+            if fragment in message["content"]
+        ]
 
     @property
     def events(self) -> list[str]:
@@ -199,6 +228,39 @@ class ClaudeRoom:
             mentions=[APPROVER["handle"]],
         )
 
+    def message(
+        self, content: str, *, sender: dict[str, str] = APPROVER
+    ) -> PlatformMessage:
+        """The next message ``sender`` posts to the room."""
+        return room_message(
+            content,
+            message_id=f"msg-{next(self._message_ids)}",
+            room_id=self.room_id,
+            sender=sender,
+        )
+
+    def _turn_input(
+        self,
+        messages: tuple[PlatformMessage, ...],
+        history: tuple[dict[str, Any], ...],
+        session_id: str | None,
+        tools: FakeAgentTools | None,
+    ) -> AgentInput:
+        bootstrap, self._bootstrapped = not self._bootstrapped, True
+        raw_history = [*history]
+        if session_id is not None:
+            raw_history.append(recorded_session(session_id))
+        return AgentInput(
+            msg=messages[0],
+            messages=messages,
+            tools=tools or self.fresh_tools(),
+            history=HistoryProvider(raw=raw_history),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=bootstrap,
+            room_id=self.room_id,
+        )
+
     async def send(
         self,
         content: str,
@@ -216,31 +278,22 @@ class ClaudeRoom:
         it persisted, and ``tools`` the message's own tools (``fresh_tools()``
         by default, as the runtime builds per message).
         """
-        bootstrap, self._bootstrapped = not self._bootstrapped, True
-        raw_history = [*history]
-        if session_id is not None:
-            raw_history.append(recorded_session(session_id))
-        await deliver_event(
-            self.adapter,
-            AgentInput(
-                msg=PlatformMessage(
-                    id=f"msg-{next(self._message_ids)}",
-                    room_id=self.room_id,
-                    content=content,
-                    sender_id=sender["id"],
-                    sender_type="User",
-                    sender_name=sender["name"],
-                    message_type="text",
-                    metadata={},
-                    created_at=datetime.now(UTC),
-                ),
-                tools=tools or self.fresh_tools(),
-                history=HistoryProvider(raw=raw_history),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=bootstrap,
-                room_id=self.room_id,
-            ),
+        inp = self._turn_input(
+            (self.message(content, sender=sender),), history, session_id, tools
+        )
+        await deliver_event(self.adapter, inp)
+
+    async def send_batch(
+        self,
+        *messages: PlatformMessage,
+        history: tuple[dict[str, Any], ...] = (),
+        session_id: str | None = None,
+        tools: FakeAgentTools | None = None,
+    ) -> None:
+        """Deliver several originals as one turn, as the runtime does for a
+        batch; like ``send``, returns once the adapter hands the turn back."""
+        await self.adapter.on_messages(
+            self._turn_input(messages, history, session_id, tools)
         )
 
     def send_in_background(self, content: str) -> asyncio.Task[None]:
