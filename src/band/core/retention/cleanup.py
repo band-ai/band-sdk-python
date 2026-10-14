@@ -9,7 +9,6 @@ import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
 from contextlib import contextmanager
-from functools import partial
 from typing import Any
 
 from band.core.exceptions import CleanupIncompleteError
@@ -19,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Callers awaiting each owned task that re-raise its failure themselves.
 _reporters: Counter[asyncio.Task[Any]] = Counter()
-# Tasks a caller saw finish: their failure is that caller's to report even when
-# the done callback runs after it stopped waiting.
+# Finished tasks whose failure a caller re-raised or this module logged.
 _reported: weakref.WeakSet[asyncio.Task[Any]] = weakref.WeakSet()
+_labels: weakref.WeakKeyDictionary[asyncio.Task[Any], str] = weakref.WeakKeyDictionary()
 
 
 def spawn_owned(
@@ -30,7 +29,8 @@ def spawn_owned(
     """Run work that outlives a cancelled caller; log its failure only when
     no caller is waiting to report it."""
     task = asyncio.create_task(operation)
-    task.add_done_callback(partial(_log_failure, label=label))
+    _labels[task] = label
+    task.add_done_callback(_log_unreported)
     return task
 
 
@@ -48,9 +48,12 @@ def rejoin_owned(
     return current
 
 
-def _log_failure(task: asyncio.Task[None], *, label: str) -> None:
+def _log_unreported(task: asyncio.Task[Any]) -> None:
     if task in _reporters or task in _reported or task.cancelled():
         return
+    if (label := _labels.get(task)) is None:
+        return
+    _reported.add(task)
     if (error := task.exception()) is not None:
         logger.warning("%s failed: %s", label, error, exc_info=error)
 
@@ -64,15 +67,29 @@ def task_failure(task: asyncio.Task[Any]) -> BaseException | None:
 
 @contextmanager
 def reporting(tasks: Collection[asyncio.Task[Any]]) -> Iterator[None]:
-    """Mark the caller as the reporter of ``tasks``' failures while it waits."""
+    """Mark the caller as the reporter of ``tasks``' failures while it waits.
+
+    A caller cancelled while waiting reports nothing, so a failure it never
+    saw is logged here when the done callback already ran.
+    """
     _reporters.update(tasks)
+    cancelled = False
     try:
         yield
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
     finally:
         _reporters.subtract(tasks)
         for task in tasks:
             if not _reporters[task]:
                 del _reporters[task]
+            if not task.done():
+                continue
+            if cancelled:
+                _log_unreported(task)
+            else:
+                _reported.add(task)
 
 
 async def await_owned(
@@ -82,7 +99,6 @@ async def await_owned(
     the caller that reports their failures; whether all finished."""
     with reporting(tasks):
         done, _ = await asyncio.wait(tasks, timeout=timeout)
-    _reported.update(done)
     return len(done) == len(tasks)
 
 

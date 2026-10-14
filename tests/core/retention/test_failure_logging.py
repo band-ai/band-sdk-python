@@ -10,7 +10,7 @@ import pytest
 
 from band.core.retention.cleanup import report_owned, spawn_owned
 from tests.adapters.hold import Hold
-from tests.adapters.waiting import until
+from tests.adapters.waiting import spin, until
 from tests.core.retention.kit import (
     RETENTION_LOGGER,
     ResidenceHost,
@@ -84,6 +84,29 @@ class TestFailureLogging:
             await report_owned(cleanup, 0.1)
         await asyncio.sleep(0)
         assert retention_logs(caplog.records) == []
+
+    async def test_a_failure_its_cancelled_caller_never_saw_is_logged_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The task fails, then its caller is cancelled in the same loop step,
+        so the done callback runs while that caller still counts as reporting."""
+        gate: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+        async def failing_cleanup() -> None:
+            await gate
+            raise RuntimeError("close failed")
+
+        cleanup = spawn_owned(failing_cleanup(), label="cleanup")
+        caller = asyncio.create_task(report_owned(cleanup, None))
+        await spin()
+        gate.set_result(None)
+        asyncio.get_running_loop().call_soon(caller.cancel)
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        await spin()
+        assert retention_logs(caplog.records) == [
+            (logging.WARNING, "cleanup failed: close failed")
+        ]
 
     async def test_an_abandoned_start_cancelled_for_recovery_is_logged(
         self, impatient_host: ResidenceHost, caplog: pytest.LogCaptureFixture
