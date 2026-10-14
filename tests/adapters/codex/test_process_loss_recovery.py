@@ -146,10 +146,13 @@ class TestProcessLossRecovery:
         assert len(reported_failures(tools)) == 1
 
     @pytest.mark.asyncio
-    async def test_unexpected_recv_error_reports_and_fails_turn(self) -> None:
+    async def test_unexpected_recv_error_reports_and_fails_turn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """When the event stream breaks mid-turn, the adapter reports an
         AgentFailure and fails the turn instead of silently degrading to a
-        plain chat reply with no structured signal at all."""
+        plain chat reply with no structured signal at all. The reader logs
+        the failure once, naming its room."""
 
         class BrokenClient(FakeCodexClient):
             async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
@@ -166,3 +169,6 @@ class TestProcessLossRecovery:
         assert len(failures) == 1
         assert failures[0]["provider"] == "codex"
         assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert [
+            record.getMessage() for record in caplog.records if record.exc_info
+        ] == [f"Room {ROOM_ID}: Codex event reader failed; recovering generation 1"]

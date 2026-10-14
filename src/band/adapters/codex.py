@@ -517,8 +517,13 @@ class NativeTurn:
     early: list[RpcEvent] = dataclass_field(default_factory=list)
     sub_agents: set[str] = dataclass_field(default_factory=set)
     unattributed: list[RpcEvent] = dataclass_field(default_factory=list)
-    # The process stopped: its closing notice is queued behind its requests.
-    lost: bool = False
+    # Why the process stopped -- its closing notice or the reader's failure,
+    # queued behind its requests.
+    loss: RpcEvent | Exception | None = None
+
+    @property
+    def lost(self) -> bool:
+        return self.loss is not None
 
     def owns(self, event: RpcEvent) -> bool:
         # Every event a turn handles names its turn; thread-scoped ones do not.
@@ -1365,13 +1370,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     turn_start=turn_start,
                 )
                 raise
-            except Exception:
-                logger.exception(
-                    "Unexpected error during Codex turn event processing "
-                    "(thread=%s, turn=%s)",
-                    thread_id,
-                    native.turn_id,
-                )
+            except Exception as error:
+                # The event reader already logged the failure that lost its process.
+                if error is not native.loss:
+                    logger.exception(
+                        "Unexpected error during Codex turn event processing "
+                        "(thread=%s, turn=%s)",
+                        thread_id,
+                        native.turn_id,
+                    )
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
@@ -1997,7 +2004,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         )
         native = room.turn
         if native is not None and native.generation == generation:
-            native.lost = True
+            native.loss = cause
             # Approvals the lost process asked for can never be answered.
             self._clear_pending_approvals_for_room(room.room_id)
             native.events.put_nowait(cause)
