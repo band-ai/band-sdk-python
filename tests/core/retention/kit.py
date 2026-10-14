@@ -6,6 +6,8 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from types import TracebackType
+from typing import Self
 
 from band.core.retention import (
     ProviderActivity,
@@ -140,9 +142,13 @@ class Resident:
 
 #: The settle grace a graceful host's disposal gives accepted work.
 SETTLE_GRACE_S = 5.0
+#: An impatient host's transition timeout: its reports time out at once.
+IMPATIENT_TRANSITION_S = 0.05
 
 
 class ResidenceHost:
+    """Residents under one owner; leaving ``async with`` closes the host."""
+
     def __init__(
         self,
         timeout: float | None = 10,
@@ -169,6 +175,17 @@ class ResidenceHost:
         )
         self.residents.append(resident)
         return resident
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        await self.close()
 
     async def close(self) -> None:
         for resident in self.residents:

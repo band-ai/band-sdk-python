@@ -100,15 +100,12 @@ class TestDisposal:
         assert not resident.observe(ProviderActivity.QUIESCENT)
 
     async def test_disabled_retention_still_disposes_owned_resources(self) -> None:
-        host = ResidenceHost(timeout=None)
-        try:
+        async with ResidenceHost(timeout=None) as host:
             resident = host.room()
             await resident.turn()
             assert resident.room.snapshot.deadline is None
             await host.owner.stop()
             assert not resident.live
-        finally:
-            await host.close()
 
     async def test_disposal_report_timeout_is_joined_without_a_second_close(
         self,
