@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 from band.agent import Agent
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 
 class TestAgentCreateContactConfig:

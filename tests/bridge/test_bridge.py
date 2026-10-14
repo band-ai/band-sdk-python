@@ -18,7 +18,7 @@ from band.platform.event import (
     RoomDeletedEvent,
     RoomRemovedEvent,
 )
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 
 from .conftest import FakeForwarder, make_http_agent, make_link_mock
 

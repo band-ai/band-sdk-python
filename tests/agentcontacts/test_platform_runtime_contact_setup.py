@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 
 class TestPlatformRuntimeContactSetup:

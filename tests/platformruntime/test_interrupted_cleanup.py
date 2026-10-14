@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from band.core.exceptions import AgentAlreadyRunningError, CleanupIncompleteError
+from band.runtime.contacts import ContactEventConfig
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.types import ContactEventConfig
 from tests.platformruntime.kit import ROOMS, serving_link
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import RoomCleanup

@@ -5,7 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from band.agent import Agent
-from band.runtime.types import AgentConfig, SessionConfig
+from band.runtime.agentconfig import AgentConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 class TestCreateFactory:

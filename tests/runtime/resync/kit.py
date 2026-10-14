@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import httpx
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 from tests.runtime.helpers import (
     LifecyclePlatform,
 )

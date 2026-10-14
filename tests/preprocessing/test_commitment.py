@@ -15,7 +15,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, PlatformMessage
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.preprocessing.test_default import make_message_event
 
 

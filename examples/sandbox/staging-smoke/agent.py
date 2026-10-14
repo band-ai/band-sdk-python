@@ -56,7 +56,7 @@ from langgraph.graph import END, MessagesState, StateGraph
 
 from band import Agent
 from band.adapters import LangGraphAdapter
-from band.runtime.types import normalize_handle
+from band.runtime.handles import normalize_handle
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"

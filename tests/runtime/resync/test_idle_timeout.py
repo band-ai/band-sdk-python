@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
 

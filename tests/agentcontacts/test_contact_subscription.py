@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from band.agent import Agent
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 
 class TestAgentContactSubscription:

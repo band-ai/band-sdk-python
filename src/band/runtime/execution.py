@@ -74,19 +74,16 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
+from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
+from band.runtime.context import ConversationContext
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.formatters import build_participants_message, format_history_for_llm
+from band.runtime.messages import PlatformMessage
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.resync import ResyncSchedule
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.types import (
-    ConversationContext,
-    ParticipantAddedCallback,
-    ParticipantRemovedCallback,
-    PlatformMessage,
-    SessionConfig,
-)
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
@@ -425,7 +422,7 @@ class ExecutionContext:
         # Cleared in the per-message ``finally``.
         self._turn_failure_reported: bool = False
 
-        # Received STOP suppresses local triggers. Base-interval probes discover
+        # Received STOP suppresses local triggers. Periodic probes discover
         # a missed PLAY; platform claims remain authoritative.
         self._stopped: bool = False
         # The first stop's graceful result; a retry only settles retained work.

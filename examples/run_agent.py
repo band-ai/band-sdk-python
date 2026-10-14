@@ -67,7 +67,7 @@ from band.config import load_agent_config
 from band.core.types import Capability, Emit
 from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 # Load environment from .env
 load_dotenv()

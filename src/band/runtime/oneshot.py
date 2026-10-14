@@ -81,13 +81,13 @@ from band.runtime.formatters import (
     format_history_for_llm,
     replace_uuid_mentions,
 )
-from band.runtime.participants import participant_snapshot
-from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
-from band.runtime.tools import AgentTools
 
 # BandLink.get_next_message returns this dataclass, not band.core.types'
 # same-named one that _build_platform_message below constructs.
-from band.runtime.types import PlatformMessage as RestPlatformMessage
+from band.runtime.messages import PlatformMessage as RestPlatformMessage
+from band.runtime.participants import participant_snapshot
+from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
+from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
 

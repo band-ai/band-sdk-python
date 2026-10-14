@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 class TestIntervalValidation:

@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.core.exceptions import AgentAlreadyRunningError
+from band.runtime.agentconfig import AgentConfig
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.types import AgentConfig
 
 
 class TestSingleInstance:

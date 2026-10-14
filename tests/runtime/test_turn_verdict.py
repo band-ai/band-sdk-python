@@ -33,9 +33,9 @@ from band.core.types import (
     PlatformMessage,
 )
 from band.runtime.execution import ExecutionContext
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools import BandTool
 from band.runtime.tools.agent import AgentTools
-from band.runtime.types import SessionConfig
 from band.testing import MISSING_REPLY_FAILURE
 from tests.adapters.codexturns import (
     FakeCodexClient,

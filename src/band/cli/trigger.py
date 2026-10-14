@@ -53,7 +53,7 @@ from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
 
 from band import LogSettings, LogStream
 from band.client.rest import aclose_rest_client
-from band.runtime.types import normalize_handle
+from band.runtime.handles import normalize_handle
 
 logger = logging.getLogger(__name__)
 
