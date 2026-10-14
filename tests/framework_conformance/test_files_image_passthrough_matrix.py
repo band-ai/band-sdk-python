@@ -8,8 +8,8 @@ from band.core.types import Capability
 from tests.framework_conformance.imageprobes import (
     _CREWAI_AVAILABLE,
     IMAGE_PASSTHROUGH_PROBES,
-    _framework_param,
     ReadRoomFileTools,
+    _framework_param,
 )
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,

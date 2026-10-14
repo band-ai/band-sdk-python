@@ -51,7 +51,7 @@ class TestLegacyJobCoverage:
         baseline = coverage.collected_nodes(
             [*sorted(targets), "tests/framework_conformance/"]
         )
-        needed_files = {str(path) for path in needed}
+        needed_files = {path.as_posix() for path in needed}
         required = {
             node.nodeid
             for node in baseline
