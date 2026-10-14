@@ -8,7 +8,13 @@ import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, OpenRoom, said
+from tests.adapters.claude_sdk.helpers import (
+    ClaudeRoom,
+    OpenRoom,
+    left,
+    said,
+    shut_down,
+)
 
 
 @pytest.mark.parametrize(
@@ -38,19 +44,11 @@ async def test_fixture_cleanup_keeps_the_clock_that_started_the_server(
     monkeypatch.setattr(room.adapter, "cleanup_all", cleanup_on_original_clock)
 
 
-async def leave_room(room: ClaudeRoom) -> None:
-    await room.leave()
-
-
-async def shut_down(room: ClaudeRoom) -> None:
-    await room.adapter.cleanup_all()
-
-
 # A turn still running when its room closes is cancelled at once.
 NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
 
 
-@pytest.mark.parametrize("teardown", [leave_room, shut_down])
+@pytest.mark.parametrize("teardown", [left, shut_down])
 async def test_teardown_mid_turn_stops_the_turn_before_closing_its_session(
     claude_room: OpenRoom, teardown: Callable[[ClaudeRoom], Awaitable[None]]
 ) -> None:

@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from claude_agent_sdk.types import Message
 
 from band.adapters.claude_sdk import (
+    APPROVAL_REQUESTED_TEMPLATE,
     ClaudeApprovalOptions,
     ClaudeSDKAdapter,
     ClaudeSDKAdapterConfig,
@@ -49,6 +50,10 @@ SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 MISSING_REPLY_TEXT = MISSING_REPLY_FAILURE[1]
 # A native file write, the tool call every approval path is asked about.
 WRITE_NOTE = ModelDecision.call("Write", file_path="notes.md", content="todo")
+# The room's approval prompt for WRITE_NOTE as the first request of a turn.
+WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
+    summary="Write: notes.md", token="a-1"
+)
 # Short enough that a held transition reports quickly, long enough for a real
 # CLI child to start and the Band MCP server to shut down on a slow runner.
 REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
@@ -316,6 +321,16 @@ OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 async def band_server_replaced(room: ClaudeRoom) -> None:
     """Retire the room's CLI by crashing the Band MCP server it dials."""
     await room.crash_band_server()
+
+
+async def left(room: ClaudeRoom) -> None:
+    """Close the room by leaving it."""
+    await room.leave()
+
+
+async def shut_down(room: ClaudeRoom) -> None:
+    """Close the room by shutting the whole adapter down."""
+    await room.adapter.cleanup_all()
 
 
 async def turn_cancelled(room: ClaudeRoom) -> None:

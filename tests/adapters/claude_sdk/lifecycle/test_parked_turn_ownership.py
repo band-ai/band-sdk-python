@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
-from band.adapters.claude_sdk import APPROVAL_REQUESTED_TEMPLATE
 from tests.adapters.claude_sdk.fakecli import Hold
 from tests.adapters.claude_sdk.helpers import (
     WRITE_NOTE,
+    WRITE_PROMPT,
     OpenRoom,
     with_approvals,
-)
-
-WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
-    summary="Write: notes.md", token="a-1"
 )
 
 

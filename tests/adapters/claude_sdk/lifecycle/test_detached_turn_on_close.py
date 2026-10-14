@@ -7,30 +7,21 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.adapters.claude_sdk import (
-    APPROVAL_REQUESTED_TEMPLATE,
-    ClaudeApprovalOptions,
-    ClaudeSDKAdapterConfig,
-)
+from band.adapters.claude_sdk import ClaudeApprovalOptions, ClaudeSDKAdapterConfig
 from band.core.turn import MISSING_REPLY
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom, OpenRoom
-
-WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
-    summary="Write: notes.md", token="a-1"
+from tests.adapters.claude_sdk.helpers import (
+    WRITE_NOTE,
+    WRITE_PROMPT,
+    ClaudeRoom,
+    OpenRoom,
+    left,
+    shut_down,
 )
-
-
-async def leave(room: ClaudeRoom) -> None:
-    await room.leave()
-
-
-async def shut_down(room: ClaudeRoom) -> None:
-    await room.adapter.cleanup_all()
 
 
 class TestDetachedTurnOnClose:
-    @pytest.mark.parametrize("closing", [leave, shut_down])
+    @pytest.mark.parametrize("closing", [left, shut_down])
     async def test_a_released_turn_cancelled_by_its_room_closing_is_reported_once(
         self, claude_room: OpenRoom, closing: Callable[[ClaudeRoom], Awaitable[None]]
     ) -> None:
