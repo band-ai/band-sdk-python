@@ -21,6 +21,20 @@ from tests.adapters.roompeer import (
 )
 
 
+async def lose_process(
+    host: RetentionHost,
+    room_id: str,
+    loss: PeerCommand = PeerCommand.LOSE_TRANSPORT,
+) -> str:
+    """Lose the room's process mid-turn and return the thread it was on."""
+    thread = host.native_id(room_id)
+    assert thread is not None
+    with pytest.raises(TurnResultAlreadyReported):
+        await host.send(room_id, loss)
+    await host.settled(room_id)
+    return thread
+
+
 class TestNativeConversationContinuity:
     """A replacement process continues the room native conversation or refuses to run."""
 
@@ -33,10 +47,7 @@ class TestNativeConversationContinuity:
         """The memo lives only in the thread's private context, so recalling it
         on a new process proves the native conversation itself continued."""
         assert await host.send("room-a", memo_instruction("private-7")) == ["Noted."]
-        thread = host.native_id("room-a")
-        with pytest.raises(TurnResultAlreadyReported):
-            await host.send("room-a", loss)
-        await host.settled("room-a")
+        thread = await lose_process(host, "room-a", loss)
 
         assert await host.send("room-a", PeerCommand.RECALL) == ["Recalled: private-7"]
         assert host.native_id("room-a") == thread
@@ -48,10 +59,7 @@ class TestNativeConversationContinuity:
         host: RetentionHost,
     ) -> None:
         assert await host.send("room-a", memo_instruction("private-7")) == ["Noted."]
-        thread = host.native_id("room-a")
-        with pytest.raises(TurnResultAlreadyReported):
-            await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
-        await host.settled("room-a")
+        thread = await lose_process(host, "room-a")
         saved = (host.root / CODEX_HOME) / f"{thread}.json"
         kept = saved.read_text()
         saved.unlink()
@@ -72,10 +80,7 @@ class TestNativeConversationContinuity:
         host: RetentionHost,
     ) -> None:
         assert await host.send("room-a", memo_instruction("private-7")) == ["Noted."]
-        thread = host.native_id("room-a")
-        with pytest.raises(TurnResultAlreadyReported):
-            await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
-        await host.settled("room-a")
+        thread = await lose_process(host, "room-a")
         ((host.root / CODEX_HOME) / f"{thread}.json").unlink()
         with pytest.raises(CodexJsonRpcError, match=NO_ROLLOUT):
             await host.send("room-a", PeerCommand.RECALL)
@@ -92,10 +97,7 @@ class TestNativeConversationContinuity:
     ) -> None:
         assert isinstance(host.adapter, CodexAdapter)
         started_with = await host.send("room-a", PeerCommand.TOOLS)
-        thread = host.native_id("room-a")
-        with pytest.raises(TurnResultAlreadyReported):
-            await host.send("room-a", PeerCommand.LOSE_TRANSPORT)
-        await host.settled("room-a")
+        thread = await lose_process(host, "room-a")
         original = host.adapter.config
         host.adapter.config = original.model_copy(
             update={
