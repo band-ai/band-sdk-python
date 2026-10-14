@@ -40,6 +40,8 @@ async def launches(
         child.refuse_close = launched.refuse_close
 
     launched.children = launch_children(monkeypatch, WorkspaceProcess, inherit_refusal)
+    # The injected failure: the SDK's int() of this fails after the child spawns
+    # and before it builds the Query.
     monkeypatch.setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "invalid")
     try:
         yield launched
