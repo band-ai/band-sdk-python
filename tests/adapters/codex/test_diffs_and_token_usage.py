@@ -7,6 +7,7 @@ import pytest
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -48,7 +49,7 @@ class TestDiffsAndTokenUsage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         diff_events = [
@@ -87,7 +88,7 @@ class TestDiffsAndTokenUsage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         diff_events = [
@@ -129,7 +130,7 @@ class TestDiffsAndTokenUsage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         usage_events = [
@@ -173,7 +174,7 @@ class TestDiffsAndTokenUsage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         usage_events = [
@@ -184,7 +185,7 @@ class TestDiffsAndTokenUsage:
         assert usage_events == []
 
         # But internal tracking still works
-        thread_id = adapter._room_threads.get("room-1")
+        thread_id = adapter._room_threads.get(ROOM_ID)
         assert thread_id is not None
         usage = adapter._token_usage.get(thread_id)
         assert usage is not None
@@ -220,7 +221,7 @@ class TestDiffsAndTokenUsage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # Now run /usage
@@ -232,7 +233,7 @@ class TestDiffsAndTokenUsage:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         usage_msgs = [

@@ -10,6 +10,7 @@ from band.adapters.codex import (
 )
 from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -95,9 +96,9 @@ class TestSessionApprovalKeying:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
-        await await_released_turn(adapter, "room-1")
+        await await_released_turn(adapter, ROOM_ID)
 
         # Manual approval times out and the pending record is cleared,
         # so /approve-session reports no pending approvals rather than
@@ -111,10 +112,10 @@ class TestSessionApprovalKeying:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=False,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
-        assert "room-1" not in adapter._session_approved
+        assert ROOM_ID not in adapter._session_approved
 
     def test_session_approval_key_empty_prevents_wildcard_match(self) -> None:
         """Empty session key from missing command cannot match any session set."""

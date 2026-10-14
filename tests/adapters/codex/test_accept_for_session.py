@@ -9,6 +9,7 @@ import pytest
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -41,7 +42,7 @@ class TestAcceptForSession:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed session approval for the exact command
-        adapter._session_approved["room-1"] = OrderedDict(
+        adapter._session_approved[ROOM_ID] = OrderedDict(
             [("commandExecution:npm install", None)]
         )
 
@@ -53,7 +54,7 @@ class TestAcceptForSession:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # Decision should be acceptForSession

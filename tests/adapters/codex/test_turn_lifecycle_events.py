@@ -9,6 +9,7 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex.types import CodexSessionState
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
     send_bootstrap,
@@ -43,7 +44,7 @@ class TestTurnLifecycleEvents:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         started_events = [

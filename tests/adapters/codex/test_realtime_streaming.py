@@ -8,6 +8,7 @@ from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -49,7 +50,7 @@ class TestRealtimeStreaming:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         thought_events = [
@@ -86,7 +87,7 @@ class TestRealtimeStreaming:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         streaming_events = [
@@ -119,7 +120,7 @@ class TestRealtimeStreaming:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         plan_thoughts = [
@@ -161,7 +162,7 @@ class TestRealtimeStreaming:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         commentary_thoughts = [
@@ -205,7 +206,7 @@ class TestRealtimeStreaming:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         assert tools.messages_sent == []
@@ -243,7 +244,7 @@ class TestRealtimeStreaming:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         assert tools.messages_sent == []

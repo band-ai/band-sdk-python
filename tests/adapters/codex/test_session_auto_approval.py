@@ -9,6 +9,7 @@ import pytest
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -43,7 +44,7 @@ class TestSessionAutoApproval:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed the session-approved set as if /approve-session was used for "npm install"
-        adapter._session_approved["room-1"] = OrderedDict(
+        adapter._session_approved[ROOM_ID] = OrderedDict(
             [("commandExecution:npm install", None)]
         )
 
@@ -55,7 +56,7 @@ class TestSessionAutoApproval:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # The request should have been auto-approved via session policy
@@ -84,7 +85,7 @@ class TestSessionAutoApproval:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed session approval for "npm install" only
-        adapter._session_approved["room-1"] = OrderedDict(
+        adapter._session_approved[ROOM_ID] = OrderedDict(
             [("commandExecution:npm install", None)]
         )
 
@@ -96,7 +97,7 @@ class TestSessionAutoApproval:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # npm publish should have been declined, not auto-approved
@@ -125,7 +126,7 @@ class TestSessionAutoApproval:
         await adapter.on_started("Agent", "A coding agent")
 
         # Pre-seed session approval for npm binary
-        adapter._session_approved["room-1"] = OrderedDict(
+        adapter._session_approved[ROOM_ID] = OrderedDict(
             [("commandExecution:npm", None)]
         )
 
@@ -137,7 +138,7 @@ class TestSessionAutoApproval:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # npm install should be auto-approved because binary matches

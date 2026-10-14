@@ -9,6 +9,7 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex.types import CodexSessionState
 from band.testing import reported_failures
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -44,7 +45,7 @@ class TestMalformedPayloadTolerance:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         failures = reported_failures(tools)
@@ -83,7 +84,7 @@ class TestMalformedPayloadTolerance:
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         assert len(reported_failures(tools)) == 1
@@ -121,7 +122,7 @@ class TestMalformedPayloadTolerance:
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         failures = reported_failures(tools)
@@ -150,7 +151,7 @@ class TestMalformedPayloadTolerance:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
     @pytest.mark.asyncio
@@ -178,5 +179,5 @@ class TestMalformedPayloadTolerance:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )

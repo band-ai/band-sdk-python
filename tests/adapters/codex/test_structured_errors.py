@@ -13,6 +13,7 @@ from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import CodexSessionState
 from band.testing import reported_failures
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
     send_bootstrap,
@@ -60,7 +61,7 @@ class TestStructuredErrors:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         failures = reported_failures(tools)
@@ -106,7 +107,7 @@ class TestStructuredErrors:
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         failures = reported_failures(tools)
@@ -137,7 +138,7 @@ class TestStructuredErrors:
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         failures = reported_failures(tools)
@@ -167,7 +168,7 @@ class TestStructuredErrors:
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
         failures = reported_failures(tools)

@@ -7,6 +7,7 @@ import pytest
 from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
+    ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
 )
@@ -44,7 +45,7 @@ class TestContextCompaction:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         compaction_events = [
@@ -79,7 +80,7 @@ class TestContextCompaction:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         compaction_events = [

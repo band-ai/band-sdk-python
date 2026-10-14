@@ -69,7 +69,7 @@ class TestEnrichedApprovals:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         audit_events = [
@@ -96,11 +96,11 @@ class TestEnrichedApprovals:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # Per-room override is set, global config is unchanged
-        assert adapter._sandbox_overrides.get("room-1") == "read-only"
+        assert adapter._sandbox_overrides.get(ROOM_ID) == "read-only"
         assert adapter.config.sandbox is None
         assert "read-only" in tools.messages_sent[0]["content"]
 
@@ -111,9 +111,9 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         await adapter.on_started("Agent", "A coding agent")
 
-        adapter._sandbox_overrides["room-1"] = "read-only"
+        adapter._sandbox_overrides[ROOM_ID] = "read-only"
 
-        assert adapter._effective_sandbox("room-1") == "read-only"
+        assert adapter._effective_sandbox(ROOM_ID) == "read-only"
         assert adapter._effective_sandbox("room-2") is None
 
     @pytest.mark.asyncio
@@ -131,11 +131,11 @@ class TestEnrichedApprovals:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         # Override should NOT be set — confirmation was required
-        assert "room-1" not in adapter._sandbox_overrides
+        assert ROOM_ID not in adapter._sandbox_overrides
         assert "--confirm" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
@@ -157,10 +157,10 @@ class TestEnrichedApprovals:
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
-                room_id="room-1",
+                room_id=ROOM_ID,
             )
 
-        assert adapter._sandbox_overrides.get("room-1") == "danger-full-access"
+        assert adapter._sandbox_overrides.get(ROOM_ID) == "danger-full-access"
         assert any(
             "Sandbox escalated to danger-full-access" in record.message
             for record in caplog.records
@@ -181,11 +181,11 @@ class TestEnrichedApprovals:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         assert adapter.config.sandbox is None
-        assert "room-1" not in adapter._sandbox_overrides
+        assert ROOM_ID not in adapter._sandbox_overrides
         assert "Invalid sandbox mode" in tools.messages_sent[0]["content"]
 
     @pytest.mark.asyncio
@@ -203,7 +203,7 @@ class TestEnrichedApprovals:
             participants_msg=None,
             contacts_msg=None,
             is_session_bootstrap=True,
-            room_id="room-1",
+            room_id=ROOM_ID,
         )
 
         assert "Effective permissions:" in tools.messages_sent[0]["content"]

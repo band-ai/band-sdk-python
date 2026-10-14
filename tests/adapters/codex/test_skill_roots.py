@@ -17,6 +17,7 @@ from band.integrations.codex.types import CodexRequestMethod
 from tests.adapters.codex.kit import (
     PROCESS_EXITED,
     REGISTER_SKILL_ROOT,
+    ROOM_ID,
     SKILL_ROOT,
     patch_codex_clients_by_room,
     run_codex_turn,
@@ -49,7 +50,7 @@ class TestSkillRoots:
     async def test_every_room_process_gets_the_roots(self) -> None:
         clients = {
             room_id: FakeCodexClient(events=[turn_completed()])
-            for room_id in ("room-1", "room-2")
+            for room_id in (ROOM_ID, "room-2")
         }
         adapter = CodexAdapter(config=CodexAdapterConfig(skill_roots=[SKILL_ROOT]))
         patch_codex_clients_by_room(adapter, clients)

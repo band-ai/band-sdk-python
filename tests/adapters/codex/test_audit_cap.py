@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from band.adapters.codex import CodexAdapterConfig
+from tests.adapters.codex.kit import ROOM_ID
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
@@ -18,13 +19,13 @@ class TestAuditCap:
         )
         for i in range(10):
             adapter._record_approval_audit(
-                room_id="room-1",
+                room_id=ROOM_ID,
                 request_id=str(i),
                 method="item/commandExecution/requestApproval",
                 decision="accept",
                 decided_by="test",
             )
-        audit = adapter._approval_audit["room-1"]
+        audit = adapter._approval_audit[ROOM_ID]
         assert len(audit) == 5
         # Should keep the most recent entries
         assert audit[0].request_id == "5"
@@ -37,8 +38,8 @@ class TestAuditCap:
             config=CodexAdapterConfig(max_session_approved_per_room=3),
         )
         for i in range(5):
-            adapter._record_session_approval("room-1", f"commandExecution:cmd{i}")
-        room = adapter._session_approved["room-1"]
+            adapter._record_session_approval(ROOM_ID, f"commandExecution:cmd{i}")
+        room = adapter._session_approved[ROOM_ID]
         assert list(room.keys()) == [
             "commandExecution:cmd2",
             "commandExecution:cmd3",
@@ -51,13 +52,13 @@ class TestAuditCap:
             FakeCodexClient(),
             config=CodexAdapterConfig(max_session_approved_per_room=3),
         )
-        adapter._record_session_approval("room-1", "commandExecution:a")
-        adapter._record_session_approval("room-1", "commandExecution:b")
-        adapter._record_session_approval("room-1", "commandExecution:c")
+        adapter._record_session_approval(ROOM_ID, "commandExecution:a")
+        adapter._record_session_approval(ROOM_ID, "commandExecution:b")
+        adapter._record_session_approval(ROOM_ID, "commandExecution:c")
         # Re-approve the oldest — it should move to the end.
-        adapter._record_session_approval("room-1", "commandExecution:a")
-        adapter._record_session_approval("room-1", "commandExecution:d")
-        room = adapter._session_approved["room-1"]
+        adapter._record_session_approval(ROOM_ID, "commandExecution:a")
+        adapter._record_session_approval(ROOM_ID, "commandExecution:d")
+        room = adapter._session_approved[ROOM_ID]
         # "b" is the oldest after re-approving "a", so it's the one evicted.
         assert "commandExecution:b" not in room
         assert list(room.keys()) == [

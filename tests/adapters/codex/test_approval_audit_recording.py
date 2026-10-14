@@ -6,6 +6,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
 )
+from tests.adapters.codex.kit import ROOM_ID
 
 
 class TestApprovalAuditRecording:
@@ -15,7 +16,7 @@ class TestApprovalAuditRecording:
         """_record_approval_audit returns the entry it appended."""
         adapter = CodexAdapter(config=CodexAdapterConfig())
         entry = adapter._record_approval_audit(
-            room_id="room-1",
+            room_id=ROOM_ID,
             request_id="req-1",
             method="item/commandExecution/requestApproval",
             decision="accept",
@@ -24,4 +25,4 @@ class TestApprovalAuditRecording:
         )
         assert entry.request_id == "req-1"
         assert entry.decision == "accept"
-        assert adapter._approval_audit["room-1"][-1] is entry
+        assert adapter._approval_audit[ROOM_ID][-1] is entry
