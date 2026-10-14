@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable, Iterable, Iterator
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
+from time import monotonic
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -108,6 +109,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@contextlib.contextmanager
+def _observe_phase(
+    phase: str, room_id: str, message_id: str | None = None
+) -> Iterator[None]:
+    """Record boundary completion separately from entry, without payloads."""
+    started = monotonic()
+    logger.debug(
+        "Turn phase=%s state=started room=%s message=%s",
+        phase,
+        room_id,
+        message_id,
+    )
+    outcome = "returned"
+    try:
+        yield
+    except BaseException as error:
+        outcome = (
+            "cancelled"
+            if isinstance(error, asyncio.CancelledError)
+            else type(error).__name__
+        )
+        raise
+    finally:
+        logger.debug(
+            "Turn phase=%s state=%s room=%s message=%s elapsed=%.6f",
+            phase,
+            outcome,
+            room_id,
+            message_id,
+            monotonic() - started,
+        )
+
+
 def _log_turn_error(error: Exception, message: str, *args: object) -> None:
     """Log a failed turn; one whose failure already reached the room was logged
     where it was reported, so it stays out of ERROR alerting."""
@@ -180,6 +214,13 @@ def _payload(event: MessageEvent) -> MessageCreatedPayload:
 def _event_message_id(event: MessageEvent) -> str:
     """The platform id of a message event that carries a real delivery."""
     return _payload(event).id
+
+
+def _diagnostic_message_id(event: PlatformEvent) -> str | None:
+    """The message id a diagnostic names; None for an event that is no delivery."""
+    if isinstance(event, MessageEvent) and event.payload:
+        return event.payload.id
+    return None
 
 
 def _message_ids(events: Iterable[MessageEvent]) -> tuple[str, ...]:
@@ -642,7 +683,14 @@ class ExecutionContext:
         pending = self.claims.pending_ack(self.room_id, message_id)
         if pending is None:
             raise ValueError(f"message {message_id} has no pending terminal write")
-        result = await self._write_terminal(message_id, pending)
+        with _observe_phase("ack", self.room_id, message_id):
+            result = await self._write_terminal(message_id, pending)
+        logger.debug(
+            "Ack room=%s message=%s accepted=%s",
+            self.room_id,
+            message_id,
+            result is SettlementResult.ACCEPTED,
+        )
         match result:
             case SettlementResult.ACCEPTED:
                 self._retry_tracker.mark_success(message_id)
@@ -659,6 +707,14 @@ class ExecutionContext:
             case SettlementResult.UNCONFIRMED:
                 pass
         return result
+
+    async def _mark_processing(self, message_id: str) -> bool:
+        with _observe_phase("claim", self.room_id, message_id):
+            accepted = await self.link.mark_processing(self.room_id, message_id)
+        logger.debug(
+            "Claim room=%s message=%s accepted=%s", self.room_id, message_id, accepted
+        )
+        return accepted
 
     async def _write_terminal(
         self, message_id: str, pending: PendingAck
@@ -1261,7 +1317,8 @@ class ExecutionContext:
             self._expire_context_cache_if_needed()
 
         if not self._context_hydrated:
-            await self.hydrate()
+            with _observe_phase("hydrate", self.room_id):
+                await self.hydrate()
 
     def build_context(self) -> ConversationContext:
         """
@@ -1546,7 +1603,7 @@ class ExecutionContext:
                 return await self._on_message_control(self, event)
 
             try:
-                if not await self.link.mark_processing(self.room_id, msg_id):
+                if not await self._mark_processing(msg_id):
                     return ControlOutcome.DEFERRED
                 if not self._owns_attempt(scope, revision):
                     if scope.kind is not None:
@@ -2262,7 +2319,7 @@ class ExecutionContext:
         for event in scope.originals:
             message_id = _event_message_id(event)
             try:
-                accepted = await self.link.mark_processing(self.room_id, message_id)
+                accepted = await self._mark_processing(message_id)
             except RoomExecutionStoppedError:
                 accepted = False
             if not accepted:
@@ -2400,10 +2457,12 @@ class ExecutionContext:
         handler drains; participant add/remove events are housekeeping and
         skip it.
         """
-        if isinstance(event, MessageEvent):
-            await self._execute_message_cycle(event)
-        else:
-            await self._on_execute(self, event)
+        message_id = _diagnostic_message_id(event)
+        with _observe_phase("cycle", self.room_id, message_id):
+            if isinstance(event, MessageEvent):
+                await self._execute_message_cycle(event, message_id)
+            else:
+                await self._on_execute(self, event)
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
@@ -2430,7 +2489,9 @@ class ExecutionContext:
         )
         self.observe_platform_stop(scope, control_revision=revision)
 
-    async def _execute_message_cycle(self, event: PlatformEvent) -> None:
+    async def _execute_message_cycle(
+        self, event: PlatformEvent, message_id: str | None
+    ) -> None:
         await self._working_reporter.start()
         scope = self.current_scope
         if scope is not None and scope.terminating:
@@ -2438,10 +2499,11 @@ class ExecutionContext:
         self._resync_handled_work = True
         self._reset_resync_interval()
         originals = scope.originals if scope is not None else ()
-        if len(originals) > 1 and self._on_execute_batch is not None:
-            await self._on_execute_batch(self, originals)
-        else:
-            await self._on_execute(self, event)
+        with _observe_phase("handler", self.room_id, message_id):
+            if len(originals) > 1 and self._on_execute_batch is not None:
+                await self._on_execute_batch(self, originals)
+            else:
+                await self._on_execute(self, event)
 
     def _retain_detached_cycle_task(
         self, task: asyncio.Task[None], *, owner: TurnTask | None = None
@@ -2609,7 +2671,7 @@ class ExecutionContext:
             raise asyncio.CancelledError
 
         try:
-            accepted = await self.link.mark_processing(self.room_id, message_id)
+            accepted = await self._mark_processing(message_id)
         except RoomExecutionStoppedError as error:
             if self.current_scope is scope and self._active_cycle_task is task:
                 self.observe_platform_stop(scope, cooperative=True)
@@ -2832,7 +2894,12 @@ class ExecutionContext:
             return TurnOutcome.RETRY_LATER
 
         self._set_state(ExecutionState.PROCESSING)
-        logger.debug("Processing %s in room %s", event.type, self.room_id)
+        logger.debug(
+            "Dispatch source=websocket room=%s message=%s event=%s",
+            self.room_id,
+            _diagnostic_message_id(event),
+            event.type,
+        )
 
         try:
             # Hydrate context on first event (loads participants always,
