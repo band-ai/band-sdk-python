@@ -16,7 +16,8 @@ import pytest
 
 from band.platform.event import ReconnectedEvent
 from band.runtime.execution import ExecutionContext, ResyncRequest
-from band.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import (

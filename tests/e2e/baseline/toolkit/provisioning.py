@@ -36,7 +36,8 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
-from band.runtime.types import AgentConfig, SessionConfig
+from band.runtime.agentconfig import AgentConfig
+from band.runtime.sessionconfig import SessionConfig
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter

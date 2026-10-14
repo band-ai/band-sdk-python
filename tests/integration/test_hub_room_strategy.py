@@ -20,7 +20,7 @@ from band.platform.event import (
 from band.platform.link import BandLink
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contact_tools import ContactTools
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 from tests.integration.conftest import (
     fetch_all_context,
     requires_api,

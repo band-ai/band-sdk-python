@@ -28,8 +28,9 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
+from band.runtime.messages import PlatformMessage
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.platform.settlement.kit import (
     MISSING_ATTEMPT,

@@ -20,7 +20,8 @@ from band.platform.event import MessageEvent
 from band.platform.message_lifecycle import ActionablePage
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event, make_participant_mock
 from tests.core.agentlifecycle.kit import make_runtime
 from tests.runtime.conftest import wait_for_condition

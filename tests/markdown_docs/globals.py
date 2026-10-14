@@ -19,7 +19,7 @@ import os
 from band import AdapterFeatures, BandConfigError, Capability, Emit
 from band import Agent as BandAgent
 from band.platform.event import ContactRequestReceivedEvent
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 MARKDOWN_AGENT_ID = "markdown-docs-agent"
 MARKDOWN_RESEARCHER_AGENT_ID = "markdown-docs-researcher"

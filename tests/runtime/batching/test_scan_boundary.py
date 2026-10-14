@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_participant_added_event
 from tests.runtime.batching.kit import AGENT_ID, ROOM_ID, FakeRoom, started_room
 

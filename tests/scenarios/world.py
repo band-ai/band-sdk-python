@@ -11,7 +11,7 @@ from band.client.streaming import ControlMode
 from band.platform.link import BandLink
 from band.runtime.execution import Execution, ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from band.testing import fake_phoenix_server
 from band.testing.phoenix_server import FakePhoenixServer
 from tests.runtime.helpers import rest_client_over

@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from band.runtime.types import ACTIONABLE_PAGE_SIZE
+from band.runtime.sessionconfig import ACTIONABLE_PAGE_SIZE
 from tests.runtime.delivery.kit import (
     EARLIER_ROW,
     FAILED_ROWS,

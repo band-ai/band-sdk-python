@@ -9,7 +9,7 @@ from typing import Protocol
 
 from band.client.streaming import DeliveryStatus
 from band.core.types import MessageType
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     liveness_probe,
     unique_marker,

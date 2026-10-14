@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import patch
 
 from band.runtime.execution import ExecutionContext, TurnOutcome
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     assert_fresh_cycle_still_propagates_shutdown_cancel,

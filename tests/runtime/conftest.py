@@ -7,7 +7,7 @@ newly required one, ``data`` widening from a bare list to Optional) breaks
 these fixtures the same way it would break production, instead of a loose
 mock silently tolerating the drift.
 
-Note: ``band.runtime.types.PlatformMessage`` (used by the root
+Note: ``band.runtime.messages.PlatformMessage`` (used by the root
 ``tests/conftest.py`` WS-event builders) is a *different* class from
 ``band.core.types.PlatformMessage`` used here — the two aren't
 interchangeable, so don't reach for ``sample_platform_message`` from the root

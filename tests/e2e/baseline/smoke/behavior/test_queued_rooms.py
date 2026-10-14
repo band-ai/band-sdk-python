@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (

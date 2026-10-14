@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ProvisionedAgent

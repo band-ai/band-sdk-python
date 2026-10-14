@@ -9,7 +9,7 @@ import pytest
 from band.core.exceptions import BandConfigError
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
 BATCHING = SessionConfig(consume_all_queued=True)

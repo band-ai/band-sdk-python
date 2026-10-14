@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 class TestIntervalValidation:
     """Reconciliation intervals must be finite and positive."""
 
     @pytest.mark.parametrize(
-        "field", ["idle_resync_seconds", "idle_resync_max_seconds"]
+        "field",
+        ["idle_resync_seconds", "idle_resync_max_seconds", "stopped_resync_seconds"],
     )
     @pytest.mark.parametrize(
         "value", [0, -1, float("nan"), float("inf"), -float("inf")]
@@ -21,3 +22,10 @@ class TestIntervalValidation:
     ) -> None:
         with pytest.raises(ValueError, match=field):
             SessionConfig(**{field: value})
+
+    @pytest.mark.parametrize(
+        "field", ["idle_resync_seconds", "idle_resync_max_seconds"]
+    )
+    def test_required_intervals_reject_none(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            SessionConfig(**{field: None})

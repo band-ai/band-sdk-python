@@ -8,7 +8,7 @@ import pytest
 
 from band.core.exceptions import BandConfigError
 from band.runtime.oneshot import OneShotInvoker, OneShotStatus
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.conftest import make_link_mock, platform_msg
 from tests.runtime.helpers import AGENT_ID
 from tests.runtime.oneshot.kit import make_adapter_mock, msg_body

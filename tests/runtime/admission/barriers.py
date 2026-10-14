@@ -24,7 +24,7 @@ from band.platform.event import MessageEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.batching.kit import QUIET_SECONDS, WAIT_SECONDS, Turns
 from tests.runtime.conftest import wait_for_condition

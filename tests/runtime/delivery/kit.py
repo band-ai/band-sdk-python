@@ -23,7 +23,7 @@ from band.client.streaming import DeliveryStatus
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import Execution, ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import ACTIONABLE_PAGE_SIZE, SessionConfig
+from band.runtime.sessionconfig import ACTIONABLE_PAGE_SIZE, SessionConfig
 from tests.conftest import make_message_event
 from tests.platform.settlement.kit import Reply, link_over
 from tests.runtime.batching.kit import ControlScript, Turns

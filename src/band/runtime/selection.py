@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from band.core.timestamps import assume_utc
 from band.platform.event import MessageEvent
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 
 
 @dataclass(frozen=True, order=True)

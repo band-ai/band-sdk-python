@@ -11,7 +11,7 @@ import pytest_asyncio
 
 from band.agent import Agent
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.platform.settlement.conftest import instant_retries
 from tests.platform.settlement.kit import link_over
 from tests.runtime.recovery.kit import (

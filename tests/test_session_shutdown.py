@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event

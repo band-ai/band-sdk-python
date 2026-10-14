@@ -25,7 +25,7 @@ from band.platform.message_lifecycle import (
 )
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import DEFAULT_MAX_MESSAGE_RETRIES, SessionConfig
+from band.runtime.sessionconfig import DEFAULT_MAX_MESSAGE_RETRIES, SessionConfig
 from tests.conftest import make_message_event, make_room_removed_event
 from tests.platform.settlement.kit import (
     MISSING_ATTEMPT,

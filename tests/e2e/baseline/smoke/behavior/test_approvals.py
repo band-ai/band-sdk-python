@@ -38,7 +38,7 @@ import pytest
 import band.adapters.opencode
 from band.client.streaming import DeliveryStatus
 from band.core.simple_adapter import SimpleAdapter
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings

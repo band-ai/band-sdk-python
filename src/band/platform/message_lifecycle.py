@@ -24,7 +24,8 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.settlement import SettlementResult
 from band.core.types import metadata_to_dict
-from band.runtime.types import ACTIONABLE_PAGE_SIZE, PlatformMessage
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import ACTIONABLE_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
 

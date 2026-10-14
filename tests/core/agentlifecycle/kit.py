@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from band.agent import Agent
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 def make_runtime() -> AsyncMock:

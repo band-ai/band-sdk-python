@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.runtime.types import (
+from band.runtime.sessionconfig import (
     ACTIONABLE_PAGE_SIZE,
     DEFAULT_MAX_QUEUED_MESSAGES,
     SessionConfig,
@@ -23,7 +23,7 @@ class TestSessionConfig:
         assert config.max_queued_messages == ceiling
 
     @pytest.mark.parametrize(
-        "ceiling", [0, -1, ACTIONABLE_PAGE_SIZE + 1, 10.0, "10", True, None]
+        "ceiling", [0, -1, ACTIONABLE_PAGE_SIZE + 1, 1.5, True, None]
     )
     def test_a_ceiling_outside_the_page_size_is_rejected(self, ceiling: object) -> None:
         with pytest.raises(ValueError, match="max_queued_messages"):

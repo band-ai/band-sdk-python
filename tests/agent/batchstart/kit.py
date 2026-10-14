@@ -11,7 +11,8 @@ import httpx
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 from band.testing.phoenix_server import FakePhoenixServer
 from tests.runtime.batching.kit import SharedCapacity
 from tests.scenarios.peer import API_PREFIX, BandPeer

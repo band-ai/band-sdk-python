@@ -14,7 +14,7 @@ from band.core.types import MessageType
 from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.integrations.acp.conftest import (
     deliver_server_message,
     failure_event,

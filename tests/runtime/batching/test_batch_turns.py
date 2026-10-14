@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.batching.kit import FakeRoom, started_room
 
 

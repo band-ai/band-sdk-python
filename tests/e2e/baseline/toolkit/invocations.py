@@ -26,7 +26,7 @@ from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.simple_adapter import SimpleAdapter
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 
 logger = logging.getLogger(__name__)
 

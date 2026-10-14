@@ -11,7 +11,7 @@ import pytest_asyncio
 from band.platform.link import BandLink
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.helpers import (
     AGENT_ID,
     LifecyclePlatform,

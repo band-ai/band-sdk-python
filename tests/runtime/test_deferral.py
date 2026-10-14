@@ -13,7 +13,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.platform.event import ReconnectedEvent
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotInvoker, OneShotStatus
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (

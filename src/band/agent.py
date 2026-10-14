@@ -28,15 +28,12 @@ from band.core.protocols import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
+from band.runtime.agentconfig import AgentConfig
+from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
+from band.runtime.contacts import ContactEventConfig
 from band.runtime.platform_runtime import PlatformRuntime
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
-from band.runtime.types import (
-    AgentConfig,
-    ContactEventConfig,
-    ParticipantAddedCallback,
-    ParticipantRemovedCallback,
-    SessionConfig,
-)
 
 if TYPE_CHECKING:
     from band.core.types import AgentInput

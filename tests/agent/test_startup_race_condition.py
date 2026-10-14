@@ -14,7 +14,8 @@ from band.client.streaming import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.platform.event import MessageEvent
-from band.runtime.types import ConversationContext, SessionConfig
+from band.runtime.context import ConversationContext
+from band.runtime.sessionconfig import SessionConfig
 from band.testing.platform import platform_connection_stub
 
 

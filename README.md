@@ -613,7 +613,7 @@ The agent handles contact decisions through its LLM. A dedicated room is created
 
 ```python
 from band import Agent
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 agent = Agent.create(
     adapter=adapter,
@@ -632,7 +632,7 @@ You provide an async function that receives each contact event and a `tools` obj
 ```python
 from band import Agent
 from band.platform.event import ContactRequestReceivedEvent
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 TRUSTED_HANDLES = {"@teammate"}
 

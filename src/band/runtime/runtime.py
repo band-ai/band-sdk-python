@@ -17,6 +17,7 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import BandConfigError
 from band.core.protocols import CapacityWaitingAdapter
 from band.platform.event import MessageEvent, PlatformEvent
+from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.control import ControlDeduplicator, apply_control, control_targets
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import (
@@ -27,11 +28,7 @@ from band.runtime.execution import (
 )
 from band.runtime.presence import RoomPresence
 from band.runtime.rooms import RoomExecutions, request_resync
-from band.runtime.types import (
-    ParticipantAddedCallback,
-    ParticipantRemovedCallback,
-    SessionConfig,
-)
+from band.runtime.sessionconfig import SessionConfig
 
 if TYPE_CHECKING:
     from band.client.streaming import AgentControlPayload

@@ -29,7 +29,7 @@ from band.core.types import (
 from band.platform.event import MessageEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.identifiers import UUID_ID
 

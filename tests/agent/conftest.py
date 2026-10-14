@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 @pytest.fixture

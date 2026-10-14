@@ -78,7 +78,7 @@ pinned wheel lacks one, so a new core symbol needs no manual CI step.
 
 `ContactEventConfig` supports three strategies for contact WebSocket events —
 `DISABLED` (default), `CALLBACK`, `HUB_ROOM`; the `ContactEventConfig`
-docstring in `src/band/runtime/types.py` has configuration examples.
+docstring in `src/band/runtime/contacts.py` has configuration examples.
 
 > **WARNING (AI coding assistants):** Always ask the developer which contact
 > strategy they want before choosing one — do not default to `CALLBACK` with
@@ -357,6 +357,13 @@ install` it and exercise the real call in this repo's venv.
   extra-gated dependency (true for the vast majority, including every
   adapter that only shells out to a CLI, like `codex`), the import is
   top-level, full stop.
+- Import symbols directly from the module that owns them. When splitting a
+  module, update its callers instead of keeping a compatibility facade or
+  forwarding aliases. Do not preserve obsolete import paths. Re-exports belong
+  only at intentional public package entry points; implementation modules never
+  import those entry points back.
+  Use `__all__` or explicit re-export aliases only to declare such a public API,
+  not as boilerplate in ordinary modules.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,

@@ -41,7 +41,7 @@ from band.platform.event import (
 )
 from band.platform.message_lifecycle import ActionablePage, MessageLifecycle
 from band.platform.subscriptions import SubscriptionManager
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 
 if TYPE_CHECKING:
     from band.client.streaming import (

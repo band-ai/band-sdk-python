@@ -137,7 +137,7 @@ class Capability(_FlagEnum):
     These control tool-schema inclusion only -- they do NOT affect
     runtime event routing (WebSocket subscriptions, contact-event
     strategies, hub-room creation).  Those remain under
-    ContactEventConfig / ContactEventStrategy in runtime/types.py.
+    ContactEventConfig / ContactEventStrategy in runtime/contacts.py.
     """
 
     MEMORY = "memory"
