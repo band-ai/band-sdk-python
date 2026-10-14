@@ -16,7 +16,9 @@ try:
     from strands.hooks import HookProvider, HookRegistry
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
+    from strands.models.bedrock import BedrockModel
     from strands.models.openai import OpenAIModel
+    from strands.models.openai_responses import OpenAIResponsesModel
     from strands.types.media import ImageFormat
     from strands.types.tools import (
         AgentTool,
@@ -34,7 +36,11 @@ except ImportError as error:
 
 from typing_extensions import Unpack
 
-from band.converters.strands import StrandsHistoryConverter, StrandsMessages
+from band.converters.strands import (
+    StrandsHistoryConverter,
+    StrandsMessages,
+    merge_consecutive_roles,
+)
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -61,6 +67,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt, with_system_updates
 from band.runtime.tools import (
+    ALL_TOOL_NAMES,
     ToolCallOutcome,
     ToolDefinition,
     TurnEffect,
@@ -71,6 +78,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
     selected_tool_definitions,
     serialize_tool_result,
+    turn_effect,
     validate_tool_arguments,
 )
 from band.runtime.tools.schema import is_failed_tool_output
@@ -409,6 +417,13 @@ class BandTurnHooks(HookProvider):
             ToolEventKey.IS_ERROR: not succeeded,
         }
         call.update(result_payload)
+        if (
+            succeeded
+            and name in ALL_TOOL_NAMES
+            and turn_effect(name) is TurnEffect.DECLINE
+        ):
+            # Strands stops after recording every result in the current tool batch.
+            event.invocation_state["request_state"]["stop_event_loop"] = True
         # Native Strands tools run outside execute_custom_tool, so their
         # declared effect is recorded here.
         if (
@@ -497,7 +512,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             history_converter: Optional custom history converter.
             additional_tools: Strands tools and/or portable ``CustomToolDef``
                 (InputModel, handler) tuples.
-            llm: A constructed Strands ``Model`` (e.g. ``OpenAIModel``,
+            llm: A constructed Strands ``Model`` (e.g. ``OpenAIResponsesModel``,
                 ``BedrockModel``), used instead of ``config.model``. Exactly one
                 of the two must be set.
         """
@@ -575,7 +590,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> StrandsMessages:
         """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
-            if isinstance(self._model, OpenAIModel):
+            if isinstance(self._model, (OpenAIModel, OpenAIResponsesModel)):
                 history = _openai_history(history)
             self._message_history[room_id] = list(history)
             if history:
@@ -596,7 +611,18 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         result: AgentResult | None = None
         try:
             agent = self._build_agent(history, tools, hooks)
-            result = await agent.invoke_async(message)
+            prompt: str | None = message
+            if (
+                isinstance(agent.model, BedrockModel)
+                and agent.messages
+                and agent.messages[-1]["role"] == "user"
+            ):
+                # Converse requires alternating roles, including after a stopped tool batch.
+                agent.messages = merge_consecutive_roles(
+                    [*agent.messages, {"role": "user", "content": [{"text": message}]}]
+                )
+                prompt = None
+            result = await agent.invoke_async(prompt)
         except Exception:
             logger.exception("Room %s: Strands turn failed", room_id)
             await tools.send_failure(
