@@ -199,7 +199,9 @@ class TestLaneScheduling:
             ({Adapter.STRANDS, Adapter.PYDANTIC_AI}, set()),
         ],
     )
-    def test_legacy_hosting_is_framework_specific(self, frameworks, expected) -> None:
+    def test_strands_nooa_hosting_is_framework_specific(
+        self, frameworks, expected
+    ) -> None:
         assert hosting_lanes(frozenset(str(value) for value in frameworks)) == expected
 
     def test_strands_cannot_be_assigned_to_core(self) -> None:

@@ -104,7 +104,7 @@ class Extra(StrEnum):
     DEV = "dev"
     DEV_CREWAI = "dev-crewai"
     DEV_PARLANT = "dev-parlant"
-    DEV_LEGACY = "dev-legacy"
+    DEV_STRANDS_NOOA = "dev-strands-nooa"
 
 
 # Lane -> the ``uv`` extra a lane's job installs. Lane id and extra are separate:
@@ -126,8 +126,8 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     # (same import path, two distributions), so it needs its own extra entirely —
     # `dev` can no longer install parlant at all (see pyproject [tool.uv] conflicts).
     Lane.PARLANT: Extra.DEV_PARLANT,
-    Lane.NOOA: Extra.DEV_LEGACY,
-    Lane.STRANDS: Extra.DEV_LEGACY,
+    Lane.NOOA: Extra.DEV_STRANDS_NOOA,
+    Lane.STRANDS: Extra.DEV_STRANDS_NOOA,
 }
 
 
@@ -142,7 +142,7 @@ LANE_EXTRAS: dict[Lane, Extra] = {
 # (https://docs.letta.com/guides/server/source).
 #
 # NOOA imports ``fcntl`` unconditionally, so it cannot be imported on Windows and
-# the ``dev-legacy`` extra does not install it there. Every other lane runs on every OS
+# the ``dev-strands-nooa`` extra does not install it there. Every other lane runs on every OS
 # the e2e matrix offers.
 LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA})
 
@@ -426,12 +426,12 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.STRANDS: DepSpec(
         lambda _s: importlib.util.find_spec("strands") is not None,
-        "strands is not importable (install dev-legacy)",
+        "strands is not importable (install dev-strands-nooa)",
         lane=Lane.STRANDS,
     ),
     Dep.NOOA: DepSpec(
         lambda _s: importlib.util.find_spec("nooa") is not None,
-        "nooa is not importable (dev-legacy installs it on Python 3.12-3.13, "
+        "nooa is not importable (dev-strands-nooa installs it on Python 3.12-3.13, "
         "off Windows)",
         lane=Lane.NOOA,
     ),

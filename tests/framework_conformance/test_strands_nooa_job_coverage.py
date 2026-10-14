@@ -14,16 +14,16 @@ from tests.framework_conformance import venv_job_coverage as coverage
 from tests.paths import REPO_ROOT
 
 
-class TestLegacyJobCoverage:
+class TestStrandsNooaJobCoverage:
     @pytest.fixture
-    def legacy_environment(self) -> None:
+    def framework_environment(self) -> None:
         if (
-            coverage.CoverageSettings().BAND_TEST_EXTRA != Extra.DEV_LEGACY
+            coverage.CoverageSettings().BAND_TEST_EXTRA != Extra.DEV_STRANDS_NOOA
             and importlib.util.find_spec("strands") is None
         ):
-            pytest.skip("covered by dev-legacy")
+            pytest.skip("covered by dev-strands-nooa")
 
-    def test_expected_configs_are_present(self, legacy_environment: None) -> None:
+    def test_expected_configs_are_present(self, framework_environment: None) -> None:
         assert importlib.util.find_spec("strands") is not None
         expected = {"strands"}
         if sys.version_info[:2] in {(3, 12), (3, 13)} and sys.platform != "win32":
@@ -32,14 +32,14 @@ class TestLegacyJobCoverage:
         assert expected <= {config.framework_id for config in ADAPTER_CONFIGS}
         assert expected <= {config.framework_id for config in CONVERTER_CONFIGS}
 
-    def test_job_selects_every_required_node(self, legacy_environment: None) -> None:
+    def test_job_selects_every_required_node(self, framework_environment: None) -> None:
         needed = coverage.tests_needing_venv(
             coverage.needs_venv_pattern(frozenset({"strands", "nooa"}))
         )
         assert needed, "legacy dependency detection found no consumers"
         assert all((REPO_ROOT / path).exists() for path in needed)
         arguments = coverage.pytest_arguments(
-            coverage.job_command("test-legacy", "Run legacy tests")
+            coverage.job_command("test-strands-nooa", "Run Strands and NOOA tests")
         )
         selected = coverage.selected_nodes(arguments)
         # Directory collection honors NOOA's supported-platform conftest gate.
@@ -67,5 +67,7 @@ class TestLegacyJobCoverage:
         assert any("test_strands_injection_spike.py" in node for node in selected)
 
     def test_job_paths_exist(self) -> None:
-        command = coverage.job_command("test-legacy", "Run legacy tests")
+        command = coverage.job_command(
+            "test-strands-nooa", "Run Strands and NOOA tests"
+        )
         assert all((REPO_ROOT / path).exists() for path in coverage.job_paths(command))

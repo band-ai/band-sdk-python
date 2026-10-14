@@ -194,7 +194,7 @@ uv sync --extra dev
 uv sync --extra dev-crewai
 
 # Install Strands/NOOA adapter deps in their OpenAI-2 environment
-uv sync --extra dev-legacy
+uv sync --extra dev-strands-nooa
 
 # Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
 uv sync --extra dev-parlant
@@ -235,7 +235,7 @@ whole lock), and **parlant cannot coexist with pydantic-ai** either (a
 `griffe`/`griffelib` namespace collision uv cannot see as a version conflict).
 Strands and NOOA/LiteLLM require OpenAI 2, while modern Pydantic AI requires
 OpenAI 3. There are four isolated development extras: `dev` (modern frameworks),
-`dev-legacy` (Strands, conditional NOOA, and their LangGraph peer), `dev-crewai`,
+`dev-strands-nooa` (Strands, conditional NOOA, and their LangGraph peer), `dev-crewai`,
 and `dev-parlant`. Each has its own CI job/venv. Public LangGraph and Parlant
 remain compatible with either OpenAI major; LangGraph + Strands is supported.
 Use `uv run --locked --isolated --python 3.12 --all-packages --extra <extra>`
@@ -271,7 +271,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `strands` (`dev-legacy` extra), `nooa` (same `dev-legacy` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -323,7 +323,7 @@ Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown
 
 ```bash
 uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
-uv run --locked --isolated --python 3.12 --all-packages --extra dev-legacy pytest --markdown-docs docs/adapters/nooa.md --no-cov
+uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest --markdown-docs docs/adapters/nooa.md --no-cov
 ```
 
 NOOA's runnable documentation requires its legacy environment; the two commands

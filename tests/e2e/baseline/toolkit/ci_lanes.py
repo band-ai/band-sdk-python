@@ -120,7 +120,7 @@ def adapter_home_lanes() -> dict[str, str]:
 
 # Extra hosts beyond its adapters' home extras; legacy needs this foreign peer.
 EXTRA_HOSTS: dict[Extra, frozenset[Adapter]] = {
-    Extra.DEV_LEGACY: frozenset({Adapter.LANGGRAPH}),
+    Extra.DEV_STRANDS_NOOA: frozenset({Adapter.LANGGRAPH}),
 }
 
 

@@ -181,7 +181,7 @@ nooa = [
 ]
 
 # Modern dev excludes CrewAI, Parlant, Strands and NOOA.
-# Strands and NOOA require OpenAI 2 and live in dev-legacy.
+# Strands and NOOA require OpenAI 2 and live in dev-strands-nooa.
 # crewai is declared conflicting with both parlant and pydantic-ai (its pydantic
 # ceiling and exact `~=` pins); parlant is declared conflicting with pydantic-ai
 # because their `griffe`/`griffelib` transitive deps are two different PyPI
@@ -330,7 +330,7 @@ dev-parlant = [
 ]
 
 # OpenAI-2 frameworks share test tooling and retain separate E2E lanes.
-dev-legacy = [
+dev-strands-nooa = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-markdown-docs>=0.9.2",
@@ -512,13 +512,13 @@ conflicts = [
     ],
     [{ extra = "dev" }, { extra = "strands" }],
     [{ extra = "dev" }, { extra = "nooa" }],
-    [{ extra = "dev" }, { extra = "dev-legacy" }],
+    [{ extra = "dev" }, { extra = "dev-strands-nooa" }],
     [{ extra = "pydantic-ai" }, { extra = "strands" }],
     [{ extra = "pydantic-ai" }, { extra = "nooa" }],
-    [{ extra = "pydantic-ai" }, { extra = "dev-legacy" }],
+    [{ extra = "pydantic-ai" }, { extra = "dev-strands-nooa" }],
     [{ extra = "dev-parlant" }, { extra = "strands" }],
     [{ extra = "dev-parlant" }, { extra = "nooa" }],
-    [{ extra = "dev-parlant" }, { extra = "dev-legacy" }],
+    [{ extra = "dev-parlant" }, { extra = "dev-strands-nooa" }],
 ]
 
 [tool.ruff.lint]

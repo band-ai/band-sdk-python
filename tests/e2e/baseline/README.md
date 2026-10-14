@@ -574,8 +574,8 @@ the `dev` extra but are split out for isolation.
 
 | Lane | `uv` extra | Adapters | Backend the CI job provides |
 |------|-----------|----------|------------------------------|
-| `strands` | `dev-legacy` | strands | OpenAI key; LangGraph foreign peer installed; Ubuntu and Windows |
-| `nooa` | `dev-legacy` | nooa | Anthropic key; Python 3.12–3.13 on POSIX; Linux-only E2E lane |
+| `strands` | `dev-strands-nooa` | strands | OpenAI key; LangGraph foreign peer installed; Ubuntu and Windows |
+| `nooa` | `dev-strands-nooa` | nooa | Anthropic key; Python 3.12–3.13 on POSIX; Linux-only E2E lane |
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
@@ -618,7 +618,7 @@ fail-loud.
 **Home ≠ hosting.** An adapter's *home* lane is where its single-framework cells run;
 *hosting* is which lanes' `uv` extra can actually install a framework (`hosting_lanes`
 in `toolkit/ci_lanes.py`: every `dev` lane hosts every `dev` framework; `dev-crewai`
-hosts only the crewai stack. `dev-legacy` hosts Strands, NOOA on supported
+hosts only the crewai stack. `dev-strands-nooa` hosts Strands, NOOA on supported
 platforms, and the explicitly declared LangGraph peer; it does not host other
 core adapters. Strands and NOOA share dependencies but own separate E2E lanes). A test whose frameworks share one home lane runs there.
 A test whose frameworks span **more than one** home lane is hosted by no single job by
@@ -703,7 +703,7 @@ nodeid. Excluded adapters get explicit N/A rows.
 
   ```bash
   uv run python -m tests.e2e.baseline.scorecard manifest
-  uv run --locked --isolated --python 3.12 --extra dev-legacy --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
+  uv run --locked --isolated --python 3.12 --extra dev-strands-nooa --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
   uv run --isolated --python 3.12 --extra dev-parlant --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
   ```
 
@@ -897,8 +897,8 @@ workflow emits no `letta × windows` cell — every other lane runs on both OSes
 Run Strands and NOOA separately, using the same isolated dependency extra:
 
 ```bash
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=strands uv run --locked --isolated --python 3.12 --all-packages --extra dev-legacy pytest tests/e2e/baseline/ -v -s --no-cov -p no:rerunfailures
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=nooa uv run --locked --isolated --python 3.12 --all-packages --extra dev-legacy pytest tests/e2e/baseline/ -v -s --no-cov -p no:rerunfailures
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=strands uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest tests/e2e/baseline/ -v -s --no-cov -p no:rerunfailures
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=nooa uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest tests/e2e/baseline/ -v -s --no-cov -p no:rerunfailures
 ```
 
 NOOA remains POSIX-only on Python 3.12–3.13; its CI E2E lane is Linux-only.

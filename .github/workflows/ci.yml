@@ -102,7 +102,7 @@ jobs:
       # Linux-only: doc snippets are OS-independent, and this step relies on
       # git ls-files globbing that we don't need to re-run per platform.
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      # NOOA snippets run in test-legacy; examples/ READMEs are illustrative.
+      # NOOA snippets run in test-strands-nooa; examples/ READMEs are illustrative.
       run: |
         # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
         uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
@@ -177,7 +177,7 @@ jobs:
           src/band/integrations/crewai/
 
 
-  test-legacy:
+  test-strands-nooa:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -209,21 +209,21 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install legacy dependencies
-      run: uv sync --all-packages --locked --extra dev-legacy
+    - name: Install Strands and NOOA dependencies
+      run: uv sync --all-packages --locked --extra dev-strands-nooa
 
-    - name: Collect baseline E2E in the legacy environment
+    - name: Collect baseline E2E in the Strands and NOOA environment
       env:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-        BAND_TEST_EXTRA: "dev-legacy"
+        BAND_TEST_EXTRA: "dev-strands-nooa"
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
-    - name: Run legacy tests
+    - name: Run Strands and NOOA tests
       env:
-        # dev-legacy lacks modern framework packages;
+        # dev-strands-nooa lacks modern framework packages;
         # tolerate missing framework configs instead of failing fast.
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-        BAND_TEST_EXTRA: "dev-legacy"
+        BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
           tests/adapters/test_strands_adapter.py \
@@ -231,17 +231,17 @@ jobs:
           tests/converters/test_strands.py \
           tests/framework_conformance/ -k 'strands or nooa or legacy or probe_registry'
 
-    - name: Verify selected legacy coverage
+    - name: Verify selected Strands and NOOA coverage
       env:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-        BAND_TEST_EXTRA: "dev-legacy"
-      run: uv run --all-packages pytest tests/framework_conformance/test_legacy_job_coverage.py
+        BAND_TEST_EXTRA: "dev-strands-nooa"
+      run: uv run --all-packages pytest tests/framework_conformance/test_strands_nooa_job_coverage.py
 
     - name: Run NOOA markdown examples
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       run: uv run --all-packages pytest --markdown-docs docs/adapters/nooa.md --no-cov
 
-    - name: Pyrefly check (legacy sources)
+    - name: Pyrefly check (Strands and NOOA sources)
       run: |
         uv run --all-packages pyrefly check \
           src/band/adapters/strands.py \
@@ -444,7 +444,7 @@ jobs:
       run: /tmp/band-mcp-install/bin/band-mcp --version
 
 
-  wheel-consumers:
+  wheel-extras:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -455,7 +455,11 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
     - name: Install uv
       uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: '3.12'
     - name: Build wheel
       run: uv build --wheel
-    - name: Resolve and start clean wheel consumers
-      run: python3 .github/scripts/wheel-consumers.py dist/band_sdk-*.whl --case ${{ matrix.case }}
+    - name: Check published extras and provider startup
+      run: python3 .github/scripts/check-wheel-extras.py dist/band_sdk-*.whl --case ${{ matrix.case }}
