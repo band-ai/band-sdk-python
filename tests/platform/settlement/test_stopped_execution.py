@@ -13,9 +13,9 @@ from tests.platform.settlement.kit import Reply, SettlementPeer, Terminal
 
 class TestStoppedExecution:
     async def test_a_204_raises_on_the_detailed_and_legacy_apis(
-        self, terminal: Terminal, peer: SettlementPeer, link: BandLink
+        self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
     ) -> None:
-        peer.reply = Reply(204)
+        settlement_peer.reply = Reply(204)
 
         with pytest.raises(RoomExecutionStoppedError):
             await terminal.detailed(link)
@@ -23,13 +23,13 @@ class TestStoppedExecution:
             await terminal.legacy(link)
 
     async def test_cancellation_propagates_from_both_apis(
-        self, terminal: Terminal, peer: SettlementPeer, link: BandLink
+        self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
     ) -> None:
-        peer.reply = None
+        settlement_peer.reply = None
         for call in (terminal.detailed, terminal.legacy):
-            peer.arrived.clear()
+            settlement_peer.arrived.clear()
             task = asyncio.create_task(call(link))
-            await asyncio.wait_for(peer.arrived.wait(), timeout=5)
+            await asyncio.wait_for(settlement_peer.arrived.wait(), timeout=5)
 
             task.cancel()
 

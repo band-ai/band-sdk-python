@@ -20,8 +20,12 @@ class TestNotFound:
         ],
     )
     async def test_a_404_is_not_found(
-        self, terminal: Terminal, peer: SettlementPeer, link: BandLink, reply: Reply
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        reply: Reply,
     ) -> None:
-        peer.reply = reply
+        settlement_peer.reply = reply
 
         assert await terminal.detailed(link) is SettlementResult.NOT_FOUND

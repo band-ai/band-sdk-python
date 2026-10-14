@@ -20,20 +20,24 @@ from tests.platform.settlement.kit import (
 class TestUnconfirmedFailures:
     @pytest.mark.parametrize("status", [401, 403, 409, 503])
     async def test_an_error_status_is_unconfirmed(
-        self, terminal: Terminal, peer: SettlementPeer, link: BandLink, status: int
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        status: int,
     ) -> None:
-        peer.reply = Reply.of_json(status, error_body("refused"))
+        settlement_peer.reply = Reply.of_json(status, error_body("refused"))
 
         assert await terminal.detailed(link) is SettlementResult.UNCONFIRMED
 
     async def test_a_retryable_status_is_retried_inside_one_logical_write(
-        self, terminal: Terminal, peer: SettlementPeer, link: BandLink
+        self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
     ) -> None:
-        peer.reply = Reply(503)
+        settlement_peer.reply = Reply(503)
 
         await terminal.detailed(link)
 
-        assert peer.writes == [terminal.write] * 4
+        assert settlement_peer.writes == [terminal.write] * 4
 
     async def test_a_transport_failure_is_unconfirmed(self, terminal: Terminal) -> None:
         async with refused_rest_client() as rest:

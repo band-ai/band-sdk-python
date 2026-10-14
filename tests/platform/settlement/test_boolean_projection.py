@@ -27,13 +27,13 @@ class TestBooleanProjection:
     async def test_each_result_projects_to_a_literal_bool(
         self,
         terminal: Terminal,
-        peer: SettlementPeer,
+        settlement_peer: SettlementPeer,
         link: BandLink,
         reply: Reply,
         result: SettlementResult,
         legacy: bool,
     ) -> None:
-        peer.reply = reply
+        settlement_peer.reply = reply
 
         assert await terminal.detailed(link) is result
         assert await terminal.legacy(link) is legacy
@@ -42,15 +42,15 @@ class TestBooleanProjection:
     async def test_each_call_is_one_logical_write(
         self,
         terminal: Terminal,
-        peer: SettlementPeer,
+        settlement_peer: SettlementPeer,
         link: BandLink,
         reply: Reply,
         result: SettlementResult,
         legacy: bool,
     ) -> None:
-        peer.reply = reply
+        settlement_peer.reply = reply
 
         await terminal.detailed(link)
         await terminal.legacy(link)
 
-        assert peer.writes == [terminal.write] * 2
+        assert settlement_peer.writes == [terminal.write] * 2

@@ -128,7 +128,9 @@ def agent_input(*messages: PlatformMessage) -> AgentInput:
     )
 
 
-batch = agent_input(message("m1", "alice"), message("m2", "bob"), message("m3", "alice"))
+batch = agent_input(
+    message("m1", "alice"), message("m2", "bob"), message("m3", "alice")
+)
 assert [m.id for m in batch.messages] == ["m1", "m2", "m3"]  # arrival order
 assert batch.msg is batch.messages[0]  # the real first original, not a composite
 assert batch.sender_ids == ("alice", "bob")  # each distinct sender once

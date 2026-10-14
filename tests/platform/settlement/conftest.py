@@ -28,13 +28,13 @@ def terminal(request: pytest.FixtureRequest) -> Terminal:
 
 
 @pytest.fixture
-def peer(terminal: Terminal) -> SettlementPeer:
+def settlement_peer(terminal: Terminal) -> SettlementPeer:
     peer = SettlementPeer()
     peer.reply = accepted(terminal.action)
     return peer
 
 
 @pytest.fixture
-async def link(peer: SettlementPeer) -> AsyncIterator[BandLink]:
-    async with peer.client() as rest:
+async def link(settlement_peer: SettlementPeer) -> AsyncIterator[BandLink]:
+    async with settlement_peer.client() as rest:
         yield link_over(rest)

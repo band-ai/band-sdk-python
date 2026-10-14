@@ -67,11 +67,11 @@ class TestMissingAttempt:
     async def test_a_422_is_rejected_only_when_it_names_the_missing_attempt(
         self,
         terminal: Terminal,
-        peer: SettlementPeer,
+        settlement_peer: SettlementPeer,
         link: BandLink,
         reply: Reply,
         expected: SettlementResult,
     ) -> None:
-        peer.reply = reply
+        settlement_peer.reply = reply
 
         assert await terminal.detailed(link) is expected
