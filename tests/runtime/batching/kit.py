@@ -38,6 +38,7 @@ class FakeRoom:
 
     page_size: int = 100
     refuse_processing: set[str] = field(default_factory=set)
+    unconfirmed_terminal: bool = False
     deliveries: dict[str, Delivery] = field(default_factory=dict)
     marks: list[tuple[str, str]] = field(default_factory=list)
     # Events the WebSocket delivers while the next page read is in flight.
@@ -123,6 +124,8 @@ class FakeRoom:
         return self.settle(DeliveryStatus.FAILED, message_id)
 
     def settle(self, status: DeliveryStatus, message_id: str) -> SettlementResult:
+        if self.unconfirmed_terminal:
+            return SettlementResult.UNCONFIRMED
         self.marks.append((status, message_id))
         self.deliveries[message_id].status = status
         return SettlementResult.ACCEPTED
@@ -212,6 +215,25 @@ def _payload_id(event: Any) -> str:
 
 
 @dataclass
+class SharedCapacity:
+    """An adapter's capacity line as the scheduler drives it: calls, in order."""
+
+    calls: list[tuple[str, str, int]] = field(default_factory=list)
+
+    def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
+        self.calls.append(("register", room_id, generation))
+
+    def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
+        self.calls.append(("withdraw", room_id, generation))
+
+    def actions(self) -> list[str]:
+        return [action for action, _, _ in self.calls]
+
+    def generations(self) -> set[int]:
+        return {generation for _, _, generation in self.calls}
+
+
+@dataclass
 class Room:
     platform: FakeRoom
     ctx: ExecutionContext
@@ -246,6 +268,7 @@ async def started_room(
     fail_on: frozenset[str] = frozenset(),
     arrived: tuple[MessageEvent, ...] = (),
     controls: ControlScript | None = None,
+    capacity: SharedCapacity | None = None,
 ) -> AsyncIterator[Room]:
     turns = Turns(gate=gate, fail_on=set(fail_on))
     ctx = ExecutionContext(
@@ -258,6 +281,7 @@ async def started_room(
         agent_id=AGENT_ID,
         on_execute_batch=turns.batch if batching else None,
         on_message_control=controls.handle if controls else None,
+        capacity=capacity,
         is_message_control=controls.recognizes if controls else None,
     )
     platform.deliver = ctx.on_event

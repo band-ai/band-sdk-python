@@ -12,6 +12,7 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import ControlMode
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import CleanupIncompleteError
+from band.core.protocols import CapacityWaitingAdapter
 from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.platform.link import BandLink
@@ -192,6 +193,7 @@ class PlatformRuntime:
         on_execute_batch: BatchExecutionHandler | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
+        capacity: CapacityWaitingAdapter | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -205,6 +207,7 @@ class PlatformRuntime:
                 required when ``SessionConfig.consume_all_queued`` is set
             is_message_control: Read-only recognition of a delivery the adapter
                 would handle as a control
+            capacity: Adapter arbitrating shared capacity among rooms
             on_cleanup: Callback for session cleanup
             on_control: Callback for an interrupt/stop control signal, for
                 adapter work that outlives the message cycle it started in
@@ -239,6 +242,7 @@ class PlatformRuntime:
                 on_message_control=on_message_control,
                 on_execute_batch=on_execute_batch,
                 is_message_control=is_message_control,
+                capacity=capacity,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
             )

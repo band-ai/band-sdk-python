@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, Iterator
@@ -55,6 +56,7 @@ from band.core.exceptions import (
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TURN_FAILURE_PROVIDER,
+    CapacityWaitingAdapter,
     TurnResultAlreadyReported,
 )
 from band.core.retention import task_failure
@@ -154,6 +156,10 @@ def _event_message_id(event: MessageEvent) -> str:
         raise ValueError("a message event without a payload has no delivery id")
     return event.payload.id
 
+
+# One number per room scheduler incarnation: a replacement's capacity request
+# can never be cancelled by cleanup from the incarnation it replaced.
+_GENERATIONS = itertools.count(1)
 
 PARKED_REASONS = {
     SettlementResult.NOT_FOUND: ParkedReason.NotFound,
@@ -362,6 +368,7 @@ class ExecutionContext:
         on_execute_batch: BatchExecutionHandler | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
+        capacity: CapacityWaitingAdapter | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -386,6 +393,9 @@ class ExecutionContext:
             is_message_control: Read-only recognition of a delivery the
                 adapter would handle as a control. Without it every candidate
                 is probed through ``on_message_control``.
+            capacity: Adapter arbitrating shared capacity among rooms. While
+                this room's ordinary input is refused only for that capacity,
+                the room keeps one request in its line.
 
         Raises:
             BandConfigError: ``config.consume_all_queued`` without a batch host.
@@ -401,6 +411,8 @@ class ExecutionContext:
         self._on_execute_batch = on_execute_batch
         self._on_message_control = on_message_control
         self._is_message_control = is_message_control
+        self._capacity = capacity
+        self._generation = next(_GENERATIONS)
         self.config = config or SessionConfig()
         self._agent_id = agent_id
         self._on_participant_added = on_participant_added
@@ -730,6 +742,7 @@ class ExecutionContext:
         return await asyncio.shield(self._shutdown_task)
 
     async def _stop(self, timeout: float | None) -> bool:
+        self._withdraw_capacity_wait()
         if self._process_loop_task is not None:
             self._stop_graceful = True
             if timeout is not None and self.is_processing:
@@ -858,6 +871,7 @@ class ExecutionContext:
     def stop_room(self) -> None:
         """Pause triggers and abort the cycle, leaving it actionable for PLAY."""
         self._stopped = True
+        self._withdraw_capacity_wait()
         self._reset_resync_interval()
         self.interrupt(kind=ControlMode.STOP)
 
@@ -1350,7 +1364,21 @@ class ExecutionContext:
     def _has_pending_work(self) -> bool:
         return self._deferred_message_id is not None or self._has_synthetic
 
+    def _register_capacity_wait(self) -> None:
+        if self._capacity is not None:
+            self._capacity.register_capacity_wait(
+                room_id=self.room_id, generation=self._generation
+            )
+
+    def _withdraw_capacity_wait(self) -> None:
+        if self._capacity is not None:
+            self._capacity.withdraw_capacity_wait(
+                room_id=self.room_id, generation=self._generation
+            )
+
     def _set_deferred_head(self, message_id: str | None) -> None:
+        if message_id is None:
+            self._withdraw_capacity_wait()
         if message_id != self._deferred_message_id:
             self._deferred_message_id = message_id
             self._control_cursor = None
@@ -2063,10 +2091,16 @@ class ExecutionContext:
                     self.room_id,
                     ids,
                 )
+                self._withdraw_capacity_wait()
                 return BacklogProcessResult.RETRY_LATER
             outcome = await self._run_claimed_attempt(events, revision, handler)
-            if outcome is BacklogProcessResult.ADVANCED:
-                self._release(ids)
+            match outcome:
+                case BacklogProcessResult.ADVANCED:
+                    self._release(ids)
+                case BacklogProcessResult.NOT_ACCEPTED:
+                    self._register_capacity_wait()
+                case BacklogProcessResult.RETRY_LATER:
+                    self._withdraw_capacity_wait()
             return outcome
 
     async def _run_claimed_attempt(

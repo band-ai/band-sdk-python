@@ -20,6 +20,7 @@ from band.core.exceptions import (
 from band.core.protocols import (
     BatchFrameworkAdapter,
     BatchPreprocessor,
+    CapacityWaitingAdapter,
     FrameworkAdapter,
     Preprocessor,
 )
@@ -352,6 +353,7 @@ class Agent:
                     on_execute=self._on_execute,
                     on_execute_batch=self._on_execute_batch,
                     is_message_control=self._is_control,
+                    capacity=self._capacity_adapter,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
                     # A bare FrameworkAdapter predates on_interrupt and needn't
@@ -606,6 +608,12 @@ class Agent:
         finally:
             if not rejected and inp.commit_context is not None:
                 inp.commit_context()
+
+    @property
+    def _capacity_adapter(self) -> CapacityWaitingAdapter | None:
+        """The adapter, when it arbitrates shared capacity among rooms."""
+        adapter = self._adapter
+        return adapter if isinstance(adapter, CapacityWaitingAdapter) else None
 
     def _is_control(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
         """Whether the adapter would handle the delivery as a control; writes nothing.
