@@ -27,6 +27,8 @@ from tests.integrations.acp.acp_toolkit.harness import decision_token as prompt_
 ROOM_A = "room-A"
 ROOM_B = "room-B"
 
+LIST_DECISIONS = f"{ROOM_COMMAND} {CursorCommandWord.DECISIONS}"
+
 # One person writing twice around another: the senders of ``deliver``'s batch.
 BATCH_INPUT_SENDERS = ("alice", "bob", "alice")
 

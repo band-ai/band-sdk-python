@@ -8,11 +8,10 @@ from band.core.exceptions import InputNotAccepted
 from band.integrations.acp.cursor import (
     DECISION_RESOLVED_TEMPLATE,
     DECISION_UNAUTHORIZED_MESSAGE,
-    ROOM_COMMAND,
-    CursorCommandWord,
 )
 from tests.adapters.cursorturns.conftest import OpenCursor
 from tests.adapters.cursorturns.kit import (
+    LIST_DECISIONS,
     ROOM_A,
     ROOM_B,
     active_turn,
@@ -21,11 +20,11 @@ from tests.adapters.cursorturns.kit import (
     decision_token,
     finish_turn,
     occupy,
+    select_command,
     terminated,
 )
 
 ALICE = "alice"
-LIST_DECISIONS = f"{ROOM_COMMAND} {CursorCommandWord.DECISIONS}"
 
 
 class TestCursorControlHandling:
@@ -38,9 +37,7 @@ class TestCursorControlHandling:
         turn = active_turn(session)
         token = decision_token(session)
 
-        consumed, tools = await command(
-            session, f"/cursor select {token} allow-1", sender_id=ALICE
-        )
+        consumed, tools = await command(session, select_command(token), sender_id=ALICE)
         await terminated(turn)
 
         assert consumed
@@ -61,7 +58,7 @@ class TestCursorControlHandling:
 
         with pytest.raises(InputNotAccepted):
             await session.send("an ordinary follow-up", room=ROOM_A)
-        await command(session, f"/cursor select {token} allow-1", sender_id=ALICE)
+        await command(session, select_command(token), sender_id=ALICE)
         await terminated(turn)
         await session.send("an ordinary follow-up", room=ROOM_A)
 
@@ -92,7 +89,7 @@ class TestCursorControlHandling:
         await occupy(session, provider)
         turn = active_turn(session)
         token = decision_token(session)
-        resolve = f"/cursor select {token} allow-1"
+        resolve = select_command(token)
 
         _, refusal = await command(session, resolve, sender_id="mallory")
         _, resolution = await command(session, resolve, sender_id=ALICE)

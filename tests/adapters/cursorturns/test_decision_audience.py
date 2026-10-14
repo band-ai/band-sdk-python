@@ -11,12 +11,14 @@ from band.integrations.acp.cursor import (
 from band.testing import FakeAgentTools
 from tests.adapters.cursorturns.conftest import OpenCursor
 from tests.adapters.cursorturns.kit import (
+    LIST_DECISIONS,
     WAIT_S,
     active_turn,
     busy_provider,
     command,
     decision_token,
     occupy,
+    select_command,
     terminated,
     turn_tools,
 )
@@ -52,7 +54,7 @@ class TestCursorDecisionAudience:
         await occupy(session, provider, batch=True)
         tools = turn_tools(session)
 
-        _, listing = await command(session, "/cursor decisions", sender_id="carol")
+        _, listing = await command(session, LIST_DECISIONS, sender_id="carol")
         async with asyncio.timeout(WAIT_S):
             await tools.until_said("timed out")
 
@@ -69,7 +71,7 @@ class TestCursorDecisionAudience:
         await occupy(session, provider, batch=True)
         turn = active_turn(session)
         token = decision_token(session)
-        resolve = f"/cursor select {token} allow-1"
+        resolve = select_command(token)
 
         _, from_bob = await command(session, resolve, sender_id="bob")
         _, from_alice = await command(session, resolve, sender_id="alice")
