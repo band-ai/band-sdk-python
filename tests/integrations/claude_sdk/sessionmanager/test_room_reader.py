@@ -14,9 +14,9 @@ from claude_agent_sdk import (
 from band.integrations.claude_sdk import session_manager
 from tests.adapters.claude_sdk.fakecli import AfterResult, FakeClaude, Hold
 from tests.adapters.claude_sdk.helpers import exchange
+from tests.adapters.waiting import until
 from tests.integrations.claude_sdk.sessionmanager.kit import (
     STRAY_RESULT,
-    Signal,
     new_manager,
     retired,
     thinking,
@@ -35,17 +35,16 @@ class TestRoomReader:
         session = manager.room("room-a")
         finished = asyncio.Event()
         claude.script([AfterResult(STRAY_RESULT, gate=finished)], thinking("second"))
-        dropped = Signal("outside any turn")
-        session_logger = logging.getLogger(session_manager.__name__)
-        session_logger.addHandler(dropped)
         try:
             with caplog.at_level(logging.DEBUG, logger=session_manager.__name__):
                 await exchange(session, "first")
                 finished.set()
-                await dropped.logged()
+                await until(
+                    lambda: "outside any turn" in caplog.text,
+                    failure="the stray result was never dropped",
+                )
                 second = await exchange(session, "second")
         finally:
-            session_logger.removeHandler(dropped)
             await manager.stop()
 
         assert thoughts(second) == ["second"]

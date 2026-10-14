@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from typing import Any
 
 from claude_agent_sdk import (
@@ -25,7 +24,7 @@ from band.integrations.claude_sdk.session_manager import (
 from tests.adapters.claude_sdk.fakecli import MODEL, Thinking
 from tests.adapters.claude_sdk.helpers import REPORTING_BUDGET
 from tests.adapters.claude_sdk.process import WorkspacePeer
-from tests.adapters.waiting import UNTIL_TIMEOUT_S
+from tests.adapters.waiting import until
 
 # A result for work the CLI finished after the turn that started it ended.
 STRAY_RESULT = {
@@ -90,35 +89,9 @@ def allow_everything(session: ClaudeRoomSession, generation: int) -> CanUseTool:
     return decide
 
 
-# Loop turns a reader may take to act on what it read; a bound, not a delay.
-READER_TURNS = 100
-
-
-class Signal(logging.Handler):
-    """Sets ``seen`` once a record containing ``fragment`` is logged."""
-
-    def __init__(self, fragment: str) -> None:
-        super().__init__(logging.DEBUG)
-        self.fragment = fragment
-        self.seen = asyncio.Event()
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if self.fragment in record.getMessage():
-            self.seen.set()
-
-    async def logged(self) -> None:
-        """Wait for the record, failing if it never comes."""
-        try:
-            async with asyncio.timeout(UNTIL_TIMEOUT_S):
-                await self.seen.wait()
-        except TimeoutError:
-            raise AssertionError(f"nothing logged {self.fragment!r}") from None
-
-
 async def retired(session: ClaudeRoomSession, generation: int) -> None:
     """Wait until recovery retires the room's residency ``generation``."""
-    for _ in range(READER_TURNS):
-        if not session.speaks_for(generation):
-            return
-        await asyncio.sleep(0)
-    raise AssertionError(f"residency {generation} was never retired")
+    await until(
+        lambda: not session.speaks_for(generation),
+        failure=f"residency {generation} was never retired",
+    )
