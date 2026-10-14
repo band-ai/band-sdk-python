@@ -26,12 +26,12 @@ class TestParkedHead:
     )
     @pytest.mark.parametrize("refusal", [Refusal.REJECTED, Refusal.ACCESS_LOST])
     async def test_the_head_is_not_reread_at_one_instant(
-        self, peer: RoomPeer, room: Harness, refusal: Refusal
+        self, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        peer.refuse(refusal, "m1")
+        room_peer.refuse(refusal, "m1")
 
         await room.join()
         await room.attempted_terminal_writes(1)
         await room.elapse(2 * RECONCILE_SECONDS + 1)
 
-        assert peer.busiest_next_reads() <= READS_PER_PASS * PASSES_AT_START
+        assert room_peer.busiest_next_reads() <= READS_PER_PASS * PASSES_AT_START

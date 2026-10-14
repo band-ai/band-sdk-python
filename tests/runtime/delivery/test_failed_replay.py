@@ -15,12 +15,12 @@ FAILED_BY_THE_MODEL = "failed-by-the-model"
 
 class TestFailedReplay:
     async def test_eviction_from_the_completed_memory_does_not_replay_it(
-        self, peer: RestPeer
+        self, rest_peer: RestPeer
     ) -> None:
-        peer.post(FAILED_BY_THE_MODEL)
+        rest_peer.post(FAILED_BY_THE_MODEL)
 
         async with started_session(
-            peer, fail_on=frozenset({FAILED_BY_THE_MODEL})
+            rest_peer, fail_on=frozenset({FAILED_BY_THE_MODEL})
         ) as session:
             await session.reached(DeliveryStatus.FAILED, FAILED_BY_THE_MODEL)
             claims = session.ctx.claims
@@ -35,10 +35,14 @@ class TestFailedReplay:
             [FAILED_BY_THE_MODEL],
         )
 
-    async def test_a_replacement_room_does_not_replay_it(self, peer: RestPeer) -> None:
-        peer.post(FAILED_BY_THE_MODEL)
+    async def test_a_replacement_room_does_not_replay_it(
+        self, rest_peer: RestPeer
+    ) -> None:
+        rest_peer.post(FAILED_BY_THE_MODEL)
 
-        async with runtime_room(peer, fail_on=frozenset({FAILED_BY_THE_MODEL})) as room:
+        async with runtime_room(
+            rest_peer, fail_on=frozenset({FAILED_BY_THE_MODEL})
+        ) as room:
             await room.reached(DeliveryStatus.FAILED, FAILED_BY_THE_MODEL)
             original = room.ctx
             await room.replace()

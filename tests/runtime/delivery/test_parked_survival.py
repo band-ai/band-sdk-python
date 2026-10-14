@@ -12,12 +12,12 @@ pytestmark = pytest.mark.looptime
 
 class TestParkedSurvival:
     async def test_a_parked_original_is_skipped_once_its_retry_charge_is_forgotten(
-        self, peer: RestPeer
+        self, rest_peer: RestPeer
     ) -> None:
-        peer.post("m1")
-        peer.terminal_error = MISSING_ATTEMPT
+        rest_peer.post("m1")
+        rest_peer.terminal_error = MISSING_ATTEMPT
 
-        async with started_session(peer) as session:
+        async with started_session(rest_peer) as session:
             await session.quiesce()
             session.ctx._retry_tracker.discard_attempt("m1")
             await session.resync()

@@ -12,11 +12,11 @@ pytestmark = pytest.mark.looptime
 
 class TestSingletonMode:
     async def test_three_inputs_queued_behind_a_busy_turn_are_three_turns(
-        self, peer: RestPeer
+        self, rest_peer: RestPeer
     ) -> None:
-        events = [peer.post(message_id) for message_id in ("m1", "m2", "m3")]
+        events = [rest_peer.post(message_id) for message_id in ("m1", "m2", "m3")]
 
-        async with started_session(peer, batching=False, gate=True) as session:
+        async with started_session(rest_peer, batching=False, gate=True) as session:
             await session.deliver(events[0])
             await session.until(lambda: session.turns.ids == [("m1",)])
             await session.deliver(*events[1:])
@@ -27,16 +27,20 @@ class TestSingletonMode:
 
     @pytest.mark.parametrize("retries", [1, 2, 3])
     async def test_a_failing_singleton_is_attempted_as_often_as_the_policy_allows(
-        self, peer: RestPeer, retries: int
+        self, rest_peer: RestPeer, retries: int
     ) -> None:
-        peer.post("m1")
+        rest_peer.post("m1")
 
         async with started_session(
-            peer, batching=False, retries=retries, fail_on=frozenset({"m1"})
+            rest_peer, batching=False, retries=retries, fail_on=frozenset({"m1"})
         ) as session:
             await session.quiesce()
 
-        assert (session.turns.ids, peer.status_of("m1"), peer.events_posted) == (
+        assert (
+            session.turns.ids,
+            rest_peer.status_of("m1"),
+            rest_peer.events_posted,
+        ) == (
             [("m1",)] * retries,
             DeliveryStatus.FAILED,
             1,
@@ -44,19 +48,19 @@ class TestSingletonMode:
 
     @pytest.mark.parametrize("batching", [True, False], ids=["batching", "singleton"])
     async def test_an_input_runs_only_after_its_admission_is_accepted(
-        self, peer: RestPeer, batching: bool
+        self, rest_peer: RestPeer, batching: bool
     ) -> None:
-        arrival = peer.post("m1")
-        peer.refuse_processing.add("m1")
+        arrival = rest_peer.post("m1")
+        rest_peer.refuse_processing.add("m1")
 
-        async with started_session(peer, batching=batching) as session:
+        async with started_session(rest_peer, batching=batching) as session:
             await session.deliver(arrival)
             await session.quiesce()
             ran_while_refused = list(session.turns.ids)
-            peer.refuse_processing.clear()
+            rest_peer.refuse_processing.clear()
             await session.resync()
 
-        assert (ran_while_refused, peer.without_reads()[-3:]) == (
+        assert (ran_while_refused, rest_peer.without_reads()[-3:]) == (
             [],
             [
                 write(DeliveryStatus.PROCESSING, "m1"),

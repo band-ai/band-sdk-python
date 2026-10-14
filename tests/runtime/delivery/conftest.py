@@ -16,5 +16,5 @@ def periodic_wake_after_the_full_interval(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.fixture
-def peer() -> RestPeer:
+def rest_peer() -> RestPeer:
     return RestPeer()

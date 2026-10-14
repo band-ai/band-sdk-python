@@ -39,7 +39,7 @@ def ending() -> Ending:
 
 
 @pytest.fixture
-def peer() -> RoomPeer:
+def room_peer() -> RoomPeer:
     return RoomPeer()
 
 
@@ -52,10 +52,10 @@ def adapter(ending: Ending) -> ScriptedAdapter:
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def harness(
-    peer: RoomPeer, adapter: ScriptedAdapter, shape: Shape
+    room_peer: RoomPeer, adapter: ScriptedAdapter, shape: Shape
 ) -> AsyncIterator[Harness]:
-    async with peer.client() as rest:
-        room = wired_harness(peer=peer, adapter=adapter, rest=rest, shape=shape)
+    async with room_peer.client() as rest:
+        room = wired_harness(peer=room_peer, adapter=adapter, rest=rest, shape=shape)
         try:
             yield room
         finally:

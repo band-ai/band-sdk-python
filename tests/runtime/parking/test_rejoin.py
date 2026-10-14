@@ -19,9 +19,9 @@ from tests.runtime.parking.harness import (
 class TestRejoin:
     @pytest.mark.parametrize("refusal", list(Refusal))
     async def test_a_rejoin_retries_the_terminal_write_alone_and_a_refusal_keeps_it_parked(
-        self, cell: Cell, peer: RoomPeer, room: Harness, refusal: Refusal
+        self, cell: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        peer.refuse(refusal, *cell.queued)
+        room_peer.refuse(refusal, *cell.queued)
         await room.join()
         await room.attempted_terminal_writes(len(cell.queued))
 
@@ -37,9 +37,9 @@ class TestRejoin:
 
     @pytest.mark.parametrize("refusal", RELENTING_REFUSALS)
     async def test_only_an_accepted_retry_completes_the_intent(
-        self, cell: Cell, peer: RoomPeer, room: Harness, refusal: Refusal
+        self, cell: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        peer.refuse(refusal, *cell.queued)
+        room_peer.refuse(refusal, *cell.queued)
         await room.join()
         await room.attempted_terminal_writes(len(cell.queued))
         await room.leave()
@@ -47,7 +47,7 @@ class TestRejoin:
         await room.attempted_terminal_writes(2 * len(cell.queued))
         still_refused = room.outcome()
 
-        peer.relent()
+        room_peer.relent()
         await room.leave()
         await room.join()
         await room.attempted_terminal_writes(3 * len(cell.queued))

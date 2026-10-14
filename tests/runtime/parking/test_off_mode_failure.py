@@ -28,9 +28,9 @@ class TestOffModeFailure:
         ids=["not-found", "rejected", "forbidden", "dropped-connection"],
     )
     async def test_no_intent_is_retained_and_the_retry_budget_alone_bounds_replays(
-        self, peer: RoomPeer, room: Harness, reply: Reply | Hangup
+        self, room_peer: RoomPeer, room: Harness, reply: Reply | Hangup
     ) -> None:
-        peer.script(reply, QUEUED)
+        room_peer.script(reply, QUEUED)
 
         await room.join()
         await room.until(lambda: len(room.turns.ids) == SPARE_RETRIES)

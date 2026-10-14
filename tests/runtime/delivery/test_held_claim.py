@@ -23,13 +23,15 @@ BEFORE_THE_HELD_ONE = ([("m1",)], ["m1"])
 )
 class TestHeldClaim:
     async def test_nothing_behind_the_held_original_runs_until_it_is_released(
-        self, peer: RestPeer, batching: bool, after_release: list[tuple[str, ...]]
+        self, rest_peer: RestPeer, batching: bool, after_release: list[tuple[str, ...]]
     ) -> None:
-        events = [peer.post(message_id) for message_id in ("m1", "m2", "m3")]
+        events = [rest_peer.post(message_id) for message_id in ("m1", "m2", "m3")]
         claims = ClaimRegistry()
         claims.try_claim(ROOM_ID, "m2")
 
-        async with started_session(peer, batching=batching, claims=claims) as session:
+        async with started_session(
+            rest_peer, batching=batching, claims=claims
+        ) as session:
             await session.quiesce()
             waiting = session.progress
             await session.deliver(events[1])

@@ -35,14 +35,14 @@ def cell(request: pytest.FixtureRequest) -> Cell:
 
 
 @pytest.fixture
-def peer(cell: Cell) -> RoomPeer:
-    peer = RoomPeer()
+def room_peer(cell: Cell) -> RoomPeer:
+    room_peer = RoomPeer()
     for message_id in cell.mode.queued:
-        peer.post(message_id)
-    return peer
+        room_peer.post(message_id)
+    return room_peer
 
 
 @pytest.fixture
-async def room(peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
-    async with harness_over(peer, cell) as harness:
+async def room(room_peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
+    async with harness_over(room_peer, cell) as harness:
         yield harness

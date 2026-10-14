@@ -18,9 +18,9 @@ from tests.runtime.parking.harness import (
 class TestRoomRetirement:
     @pytest.mark.parametrize("refusal", NOT_FOUND_REFUSALS)
     async def test_observed_removal_retires_the_room_without_settling_the_intent(
-        self, cell: Cell, peer: RoomPeer, room: Harness, refusal: Refusal
+        self, cell: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        peer.refuse(refusal, *cell.queued)
+        room_peer.refuse(refusal, *cell.queued)
         await room.join()
         await room.attempted_terminal_writes(len(cell.queued))
 
