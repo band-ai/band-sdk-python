@@ -61,6 +61,21 @@ class TestPacedBlockage:
             session.turns.ids,
         ) == (pytest.approx(PACED), [])
 
+    async def test_a_refused_input_runs_at_the_next_interval_once_the_host_accepts(
+        self, rest_peer: RestPeer
+    ) -> None:
+        rest_peer.post("m1")
+
+        async with started_session(rest_peer, accepting=False) as session:
+            await session.until(lambda: session.turns.refused)
+            session.turns.accepting = True
+            await asyncio.sleep(IDLE_INTERVAL + 1)
+
+        assert (
+            session.turns.ids,
+            session.since_start(rest_peer.write_times(DeliveryStatus.PROCESSED)),
+        ) == ([("m1",)], pytest.approx([IDLE_INTERVAL]))
+
     async def test_an_unconfirmed_terminal_write_is_retried_without_another_turn(
         self, rest_peer: RestPeer
     ) -> None:

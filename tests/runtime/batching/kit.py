@@ -215,8 +215,10 @@ class Turns:
     release: asyncio.Event = field(default_factory=asyncio.Event)
     gate: bool = False
     fail_on: set[str] = field(default_factory=set)
-    # While False the host refuses ordinary input, as a busy adapter does.
+    # While False the host refuses ordinary input, as a busy adapter does; each
+    # refused offer is kept.
     accepting: bool = True
+    refused: list[tuple[str, ...]] = field(default_factory=list)
 
     @property
     def order(self) -> list[str]:
@@ -233,6 +235,7 @@ class Turns:
 
     async def record(self, ids: tuple[str, ...]) -> None:
         if not self.accepting:
+            self.refused.append(ids)
             raise InputNotAccepted("busy")
         self.ids.append(ids)
         if self.gate:
