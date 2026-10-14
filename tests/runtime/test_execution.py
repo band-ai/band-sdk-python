@@ -1502,6 +1502,7 @@ class TestCrashRecoverySync:
         await wait_for_condition(
             lambda: mock_link_with_next.mark_processed.await_count >= 3,
             timeout=2 * ctx.config.idle_resync_seconds,
+            interval=1.0,
         )
 
         assert [call.args[1].payload.id for call in mock_handler.await_args_list] == [
