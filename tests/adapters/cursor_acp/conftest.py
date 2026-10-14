@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,8 +21,24 @@ from tests.adapters.cursor_acp.kit import (
     cursor_custom_tools,
     echo,
 )
+from tests.adapters.cursor_acp.process import CursorProcess
+from tests.adapters.lifecycle.kit import hosted
+from tests.baseline.adapter import Adapter
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 from tests.integrations.acp.acp_toolkit.harness import pair_in_process
+from tests.integrations.acp.lifecycleprofile import PROFILES
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def cursor_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[CursorProcess]:
+    profile = next(
+        profile for profile in PROFILES if profile.name == Adapter.CURSOR_ACP
+    )
+    async with hosted(profile, tmp_path, monkeypatch) as host:
+        host.shared = False
+        yield CursorProcess(host)
 
 
 # The adapter's ACP runtime lives on the loop that started it, so setup, the

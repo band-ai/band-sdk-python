@@ -52,7 +52,7 @@ RELEASED = frozenset({Residency.SUSPENDED, Residency.CLOSED})
 _DECISION_COMMAND = re.compile(
     re.escape(f"`{ROOM_COMMAND} ")
     + f"({'|'.join(map(re.escape, CursorCommandWord))})"
-    + r" (\S+)"
+    + r" ([^`\s]+)"
 )
 
 
@@ -481,10 +481,16 @@ class AcpSession:
         )
         return tools.reply
 
-    async def send_judged(self, content: str, *, room: str = DEFAULT_ROOM) -> Reply:
+    async def send_judged(
+        self,
+        content: str,
+        *,
+        room: str = DEFAULT_ROOM,
+        tools: TranscriptTools | None = None,
+    ) -> Reply:
         """Deliver ``content`` through ``on_event``, as the runtime does, so
         its turn is judged; return what the adapter posted back."""
-        tools = self._last_tools = TranscriptTools()
+        tools = self._last_tools = tools or TranscriptTools()
         await self.adapter.on_event(
             AgentInput(
                 msg=_message(content, room),

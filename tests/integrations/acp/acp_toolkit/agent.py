@@ -39,7 +39,10 @@ from acp.schema import (
 )
 from mcp.types import Tool
 
-from band.integrations.acp.client_profiles import CURSOR_ASK_QUESTION_METHOD
+from band.integrations.acp.client_profiles import (
+    CURSOR_ASK_QUESTION_METHOD,
+    CURSOR_CREATE_PLAN_METHOD,
+)
 from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
@@ -551,13 +554,23 @@ class FakeACPAgent:
         await self.emit(session_id, update_agent_message_text(text))
 
     async def update_cursor_todos(
-        self, session_id: str, *contents: str, sessionless: bool = False
+        self,
+        session_id: str,
+        *contents: str,
+        sessionless: bool = False,
+        merge: bool = False,
+        todo_prefix: str = "t",
     ) -> None:
         """Push Cursor's ``cursor/update_todos`` extension notification;
         ``sessionless`` omits its session id, as Cursor itself does."""
         await self._conn_for(session_id).ext_notification(
             "cursor/update_todos",
-            cursor_todos(*contents, session_id=None if sessionless else session_id),
+            cursor_todos(
+                *contents,
+                session_id=None if sessionless else session_id,
+                merge=merge,
+                todo_prefix=todo_prefix,
+            ),
         )
 
     def _conn_for(self, session_id: str) -> AgentSideConnection:
@@ -603,6 +616,12 @@ class FakeACPAgent:
                     }
                 ]
             },
+        )
+
+    async def ask_cursor_plan(self, session_id: str, plan: str) -> dict[str, Any]:
+        """Send Cursor's sessionless plan request and return its native outcome."""
+        return await self._conn_for(session_id).ext_method(
+            CURSOR_CREATE_PLAN_METHOD, {"plan": plan}
         )
 
     async def ask_permission(
@@ -825,11 +844,16 @@ def select_option(
     )
 
 
-def cursor_todos(*contents: str, session_id: str | None = None) -> dict[str, Any]:
+def cursor_todos(
+    *contents: str,
+    session_id: str | None = None,
+    merge: bool = False,
+    todo_prefix: str = "t",
+) -> dict[str, Any]:
     """A ``cursor/update_todos`` payload; Cursor itself sends no session id."""
     todos = [
-        {"id": f"t{index}", "content": content, "status": "pending"}
+        {"id": f"{todo_prefix}{index}", "content": content, "status": "pending"}
         for index, content in enumerate(contents)
     ]
     session = {} if session_id is None else {"sessionId": session_id}
-    return {**session, "todos": todos}
+    return {**session, "todos": todos, **({"merge": True} if merge else {})}
