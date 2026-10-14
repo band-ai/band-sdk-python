@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -27,6 +28,7 @@ from band.runtime.execution import (
     ResyncOutcome,
     TurnOutcome,
     _error_label,
+    _observe_phase,
 )
 from band.runtime.tools import AgentTools
 from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
@@ -2743,3 +2745,88 @@ async def test_stopped_startup_uses_next_gate_not_processing_list() -> None:
             ("newer", "processing"),
             ("newer", "processed"),
         ]
+
+
+@pytest.mark.parametrize("cancel", [False, True], ids=["complete", "cancel"])
+async def test_turn_diagnostics_distinguish_running_handler_from_ack(
+    caplog: pytest.LogCaptureFixture, cancel: bool
+) -> None:
+    peer = LifecyclePlatform()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        entered.set()
+        await release.wait()
+
+    caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+    async with rest_client_over(peer.answer) as rest:
+        link = BandLink(agent_id="agent-123", api_key="test")
+        link.rest = rest
+        ctx = ExecutionContext(
+            "room-123",
+            link,
+            handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        async with asyncio.TaskGroup() as tasks:
+            task = tasks.create_task(
+                ctx._process_event(
+                    make_message_event(
+                        room_id="room-123",
+                        msg_id="observed-turn",
+                        content="private prompt",
+                    )
+                )
+            )
+            await entered.wait()
+            assert peer.marked("processing") == ["observed-turn"]
+            assert peer.requested("processed") == []
+            assert "phase=handler state=started" in caplog.text
+            assert "phase=handler state=returned" not in caplog.text
+            assert "phase=ack" not in caplog.text
+            if cancel:
+                task.cancel()
+            else:
+                release.set()
+
+        if cancel:
+            assert task.cancelled()
+            assert peer.requested("processed") == []
+            assert "phase=handler state=cancelled" in caplog.text
+        else:
+            assert peer.marked("processed") == ["observed-turn"]
+            assert "phase=handler state=returned" in caplog.text
+            assert (
+                "Ack room=room-123 message=observed-turn accepted=True" in caplog.text
+            )
+        assert "private prompt" not in caplog.text
+
+
+class TestPhaseOutcome:
+    """Boundary traces stay at DEBUG and name interrupts that are not Exceptions."""
+
+    def test_completed_phase_is_debug_without_a_monotonic_stamp(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="band.runtime.execution")
+        with _observe_phase("handler", "room-1", "msg-1"):
+            pass
+        assert "phase=handler" not in caplog.text
+
+        caplog.clear()
+        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        with _observe_phase("handler", "room-1", "msg-1"):
+            pass
+        assert "phase=handler state=started room=room-1 message=msg-1" in caplog.text
+        assert "phase=handler state=returned room=room-1 message=msg-1" in caplog.text
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_interrupt_is_named(
+        self, caplog: pytest.LogCaptureFixture, interrupt: type[BaseException]
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        with pytest.raises(interrupt), _observe_phase("handler", "room-1", "msg-1"):
+            raise interrupt
+        assert f"phase=handler state={interrupt.__name__}" in caplog.text
+        assert "state=returned" not in caplog.text
