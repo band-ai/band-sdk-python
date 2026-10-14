@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from itertools import product
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -141,6 +142,36 @@ class Entrance(StrEnum):
                 return Route.LIVE
             case _:
                 return Route.BACKLOG
+
+    @property
+    def paced(self) -> bool:
+        """Whether the entrance merely touches the original, so a retry within the
+        reconciliation interval of its last attempt waits for the next pass.
+
+        A resync is requested, and a requested pass retries at once.
+        """
+        return self in {Entrance.CONTROL_PROBE, Entrance.LIVE_DUPLICATE}
+
+    def finds_the_original(self, fault: Fault) -> bool:
+        """Whether the entrance can see an original whose terminal write is owed.
+
+        A resync always reads the owed writes from the room's own record. A control
+        probe or a duplicate delivery only meets an original the room still holds
+        back: a probe through the platform's actionable list, which lists it unless
+        the platform already applied the write; a duplicate through the payload the
+        room retained from the live push.
+        """
+        return not (self is Entrance.CONTROL_PROBE and fault.applied)
+
+
+def entrance_cases(*, paced: bool) -> list[tuple[Shape, Ending, Entrance, Fault]]:
+    """Every (turn, entrance, fault) where a paced or a requesting entrance meets
+    an original that is owed a terminal write."""
+    return [
+        (shape, ending, entrance, fault)
+        for (shape, ending), entrance, fault in product(TURNS, Entrance, Fault)
+        if entrance.paced is paced and entrance.finds_the_original(fault)
+    ]
 
 
 @dataclass

@@ -498,6 +498,10 @@ class ExecutionContext:
         # distinct message ids for the life of this context.
         self._first_ws_msg_id: str | None = None  # First WS message = sync point
         self._retry_tracker = RetryTracker(max_retries=self.config.max_message_retries)
+        # Loop time before which an unconfirmed terminal write is not retried, so
+        # arrivals cannot multiply an outage's writes. A due or requested
+        # reconciliation clears it.
+        self._ack_retry_not_before: dict[str, float] = {}
         self._sync_complete = False  # True after sync with /next completes
         self._deferred_message_id: str | None = None
         # Retained local events in observed order: synthetic hub turns, original
@@ -636,12 +640,14 @@ class ExecutionContext:
 
         A parked entry stays retained but is not retried or blocking: only a
         reconnect or rejoin unparks it. An unconfirmed write keeps its stored
-        intent however long it takes -- dropping it would replay the handler.
+        intent however long it takes -- dropping it would replay the handler --
+        and waits out the reconciliation interval between attempts unless a
+        scheduled or requested reconciliation lifts the wait.
         """
         pending = self.claims.pending_ack(self.room_id, message_id)
         if pending is None or pending["parked"] is not None:
             return True
-        if self._stopped:
+        if self._stopped or self._ack_retry_paced(message_id):
             return False
 
         try:
@@ -661,6 +667,10 @@ class ExecutionContext:
                 message_id,
             )
         return False
+
+    def _ack_retry_paced(self, message_id: str) -> bool:
+        not_before = self._ack_retry_not_before.get(message_id, 0.0)
+        return asyncio.get_running_loop().time() < not_before
 
     async def _retry_ack_outcome(self, message_id: str) -> TurnOutcome:
         if await self._retry_terminal_ack(message_id):
@@ -694,7 +704,9 @@ class ExecutionContext:
                     result,
                 )
             case SettlementResult.UNCONFIRMED:
-                pass
+                self._ack_retry_not_before[message_id] = (
+                    asyncio.get_running_loop().time() + self.config.idle_resync_seconds
+                )
         return result
 
     async def _mark_processing(self, message_id: str) -> bool:
@@ -868,6 +880,7 @@ class ExecutionContext:
 
     async def request_resync(self) -> None:
         """Queue an immediate /next reconciliation, coalescing pending requests."""
+        self._ack_retry_not_before.clear()
         if self._pending_resync is not None:
             return
         self._pending_resync = ResyncRequest()
@@ -1421,6 +1434,7 @@ class ExecutionContext:
             while True:
                 deadline = self._resync_schedule.due_at
                 if deadline is not None and deadline <= loop.time():
+                    self._ack_retry_not_before.clear()
                     await self._reconcile()
                     continue
                 try:

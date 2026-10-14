@@ -1325,6 +1325,7 @@ class TestCrashRecoverySync:
         assert "msg-ws-ack-fails" not in ctx.claims.completed_ids(ctx.room_id)
         assert ctx.claims.is_ack_pending(ctx.room_id, "msg-ws-ack-fails")
 
+    @pytest.mark.looptime
     async def test_backlog_processed_ack_failure_retries_ack_without_handler_replay(
         self, mock_link_with_next, mock_handler
     ):
@@ -1351,6 +1352,7 @@ class TestCrashRecoverySync:
         )
 
         assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
+        await asyncio.sleep(ctx.config.idle_resync_seconds)
         assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
 
         mock_handler.assert_awaited_once()
@@ -1358,6 +1360,7 @@ class TestCrashRecoverySync:
         assert "msg-backlog-ack-retry" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-backlog-ack-retry")
 
+    @pytest.mark.looptime
     async def test_ack_retry_budget_exhaustion_keeps_the_intent_pending(
         self, mock_link_with_next, mock_handler
     ):
@@ -1389,7 +1392,10 @@ class TestCrashRecoverySync:
             ),
         )
 
-        outcomes = [await ctx._process_backlog_message(msg) for _ in range(4)]
+        outcomes = []
+        for _ in range(4):
+            outcomes.append(await ctx._process_backlog_message(msg))
+            await asyncio.sleep(ctx.config.idle_resync_seconds)
 
         assert outcomes == [
             TurnOutcome.RETRY_LATER,
@@ -1402,6 +1408,7 @@ class TestCrashRecoverySync:
         assert "msg-ack-budget" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-budget")
 
+    @pytest.mark.looptime
     async def test_websocket_processed_ack_failure_retries_ack_without_handler_replay(
         self, mock_link_with_next, mock_handler
     ):
@@ -1417,6 +1424,7 @@ class TestCrashRecoverySync:
 
         event = make_message_event(room_id="room-123", msg_id="msg-ws-ack-retry")
         await ctx._process_event(event)
+        await asyncio.sleep(ctx.config.idle_resync_seconds)
         await ctx._process_event(event)
 
         mock_handler.assert_awaited_once()
@@ -1424,6 +1432,7 @@ class TestCrashRecoverySync:
         assert "msg-ws-ack-retry" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ws-ack-retry")
 
+    @pytest.mark.looptime
     async def test_ack_pending_message_survives_lru_pressure_without_replay(
         self, mock_link_with_next, mock_handler
     ):
@@ -1463,6 +1472,7 @@ class TestCrashRecoverySync:
         executions_before_redelivery = mock_handler.await_count
         mock_link_with_next.mark_processed = AsyncMock(return_value=True)
 
+        await asyncio.sleep(ctx.config.idle_resync_seconds)
         await deliver("msg-unacked")
 
         assert mock_handler.await_count == executions_before_redelivery
@@ -1470,10 +1480,12 @@ class TestCrashRecoverySync:
             "room-123", "msg-unacked"
         )
 
-    async def test_websocket_processed_ack_failure_retries_ack_before_newer_queue(
+    @pytest.mark.looptime
+    async def test_websocket_processed_ack_failure_is_retried_by_the_loop_without_replay(
         self, mock_link_with_next, mock_handler
     ):
-        """The process loop should retry a failed WebSocket processed ack before newer events."""
+        """The process loop retries a failed WebSocket processed ack on its next
+        reconciliation, however many newer events ran in the meantime."""
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_processed = AsyncMock(side_effect=[False, True, True])
         ctx = ExecutionContext(
@@ -1488,7 +1500,8 @@ class TestCrashRecoverySync:
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-old-ws"))
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-new-ws"))
         await wait_for_condition(
-            lambda: mock_link_with_next.mark_processed.await_count >= 3
+            lambda: mock_link_with_next.mark_processed.await_count >= 3,
+            timeout=2 * ctx.config.idle_resync_seconds,
         )
 
         assert [call.args[1].payload.id for call in mock_handler.await_args_list] == [

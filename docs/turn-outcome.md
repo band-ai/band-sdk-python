@@ -428,7 +428,7 @@ classified by [`SettlementResult`](rest-client.md#terminal-write-results):
 | Result | Effect on the stored intent |
 | --- | --- |
 | `ACCEPTED` | The original completes locally. This means the delivery is settled, not that the model succeeded. |
-| `UNCONFIRMED` | Retained and retried on the reconciliation cadence. Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
+| `UNCONFIRMED` | Retained and retried on the reconciliation cadence, at most once per interval (see below). Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
 | `NOT_FOUND`, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
 | HTTP 204 | `RoomExecutionStoppedError`: the intent is retained and retried later, uncharged. |
 
@@ -444,6 +444,14 @@ backlog and a live duplicate delivery) retries through one helper that reads the
 stored intent: `processed` writes `mark_processed_result`, `failed` writes
 `mark_failed_result` with the stored error. None of them reopens processing or
 reaches the handler.
+
+The helper paces an unconfirmed write: it is attempted at most once per
+`idle_resync_seconds` (the reconciliation interval), however many inputs arrive,
+so an outage costs one write per pending original per interval. A scheduled
+reconciliation pass and a requested resync (reconnect, room start, PLAY) lift
+the pacing and retry every pending write once. The control probe and a live
+duplicate are not passes: each retries only once the interval has passed since
+the last attempt, otherwise the next pass settles the write.
 
 The registry belongs to the runtime, so a pending intent survives replacement of
 a room's execution; process exit loses it. Delivery stays at-least-once across

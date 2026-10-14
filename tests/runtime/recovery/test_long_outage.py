@@ -50,8 +50,8 @@ class TestLongOutage:
             await harness.advance(RESYNC_SECONDS / 2)
             per_interval.append(len(harness.peer.writes) - before)
 
-        assert len(set(per_interval)) == 1
-        assert per_interval[0] >= len(harness.members) * fault.requests_per_write
+        one_write_each = len(harness.members) * fault.requests_per_write
+        assert per_interval == [one_write_each] * PACED_INTERVALS
 
     async def test_control_discovery_keeps_working_while_writes_are_owed(
         self, harness: Harness, fault: Fault
