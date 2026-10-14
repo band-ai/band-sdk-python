@@ -141,6 +141,13 @@ STOP_ECHO: ActivityReport = (True, False)
 IDLE: ActivityReport = (False, False)
 
 
+def page(data: list[dict[str, Any]]) -> httpx.Response:
+    """A listing that fits in one page."""
+    return httpx.Response(
+        200, json={"data": data, "metadata": {"has_more": False, "limit": 50}}
+    )
+
+
 class LifecyclePlatform:
     """A controlled HTTP peer for the real Fern lifecycle and posting client."""
 
@@ -206,16 +213,16 @@ class LifecyclePlatform:
                 (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
             )
             limit = int(request.url.params.get("limit", "100"))
-            page = self.messages[start : start + limit]
+            window = self.messages[start : start + limit]
             has_more = start + limit < len(self.messages)
             return httpx.Response(
                 200,
                 json={
-                    "data": page,
+                    "data": window,
                     "metadata": {
                         "limit": limit,
                         "has_more": has_more,
-                        "next_cursor": page[-1]["id"] if has_more else None,
+                        "next_cursor": window[-1]["id"] if has_more else None,
                     },
                 },
             )
@@ -255,9 +262,7 @@ class LifecyclePlatform:
                     }
                 },
             )
-        return httpx.Response(
-            200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
-        )
+        return page([])
 
     def marked(self, status: str) -> list[str]:
         return [mid for mid, mark in self.accepted_marks if mark == status]
@@ -276,10 +281,7 @@ class PostingPlatform(LifecyclePlatform):
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "participants":
-            return httpx.Response(
-                200,
-                json={"data": [ALICE], "metadata": {"has_more": False, "limit": 50}},
-            )
+            return page([ALICE])
         if request.method == "POST" and tail == "events":
             return httpx.Response(
                 201, json={"data": {"id": "e-1", "message_type": "event"}}
