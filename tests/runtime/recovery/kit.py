@@ -46,8 +46,9 @@ SENDER_ID = "user-1"
 # Requests the generated client spends on one logical write that keeps answering 5xx.
 HTTP_ATTEMPTS = DEFAULT_REQUEST_OPTIONS["max_retries"] + 1
 # Fake seconds that let every non-timer-driven step finish; far below the
-# room's reconciliation interval.
-DRAIN_SECONDS = 0.001
+# room's reconciliation interval yet above the 15.6 ms loop clock tick of
+# Windows before Python 3.13, which treats any shorter sleep as already due.
+DRAIN_SECONDS = 0.05
 RESYNC_SECONDS = SessionConfig().idle_resync_seconds
 # Text a failing model raises with; it must never reach the platform.
 SECRET = "secret-token-in-the-exception"
