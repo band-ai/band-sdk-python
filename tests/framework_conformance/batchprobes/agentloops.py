@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from band.core.types import AgentInput
+from tests.framework_configs.adapters import ADAPTER_EXCLUDED_MODULES
 from tests.framework_conformance.batchprobes import BatchProbe, deliver
 
 
@@ -114,7 +115,6 @@ async def run_agno(inp: AgentInput, final_text: str) -> str:
 
 
 async def run_strands(inp: AgentInput, final_text: str) -> str:
-    pytest.importorskip("strands")
     from strands.types.content import (  # noqa: PLC0415 -- strands extra, absent from some lane venvs
         Messages,
     )
@@ -165,5 +165,9 @@ PROBES: dict[str, BatchProbe] = {
     "langgraph": BatchProbe(run=run_langgraph),
     "pydantic_ai": BatchProbe(run=run_pydantic_ai),
     "agno": BatchProbe(run=run_agno),
-    "strands": BatchProbe(run=run_strands),
+    **(
+        {"strands": BatchProbe(run=run_strands)}
+        if "strands" not in ADAPTER_EXCLUDED_MODULES
+        else {}
+    ),
 }
