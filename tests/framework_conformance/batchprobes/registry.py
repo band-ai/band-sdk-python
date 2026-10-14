@@ -11,6 +11,7 @@ from tests.framework_conformance.batchprobes import (
     BatchProbe,
     gemini,
     googleadk,
+    nooa,
     toolloop,
 )
 
@@ -18,4 +19,5 @@ BATCH_PROBES: dict[str, BatchProbe] = {
     **toolloop.PROBES,
     **gemini.PROBES,
     **googleadk.PROBES,
+    **nooa.PROBES,
 }
