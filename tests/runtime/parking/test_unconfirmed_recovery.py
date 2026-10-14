@@ -11,7 +11,6 @@ from tests.runtime.parking.harness import (
     Cell,
     Hangup,
     Harness,
-    Outcome,
     RoomPeer,
 )
 
@@ -47,13 +46,6 @@ class TestUnconfirmedRecovery:
 
         peer.relent()
         await room.elapse(RECONCILE_SECONDS)
-        await room.until(lambda: room.retained() == {})
+        await room.intents_resolved()
 
-        assert room.outcome().once_each() == Outcome(
-            model=[cell.queued],
-            admitted=list(cell.queued),
-            terminal_writes=cell.writes(),
-            retained={},
-            completed=sorted(cell.queued),
-            platform=dict.fromkeys(cell.queued, cell.terminal),
-        )
+        assert room.outcome().once_each() == cell.after_acceptance()

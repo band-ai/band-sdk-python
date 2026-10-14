@@ -26,5 +26,7 @@ class TestRejectedIntent:
         await room.deliver(peer.event(cell.queued[0]))
         await room.elapse(2 * RECONCILE_SECONDS + 1)
 
-        assert room.outcome() == cell.after_first_attempt(parked="rejected")
+        assert room.outcome() == cell.after_first_attempt(
+            parked=Refusal.REJECTED.parked
+        )
         assert peer.terminal_replies == [MISSING_ATTEMPT] * len(cell.queued)

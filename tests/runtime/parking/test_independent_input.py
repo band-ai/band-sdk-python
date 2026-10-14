@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
-from band.client.streaming import DeliveryStatus
-from tests.runtime.parking.harness import Cell, Harness, Refusal, RoomPeer
-
-OTHER = "other"
+from tests.runtime.parking.harness import OTHER, Cell, Harness, Refusal, RoomPeer
 
 
 @pytest.mark.looptime
@@ -24,13 +19,6 @@ class TestIndependentInput:
         parked = cell.after_first_attempt(parked=refusal.parked)
 
         await room.deliver(peer.post(OTHER))
-        await room.until(lambda: OTHER in peer.completed())
+        await room.settled(OTHER)
 
-        assert room.outcome() == replace(
-            parked,
-            model=[*parked.model, (OTHER,)],
-            admitted=[*parked.admitted, OTHER],
-            terminal_writes=[*parked.terminal_writes, f"{OTHER}/processed"],
-            completed=[OTHER],
-            platform={OTHER: DeliveryStatus.PROCESSED},
-        )
+        assert room.outcome() == parked.with_other_settled()

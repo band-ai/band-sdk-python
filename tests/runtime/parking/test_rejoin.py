@@ -10,7 +10,6 @@ from tests.runtime.parking.harness import (
     RELENTING_REFUSALS,
     Cell,
     Harness,
-    Outcome,
     Refusal,
     RoomPeer,
 )
@@ -52,14 +51,7 @@ class TestRejoin:
         await room.leave()
         await room.join()
         await room.attempted_terminal_writes(3 * len(cell.queued))
-        await room.until(lambda: room.retained() == {})
+        await room.intents_resolved()
 
         assert still_refused.completed == []
-        assert room.outcome() == Outcome(
-            model=[cell.queued],
-            admitted=list(cell.queued),
-            terminal_writes=cell.writes() * 3,
-            retained={},
-            completed=sorted(cell.queued),
-            platform=dict.fromkeys(cell.queued, cell.terminal),
-        )
+        assert room.outcome() == cell.after_acceptance(rounds=3)

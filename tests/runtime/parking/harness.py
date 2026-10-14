@@ -11,7 +11,7 @@ from datetime import timedelta
 from enum import StrEnum
 
 import httpx
-from band_sdk_core import ClaimRegistry
+from band_sdk_core import ClaimRegistry, ParkedReason
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -42,6 +42,9 @@ from tests.runtime.conftest import admit_room, wait_for_condition
 AGENT_ID = "agent-123"
 SENDER_ID = "user-1"
 
+# An input that arrives independently of the originals the room starts with.
+OTHER = "other"
+
 # The room's periodic reconciliation interval: the cadence of every paced retry.
 RECONCILE_SECONDS = SessionConfig().idle_resync_seconds
 
@@ -50,10 +53,10 @@ RECONCILE_SECONDS = SessionConfig().idle_resync_seconds
 MAX_NEXT_READS_AT_ONE_INSTANT = 40
 
 # Deleted-message and lost-access refusals are one and the same reply.
-NOT_FOUND = Reply.of_json(404, error_body("not_found"))
+NOT_FOUND = Reply.of_json(status=404, payload=error_body(code="not_found"))
 
 # A refusal the SDK cannot classify beyond "not accepted".
-REFUSED = Reply.of_json(403, error_body("refused"))
+REFUSED = Reply.of_json(status=403, payload=error_body(code="refused"))
 
 
 @dataclass(frozen=True)
@@ -74,7 +77,10 @@ class Refusal(StrEnum):
     @property
     def parked(self) -> str:
         """The reason the runtime records for the intent it keeps."""
-        return "rejected" if self is Refusal.REJECTED else "not_found"
+        reason = (
+            ParkedReason.Rejected if self is Refusal.REJECTED else ParkedReason.NotFound
+        )
+        return reason.wire_name
 
 
 NOT_FOUND_REFUSALS = (Refusal.DELETED, Refusal.ACCESS_LOST)
@@ -86,16 +92,24 @@ RELENTING_REFUSALS = (Refusal.ACCESS_LOST, Refusal.REJECTED)
 # What the platform may answer a terminal write that proves nothing about the message.
 UNCONFIRMED_REPLIES = {
     "generic-validation-422": Reply.of_json(
-        422, error_body(VALIDATION_ERROR_CODE, {"/error": ["is invalid"]})
+        status=422,
+        payload=error_body(
+            code=VALIDATION_ERROR_CODE, details={"/error": ["is invalid"]}
+        ),
     ),
-    "no-details-422": Reply.of_json(422, error_body(VALIDATION_ERROR_CODE, {})),
+    "no-details-422": Reply.of_json(
+        status=422, payload=error_body(code=VALIDATION_ERROR_CODE, details={})
+    ),
     "database-error-422": Reply.of_json(
-        422, error_body("database_error", {PROCESSING_ATTEMPT_POINTER: ["x"]})
+        status=422,
+        payload=error_body(
+            code="database_error", details={PROCESSING_ATTEMPT_POINTER: ["x"]}
+        ),
     ),
-    "empty-422": Reply(422),
-    "malformed-422": Reply(422, "{not json"),
+    "empty-422": Reply(status=422),
+    "malformed-422": Reply(status=422, body="{not json"),
     "forbidden-403": REFUSED,
-    "unavailable-503": Reply(503),
+    "unavailable-503": Reply(status=503),
     "dropped-connection": Hangup(),
 }
 
@@ -146,6 +160,18 @@ class Outcome:
         """The same record with each terminal write listed once, however often retried."""
         return replace(self, terminal_writes=list(dict.fromkeys(self.terminal_writes)))
 
+    def with_other_settled(self) -> Outcome:
+        """The same record after an independent input ran and settled processed."""
+        processed = DeliveryStatus.PROCESSED
+        return replace(
+            self,
+            model=[*self.model, (OTHER,)],
+            admitted=[*self.admitted, OTHER],
+            terminal_writes=[*self.terminal_writes, f"{OTHER}/{processed}"],
+            completed=sorted([*self.completed, OTHER]),
+            platform={**self.platform, OTHER: processed},
+        )
+
 
 @dataclass(frozen=True)
 class Cell:
@@ -166,11 +192,11 @@ class Cell:
     def queued(self) -> tuple[str, ...]:
         return self.mode.queued
 
-    def writes(self, action: DeliveryStatus | None = None) -> list[str]:
-        """The queued originals' lifecycle writes of ``action`` (default: its terminal)."""
-        return [f"{m}/{action or self.terminal}" for m in self.queued]
+    def writes(self) -> list[str]:
+        """One terminal write per queued original."""
+        return [f"{m}/{self.terminal}" for m in self.queued]
 
-    def after_first_attempt(self, parked: str | None) -> Outcome:
+    def after_first_attempt(self, *, parked: str | None) -> Outcome:
         """One turn over the queued originals whose terminal writes were all refused."""
         return Outcome(
             model=[self.queued],
@@ -181,19 +207,33 @@ class Cell:
             platform={},
         )
 
+    def after_acceptance(self, *, rounds: int = 1) -> Outcome:
+        """The same single turn once a terminal write for each original was accepted.
 
-OFF_PROCESSED = Cell(Mode.OFF, DeliveryStatus.PROCESSED)
+        ``rounds`` counts how often the writes were attempted, the last accepted.
+        """
+        return Outcome(
+            model=[self.queued],
+            admitted=list(self.queued),
+            terminal_writes=self.writes() * rounds,
+            retained={},
+            completed=sorted(self.queued),
+            platform=dict.fromkeys(self.queued, self.terminal),
+        )
+
+
+OFF_PROCESSED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.PROCESSED)
 
 # Not among CELLS: off mode retains no failed intent. Its failed turn is the
 # subject of a test of its own.
-OFF_FAILED = Cell(Mode.OFF, DeliveryStatus.FAILED)
+OFF_FAILED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.FAILED)
 
 CELLS = (
     OFF_PROCESSED,
-    Cell(Mode.SINGLETON, DeliveryStatus.PROCESSED),
-    Cell(Mode.BATCH, DeliveryStatus.PROCESSED),
-    Cell(Mode.SINGLETON, DeliveryStatus.FAILED),
-    Cell(Mode.BATCH, DeliveryStatus.FAILED),
+    Cell(mode=Mode.SINGLETON, terminal=DeliveryStatus.PROCESSED),
+    Cell(mode=Mode.BATCH, terminal=DeliveryStatus.PROCESSED),
+    Cell(mode=Mode.SINGLETON, terminal=DeliveryStatus.FAILED),
+    Cell(mode=Mode.BATCH, terminal=DeliveryStatus.FAILED),
 )
 
 TERMINALS = (DeliveryStatus.PROCESSED, DeliveryStatus.FAILED)
@@ -403,6 +443,15 @@ class Harness:
 
     async def attempted_terminal_writes(self, count: int) -> None:
         await self.until(lambda: len(self.peer.terminal_writes()) >= count)
+
+    async def admission_attempted(self, message_id: str) -> None:
+        await self.until(lambda: f"{message_id}/processing" in self.peer.writes)
+
+    async def settled(self, message_id: str) -> None:
+        await self.until(lambda: message_id in self.peer.completed())
+
+    async def intents_resolved(self) -> None:
+        await self.until(lambda: self.retained() == {})
 
     async def elapse(self, seconds: float) -> None:
         """Let the room's scheduler run for ``seconds`` of the loop's virtual clock."""
