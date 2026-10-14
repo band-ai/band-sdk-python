@@ -780,17 +780,21 @@ class ACPClientAdapter(
         room_id: str,
     ) -> None:
         room = self._room(room_id)
-        async with self._using_room(room, tools) as runtime:
-            await self._prompt_room(
-                room,
-                runtime,
-                msg,
-                tools,
-                history,
-                participants_msg,
-                contacts_msg,
-                is_session_bootstrap=is_session_bootstrap,
-            )
+
+        async def prompt_room() -> None:
+            async with self._using_room(room, tools) as runtime:
+                await self._prompt_room(
+                    room,
+                    runtime,
+                    msg,
+                    tools,
+                    history,
+                    participants_msg,
+                    contacts_msg,
+                    is_session_bootstrap=is_session_bootstrap,
+                )
+
+        await room.retained.start_owned(prompt_room)
 
     async def _prompt_room(
         self,
