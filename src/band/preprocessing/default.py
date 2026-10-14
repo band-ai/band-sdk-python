@@ -66,7 +66,7 @@ class DefaultPreprocessor(Preprocessor):
 
         raw_history: list[dict[str, Any]] = []
         if is_bootstrap and ctx.config.enable_context_hydration:
-            raw_history = await self._load_history(ctx, first)
+            raw_history = await self._load_history(ctx, messages)
 
         participants = ctx.participants
         participants_msg = check_and_format_participants(ctx, mark_sent=False)
@@ -145,18 +145,23 @@ class DefaultPreprocessor(Preprocessor):
     async def _load_history(
         self,
         ctx: ExecutionContext,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
     ) -> list[dict[str, Any]]:
-        """Load platform history for session bootstrap."""
+        """Load platform history for session bootstrap, before the turn's originals."""
         try:
             logger.info("Room %s: Loading history...", ctx.room_id)
             context = await ctx.get_context()
-            # Strictly before the trigger: later entries are pending turns of
-            # their own; replaying them exposes future requests and duplicates
-            # them when their own turn arrives.
+            # Strictly before the earliest original: later entries are pending
+            # turns of their own; replaying them exposes future requests and
+            # duplicates them when their own turn arrives. A later original is
+            # dropped even when the earliest is not stored yet.
+            original_ids = {msg.id for msg in messages}
             history = format_history_for_llm(
-                messages_before(context.messages, msg.id),
-                exclude_id=msg.id,
+                [
+                    stored
+                    for stored in messages_before(context.messages, messages[0].id)
+                    if stored.get("id") not in original_ids
+                ],
                 participants=ctx.participants,
             )
             logger.info(
