@@ -8,6 +8,7 @@ across all registered converters.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ from tests.framework_configs.output_adapters import (
     StrandsOutputAdapter,
 )
 from tests.framework_configs.sentinel import STRICT_CI
+
+_HAS_STRANDS = importlib.util.find_spec("strands") is not None
 
 __all__ = [
     "CONVERTER_CONFIGS",
@@ -339,6 +342,9 @@ CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
     }
 )
 
+if not _HAS_STRANDS:
+    CONVERTER_EXCLUDED_MODULES |= {"strands"}
+
 
 def _build_google_adk_config() -> ConverterConfig:
     return ConverterConfig(
@@ -356,7 +362,9 @@ def _build_google_adk_config() -> ConverterConfig:
     )
 
 
-def _build_strands_config() -> ConverterConfig:
+def _build_strands_config() -> ConverterConfig | None:
+    if not _HAS_STRANDS:
+        return None
     return ConverterConfig(
         framework_id="strands",
         display_name="Strands",
@@ -389,7 +397,7 @@ def _build_nooa_config() -> ConverterConfig:
     )
 
 
-_CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
+_CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig | None]] = [
     _build_anthropic_config,
     _build_langchain_config,
     _build_crewai_config,
@@ -417,7 +425,9 @@ def _build_converter_configs() -> list[ConverterConfig]:
     configs: list[ConverterConfig] = []
     for builder in _CONVERTER_CONFIG_BUILDERS:
         try:
-            configs.append(builder())
+            result = builder()
+            if result is not None:
+                configs.append(result)
         except Exception as exc:
             if STRICT_CI:
                 raise RuntimeError(

@@ -239,7 +239,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_duplicate_start.py` (the platform refuses a second start of a live agent id under `ConflictPolicy.REJECT`), `test_room_rejoin.py` (a Codex, Claude SDK or ACP agent removed from a room and re-added answers again), `test_agent_scenarios.py`, `test_approvals.py` (chat-mediated approve/decline/timeout for every coding agent; builds via `smoke/samples/approvals.py`) |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
-| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `copilotsdk/`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -574,6 +574,8 @@ the `dev` extra but are split out for isolation.
 
 | Lane | `uv` extra | Adapters | Backend the CI job provides |
 |------|-----------|----------|------------------------------|
+| `strands` | `dev-strands-nooa` | strands | OpenAI key; LangGraph foreign peer installed; Ubuntu and Windows |
+| `nooa` | `dev-strands-nooa` | nooa | Anthropic key; Python 3.12–3.13 on POSIX; Linux-only E2E lane |
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
@@ -616,7 +618,9 @@ fail-loud.
 **Home ≠ hosting.** An adapter's *home* lane is where its single-framework cells run;
 *hosting* is which lanes' `uv` extra can actually install a framework (`hosting_lanes`
 in `toolkit/ci_lanes.py`: every `dev` lane hosts every `dev` framework; `dev-crewai`
-hosts only the crewai stack). A test whose frameworks share one home lane runs there.
+hosts only the crewai stack. `dev-strands-nooa` hosts Strands, NOOA on supported
+platforms, and the explicitly declared LangGraph peer; it does not host other
+core adapters. Strands and NOOA share dependencies but own separate E2E lanes). A test whose frameworks share one home lane runs there.
 A test whose frameworks span **more than one** home lane is hosted by no single job by
 default, so `assert_every_item_is_schedulable` (the same hook) **fails collection** for
 it — the fail-loud guard against a test that would silently skip in every lane (false
@@ -695,10 +699,11 @@ nodeid. Excluded adapters get explicit N/A rows.
   active cell, or failure reddens the gate. The manifest lists supported OSes
   for each lane and explicit N/A reasons for environment-gated file cells.
 - **Update the manifest when intentional coverage changes.** Collect the default
-  extra, then union Parlant's structurally separate extra:
+  extra, then collect legacy and union Parlant's structurally separate extra:
 
   ```bash
   uv run python -m tests.e2e.baseline.scorecard manifest
+  uv run --locked --isolated --python 3.12 --extra dev-strands-nooa --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
   uv run --isolated --python 3.12 --extra dev-parlant --all-packages python -m tests.e2e.baseline.scorecard manifest --merge-existing
   ```
 
@@ -885,3 +890,21 @@ workflow emits no `letta × windows` cell — every other lane runs on both OSes
 `e2e_pending` (which once excluded Letta) is now a reason *string*
 (`str | None`), pinned to an allowlist — empty today — in
 `tests/framework_conformance/test_agent_wiring_rules.py`.
+
+
+### Legacy OpenAI environments
+
+Run Strands and NOOA separately, using the same isolated dependency extra:
+
+```bash
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=strands uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest tests/e2e/baseline/ -v -s --no-cov -p no:rerunfailures
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=nooa uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest tests/e2e/baseline/ -v -s --no-cov -p no:rerunfailures
+```
+
+NOOA remains POSIX-only on Python 3.12–3.13; its CI E2E lane is Linux-only.
+Strands runs on both CI operating systems. Core tests retain exact collection
+of lazy legacy matrix cells even though those cells execute in their own lanes.
+Only modules absent at import time (such as Parlant) need a manifest union.
+The legacy cross-framework wrapper assigns Strands + LangGraph to the Strands
+lane; `@per_adapter(lane=...)` filters adapter selection and `@lane(...)` assigns
+execution. These are separate decisions.

@@ -192,6 +192,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 create_agent,
             )
 
+            from band.integrations.langgraph.decline import (  # noqa: PLC0415 -- middleware is only used by the langchain-owned simple pattern
+                DeclineMiddleware,
+            )
+
             if checkpointer is None:
                 checkpointer = InMemorySaver()
 
@@ -200,6 +204,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     model=llm,
                     tools=turn_tools,
                     checkpointer=checkpointer,
+                    middleware=[DeclineMiddleware()],
                 )
 
             graph_factory = factory

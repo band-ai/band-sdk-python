@@ -46,11 +46,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
-    create_async_http_client,
-    infer_model,
 )
-from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.result import FinalResult
 from pydantic_graph import End
 from typing_extensions import Unpack
@@ -329,29 +325,6 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
-_OPENAI_LEGACY_HTTP_PROVIDERS = frozenset({"openai", "openai-chat"})
-
-
-def _resolve_pydantic_ai_model(model: Model | str) -> Model | str:
-    """Resolve a model string, patching OpenAI providers to use legacy ``httpx``.
-
-    pydantic-ai's OpenAI-compatible providers default to ``httpx2``, while the
-    ``openai`` Python SDK still type-checks for ``httpx.AsyncClient``.
-    """
-    if not isinstance(model, str):
-        return model
-    provider_name = model.partition(":")[0]
-    if provider_name not in _OPENAI_LEGACY_HTTP_PROVIDERS:
-        return model
-
-    def provider_factory(name: str) -> Provider[Any]:
-        if name in _OPENAI_LEGACY_HTTP_PROVIDERS:
-            return OpenAIProvider(http_client=create_async_http_client())
-        return infer_provider(name)
-
-    return infer_model(model, provider_factory)
-
-
 class PydanticAIAdapterConfig(BaseAdapterConfig):
     """Settings for a Pydantic AI agent.
 
@@ -476,7 +449,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._system_prompt = system
 
         agent: Agent[AgentToolsProtocol, str | None] = Agent(
-            _resolve_pydantic_ai_model(self._model),
+            self._model,
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
             # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
             # only on the first request, after which it ages into buried history;
@@ -609,6 +582,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # pydantic-ai's result.usage is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
+        tool_call_count = 0
+        tool_result_count = 0
+        failed_tool_result_count = 0
+        native_output_type: str | None = None
+        native_output_chars = 0
         # Snapshot the prior messages' identities so the fallback usage path
         # (any run that raises) can sum only THIS run's responses: capture_run_messages()
         # records the passed message_history + the new turn, so summing the whole
@@ -653,6 +631,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             events=event_count,
                             tool=event.part.tool_name,
                         )
+                        tool_call_count += 1
                         if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
@@ -679,6 +658,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             events=event_count,
                             tool=event.part.tool_name,
                         )
+                        tool_result_count += 1
+                        if isinstance(event.part, RetryPromptPart) or (
+                            isinstance(event.part, ToolReturnPart)
+                            and (
+                                event.part.outcome != "success"
+                                or is_failed_tool_output(event.part.content)
+                            )
+                        ):
+                            failed_tool_result_count += 1
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
                         if (
@@ -720,6 +708,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 )
                     elif isinstance(event, AgentRunResultEvent):
                         _log_native_progress("result_received", events=event_count)
+                        native_output_type = type(event.result.output).__name__
+                        if isinstance(event.result.output, str):
+                            native_output_chars = len(event.result.output)
                         turn_usage = self._usage_from_result(event.result)
                         # Keep native run history, but drop responses that replay as
                         # content:null (e.g. thinking-only) — providers reject them
@@ -791,6 +782,19 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             raise
         finally:
             _native_turn.reset(trace_token)
+            if native_output_type is not None and not tools.turn.complete:
+                logger.warning(
+                    "Room %s message %s: native run ended without a turn outcome "
+                    "(output_type=%s, output_chars=%s, tool_calls=%s, "
+                    "tool_results=%s, failed_tool_results=%s)",
+                    room_id,
+                    msg.id,
+                    native_output_type,
+                    native_output_chars,
+                    tool_call_count,
+                    tool_result_count,
+                    failed_tool_result_count,
+                )
             capture_cm.__exit__(None, None, None)
             # Single emit point for every exit. A run that raised (benign
             # empty-final or a hard failure) never saw the result event, so
