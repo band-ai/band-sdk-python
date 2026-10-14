@@ -38,6 +38,7 @@ import pytest
 import band.adapters.opencode
 from band.client.streaming import DeliveryStatus
 from band.core.simple_adapter import SimpleAdapter
+from band.runtime.types import SessionConfig
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.requires import require_dep
 from tests.e2e.baseline.settings import BaselineSettings
@@ -59,6 +60,7 @@ from tests.e2e.baseline.smoke.samples.approvals import (
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.timeouts import SlowTurnBudget, slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.logs import sdk_logs_at
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
@@ -84,8 +86,9 @@ TURN_BUDGET_S = BaselineSettings().e2e_timeout
 BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=2)
 # Two requests and the closing reply; or a request, a refusal and the closing reply.
 THREE_BARRIERS = slow_turn_budget(TURN_BUDGET_S, barriers=3)
+# The request, the decided turn's close, and the replies to three queued inputs.
+QUEUED_WORK_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=6)
 # Short enough to expire promptly, long enough that the request is captured first.
-QUEUED_WORK_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=5)
 EXPIRING_WAIT_S = 10.0
 # Outlasts every barrier of the longest flow (and stays under Cursor's default turn
 # timeout, which it must).
@@ -107,9 +110,12 @@ async def approval_room(
     wait_timeout_s: float = PATIENT_WAIT_S,
     approvers: frozenset[str] | None = None,
     build: Callable[[BaselineSettings, AgentSetup], SimpleAdapter[Any]] | None = None,
+    session_config: SessionConfig | None = None,
+    observer: InvocationObserver | None = None,
 ) -> AsyncIterator[tuple[ApprovalRoom, Path]]:
     """Run the cell's agent in a fresh room and workdir: in manual approval mode,
-    or as ``build`` makes it."""
+    or as ``build`` makes it, under ``session_config`` with its turns watched by
+    ``observer``."""
     dialect = DIALECTS[Adapter(cell.adapter_id)]
     for dep in dialect.extra_deps:
         require_dep(dep, cell.settings)
@@ -127,7 +133,11 @@ async def approval_room(
         setup = AgentSetup(root, wait_timeout_s, approvers)
         adapter = (build or dialect.build)(cell.settings, setup)
         async with running_provisioned_agent(
-            adapter, cell.resources, label=f"approval-{label}"
+            adapter,
+            cell.resources,
+            label=f"approval-{label}",
+            session_config=session_config,
+            observer=observer,
         ) as agent:
             room_id = await cell.resources.provision_room(
                 title=f"e2e-approval-{cell.adapter_id}-{label}",
@@ -207,24 +217,33 @@ async def test_the_room_reply_decides_whether_the_gated_command_runs(
 
 
 @per_adapter(Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.CURSOR_ACP, Adapter.OPENCODE)
+@pytest.mark.parametrize("consume_all_queued", [True, False])
 @pytest.mark.timeout(extra=THREE_BARRIERS.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_each_of_two_gated_commands_is_decided_on_its_own(
     cell: AdapterCell,
+    consume_all_queued: bool,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
+    invocation_observer: InvocationObserver,
 ) -> None:
     """Two commands in one turn ask separately: approving one and declining the
-    other runs exactly one."""
+    other runs exactly one, and neither reply is handed to the model."""
     async with approval_room(
-        cell, user_ops, reply_capture, label="two", budget=THREE_BARRIERS
+        cell,
+        user_ops,
+        reply_capture,
+        label="two",
+        budget=THREE_BARRIERS,
+        session_config=SessionConfig(consume_all_queued=consume_all_queued),
+        observer=invocation_observer,
     ) as (room, workdir):
         markers = {workdir / f"{name}.txt": unique_marker(name) for name in "ab"}
         commands = [
             marker_command(marker, target) for target, marker in markers.items()
         ]
         done = unique_marker("closed")
-        start = await room.say(commands_request(*commands, done=done))
+        start, request_id = await room.post(commands_request(*commands, done=done))
         [approved] = await room.requests(1, since=start)
         await room.decide(Outcome.APPROVE, approved)
         declined = (await room.requests(2, since=start))[1]
@@ -240,20 +259,26 @@ async def test_each_of_two_gated_commands_is_decided_on_its_own(
         assert len(landed) == 1, f"expected exactly one command to run, got {landed}"
         [(target, marker)] = landed.items()
         assert written_lines(target) == [marker]
+        assert invocation_observer.handed(room.room_id) == [request_id]
 
 
-@per_adapter(Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.OPENCODE)
+@per_adapter(Adapter.CLAUDE_SDK, Adapter.CODEX, Adapter.CURSOR_ACP, Adapter.OPENCODE)
+@pytest.mark.parametrize("consume_all_queued", [True, False])
 @pytest.mark.timeout(extra=QUEUED_WORK_BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_pending_work_preserves_order_without_hiding_an_approval(
     cell: AdapterCell,
+    consume_all_queued: bool,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
+    invocation_observer: InvocationObserver,
 ) -> None:
-    """A's approval remains reachable while B and D wait for their own turns."""
+    """A's approval remains reachable while B and D wait for their own turns, and
+    an input sent after the approval reply queues behind them. The reply is its
+    own control, never handed to the model, and every ordinary input runs once."""
     marker = unique_marker("approved")
-    done, first, second = (
-        unique_marker(name) for name in ("closed", "first", "second")
+    done, first, second, third = (
+        unique_marker(name) for name in ("closed", "first", "second", "third")
     )
     async with approval_room(
         cell,
@@ -262,9 +287,11 @@ async def test_pending_work_preserves_order_without_hiding_an_approval(
         label="pending-work",
         budget=QUEUED_WORK_BUDGET,
         wait_timeout_s=QUEUED_WORK_BUDGET.deadline_s * 2,
+        session_config=SessionConfig(consume_all_queued=consume_all_queued),
+        observer=invocation_observer,
     ) as (room, workdir):
         target = workdir / "approval.txt"
-        start = await room.say(command_request(marker, target, done=done))
+        start, request_id = await room.post(command_request(marker, target, done=done))
         [request] = await room.requests(1, since=start)
         first_start, first_id = await room.post(liveness_probe(first))
         await room.capture.wait_for_delivery(
@@ -274,36 +301,52 @@ async def test_pending_work_preserves_order_without_hiding_an_approval(
             deadline_s=QUEUED_WORK_BUDGET.deadline_s,
         )
         second_start, second_id = await room.post(liveness_probe(second))
+        assert await room.capture.durable_delivery_statuses(
+            [first_id], room.agent.id
+        ) == {first_id: DeliveryStatus.PROCESSING}
         await room.decide(Outcome.APPROVE, request)
+        [decision_id] = room.decision_ids
+        third_start, third_id = await room.post(liveness_probe(third))
         await room.closed(
             room.dialect.notice(Outcome.APPROVE, request),
             since=start,
             closing_reply=done,
             allowed_followup_commands=readback_commands(target),
         )
-        await room.shown(first, since=first_start)
-        first_replies = await room.capture.wait_for_reply(
-            first_id,
-            room.agent.id,
-            since=first_start,
-            deadline_s=QUEUED_WORK_BUDGET.deadline_s,
-        )
-        first_replies.assert_contains_any([first])
-        await room.shown(second, since=second_start)
-        second_replies = await room.capture.wait_for_reply(
-            second_id,
-            room.agent.id,
-            since=second_start,
-            deadline_s=QUEUED_WORK_BUDGET.deadline_s,
-        )
-        second_replies.assert_contains_any([second])
+        for token, token_start, token_id in (
+            (first, first_start, first_id),
+            (second, second_start, second_id),
+            (third, third_start, third_id),
+        ):
+            await room.shown(token, since=token_start)
+            replies = await room.capture.wait_for_reply(
+                token_id,
+                room.agent.id,
+                since=token_start,
+                deadline_s=QUEUED_WORK_BUDGET.deadline_s,
+            )
+            replies.assert_contains_any([token])
         said = room.said_since(start)
-        first_position = next(i for i, content in enumerate(said) if first in content)
-        second_position = next(i for i, content in enumerate(said) if second in content)
-        assert first_position < second_position, (
+        positions = [
+            next(i for i, content in enumerate(said) if token in content)
+            for token in (first, second, third)
+        ]
+        assert positions == sorted(positions), (
             "newer ordinary work overtook pending work"
         )
         assert written_lines(target) == [marker]
+        assert invocation_observer.handed(room.room_id) == [
+            request_id,
+            first_id,
+            second_id,
+            third_id,
+        ]
+        for message_id in (request_id, first_id, second_id, third_id, decision_id):
+            await room.capture.wait_for_processed(
+                message_id,
+                room.agent.id,
+                deadline_s=QUEUED_WORK_BUDGET.deadline_s,
+            )
 
 
 @per_adapter(*REFUSING)
