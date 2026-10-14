@@ -36,7 +36,7 @@ from tests.platform.settlement.kit import (
     error_body,
     link_over,
 )
-from tests.runtime.batching.kit import EPOCH, WAIT_SECONDS, Turns
+from tests.runtime.batching.kit import EPOCH, WAIT_SECONDS, ControlScript, Turns
 from tests.runtime.conftest import admit_room, wait_for_condition
 
 AGENT_ID = "agent-123"
@@ -305,6 +305,11 @@ class RoomPeer(SettlementPeer):
     def terminal_writes(self) -> list[str]:
         return [w for w in self.writes if w.endswith(tuple(TERMINALS))]
 
+    def repeated_terminal_writes(self) -> list[str]:
+        """The terminal writes attempted more than once, each listed once."""
+        counts = Counter(self.terminal_writes())
+        return [write for write, count in counts.items() if count > 1]
+
     def completed(self) -> dict[str, str]:
         """The messages the platform holds as processed or failed for the agent."""
         return {m: s for m, s in self.status.items() if s in TERMINALS}
@@ -425,6 +430,14 @@ class Harness:
         await self.converged()
         self.claims = self.execution.claims
 
+    async def join_in_outage(self, cell: Cell) -> None:
+        """Join while every terminal write goes unconfirmed, and wait until each
+        original's has been attempted and the room is quiet."""
+        self.peer.script(REFUSED, *cell.queued)
+        await self.join()
+        await self.attempted_terminal_writes(len(cell.queued))
+        await self.elapse(1)
+
     async def leave(self) -> None:
         """Deliver the room-removed event to presence and wait for retirement."""
         admit_room(self.runtime.presence, ROOM_ID)
@@ -482,8 +495,14 @@ class Harness:
 
 
 @asynccontextmanager
-async def harness_over(peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
-    """A runtime for ``cell``; its model fails exactly when the cell's terminal is failed."""
+async def harness_over(
+    peer: RoomPeer, cell: Cell, *, controls: ControlScript | None = None
+) -> AsyncIterator[Harness]:
+    """A runtime for ``cell``; its model fails exactly when the cell's terminal is failed.
+
+    With ``controls`` the host also handles control messages, so the room scans
+    every arrival for them.
+    """
     async with peer.client() as rest:
         link = link_over(rest)
         fails = cell.terminal is DeliveryStatus.FAILED
@@ -493,6 +512,8 @@ async def harness_over(peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
             AGENT_ID,
             turns.single,
             on_execute_batch=turns.batch if cell.mode.batching else None,
+            on_message_control=controls.handle if controls else None,
+            is_message_control=controls.recognizes if controls else None,
             session_config=SessionConfig(
                 consume_all_queued=cell.mode.batching,
                 max_message_retries=cell.mode.retries,

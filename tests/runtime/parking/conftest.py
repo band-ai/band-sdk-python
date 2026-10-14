@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 import pytest
 from band_rest.core import http_client
 
+from tests.runtime.batching.kit import ControlScript
 from tests.runtime.parking.harness import (
     CELLS,
     Cell,
@@ -38,4 +39,13 @@ def room_peer(scenario: Cell) -> RoomPeer:
 @pytest.fixture
 async def room(room_peer: RoomPeer, scenario: Cell) -> AsyncIterator[Harness]:
     async with harness_over(room_peer, scenario) as harness:
+        yield harness
+
+
+@pytest.fixture
+async def controlled_room(
+    room_peer: RoomPeer, scenario: Cell
+) -> AsyncIterator[Harness]:
+    """The same room served by a host that scans every arrival for controls."""
+    async with harness_over(room_peer, scenario, controls=ControlScript()) as harness:
         yield harness
