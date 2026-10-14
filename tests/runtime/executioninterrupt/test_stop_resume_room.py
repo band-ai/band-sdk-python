@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import BacklogProcessResult, ExecutionContext, ResyncOutcome
+from band.runtime.execution import ExecutionContext, ResyncOutcome, TurnOutcome
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
@@ -24,7 +24,7 @@ class TestStopRoomResumeRoom:
         result = await proc
 
         assert ctx._stopped is True
-        assert result is True
+        assert result is TurnOutcome.PAUSED
         mock_link.mark_processed.assert_not_awaited()
 
     async def test_stopped_room_skips_new_message(self, mock_link):
@@ -36,7 +36,7 @@ class TestStopRoomResumeRoom:
 
         result = await ctx._process_event(make_message_event(msg_id="while-stopped"))
 
-        assert result is True
+        assert result is TurnOutcome.PAUSED
         assert handler.invoked == []  # adapter never invoked
         mock_link.mark_processing.assert_not_awaited()
         mock_link.mark_processed.assert_not_awaited()
@@ -104,7 +104,7 @@ class TestStopRoomResumeRoom:
         proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="p1")))
         await handler.started.wait()
         ctx.stop_room()
-        assert await proc is True
+        assert await proc is TurnOutcome.PAUSED
         mock_link.mark_processed.assert_not_awaited()
 
         # Resume, then the platform replays the still-"processing" message via
@@ -112,6 +112,6 @@ class TestStopRoomResumeRoom:
         handler.started.clear()
         result = await ctx._process_backlog_message(backlog_message("p1"))
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         assert handler.completed == ["p1"]  # handler actually ran this time
         assert not ctx._retry_tracker.is_permanently_failed("p1")

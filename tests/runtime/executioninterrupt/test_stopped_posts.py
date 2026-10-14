@@ -12,7 +12,7 @@ import pytest
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, bind_turn_task
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import BacklogProcessResult, ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
 from tests.runtime.executioninterrupt.kit import (
@@ -56,7 +56,10 @@ class TestStoppedPosts:
                             raise
 
             ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
-            assert not await ctx._process_event(make_message_event(msg_id="stopped"))
+            assert (
+                await ctx._process_event(make_message_event(msg_id="stopped"))
+                is TurnOutcome.RETRY_LATER
+            )
             assert not ctx.is_stopped
             assert not ctx.claims.is_completed(ctx.room_id, "stopped")
             mock_link.mark_processed.assert_not_awaited()
@@ -64,7 +67,7 @@ class TestStoppedPosts:
             assert peer.posts == ["messages" if post == "message" else "events"]
             assert (
                 await ctx._process_backlog_message(backlog_message("stopped"))
-                == BacklogProcessResult.ADVANCED
+                is TurnOutcome.ADVANCED
             )
             assert invoked == ["stopped", "stopped"]
 
@@ -95,7 +98,7 @@ class TestStoppedPosts:
             with pytest.raises(asyncio.CancelledError):
                 await captured[0].send_event("late", "thought")
             release.set()
-            assert await task
+            assert await task is TurnOutcome.ADVANCED
         finally:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -123,7 +126,10 @@ class TestStoppedPosts:
             await captured[0].send_event("delayed", "thought")
         observer.assert_not_awaited()
         assert not ctx.is_stopped
-        assert await ctx._process_event(make_message_event(msg_id="new"))
+        assert (
+            await ctx._process_event(make_message_event(msg_id="new"))
+            is TurnOutcome.ADVANCED
+        )
 
     async def test_detached_stop_hook_does_not_await_its_posting_task(
         self, mock_link
@@ -154,7 +160,10 @@ class TestStoppedPosts:
         with pytest.raises(asyncio.CancelledError):
             await provider
         await cleanup.wait()
-        assert await ctx._process_event(make_message_event(msg_id="after"))
+        assert (
+            await ctx._process_event(make_message_event(msg_id="after"))
+            is TurnOutcome.ADVANCED
+        )
 
     @pytest.mark.looptime
     async def test_stopped_post_cancels_a_released_worker_at_its_grace(

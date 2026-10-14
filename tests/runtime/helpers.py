@@ -22,7 +22,12 @@ from band.core.memory_types import (
 )
 from band.core.protocols import TURN_FAILURE_PROVIDER
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import PlatformMessage
+from band.core.types import (
+    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    SYNTHETIC_SENDER_TYPE,
+    PlatformMessage,
+)
+from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
@@ -84,6 +89,16 @@ def run_through(
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
         on_message_control=agent._on_control,
+    )
+
+
+def synthetic_message(message_id: str) -> MessageEvent:
+    """A contact-hub message: it exists only in the room's local queue."""
+    return make_message_event(
+        room_id=ROOM_ID,
+        msg_id=message_id,
+        sender_type=SYNTHETIC_SENDER_TYPE,
+        sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     )
 
 
