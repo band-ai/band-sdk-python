@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -69,6 +70,17 @@ def control(message_id: str) -> str:
 def write(action: DeliveryStatus, message_id: str, *, confirmed: bool = True) -> str:
     """Journal entry: a lifecycle write reached the platform, confirmed or not."""
     return f"{action} {message_id}" + ("" if confirmed else " (unconfirmed)")
+
+
+def error_causes(
+    records: Iterable[logging.LogRecord],
+) -> set[type[BaseException] | None]:
+    """The exception type behind each record logged at ERROR or above."""
+    return {
+        record.exc_info[0] if record.exc_info else None
+        for record in records
+        if record.levelno >= logging.ERROR
+    }
 
 
 def failed_row_id(index: int) -> str:

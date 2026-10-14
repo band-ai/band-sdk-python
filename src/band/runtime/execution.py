@@ -2420,7 +2420,7 @@ class ExecutionContext:
         if self.config.consume_all_queued and scope.admitted and not scope.settled:
             self._settle_scope(scope, DeliveryStatus.FAILED)
         if scope.intent is DeliveryStatus.FAILED:
-            settled = await self._settle_originals(scope)
+            settled = await self._try_settle_originals(scope)
             await self._report_turn_failure(final=True)
             return settled
         for message_id, count in attempts.items():
@@ -2711,7 +2711,7 @@ class ExecutionContext:
         # failed write stays retained as a pending intent.
         if (
             scope.intent is DeliveryStatus.PROCESSED
-            and not await self._settle_interrupted(scope)
+            and not await self._try_settle_originals(scope)
         ):
             logger.warning(
                 "ExecutionContext %s: durable terminal write failed for "
@@ -2735,7 +2735,9 @@ class ExecutionContext:
         )
         return False
 
-    async def _settle_interrupted(self, scope: TurnScope) -> bool:
+    async def _try_settle_originals(self, scope: TurnScope) -> bool:
+        """Settle the originals; False while any intent stays retained, a refusal
+        from a stopped platform included."""
         try:
             return await self._settle_originals(scope)
         except RoomExecutionStoppedError:
