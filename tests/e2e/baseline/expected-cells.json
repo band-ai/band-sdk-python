@@ -698,6 +698,42 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/copilotsdk/test_handler.py::TestAskUserHandler::test_copilot_ask_user_handler_round_trips_to_room_reply",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/copilotsdk/test_resume.py::TestResumeMiss::test_copilot_recall_via_injected_history_when_resume_misses",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/copilotsdk/test_roomquestion.py::TestRoomQuestion::test_copilot_ask_user_room_question_answered_by_next_message",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/copilotsdk/test_sharedclient.py::TestSharedClient::test_copilot_shared_client_across_adapter_lifecycles",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_a2a.py::test_a2a_adapter_relays_a_real_counterparty_reply",
       "adapter": "suite",
       "lanes": [
@@ -846,42 +882,6 @@
       "adapter": "suite",
       "lanes": [
         "backends"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py::test_copilot_ask_user_handler_round_trips_to_room_reply",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py::test_copilot_ask_user_room_question_answered_by_next_message",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py::test_copilot_recall_via_injected_history_when_resume_misses",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py::test_copilot_shared_client_across_adapter_lifecycles",
-      "adapter": "suite",
-      "lanes": [
-        "core"
       ],
       "status": "pass",
       "reason": null

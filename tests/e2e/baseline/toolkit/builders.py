@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import tempfile
 import weakref
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from band import create_room_workspace_resolver
 from band.adapters.codex import CodexSandboxMode
@@ -43,6 +43,9 @@ from tests.e2e.baseline.toolkit.omp_credentials import (
     omp_provider_api_key,
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
+
+if TYPE_CHECKING:
+    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
 # Spelled out rather than derived from the Capability enum: an adapter's
 # `supports` is a claim the capability-scoped matrices select on, so a newly
@@ -123,9 +126,29 @@ def _build_copilot_sdk(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
-    # ask_user / a shared client are bespoke knobs exercised by
-    # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-sdk-")
+    adapter = build_copilot_sdk_adapter(
+        s,
+        base_directory=copilot_home_dir(sandbox.name),
+        custom_section=prompt or "",
+        features=features,
+        tools=tools,
+    )
+    weakref.finalize(adapter, sandbox.cleanup)
+    return adapter
+
+
+def build_copilot_sdk_adapter(
+    s: BaselineSettings,
+    *,
+    base_directory: str,
+    custom_section: str = "Keep responses short and concise.",
+    client: Any | None = None,
+    ask_user: Any | None = None,
+    features: AdapterFeatures | None = None,
+    tools: list[ToolSpec] | None = None,
+) -> CopilotSDKAdapter:
+    """Build BYOK sessions with a caller-owned, isolated Copilot runtime home."""
     from copilot import (  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
         ProviderConfig,
     )
@@ -135,16 +158,15 @@ def _build_copilot_sdk(
         CopilotSDKAdapterConfig,
     )
 
-    # A per-cell COPILOT_HOME, as copilot_acp gets: host hooks and extensions
-    # in ~/.copilot otherwise steer or deny the turn under test.
-    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-sdk-")
-    adapter = CopilotSDKAdapter(
+    return CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             model=s.llm_models.anthropic_model,
             use_logged_in_user=False,
-            base_directory=copilot_home_dir(sandbox.name),
-            custom_section=prompt or "",
+            base_directory=base_directory,
+            custom_section=custom_section,
         ),
+        client=client,
+        ask_user=ask_user,
         additional_tools=_custom_tool_defs(tools),
         provider=ProviderConfig(
             type="anthropic",
@@ -153,8 +175,6 @@ def _build_copilot_sdk(
         ),
         **feature_kwargs(features),
     )
-    weakref.finalize(adapter, sandbox.cleanup)
-    return adapter
 
 
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
