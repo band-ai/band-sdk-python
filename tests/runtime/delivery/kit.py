@@ -311,7 +311,7 @@ class RestPeer:
     def _next(self) -> httpx.Response:
         self._guard_against_runaway()
         self.nexts.append(asyncio.get_running_loop().time())
-        rows = [row for row in self._outstanding()]
+        rows = self._outstanding()
         if not rows:
             return httpx.Response(204)
         return httpx.Response(200, json={"data": rows[0].wire})
@@ -374,12 +374,9 @@ class JournaledControls(ControlScript):
         return consumed
 
 
-def session_config(
-    *, batching: bool, max_queued: int = 10, retries: int = 1
-) -> SessionConfig:
+def session_config(*, batching: bool, retries: int = 1) -> SessionConfig:
     return SessionConfig(
         consume_all_queued=batching,
-        max_queued_messages=max_queued,
         max_message_retries=retries,
         enable_context_hydration=False,
         enable_working_state=False,
@@ -424,7 +421,6 @@ class Session(Observer):
     """One started room execution."""
 
     ctx: ExecutionContext
-    controls: JournaledControls
     started_at: float
 
     async def deliver(self, *events: PlatformEvent) -> None:
@@ -461,7 +457,6 @@ async def started_session(
     peer: RestPeer,
     *,
     batching: bool = True,
-    max_queued: int = 10,
     retries: int = 1,
     gate: bool = False,
     accepting: bool = True,
@@ -479,9 +474,7 @@ async def started_session(
             ROOM_ID,
             link_over(rest),
             turns.single,
-            config=session_config(
-                batching=batching, max_queued=max_queued, retries=retries
-            ),
+            config=session_config(batching=batching, retries=retries),
             agent_id=AGENT_ID,
             claim_registry=claims,
             on_execute_batch=turns.batch,
@@ -491,7 +484,7 @@ async def started_session(
         started_at = asyncio.get_running_loop().time()
         await ctx.start()
         try:
-            yield Session(peer, turns, ctx, scripted, started_at)
+            yield Session(peer, turns, ctx, started_at)
         finally:
             turns.release.set()
             await ctx.stop(timeout=2)
@@ -499,10 +492,7 @@ async def started_session(
 
 @contextlib.asynccontextmanager
 async def runtime_room(
-    peer: RestPeer,
-    *,
-    batching: bool = True,
-    fail_on: frozenset[str] = frozenset(),
+    peer: RestPeer, *, fail_on: frozenset[str] = frozenset()
 ) -> AsyncIterator[RuntimeRoom]:
     """An agent runtime serving the room over the peer, admitted and running."""
     turns = JournaledTurns(fail_on=set(fail_on), journal=peer.journal)
@@ -511,7 +501,7 @@ async def runtime_room(
             link_over(rest),
             AGENT_ID,
             turns.single,
-            session_config=session_config(batching=batching),
+            session_config=session_config(batching=True),
             on_execute_batch=turns.batch,
         )
         runtime.rooms.accepting = True
