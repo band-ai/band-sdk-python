@@ -160,6 +160,11 @@ COPILOT_EFFORTS = {
     "claude-haiku-4.5": (),
 }
 
+# Event-loop ticks that cover every step of a model+effort switch, with
+# headroom: a cleanup after tick 15 finds the switch already done.
+SWITCH_SWEEP_TICKS = 24
+ENDED_MID_SWITCH = f"room {DEFAULT_ROOM}'s ACP session ended mid-switch"
+
 
 def copilot(current: str = "claude-sonnet-5") -> FakeACPAgent:
     """A fake ``copilot --acp`` advertising Copilot's model catalog."""
@@ -487,7 +492,7 @@ class TestCopilotACPModelSelection:
             results = await asyncio.gather(first, queued, return_exceptions=True)
 
         assert isinstance(results[1], BandConfigError)
-        assert str(results[1]) == "room room-1's ACP session ended mid-switch"
+        assert str(results[1]) == ENDED_MID_SWITCH
 
     @pytest.mark.asyncio
     async def test_a_cleanup_at_any_point_of_a_switch_names_the_ended_session(
@@ -497,11 +502,10 @@ class TestCopilotACPModelSelection:
         # model and effort steps, and after the switch completes.
         outcomes = {
             await self._switch_cleaned_up_after(ticks, turn_settle_timeout_s=0)
-            for ticks in range(12)
+            for ticks in range(SWITCH_SWEEP_TICKS)
         }
 
-        assert outcomes <= {"ok", "room room-1's ACP session ended mid-switch"}
-        assert "room room-1's ACP session ended mid-switch" in outcomes
+        assert outcomes == {"ok", ENDED_MID_SWITCH}
 
     @pytest.mark.asyncio
     async def test_a_cleanup_at_any_point_of_a_switch_lets_it_finish(
@@ -509,7 +513,10 @@ class TestCopilotACPModelSelection:
     ) -> None:
         """Within the settle grace a running switch completes before its
         session ends, wherever the cleanup lands."""
-        outcomes = {await self._switch_cleaned_up_after(ticks) for ticks in range(12)}
+        outcomes = {
+            await self._switch_cleaned_up_after(ticks)
+            for ticks in range(SWITCH_SWEEP_TICKS)
+        }
 
         assert outcomes == {"ok"}
 
