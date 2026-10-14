@@ -17,9 +17,19 @@ function identifier(value) {
 export default async function streamTrace(_context, { path }) {
   const seen = new Map();
   const active = new Set();
-  const record = (phase, fields = {}) => appendFileSync(
-    path, JSON.stringify({ timestamp: new Date().toISOString(), phase, ...fields }) + "\n",
-  );
+  // A trace write must not reject the provider call or the progress timer.
+  // The first failure is reported once, from dispose.
+  let traceError;
+  const record = (phase, fields = {}) => {
+    if (traceError) return;
+    try {
+      appendFileSync(
+        path, JSON.stringify({ timestamp: new Date().toISOString(), phase, ...fields }) + "\n",
+      );
+    } catch (error) {
+      traceError = error;
+    }
+  };
   record("plugin.loaded");
   return {
     async config(config) {
@@ -144,7 +154,9 @@ export default async function streamTrace(_context, { path }) {
       const results = await Promise.allSettled([...active].map(async (finish) => finish()));
       seen.clear();
       const failure = results.find((result) => result.status === "rejected");
-      if (failure) throw failure.reason;
+      const error = failure?.reason ?? traceError;
+      traceError = undefined;
+      if (error) throw error;
     },
   };
 }

@@ -141,8 +141,75 @@ test("artifact failure still cancels the upstream stream", async (t) => {
   await reader.read();
   peer.removeArtifact();
   try {
-    await assert.rejects(reader.cancel(), { code: "ENOENT" });
+    await reader.cancel();
     await closed.promise;
+    await assert.rejects(peer.hooks.dispose(), { code: "ENOENT" });
+  } finally {
+    peer.restoreArtifact();
+  }
+});
+
+test("a trace write failure still returns the provider response", async (t) => {
+  const entered = barrier();
+  const release = barrier();
+  const closed = barrier();
+  const body = "data: secret-generation\n\n";
+  const peer = await fixture(t, (req, res) => {
+    res.on("close", closed.resolve);
+    entered.resolve();
+    release.promise.then(() => {
+      res.writeHead(200, { "content-type": "text/event-stream", "x-request-id": "upstream-id" });
+      res.end(body);
+    });
+  });
+  const pending = peer.fetch(peer.url, { headers: CORRELATION });
+  await entered.promise;
+  peer.removeArtifact();
+  try {
+    release.resolve();
+    const response = await pending;
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-request-id"), "upstream-id");
+    assert.equal(await response.text(), body);
+    await closed.promise;
+    await assert.rejects(peer.hooks.dispose(), { code: "ENOENT" });
+  } finally {
+    peer.restoreArtifact();
+  }
+});
+
+test("a trace write failure still delivers provider bytes", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const crashes = [];
+  const onCrash = (error) => crashes.push(error.code);
+  process.on("uncaughtException", onCrash);
+  t.after(() => process.off("uncaughtException", onCrash));
+  const release = barrier();
+  const first = ": heartbeat\n\n";
+  const rest = "data: secret-generation\n\n";
+  const peer = await fixture(t, async (req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(first);
+    await release.promise;
+    res.end(rest);
+  });
+  const response = await peer.fetch(peer.url, { headers: CORRELATION });
+  peer.removeArtifact();
+  try {
+    const reader = response.body.getReader();
+    const part = await reader.read();
+    assert.equal(Buffer.from(part.value).toString(), first);
+    t.mock.timers.tick(PROGRESS_TICK_MS);
+    assert.deepEqual(crashes, []);
+    release.resolve();
+    const chunks = [Buffer.from(part.value)];
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      chunks.push(Buffer.from(next.value));
+    }
+    assert.equal(Buffer.concat(chunks).toString(), first + rest);
+    await assert.rejects(peer.hooks.dispose(), { code: "ENOENT" });
   } finally {
     peer.restoreArtifact();
   }
