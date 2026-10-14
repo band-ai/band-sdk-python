@@ -20,14 +20,24 @@ from tests.runtime.helpers import (
     run_through,
 )
 
+# A due periodic wake scans the room's pages. The live case has no wake: one landing
+# before the approval, or before B is retried, would page needlessly.
+PERIODIC_WAKE_SECONDS = 0.01
+NO_WAKE_SECONDS = 3600.0
+
 
 class TestApprovalBeyondFirstPage:
     @pytest.mark.parametrize(
-        ("recovery", "must_page_to_find_it"),
-        [("live", False), ("missed", True), ("reconnect", True), ("startup", True)],
+        ("recovery", "wake_seconds", "must_page_to_find_it"),
+        [
+            ("live", NO_WAKE_SECONDS, False),
+            ("missed", PERIODIC_WAKE_SECONDS, True),
+            ("reconnect", PERIODIC_WAKE_SECONDS, True),
+            ("startup", PERIODIC_WAKE_SECONDS, True),
+        ],
     )
     async def test_approval_beyond_first_page_releases_ordered_work(
-        self, recovery: str, must_page_to_find_it: bool
+        self, recovery: str, wake_seconds: float, must_page_to_find_it: bool
     ) -> None:
         peer = LifecyclePlatform()
         peer.add_message("A")
@@ -41,8 +51,8 @@ class TestApprovalBeyondFirstPage:
                 config=SessionConfig(
                     enable_context_hydration=False,
                     enable_working_state=False,
-                    idle_resync_seconds=0.01,
-                    idle_resync_max_seconds=0.01,
+                    idle_resync_seconds=wake_seconds,
+                    idle_resync_max_seconds=wake_seconds,
                     max_message_retries=1,
                 ),
             )
@@ -77,6 +87,8 @@ class TestApprovalBeyondFirstPage:
                             room_id=ROOM_ID, msg_id="C", content="approve"
                         )
                     )
+                    # The pass that retries B, queued ahead of any traffic.
+                    await ctx.request_resync()
                 elif recovery == "reconnect":
                     await ctx.on_event(ReconnectedEvent())
                 # Sustained ordinary delivery cannot rewind an in-progress scan.
@@ -100,7 +112,7 @@ class TestApprovalBeyondFirstPage:
                 assert peer.marked("failed") == []
                 # A live approval is retained locally, so only recovery must page for it.
                 paged = any(cursor is not None for cursor in peer.actionable_cursors)
-                assert paged or not must_page_to_find_it
+                assert paged is must_page_to_find_it
                 # A terminal duplicate cannot reopen or reapply the approval.
                 await ctx.on_event(
                     make_message_event(room_id=ROOM_ID, msg_id="C", content="approve")
