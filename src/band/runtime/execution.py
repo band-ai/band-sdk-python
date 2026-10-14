@@ -182,6 +182,8 @@ class ResyncOutcome(Enum):
     BLOCKED = "blocked"
     RETRY = "retry"
     STOPPED = "stopped"
+    PROGRESS = "progress"
+    """A pass advanced the room and another is due; a drain never returns it."""
 
 
 class ExecutionState(StrEnum):
@@ -1948,19 +1950,20 @@ class ExecutionContext:
         read the same message as progress and spin.
         """
         while self._oldest_synthetic() is not None:
-            if (outcome := await self._finish_synthetic()) is not None:
+            outcome = await self._finish_synthetic()
+            if outcome is not ResyncOutcome.PROGRESS:
                 return outcome
         return None
 
-    async def _finish_synthetic(self) -> ResyncOutcome | None:
-        """Advance the oldest synthetic turn; None once that one settled."""
+    async def _finish_synthetic(self) -> ResyncOutcome:
+        """Advance the oldest synthetic turn; PROGRESS once that one settled."""
         event = self._oldest_synthetic()
         if event is None:
-            return None
+            return ResyncOutcome.PROGRESS
         match await self._process_event(event):
             case TurnOutcome.ADVANCED:
                 self._release((_event_message_id(event),))
-                return None
+                return ResyncOutcome.PROGRESS
             case TurnOutcome.PAUSED:
                 return ResyncOutcome.STOPPED
             case _:
@@ -2031,7 +2034,7 @@ class ExecutionContext:
         self._last_selection = ()
         self._scan_cursor = None
         try:
-            while (outcome := await self._batch_step()) is None:
+            while (outcome := await self._batch_step()) is ResyncOutcome.PROGRESS:
                 # Controls and local boundaries get the loop between passes.
                 await asyncio.sleep(0)
         except Exception:
@@ -2045,8 +2048,8 @@ class ExecutionContext:
                 return ResyncOutcome.WORK
         return outcome
 
-    async def _batch_step(self) -> ResyncOutcome | None:
-        """One selection pass; ``None`` means progress and another pass is due."""
+    async def _batch_step(self) -> ResyncOutcome:
+        """One selection pass; ``PROGRESS`` means another pass is due."""
         self._absorb_queue()
         if self._stopped:
             return ResyncOutcome.STOPPED
@@ -2062,7 +2065,7 @@ class ExecutionContext:
         if revision != self._control_revision:
             # A control landed during the read, so the page is stale; unlike a
             # STOP it leaves the room running, which reads again.
-            return None
+            return ResyncOutcome.PROGRESS
         segment, limit = self._local_segment()
         rest = [self._candidate(_backlog_event(msg)) for msg in page.messages]
         retained = [self._candidate(event) for event in segment]
@@ -2079,7 +2082,7 @@ class ExecutionContext:
             return self._after_empty_scan(selection, page.next_cursor, pruned)
         return await self._run_selection(selection, revision)
 
-    async def _run_boundary(self) -> ResyncOutcome | None:
+    async def _run_boundary(self) -> ResyncOutcome:
         """Execute the head non-message event or synthetic turn on its own.
 
         A synthetic stays at the head until it advances. Anything else leaves
@@ -2090,7 +2093,7 @@ class ExecutionContext:
             return await self._finish_synthetic()
         self._pending.popleft()
         if await self._process_event_body(event) is TurnOutcome.ADVANCED:
-            return None
+            return ResyncOutcome.PROGRESS
         return ResyncOutcome.BLOCKED
 
     def _local_segment(self) -> tuple[list[MessageEvent], MessageKey | None]:
@@ -2144,7 +2147,7 @@ class ExecutionContext:
 
     def _after_empty_scan(
         self, selection: Selection, next_cursor: str | None, pruned: bool
-    ) -> ResyncOutcome | None:
+    ) -> ResyncOutcome:
         if selection.stop is Stop.HELD and selection.at is not None:
             self._set_deferred_head(selection.at.message_id)
             return ResyncOutcome.BLOCKED
@@ -2152,13 +2155,13 @@ class ExecutionContext:
         # all skipped and has just been pruned, so the first page is read again.
         if next_cursor is not None and selection.stop is not Stop.LIMIT:
             self._scan_cursor = next_cursor
-            return None
+            return ResyncOutcome.PROGRESS
         self._scan_cursor = None
-        return None if pruned else ResyncOutcome.EMPTY
+        return ResyncOutcome.PROGRESS if pruned else ResyncOutcome.EMPTY
 
     async def _run_selection(
         self, selection: Selection, revision: int
-    ) -> ResyncOutcome | None:
+    ) -> ResyncOutcome:
         events = selection.events
         ids = _message_ids(events)
         if ids == self._last_selection:
@@ -2167,7 +2170,7 @@ class ExecutionContext:
         if selection.members[0].disposition is Disposition.CONTROL:
             match await self._probe_control(events[0]):
                 case ControlOutcome.CONSUMED:
-                    return None
+                    return ResyncOutcome.PROGRESS
                 case ControlOutcome.DEFERRED:
                     self._withdraw_capacity_wait()
                     self._set_deferred_head(ids[0])
@@ -2180,7 +2183,7 @@ class ExecutionContext:
                 # An INTERRUPT that consumed the attempt only bumped the
                 # revision; the room runs on and what queued behind it is due.
                 self._clear_deferred_head_for(events)
-                return None
+                return ResyncOutcome.PROGRESS
             case _ if revision != self._control_revision:
                 return ResyncOutcome.BLOCKED
             case TurnOutcome.NOT_ACCEPTED:
