@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
-from tests.paths import REPO_ROOT
+from tests.paths import ROOM_PEER
 
 HEARTBEAT_S = 0.05
 HEARTBEAT_FILE = "heartbeat"
@@ -50,7 +50,7 @@ async def child(
         command=[
             sys.executable,
             "-u",
-            str(REPO_ROOT / "tests/adapters/roompeer.py"),
+            str(ROOM_PEER),
             "--stay",
         ],
         cwd=str(tmp_path),

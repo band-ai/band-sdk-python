@@ -22,7 +22,7 @@ from tests.adapters.lifecycle.kit import (
     pause_at,
 )
 from tests.adapters.roompeer import CLEANUP_FAILURE, CODEX_HOME, STARTUP_FAILURE
-from tests.paths import REPO_ROOT
+from tests.paths import ROOM_PEER
 
 
 class CodexPeer(CodexStdioClient):
@@ -60,7 +60,7 @@ def install(
             codex_command=(
                 sys.executable,
                 "-u",
-                str(REPO_ROOT / "tests/adapters/roompeer.py"),
+                str(ROOM_PEER),
                 *host.peer_arguments,
                 "--home",
                 str(host.root / CODEX_HOME),

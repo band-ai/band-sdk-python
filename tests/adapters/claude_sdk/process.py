@@ -13,7 +13,7 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from band.integrations.claude_sdk import transport
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import CLEANUP_FAILURE
-from tests.paths import REPO_ROOT
+from tests.paths import ROOM_PEER
 
 PROBE = """
 import json
@@ -71,7 +71,7 @@ class WorkspacePeer(WorkspaceProcess):
         command = [
             sys.executable,
             "-u",
-            str(REPO_ROOT / "tests/adapters/roompeer.py"),
+            str(ROOM_PEER),
             *self.arguments,
         ]
         if server := self._options.mcp_servers.get(BAND_MCP_SERVER_NAME):

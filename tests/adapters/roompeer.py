@@ -122,6 +122,11 @@ def initialize(failure: Path | None, hold: Path | None) -> bool:
     return startup_refused(failure)
 
 
+def rollout_path(home: Path, thread_id: str) -> Path:
+    """Where the Codex peer saves ``thread_id`` under ``home``."""
+    return home / f"{thread_id}.json"
+
+
 class AppServer:
     """A Codex app-server whose threads outlive the process, like rollouts.
 
@@ -139,7 +144,7 @@ class AppServer:
         self.turns = 0
 
     def saved(self, thread_id: str) -> Path:
-        return self.home / f"{thread_id}.json"
+        return rollout_path(self.home, thread_id)
 
     def save(self, thread_id: str) -> None:
         self.home.mkdir(parents=True, exist_ok=True)

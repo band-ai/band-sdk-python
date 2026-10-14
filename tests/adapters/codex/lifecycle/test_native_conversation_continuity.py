@@ -18,6 +18,7 @@ from tests.adapters.roompeer import (
     NO_ROLLOUT,
     PeerCommand,
     memo_instruction,
+    rollout_path,
 )
 
 
@@ -60,7 +61,7 @@ class TestNativeConversationContinuity:
     ) -> None:
         assert await host.send("room-a", memo_instruction("private-7")) == ["Noted."]
         thread = await lose_process(host, "room-a")
-        saved = (host.root / CODEX_HOME) / f"{thread}.json"
+        saved = rollout_path(host.root / CODEX_HOME, thread)
         kept = saved.read_text()
         saved.unlink()
 
@@ -81,7 +82,7 @@ class TestNativeConversationContinuity:
     ) -> None:
         assert await host.send("room-a", memo_instruction("private-7")) == ["Noted."]
         thread = await lose_process(host, "room-a")
-        ((host.root / CODEX_HOME) / f"{thread}.json").unlink()
+        rollout_path(host.root / CODEX_HOME, thread).unlink()
         with pytest.raises(CodexJsonRpcError, match=NO_ROLLOUT):
             await host.send("room-a", PeerCommand.RECALL)
         await host.settled("room-a")
