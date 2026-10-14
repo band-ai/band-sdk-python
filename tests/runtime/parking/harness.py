@@ -25,7 +25,7 @@ from band.platform.message_lifecycle import (
 )
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
-from band.runtime.types import SessionConfig
+from band.runtime.types import DEFAULT_MAX_MESSAGE_RETRIES, SessionConfig
 from tests.conftest import make_message_event
 from tests.platform.settlement.kit import (
     MISSING_ATTEMPT,
@@ -100,6 +100,9 @@ UNCONFIRMED_REPLIES = {
 }
 
 
+SPARE_RETRIES = 3
+
+
 class Mode(StrEnum):
     """How the room consumes what is queued when it starts."""
 
@@ -115,6 +118,12 @@ class Mode(StrEnum):
     def queued(self) -> tuple[str, ...]:
         """The originals already waiting when the room starts."""
         return ("m1", "m2") if self is Mode.BATCH else ("m1",)
+
+    @property
+    def retries(self) -> int:
+        """Off mode runs with spare retries, so only a retained intent, never an
+        exhausted retry budget, can keep the model from replaying."""
+        return SPARE_RETRIES if self is Mode.OFF else DEFAULT_MAX_MESSAGE_RETRIES
 
 
 @dataclass(frozen=True)
@@ -429,6 +438,7 @@ async def harness_over(peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
             on_execute_batch=turns.batch if cell.mode.batching else None,
             session_config=SessionConfig(
                 consume_all_queued=cell.mode.batching,
+                max_message_retries=cell.mode.retries,
                 enable_context_hydration=False,
                 enable_working_state=False,
                 report_turn_failures_to_room=False,
