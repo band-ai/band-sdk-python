@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pydantic import PositiveInt, ValidationError
@@ -39,6 +40,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     find_custom_tool,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BandTool,
@@ -336,7 +338,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     Uses Google's Agent Development Kit with Gemini models for agent
     interactions, with automatic tool bridging and session management.
 
-    Tool bridges are created per ``on_message`` call with direct references
+    Tool bridges are created per turn with direct references
     to the current ``AgentToolsProtocol`` and custom tools, so each
     invocation is self-contained and safe for concurrent use.
 
@@ -352,6 +354,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -390,7 +393,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # A fresh InMemoryRunner is created per message, so continuity comes
         # from injecting the accumulated transcript, not from runner state.
         # Thread-safety: the runtime's ExecutionContext guarantees that
-        # on_message is called sequentially per room (single asyncio.Task per
+        # turns run sequentially per room (single asyncio.Task per
         # room with an asyncio.Queue), so no lock is needed here.
         self._room_history: dict[str, GoogleADKMessages] = {}
 
@@ -483,15 +486,38 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: GoogleADKMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
         """
-        Handle incoming message via Google ADK.
+        Handle one turn over its original messages via Google ADK.
 
         Uses ADK's Runner for the full tool loop. The runner handles
         LLM calls, tool execution, and conversation management.
         """
         _, _, _, types = _require_adk()
 
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        message_ids = [message.id for message in messages]
+        logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         # Initialize or seed per-room history
         if is_session_bootstrap:
@@ -571,8 +597,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 parts.append(f"[System]: {contacts_msg}")
                 logger.info("Room %s: Contacts broadcast received", room_id)
 
-            # Add the actual message
-            parts.append(msg.format_for_llm())
+            # Add the turn's current inputs
+            parts.append(format_current_inputs(messages))
 
             user_content = types.Content(
                 role="user",
@@ -638,9 +664,11 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 if runner is not None:
                     await runner.close()
 
-        # Accumulate message history for future transcript injection
-        self._room_history[room_id].append(
-            {"role": "user", "content": msg.format_for_llm()}
+        # Accumulate message history for future transcript injection, one
+        # entry per original in the converter's own ``[name]: content`` shape.
+        self._room_history[room_id].extend(
+            {"role": "user", "content": message.format_for_llm()}
+            for message in messages
         )
         if final_response_text:
             self._room_history[room_id].append(
@@ -656,7 +684,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 -self.config.max_history_messages :
             ]
 
-        logger.debug("Message %s processed successfully", msg.id)
+        logger.debug("Messages %s processed successfully", message_ids)
 
     @staticmethod
     def _usage_from_event(event: Any) -> TurnUsage:
