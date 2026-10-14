@@ -1763,6 +1763,7 @@ class ExecutionContext:
     ) -> bool:
         return (
             self.claims.is_completed(self.room_id, delivery.id)
+            or self._has_parked_write(delivery.id)
             or self._retry_tracker.is_permanently_failed(delivery.id)
             or bool(
                 self._agent_id
@@ -1773,6 +1774,10 @@ class ExecutionContext:
                 )
             )
         )
+
+    def _has_parked_write(self, message_id: str) -> bool:
+        pending = self.claims.pending_ack(self.room_id, message_id)
+        return pending is not None and pending["parked"] is not None
 
     @property
     def _has_synthetic(self) -> bool:
@@ -1845,6 +1850,7 @@ class ExecutionContext:
     async def _drain_pending(self) -> ResyncOutcome:
         """Run selection passes until the room is empty, blocked or stopped."""
         self._last_selection = ()
+        self._scan_cursor = None
         try:
             while (outcome := await self._batch_step()) is None:
                 # Controls and local boundaries get the loop between passes.
@@ -2114,7 +2120,8 @@ class ExecutionContext:
 
         except Exception as e:  # noqa: BLE001 -- the turn boundary: logged by _log_turn_error, then marked failed
             _log_turn_error(e, "Error processing messages in room %s", self.room_id)
-            await self._fail_attempt(scope, attempts, e)
+            if not await self._fail_attempt(scope, attempts, e):
+                return BacklogProcessResult.RETRY_LATER
             return BacklogProcessResult.ADVANCED
 
         finally:
@@ -2241,16 +2248,20 @@ class ExecutionContext:
 
     async def _fail_attempt(
         self, scope: TurnScope, attempts: dict[str, int], error: Exception
-    ) -> None:
-        """Fail every original of an attempt whose handler raised, reporting once."""
+    ) -> bool:
+        """Fail every original of an attempt whose handler raised, reporting once.
+
+        False while a stored failed intent still awaits its write.
+        """
         if self.config.consume_all_queued and scope.admitted and not scope.settled:
             self._settle_scope(scope, DeliveryStatus.FAILED)
         if scope.intent is DeliveryStatus.FAILED:
-            await self._settle_originals(scope)
+            settled = await self._settle_originals(scope)
             await self._report_turn_failure(final=True)
-            return
+            return settled
         for message_id, count in attempts.items():
             await self._handle_turn_failure(message_id, count, error)
+        return True
 
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
         """
