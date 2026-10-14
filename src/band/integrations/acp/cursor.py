@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from enum import StrEnum
 
+from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools.registry import (
     BAND_MCP_SERVER_NAME,
     canonicalize_mcp_tool_name,
@@ -17,6 +18,18 @@ DECISION_UNAUTHORIZED_MESSAGE = "You are not authorized to resolve Cursor decisi
 ROOM_COMMAND = "/cursor"
 CURSOR_CLI_BINARY = "agent"
 CURSOR_TITLE_SEPARATOR = ": "
+
+
+def room_command_words(content: str) -> list[str] | None:
+    """The words of a ``/cursor`` room command, or ``None`` for any other message.
+
+    The one parser behind both recognizing a command and handling it, so the
+    two can never disagree about what is a control.
+    """
+    words = strip_leading_mentions(content).strip().split()
+    if not words or words[0].lower() != ROOM_COMMAND:
+        return None
+    return words
 
 
 def cursor_mcp_title(title: str) -> tuple[str, str] | None:

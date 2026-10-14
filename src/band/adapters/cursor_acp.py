@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, ClassVar, Literal, Self
@@ -17,7 +17,12 @@ from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn import judge_detached_turn
-from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    ApprovalMode,
+    FeatureKwargs,
+    PlatformMessage,
+    distinct_sender_ids,
+)
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -44,6 +49,7 @@ from band.integrations.acp.cursor import (
     CursorCommandWord,
     canonicalize_cursor_tool_name,
     is_cursor_band_tool,
+    room_command_words,
 )
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -59,7 +65,6 @@ from band.runtime.decisions import (
     DecisionRegistry,
     Timeout,
 )
-from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from band.workspaces import WorkspaceResolver
 
@@ -140,7 +145,9 @@ class CursorTurn:
 
     room_id: str
     tools: AgentToolsProtocol
-    requester_id: str | None
+    # Who the turn's own notices address: the senders of the inputs it was
+    # admitted with. Later messages never change it.
+    audience: tuple[str, ...]
     release: asyncio.Future[None]
     session_id: str | None = None
     closed: bool = False
@@ -228,6 +235,18 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     def _canonical_tool_name(self, name: str) -> str:
         return canonicalize_cursor_tool_name(name, self._own_tool_names)
 
+    async def try_handle_control(
+        self, msg: PlatformMessage, tools: AgentToolsProtocol
+    ) -> bool:
+        """Handle a ``/cursor`` command; it never takes the provider slot."""
+        handled = await self._handle_control_message(msg, tools, msg.room_id)
+        if handled:
+            tools.turn.settle()
+        return handled
+
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return room_command_words(msg.content) is not None
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -239,19 +258,40 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        if await self._handle_control_message(msg, tools, room_id):
-            tools.turn.settle()
+        # The runtime hands a command to ``try_handle_control`` first; this
+        # keeps one reaching a singleton entry point directly a command too.
+        if await self.try_handle_control(msg, tools):
             return
+        await super().on_message(
+            msg,
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
 
-        # Detached from the caller: on_message returns once a decision opens so
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: ACPClientSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        # Detached from the caller: on_turn returns once a decision opens so
         # the room can deliver its reply, while the turn keeps the provider slot.
         turn = self._reserve_provider_slot(
-            room_id=room_id, tools=tools, requester_id=msg.sender_id
+            room_id=room_id, tools=tools, audience=distinct_sender_ids(messages)
         )
         turn_task = self._launch_turn(
             turn,
             self._run_turn(
-                msg,
+                messages,
                 tools,
                 history,
                 participants_msg,
@@ -286,7 +326,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         return next(iter(self._capacity_requests), room_id) == room_id
 
     def _reserve_provider_slot(
-        self, *, room_id: str, tools: AgentToolsProtocol, requester_id: str | None
+        self, *, room_id: str, tools: AgentToolsProtocol, audience: tuple[str, ...]
     ) -> CursorTurn:
         """Claim the one provider slot, or refuse the input without side effects.
 
@@ -304,7 +344,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn = CursorTurn(
             room_id=room_id,
             tools=tools,
-            requester_id=requester_id,
+            audience=audience,
             release=asyncio.get_running_loop().create_future(),
         )
         self._active_turn = turn
@@ -351,7 +391,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
 
     async def _run_turn(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: ACPClientSessionState,
         participants_msg: str | None,
@@ -360,8 +400,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        await super().on_message(
-            msg,
+        await super().on_turn(
+            messages,
             tools,
             history,
             participants_msg,
@@ -618,7 +658,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         try:
             await turn.tools.send_notice(
                 prompt.replace("{token}", entry.token),
-                mentions=_requester_mentions(turn),
+                mentions=_audience_mentions(turn),
             )
         except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
             logger.warning("Could not deliver Cursor %s decision prompt", kind)
@@ -648,7 +688,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         try:
             await turn.tools.send_notice(
                 DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
-                mentions=_requester_mentions(turn),
+                mentions=_audience_mentions(turn),
             )
         except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
             logger.warning("Could not deliver Cursor %s timeout notice", kind)
@@ -656,8 +696,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _handle_control_message(
         self, msg: PlatformMessage, tools: AgentToolsProtocol, room_id: str
     ) -> bool:
-        words = strip_leading_mentions(msg.content).strip().split()
-        if not words or words[0].lower() != ROOM_COMMAND:
+        words = room_command_words(msg.content)
+        if words is None:
             return False
         mentions = [msg.sender_id]
         if len(words) == 1 or words[1].lower() == CursorCommandWord.DECISIONS:
@@ -818,8 +858,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         await tools.send_notice(content, mentions=mentions)
 
 
-def _requester_mentions(turn: CursorTurn) -> list[str] | None:
-    return [turn.requester_id] if turn.requester_id else None
+def _audience_mentions(turn: CursorTurn) -> list[str] | None:
+    return list(turn.audience) or None
 
 
 __all__ = [

@@ -42,6 +42,15 @@ def copilot() -> ACPClientAdapter:
     return CopilotACPAdapter(CopilotACPAdapterConfig(inject_band_tools=False))
 
 
+def cursor() -> ACPClientAdapter:
+    from band.adapters.cursor_acp import (  # noqa: PLC0415 -- acp extra, absent from some lane venvs
+        CursorACPAdapter,
+        CursorACPAdapterConfig,
+    )
+
+    return CursorACPAdapter(CursorACPAdapterConfig(inject_band_tools=False))
+
+
 def omp() -> ACPClientAdapter:
     from band.adapters.omp_acp import (  # noqa: PLC0415 -- acp extra, absent from some lane venvs
         OmpACPAdapter,
@@ -54,6 +63,7 @@ def omp() -> ACPClientAdapter:
 ADAPTERS: dict[str, AdapterFactory] = {
     "acp": generic,
     "copilot_acp": copilot,
+    "cursor_acp": cursor,
     "omp_acp": omp,
 }
 

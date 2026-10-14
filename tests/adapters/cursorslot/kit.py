@@ -15,11 +15,18 @@ from band.adapters.cursor_acp import CursorACPAdapter, CursorTurn
 from band.core.exceptions import InputNotAccepted
 from band.integrations.acp.client_runtime import ACPRuntime
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate, allow_or_reject
-from tests.integrations.acp.acp_toolkit.harness import AcpSession
+from tests.integrations.acp.acp_toolkit.harness import (
+    AcpSession,
+    TranscriptTools,
+    live_message,
+)
 
 ROOM_A = "room-A"
 ROOM_B = "room-B"
 ROOM_C = "room-C"
+
+# One person writing twice around another: the senders of ``deliver``'s batch.
+BATCH_INPUT_SENDERS = ("alice", "bob", "alice")
 
 # A hang in a peer or a held slot fails a test within this, not at the suite timeout.
 WAIT_S = 5.0
@@ -79,17 +86,44 @@ def active_turn(session: AcpSession) -> CursorTurn:
     return turn
 
 
+def turn_tools(session: AcpSession) -> TranscriptTools:
+    """The tools the active turn was admitted with, where its notices land."""
+    tools = active_turn(session).tools
+    assert isinstance(tools, TranscriptTools)
+    return tools
+
+
+async def deliver(
+    session: AcpSession, content: str, *, room: str, batch: bool = False
+) -> None:
+    """Deliver ``content`` through the singleton entry, or through the batch entry
+    as one input per ``BATCH_INPUT_SENDERS``."""
+    if not batch:
+        await session.send(content, room=room)
+        return
+    await session.send_batch(
+        *(
+            live_message(f"{content} {n}", room_id=room, sender_id=sender)
+            for n, sender in enumerate(BATCH_INPUT_SENDERS, start=1)
+        ),
+        room=room,
+    )
+
+
 async def occupy(
-    session: AcpSession, provider: BusyProvider, *, room: str = ROOM_A
+    session: AcpSession,
+    provider: BusyProvider,
+    *,
+    room: str = ROOM_A,
+    batch: bool = False,
 ) -> asyncio.Task[Any]:
     """Start a turn in ``room`` and return once the peer holds its prompt.
 
-    The returned task is the delivery worker's ``on_message`` call: it ends
-    with the turn for ``prompt`` and as soon as the decision opens for
-    ``approval``.
+    The returned task is the delivery worker's turn call: it ends with the turn
+    for ``prompt`` and as soon as the decision opens for ``approval``.
     """
     provider.parked.clear()
-    sending = asyncio.create_task(session.send("go", room=room))
+    sending = asyncio.create_task(deliver(session, "go", room=room, batch=batch))
     async with asyncio.timeout(WAIT_S):
         await provider.parked.wait()
         if provider.kind == "approval":
@@ -105,14 +139,26 @@ async def finish_turn(provider: BusyProvider, sending: asyncio.Task[Any]) -> Non
         await sending
 
 
-async def is_accepted(session: AcpSession, *, room: str) -> bool:
+async def is_accepted(session: AcpSession, *, room: str, batch: bool = False) -> bool:
     """Whether Cursor takes ``room``'s next input; a taken input runs its turn."""
     try:
         async with asyncio.timeout(WAIT_S):
-            await session.send("next", room=room)
+            await deliver(session, "next", room=room, batch=batch)
     except InputNotAccepted:
         return False
     return True
+
+
+async def command(
+    session: AcpSession, content: str, *, sender_id: str, room: str = ROOM_A
+) -> tuple[bool, TranscriptTools]:
+    """Hand ``content`` to Cursor's control hook as the runtime does for a
+    command; return whether it was consumed and the tools its reply went through."""
+    tools = TranscriptTools()
+    consumed = await cursor_adapter(session).try_handle_control(
+        live_message(content, room_id=room, sender_id=sender_id), tools
+    )
+    return consumed, tools
 
 
 def line_up(session: AcpSession, *rooms: str, generation: int = 1) -> None:
