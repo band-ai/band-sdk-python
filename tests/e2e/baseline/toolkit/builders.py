@@ -233,8 +233,8 @@ def _build_strands(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from strands.models.openai import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
-        OpenAIModel,
+    from strands.models.openai_responses import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
+        OpenAIResponsesModel,
     )
 
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
@@ -247,7 +247,7 @@ def _build_strands(
     api_key = s.llm_credentials.openai_api_key
     return StrandsAdapter(
         StrandsAdapterConfig(custom_section=prompt),
-        llm=OpenAIModel(
+        llm=OpenAIResponsesModel(
             client_args={"api_key": api_key} if api_key else None,
             model_id=s.llm_models.openai_model,
         ),
@@ -358,6 +358,46 @@ def _build_agno(
             instructions=prompt,
             tools=native,
         ),
+        **feature_kwargs(features),
+    )
+
+
+@adapter(Adapter.NOOA, requires=[Dep.ANTHROPIC, Dep.NOOA], supports=_EVERY_CAPABILITY)
+def _build_nooa(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    # A NOOA agent's prompt is its class docstring, so steering goes into the
+    # adapter's custom section beside the Band instructions.
+    from nooa.unifiedllm.registry import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
+        get_llm_client,
+    )
+
+    from band.adapters.nooa import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
+        NooaAdapter,
+        NooaAdapterConfig,
+    )
+    from band.testing.nooa import (  # noqa: PLC0415 -- isolates the nooa extra from the other frameworks this file builds
+        room_agent_class,
+    )
+
+    api_key = s.llm_credentials.anthropic_api_key
+    llm = get_llm_client(
+        f"anthropic/{s.llm_models.anthropic_model}",
+        **({"api_key": api_key} if api_key else {}),
+    )
+    agent = room_agent_class(
+        llm,
+        name="BaselineAgent",
+        doc="You are a helpful participant in a Band chat room.",
+    )
+    return NooaAdapter(
+        NooaAdapterConfig(custom_section=prompt),
+        agent=agent,
+        additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
 

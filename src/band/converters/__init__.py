@@ -15,6 +15,7 @@ Install the extra you need::
     uv add band-sdk[google_adk]
     uv add band-sdk[opencode]
     uv add band-sdk[strands]
+    uv add band-sdk[nooa]
 """
 
 from __future__ import annotations
@@ -91,6 +92,12 @@ if TYPE_CHECKING:
     from band.converters.langchain import (
         LangChainMessages as LangChainMessages,
     )
+    from band.converters.nooa import (
+        NooaHistoryConverter as NooaHistoryConverter,
+    )
+    from band.converters.nooa import (
+        NooaTranscript as NooaTranscript,
+    )
     from band.converters.opencode import (
         OpencodeHistoryConverter as OpencodeHistoryConverter,
     )
@@ -132,5 +139,6 @@ __all__, __getattr__ = lazy_exports(
     gemini=["GeminiHistoryConverter", "GeminiMessages"],
     google_adk=["GoogleADKHistoryConverter", "GoogleADKMessages"],
     opencode=["OpencodeHistoryConverter"],
+    nooa=["NooaHistoryConverter", "NooaTranscript"],
     strands=["StrandsHistoryConverter", "StrandsMessages"],
 )

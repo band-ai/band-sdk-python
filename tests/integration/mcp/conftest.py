@@ -103,7 +103,7 @@ def _extract_id(payload: Any) -> str | None:
     Most tools wrap results as ``{"id": ...}`` or ``{"data": {"id": ...}}``,
     but ``band_create_chatroom``'s underlying SDK method returns the room id
     as a bare ``str`` (``AgentTools.create_chatroom() -> str``), which
-    ``_serialize()``/``LiveHarness.call()`` round-trips through JSON as a
+    ``tool_result_text``/``LiveHarness.call()`` round-trips through JSON as a
     plain string, not a dict -- so that shape is the id itself.
     """
     if isinstance(payload, str):
@@ -140,7 +140,7 @@ class LiveHarness:
     async def call_raw(self, name: str, **args: Any) -> str:
         result = await self._mcp._tool_manager.call_tool(name, args)
         # FastMCP returns the handler's string return wrapped in content; the
-        # engine's registrations return a JSON string via ``_serialize``.
+        # engine's registrations return a JSON string via ``tool_result_text``.
         if isinstance(result, str):
             return result
         if isinstance(result, (list, tuple)) and result:

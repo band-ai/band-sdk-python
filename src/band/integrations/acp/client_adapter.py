@@ -110,6 +110,7 @@ from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
     render_system_prompt,
+    system_updates,
 )
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
@@ -188,11 +189,11 @@ SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
 #
 # Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
 # (12+ adapters each hardcode their own copy); it has already drifted once
-# (parlant.py uses "[System Update]: " for the identical concept). Extracting
-# one real cross-adapter constant is out of scope here — it would touch every
-# other adapter's own file for no ACP-specific reason — but is worth a
-# follow-up so the convention has one source instead of N private copies.
-SYSTEM_UPDATE_PREFIX = "[System]: "
+# (the Parlant adapter uses "[System Update]: " for the identical concept).
+# Extracting one real cross-adapter constant is out of scope here — it would
+# touch every other adapter's own file for no ACP-specific reason — but is
+# worth a follow-up so the convention has one source instead of N private
+# copies.
 
 # Marks where the replayed transcript ends and the live message begins, so
 # the boundary is mechanical rather than inferred (transcript lines and the
@@ -1466,11 +1467,7 @@ class ACPClientAdapter(
         They arrive only on change (the runtime marks them sent), so inject
         them on whichever turn carries them — mirrors codex and opencode.
         """
-        return [
-            f"{SYSTEM_UPDATE_PREFIX}{update}"
-            for update in (participants_msg, contacts_msg)
-            if update
-        ]
+        return system_updates(participants_msg, contacts_msg)
 
     @staticmethod
     def _framed_replay(replay: list[str], live_message: str) -> list[str]:

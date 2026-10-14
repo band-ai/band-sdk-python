@@ -45,6 +45,9 @@ name: E2E (baseline)
 #                  inside the pytest process; the container reaches it back via
 #                  host.docker.internal. Own lane (shares the `dev` extra) for the
 #                  server it stands up.
+# - nooa         — NooaAdapter (NVIDIA NOOA). Shares the `dev` extra, which installs
+#                  NOOA only on Python 3.12-3.13 off Windows (it imports fcntl), so
+#                  the lane is Linux-only.
 #
 # CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
 # CLI runtime (no setup step), so it needs no isolated lane or GitHub auth.
@@ -76,6 +79,7 @@ on:
           - google
           - backends
           - letta
+          - nooa
           - parlant
       os:
         description: "OS to run on (all = Linux + Windows)."

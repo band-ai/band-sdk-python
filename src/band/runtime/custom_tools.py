@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
+from pydantic.json_schema import GenerateJsonSchema
 
+from band.core.exceptions import InvalidToolArgumentsError
 from band.core.turn import Turn
+from band.runtime.tools.registry import ALL_TOOL_NAMES
 from band.runtime.tools.schema import is_failed_tool_output
 from band.runtime.tools.types import TurnEffect
 
@@ -86,17 +90,38 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
     return name.lower()
 
 
-def custom_tool_to_openai_schema(input_model: type[BaseModel]) -> dict[str, Any]:
+def reject_conflicting_tool_names(names: Iterable[str]) -> None:
+    """Refuse custom tool names that would replace another tool.
+
+    For a framework whose tool registry is last-wins, a name shadowing a Band
+    platform tool or another custom tool silently replaces it.
+    """
+    counts = Counter(names)
+    if shadowed := sorted(name for name in counts if name in ALL_TOOL_NAMES):
+        raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
+    if duplicated := sorted(name for name, count in counts.items() if count > 1):
+        raise ValueError(f"Custom tool names must be unique: {duplicated}")
+
+
+def custom_tool_to_openai_schema(
+    input_model: type[BaseModel],
+    *,
+    schema_generator: type[GenerateJsonSchema] | None = None,
+) -> dict[str, Any]:
     """
     Convert Pydantic model to OpenAI function schema.
 
     Args:
         input_model: Pydantic model class defining tool input
+        schema_generator: Optional model-schema generator for a framework's metadata.
 
     Returns:
         OpenAI-compatible tool schema with type="function"
     """
-    schema = input_model.model_json_schema()
+    schema_options: dict[str, Any] = (
+        {} if schema_generator is None else {"schema_generator": schema_generator}
+    )
+    schema = input_model.model_json_schema(**schema_options)
     schema.pop("title", None)  # Remove title, not needed in schema
 
     return {
@@ -195,6 +220,7 @@ async def execute_custom_tool(
     arguments: dict[str, Any],
     *,
     turn: Turn | None,
+    strict: bool | None = None,
 ) -> Any:
     """
     Execute custom tool with Pydantic validation.
@@ -204,22 +230,24 @@ async def execute_custom_tool(
         arguments: Raw arguments dict from LLM
         turn: The turn to record the tool's declared effect on, or ``None``
             when the tool is not bound to a room, so it cannot settle a turn.
+        strict: Overrides the input model's own strictness; ``None`` keeps it.
 
     Returns:
         Tool execution result
 
     Raises:
-        ValueError: If arguments don't match InputModel schema (formatted for LLM)
+        InvalidToolArgumentsError: If arguments don't match InputModel schema
+            (formatted for LLM)
         Exception: Any exception from tool function (for adapter to catch)
     """
     model, func = tool
 
     # Validate arguments, format errors for LLM readability
     try:
-        validated = model.model_validate(arguments)
+        validated = model.model_validate(arguments, strict=strict)
     except ValidationError as e:
         tool_name = get_custom_tool_name(model)
-        raise ValueError(
+        raise InvalidToolArgumentsError(
             f"Invalid arguments for {tool_name}: {format_validation_error(e)}"
         ) from e
 

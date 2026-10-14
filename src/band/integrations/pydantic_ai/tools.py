@@ -23,17 +23,16 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_core import SchemaValidator, core_schema
 
 from band.core.protocols import AgentToolsProtocol
-from band.core.tool_filter import filter_tool_schemas, sanitize_tool_schema
+from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import AdapterFeatures, MessageType
 from band.runtime.tools import (
     BandTool,
     ToolDefinition,
-    decode_image_block,
-    get_band_tool_category,
+    decode_image_blocks,
     get_tool_description,
     is_image_passthrough_result,
-    iter_tool_definitions,
     platform_args_schema,
+    selected_tool_definitions,
     serialize_tool_result,
     turn_effect,
     validate_tool_arguments,
@@ -55,17 +54,9 @@ def build_band_pydantic_ai_tools(
     features: AdapterFeatures,
 ) -> list[Tool[AgentToolsProtocol]]:
     """The native pydantic-ai tools for the built-in Band surface ``features`` allows."""
-    return [_build_tool(definition) for definition in _selected_definitions(features)]
-
-
-def _selected_definitions(features: AdapterFeatures) -> list[ToolDefinition]:
-    """The agent-surface definitions left after the capability gate and filters."""
-    return filter_tool_schemas(
-        iter_tool_definitions(capabilities=features.capabilities),
-        features,
-        get_name=lambda definition: definition.name,
-        get_category=lambda definition: get_band_tool_category(definition.name),
-    )
+    return [
+        _build_tool(definition) for definition in selected_tool_definitions(features)
+    ]
 
 
 def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
@@ -272,9 +263,7 @@ def _normalized_result(definition: ToolDefinition, result: Any) -> Any:
     if is_image_passthrough_result(definition.name, result):
         return [
             BinaryContent(data=data, media_type=media_type)
-            for data, media_type in (
-                decode_image_block(block) for block in result["content"]
-            )
+            for data, media_type in decode_image_blocks(result)
         ]
     return serialize_tool_result(result)
 

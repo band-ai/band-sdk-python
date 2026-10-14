@@ -18,13 +18,14 @@ from band.core.protocols import (
 )
 from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
+from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import (
-    BacklogProcessResult,
     Execution,
     ExecutionContext,
     ExecutionState,
     ResyncOutcome,
+    TurnOutcome,
     _error_label,
 )
 from band.runtime.tools import AgentTools
@@ -986,7 +987,7 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         mock_handler.assert_not_awaited()
         mock_link_with_next.mark_processing.assert_not_awaited()
         mock_link_with_next.mark_processed.assert_not_awaited()
@@ -1208,8 +1209,8 @@ class TestCrashRecoverySync:
 
         assert handler_calls == 1
         assert mock_link_with_next.mark_processing.await_count == 1
-        assert owner_handled is True
-        assert duplicate_handled is False
+        assert owner_handled is TurnOutcome.ADVANCED
+        assert duplicate_handled is TurnOutcome.RETRY_LATER
 
     async def test_mark_processing_failure_does_not_execute_message(
         self, mock_link_with_next, mock_handler
@@ -1251,7 +1252,7 @@ class TestCrashRecoverySync:
         )
         event = make_message_event(room_id="room-123", msg_id="msg-handler-fails")
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
 
         mock_link_with_next.mark_failed.assert_awaited_once_with(
             "room-123", "msg-handler-fails", "handler failed"
@@ -1285,7 +1286,7 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.RETRY_LATER
+        assert result is TurnOutcome.RETRY_LATER
         mock_handler.assert_awaited_once()
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-ack-fails"
@@ -1342,10 +1343,8 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        assert (
-            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
-        )
-        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1380,10 +1379,8 @@ class TestCrashRecoverySync:
             ),
         )
 
-        assert (
-            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
-        )
-        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1882,7 +1879,7 @@ class TestCrashRecoverySync:
         # A further delivery of the same message must not invoke the handler.
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         assert failing_handler.await_count == 1
 
 
@@ -1957,7 +1954,9 @@ class TestTurnFailureReport:
             room_id="room-123", msg_id="msg-ws", sender_id="user-1"
         )
 
-        assert await self._context(mock_link)._process_event(event) is True
+        assert (
+            await self._context(mock_link)._process_event(event) is TurnOutcome.ADVANCED
+        )
 
         mock_link.mark_failed.assert_awaited_once()
         assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
@@ -1970,15 +1969,15 @@ class TestTurnFailureReport:
             room_id="room-123", msg_id="msg-retried", sender_id="user-1"
         )
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
         error_events.assert_not_awaited()
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
         assert mock_link.mark_failed.await_count == 2
         error_events.assert_awaited_once()
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
         error_events.assert_awaited_once()
 
     @pytest.mark.parametrize("sender_type", ["Agent", "System"])
@@ -1994,7 +1993,9 @@ class TestTurnFailureReport:
             sender_type=sender_type,
         )
 
-        assert await self._context(mock_link)._process_event(event) is True
+        assert (
+            await self._context(mock_link)._process_event(event) is TurnOutcome.ADVANCED
+        )
 
         error_events.assert_awaited_once()
 
@@ -2071,7 +2072,7 @@ class TestTurnFailureReport:
             self._backlog_message("msg-post-fails")
         )
 
-        assert result is BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
         error_events.assert_awaited_once()
 
@@ -2466,10 +2467,27 @@ class TestParticipantCallbacks:
 
         await ctx.stop()
 
+    @pytest.mark.looptime
+    @pytest.mark.parametrize("startup_delay", [0.0, 2.0])
     async def test_participant_callback_error_does_not_block_handler(
-        self, mock_link, mock_handler
-    ):
-        """Participant callback errors should not stop normal execution."""
+        self,
+        mock_link: MagicMock,
+        mock_handler: AsyncMock,
+        startup_delay: float,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        completed = asyncio.Event()
+
+        async def next_message(room_id: str) -> None:
+            await asyncio.sleep(startup_delay)
+
+        async def handler_completed(
+            ctx: ExecutionContext, event: PlatformEvent
+        ) -> None:
+            completed.set()
+
+        mock_link.get_next_message.side_effect = next_message
+        mock_handler.side_effect = handler_completed
         on_participant_added = AsyncMock(side_effect=RuntimeError("callback failed"))
         ctx = ExecutionContext(
             "room-123",
@@ -2478,21 +2496,20 @@ class TestParticipantCallbacks:
             config=SessionConfig(enable_context_hydration=False),
             on_participant_added=on_participant_added,
         )
-        await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
-
         event = make_participant_added_event(
             room_id="room-123",
             participant_id="user-2",
             name="User Two",
         )
-        await ctx.on_event(event)
-        await wait_for_condition(lambda: mock_handler.await_count >= 1)
-
-        on_participant_added.assert_awaited_once()
-        mock_handler.assert_awaited_once()
-
-        await ctx.stop()
+        await ctx.start()
+        try:
+            await ctx.on_event(event)
+            await completed.wait()
+            on_participant_added.assert_awaited_once()
+            mock_handler.assert_awaited_once_with(ctx, event)
+            assert "on_participant_added error for room-123" in caplog.text
+        finally:
+            await ctx.stop()
 
 
 class TestGracefulStopWithTimeout:

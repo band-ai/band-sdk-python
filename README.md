@@ -470,6 +470,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
 | Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
 | Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
+| NOOA (NVIDIA)    | `nooa`        | `NooaAdapter`                        | [docs](docs/adapters/nooa.md) | [examples](examples/nooa/)   |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/opencode.md) | [examples](examples/opencode/)       |
 
@@ -577,6 +578,7 @@ Adapter emit support:
 | Pydantic AI | Yes | - | - | Yes |
 | LangGraph | Yes | - | - | Yes |
 | Strands Agents | Yes | - | - | Yes |
+| NOOA | Yes | Yes | - | Yes |
 | Parlant | - | - | - | - |
 | A2A / A2A Gateway | - | - | - | - |
 | ACP Client | - | - | - | - |
@@ -900,7 +902,7 @@ uv run python examples/run_agent.py --example anthropic
 uv run python examples/run_agent.py --example codex
 ```
 
-`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, `examples/agno/01_basic_agent.py`, `examples/strands/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
+`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, `examples/agno/01_basic_agent.py`, `examples/strands/01_basic_agent.py`, `examples/nooa/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
 
 For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged services in the same room, see [examples/mixed](examples/mixed/).
 

@@ -580,10 +580,19 @@ class BandLink:
         return await self._messages.mark_failed(self.rest, room_id, message_id, error)
 
     async def report_activity(
-        self, room_id: str, working: bool, *, timeout_seconds: int = 2
+        self,
+        room_id: str,
+        working: bool,
+        *,
+        timeout_seconds: int = 2,
+        on_stopped: Callable[[], None] | None = None,
     ) -> bool:
         return await self._messages.report_activity(
-            self.rest, room_id, working, timeout_seconds=timeout_seconds
+            self.rest,
+            room_id,
+            working,
+            timeout_seconds=timeout_seconds,
+            on_stopped=on_stopped,
         )
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:

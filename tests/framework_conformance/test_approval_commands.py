@@ -48,6 +48,9 @@ SHELL_POLICIES = tuple(
 
 WriteCalls = Callable[[str, Path], ToolCalls]
 
+# This bounds the whole shell lifetime, including initialization on a fresh runner.
+SHELL_PROCESS_TIMEOUT_SECONDS = 30
+
 
 @pytest.fixture(params=SHELL_POLICIES, ids=lambda policy: policy.name)
 def shell_policy(request: pytest.FixtureRequest) -> UnattendedPolicy:
@@ -199,6 +202,7 @@ def test_shell_redirect_readback_handles_host_encodings(
     assert written_lines(target) == [marker]
 
 
+@pytest.mark.timeout(3 * SHELL_PROCESS_TIMEOUT_SECONDS)
 @pytest.mark.parametrize(
     "shell",
     [None, "pwsh", "powershell"] if sys.platform == "win32" else [None],
@@ -219,9 +223,16 @@ def test_approval_commands_write_and_append_with_host_shell(
     marker = "approval-marker"
     target.write_text("old", encoding="utf-8")
 
-    for command in (marker_command, appending_command):
+    for command, expected in (
+        (marker_command, [marker]),
+        (appending_command, [marker, marker]),
+    ):
         text = command(marker, target)
-        args = text if shell is None else [shell, "-NoProfile", "-Command", text]
+        args = (
+            text
+            if shell is None
+            else [shell, "-NoProfile", "-NonInteractive", "-Command", text]
+        )
         logger.info("Starting shell command: %s", args)
         started = time.monotonic()
         try:
@@ -230,18 +241,24 @@ def test_approval_commands_write_and_append_with_host_shell(
                 shell=shell is None,
                 check=True,
                 cwd=tmp_path,
-                timeout=10,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
+                timeout=SHELL_PROCESS_TIMEOUT_SECONDS,
             )
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+            contents = target.read_bytes() if target.exists() else None
             logger.exception(
                 "Shell command failed after %ss: stdout=%r stderr=%r target=%r",
                 time.monotonic() - started,
-                error.stdout,
-                error.stderr,
-                target.read_bytes() if target.exists() else None,
+                exc.stdout,
+                exc.stderr,
+                contents,
             )
-            raise
+            pytest.fail(
+                f"{exc}\nstdout={exc.stdout!r}\nstderr={exc.stderr!r}"
+                f"\ntarget bytes={contents!r}",
+                pytrace=False,
+            )
         logger.info(
             "Shell command completed after %ss: returncode=%s stdout=%r stderr=%r",
             time.monotonic() - started,
@@ -249,7 +266,7 @@ def test_approval_commands_write_and_append_with_host_shell(
             result.stdout,
             result.stderr,
         )
-    assert written_lines(target) == [marker, marker]
+        assert written_lines(target) == expected
 
 
 GATED_COMMAND = "cat approval.txt"

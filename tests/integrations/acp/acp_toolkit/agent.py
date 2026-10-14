@@ -44,6 +44,7 @@ from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
+from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.session_config import SessionConfigOption, find_select
 from band.integrations.mcp import BandMCPTransport
 from tests.mcpclient import mcp_session
@@ -498,18 +499,14 @@ class FakeACPAgent:
         title: str | None = None,
         raw_input: dict[str, Any] | None = None,
         allow_option_id: str | None = "allow-1",
+        options: list[PermissionOption] | None = None,
     ) -> FakeACPAgent:
-        """Ask to run a tool, offering ``allow_option_id`` (``None``: reject only)."""
-        options = [
-            PermissionOption(kind="reject_once", name="Reject", optionId="reject-1")
-        ]
-        if allow_option_id is not None:
-            options.insert(
-                0,
-                PermissionOption(
-                    kind="allow_once", name="Allow", optionId=allow_option_id
-                ),
-            )
+        """Ask to run a tool.
+
+        ``options`` is the menu when given. Otherwise ``allow_option_id`` builds
+        the allow/reject menu, or reject-only when it is ``None``.
+        """
+        offered = options if options is not None else allow_or_reject(allow_option_id)
 
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
@@ -517,11 +514,17 @@ class FakeACPAgent:
                 ToolCallUpdate(
                     tool_call_id=tool_call_id, title=title, raw_input=raw_input
                 ),
-                options,
+                offered,
             )
-            a.approved = (
-                isinstance(resp.outcome, AllowedOutcome)
-                and resp.outcome.option_id == allow_option_id
+            selected = (
+                resp.outcome.option_id
+                if isinstance(resp.outcome, AllowedOutcome)
+                else None
+            )
+            a.approved = any(
+                option.option_id == selected
+                and option.kind in (ALLOW_ONCE_KIND, ALLOW_ALWAYS_KIND)
+                for option in offered
             )
 
         self._script.append(_action)
@@ -748,6 +751,20 @@ class FakeACPAgent:
             for action in self._script:
                 await action(self, session_id)
         return PromptResponse(stop_reason="end_turn", usage=self._usage)
+
+
+def allow_or_reject(allow_option_id: str | None = "allow-1") -> list[PermissionOption]:
+    """The usual permission menu: one-shot allow, one-shot reject.
+
+    ``allow_option_id=None`` offers reject only.
+    """
+    reject = PermissionOption(kind="reject_once", name="Reject", optionId="reject-1")
+    if allow_option_id is None:
+        return [reject]
+    return [
+        PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id),
+        reject,
+    ]
 
 
 def select_option(

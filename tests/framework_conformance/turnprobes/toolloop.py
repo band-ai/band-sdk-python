@@ -42,6 +42,26 @@ async def run_strands(script: TurnScript, tools: FakeAgentTools) -> None:
     await adapter.on_event(turn_input(tools))
 
 
+async def run_nooa(script: TurnScript, tools: FakeAgentTools) -> None:
+    pytest.importorskip("nooa")
+    from band.adapters.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
+        NooaAdapter,
+    )
+    from band.testing.nooa import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
+        room_agent_class,
+        room_call,
+        scripted_llm,
+    )
+
+    # NOOA returns a typed result rather than text, so final_text has no channel.
+    llm = scripted_llm(
+        *(room_call(call.name, call.arguments) for call in script.tool_calls)
+    )
+    adapter = NooaAdapter(agent=room_agent_class(llm))
+    await adapter.on_started("Agent", "A test agent")
+    await adapter.on_event(turn_input(tools))
+
+
 async def run_pydantic_ai(script: TurnScript, tools: FakeAgentTools) -> None:
     pytest.importorskip("pydantic_ai")
     from pydantic_ai.models.function import (  # noqa: PLC0415 -- pydantic_ai extra, absent from some lane venvs
@@ -214,9 +234,11 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
     from band.adapters.google_adk import (  # noqa: PLC0415 -- google_adk extra, absent from some lane venvs
         GoogleADKAdapter,
         _get_tool_bridge_class,
+        _require_adk,
     )
 
     tool_bridge = _get_tool_bridge_class()
+    _, _, _, model_class, _ = _require_adk()
 
     def scripted_runner(turn_tools: Any) -> MagicMock:
         """An ADK runner whose tool loop calls the script through the adapter's
@@ -239,6 +261,7 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
         runner.session_service.create_session = AsyncMock()
         runner.run_async = run_async
         runner.close = AsyncMock()
+        runner.agent.model = model_class(model=adapter.config.model)
         return runner
 
     adapter = GoogleADKAdapter()
@@ -249,6 +272,7 @@ async def run_google_adk(script: TurnScript, tools: FakeAgentTools) -> None:
 
 PROBES: dict[str, TurnOutcomeProbe] = {
     "strands": TurnOutcomeProbe(run=run_strands),
+    "nooa": TurnOutcomeProbe(run=run_nooa),
     "pydantic_ai": TurnOutcomeProbe(run=run_pydantic_ai),
     "agno": TurnOutcomeProbe(run=run_agno),
     "langgraph": TurnOutcomeProbe(run=run_langgraph),

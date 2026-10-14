@@ -29,7 +29,7 @@ async def _call(
 ) -> Any:
     """Dispatch through the real engine handler and parse its JSON string.
 
-    Matches the engine's wire shape (``_serialize()``): a dict/list result
+    Matches the engine's wire shape (``tool_result_text``): a dict/list result
     round-trips through ``json.dumps``, while a raw string result (the
     "Error: ..." handler convention) passes through unparsed.
     """
