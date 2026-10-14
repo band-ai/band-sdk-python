@@ -844,6 +844,27 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 
 ### Adapter Dependency Conflicts
 
+Pydantic AI uses OpenAI 3 and its default HTTPX2 client. Current CrewAI, Strands,
+and NOOA/LiteLLM require OpenAI 2; install these in separate environments from
+Pydantic AI. This is a breaking dependency compatibility change for consumers
+that previously combined those extras. Adapter signatures and Band REST's
+HTTPX transport remain unchanged. Injected OpenAI clients must match their
+installed OpenAI major.
+
+LangGraph and Parlant support either major. LangGraph + Strands remains a
+supported OpenAI-2 combination. Agents from separate environments can still
+collaborate through Band.
+
+For testing, `dev` and `dev-parlant` use OpenAI 3; `dev-crewai` and `dev-legacy`
+use OpenAI 2. `dev-legacy` contains Strands, conditional NOOA, and LangGraph.
+Run isolated environments without replacing a concurrently used `.venv`:
+
+```bash
+uv run --locked --isolated --python 3.12 --all-packages --extra dev pytest tests/ --ignore=tests/e2e/ --ignore=tests/integration/
+uv run --locked --isolated --python 3.12 --all-packages --extra dev-legacy pytest tests/adapters/test_strands_adapter.py tests/adapters/nooa/ tests/framework_conformance/ -k 'strands or nooa or legacy'
+```
+
+
 Three extras are resolved separately, because crewai carries the narrowest transitive pins and they have repeatedly collided:
 
 | Pair | crewai's pin | Other side |

@@ -199,7 +199,7 @@ def assert_every_item_is_schedulable(items: list[pytest.Item]) -> None:
         homes = _home_lanes(item, lane_of)
         override = _override_lane(item)
         if override is not None:
-            hosts = hosting_lanes(homes)
+            hosts = hosting_lanes(item_frameworks(item))
             if override not in hosts:
                 offenders.append(
                     f"{item.nodeid} pins @lane({override!r}) but no lane hosts all its "
@@ -208,7 +208,7 @@ def assert_every_item_is_schedulable(items: list[pytest.Item]) -> None:
             continue
         if len(homes) <= 1:
             continue  # single home lane (or adapter-agnostic) — always schedulable
-        hosts = hosting_lanes(homes)
+        hosts = hosting_lanes(item_frameworks(item))
         if hosts:
             offenders.append(
                 f"{item.nodeid} spans home lanes {sorted(homes)} but shares an extra; "

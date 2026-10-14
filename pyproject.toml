@@ -68,8 +68,8 @@ letta = [
     "mcp>=1.28.1,<2",
 ]
 pydantic-ai = [
-    "pydantic-ai-slim[anthropic]>=2.18.0",
-    "openai>=2.0.0",
+    "pydantic-ai-slim[anthropic,openai]>=2.55.0",
+    "openai>=3.26.0,<4",
 ]
 anthropic = [
     "anthropic>=0.75.0,<2",
@@ -78,7 +78,7 @@ langgraph = [
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
     "langgraph>=1.0.0",
-    "langchain-openai>=0.3.0",
+    "langchain-openai>=1.5.0",
     "langchain-anthropic>=0.3.0",
     "langchain-community>=0.4.0",  # 0.4.0+ required for langchain 1.0 compatibility
     "langchain-text-splitters>=0.3.0",
@@ -101,7 +101,7 @@ parlant = [
 ]
 crewai = [
     "crewai==1.15.27",
-    "openai>=2.0.0",  # crewai 1.14.3 requires openai>=2.0.0
+    "openai>=2.0.0,<3",  # CrewAI requires the legacy OpenAI client
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
 ]
@@ -122,7 +122,7 @@ a2a_gateway_demo = [
     "starlette>=0.40.0",    # HTTP server
     "uvicorn>=0.29",      # ASGI server
     "langgraph>=1.0.0",     # LangGraph for orchestrator agent
-    "langchain-openai>=0.3.0",  # OpenAI model for LLM
+    "langchain-openai>=1.5.0",  # OpenAI model for LLM
     "click>=8.0.0",         # CLI for demo orchestrator
 ]
 acp = [
@@ -172,7 +172,7 @@ agno = [
 ]
 strands = [
     "strands-agents[openai]>=1.50.1,<2",
-    "openai>=2.0.0",
+    "openai>=2.0.0,<3",
 ]
 # NOOA supports Python 3.12 and 3.13 on POSIX only (it imports fcntl); elsewhere
 # the extra installs nothing.
@@ -180,7 +180,8 @@ nooa = [
     "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14' and sys_platform != 'win32'",
 ]
 
-# dev extra includes ALL framework deps for testing EXCEPT crewai and parlant.
+# Modern dev excludes CrewAI, Parlant, Strands and NOOA.
+# Strands and NOOA require OpenAI 2 and live in dev-legacy.
 # crewai is declared conflicting with both parlant and pydantic-ai (its pydantic
 # ceiling and exact `~=` pins); parlant is declared conflicting with pydantic-ai
 # because their `griffe`/`griffelib` transitive deps are two different PyPI
@@ -203,7 +204,7 @@ dev = [
     "httpx>=0.24.0",  # Already in main deps, for mocking
     "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
     # Include pydantic-ai for testing
-    "pydantic-ai-slim>=2.18.0",
+    "pydantic-ai-slim[anthropic,openai]>=2.55.0",
     # Include anthropic for testing
     "anthropic>=0.75.0,<2",
     # Include claude_sdk for testing
@@ -214,11 +215,11 @@ dev = [
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
     "langgraph>=1.0.0",
-    "langchain-openai>=0.3.0",
+    "langchain-openai>=1.5.0",
     "langchain-anthropic>=0.3.0",
     "langchain-community>=0.4.0",
     "langchain-text-splitters>=0.3.0",
-    "openai>=2.0.0",
+    "openai>=3.26.0,<4",
     "beautifulsoup4>=4.12.0",
     # Include a2a-sdk for testing
     "a2a-sdk>=1.1.2,<2",
@@ -241,10 +242,6 @@ dev = [
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
     # Include Agno for testing
     "agno>=2.6.0",
-    # Include Strands Agents for testing
-    "strands-agents[openai]>=1.50.1,<2",
-    # Include NOOA for testing (Python 3.12 and 3.13, POSIX only)
-    "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14' and sys_platform != 'win32'",
     # Include letta-client for testing
     "letta-client>=1.0.0",
     # Include bridge deps for testing
@@ -286,7 +283,7 @@ dev-crewai = [
     "httpx>=0.24.0",
     # CrewAI and its deps
     "crewai==1.15.27",
-    "openai>=2.0.0",
+    "openai>=2.0.0,<3",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
     # Anthropic client: the baseline E2E conftest imports it at module load and
@@ -318,13 +315,49 @@ dev-parlant = [
     "httpx>=0.24.0",
     # Parlant and its deps (see the parlant extra for why >=3.3.2)
     "parlant>=3.3.2",
-    "openai>=2.0.0",
+    "openai>=3.26.0,<4",
     "werkzeug>=3.1.6",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no parlant conflict.
     "anthropic>=0.75.0,<2",
     # A2A e2e smokes import band.integrations.a2a at module load, no parlant conflict
     "a2a-sdk>=1.1.2,<2",
+    # Pretty E2E test output
+    "rich>=13.0.0",
+    # Development tools
+    "ruff>=0.8.0",
+    "pyrefly>=0.18.0",
+]
+
+# OpenAI-2 frameworks share test tooling and retain separate E2E lanes.
+dev-legacy = [
+    "pydantic-settings>=2.0.0",
+    "pytest>=7.0.0",
+    "pytest-markdown-docs>=0.9.2",
+    "pytest-asyncio>=0.21.0",
+    "looptime>=0.7",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+    "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
+    "pytest-timeout>=2.4.0",
+    "band-testing-python==0.1.4",
+    "httpx>=0.24.0",
+    # OpenAI-2 frameworks and their LangGraph peer
+    "strands-agents[openai]>=1.50.1,<2",
+    "nooa>=0.0.10,<0.1; python_version >= '3.12' and python_version < '3.14' and sys_platform != 'win32'",
+    "openai>=2.0.0,<3",
+    # Shared clients for baseline collection and the judge.
+    "anthropic>=0.75.0,<2",
+    "a2a-sdk>=1.1.2,<2",
+    "langchain>=1.0.0",
+    "langchain-core>=1.2.11",
+    "langgraph>=1.0.0",
+    "langchain-openai>=1.5.0",
+    "langchain-anthropic>=0.3.0",
+    "langchain-community>=0.4.0",  # 0.4.0+ required for langchain 1.0 compatibility
+    "langchain-text-splitters>=0.3.0",
+    "beautifulsoup4>=4.12.0",
     # Pretty E2E test output
     "rich>=13.0.0",
     # Development tools
@@ -477,6 +510,15 @@ conflicts = [
         { extra = "dev-parlant" },
         { extra = "crewai" },
     ],
+    [{ extra = "dev" }, { extra = "strands" }],
+    [{ extra = "dev" }, { extra = "nooa" }],
+    [{ extra = "dev" }, { extra = "dev-legacy" }],
+    [{ extra = "pydantic-ai" }, { extra = "strands" }],
+    [{ extra = "pydantic-ai" }, { extra = "nooa" }],
+    [{ extra = "pydantic-ai" }, { extra = "dev-legacy" }],
+    [{ extra = "dev-parlant" }, { extra = "strands" }],
+    [{ extra = "dev-parlant" }, { extra = "nooa" }],
+    [{ extra = "dev-parlant" }, { extra = "dev-legacy" }],
 ]
 
 [tool.ruff.lint]
@@ -523,6 +565,8 @@ project_excludes = [
 ignore-missing-imports = [
     "crewai.*",
     "parlant.*",
+    "strands.*",
+    "nooa.*",
     "nest_asyncio",
 ]
 # Disable the default **/.[!/.]*/** exclude so pyrefly works inside

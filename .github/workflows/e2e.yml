@@ -45,7 +45,8 @@ name: E2E (baseline)
 #                  inside the pytest process; the container reaches it back via
 #                  host.docker.internal. Own lane (shares the `dev` extra) for the
 #                  server it stands up.
-# - nooa         — NooaAdapter (NVIDIA NOOA). Shares the `dev` extra, which installs
+# - strands      — Strands Responses provider on OpenAI 2 (`dev-legacy`).
+# - nooa         — NooaAdapter (NVIDIA NOOA). Shares the `dev-legacy` extra, which installs
 #                  NOOA only on Python 3.12-3.13 off Windows (it imports fcntl), so
 #                  the lane is Linux-only.
 #
@@ -79,6 +80,7 @@ on:
           - google
           - backends
           - letta
+          - strands
           - nooa
           - parlant
       os:
@@ -190,10 +192,9 @@ jobs:
       # @pytest.mark.timeout(extra=...). See tests/e2e/baseline/conftest.py.
       # The registry scopes which adapters run in this lane.
       BAND_E2E_LANE: ${{ matrix.lane }}
-      # The dev-crewai and dev-parlant venvs each lack the other frameworks;
-      # tolerate missing framework configs there instead of failing fast (mirrors
-      # ci.yml's crewai and parlant jobs).
-      BAND_ALLOW_MISSING_FRAMEWORKS: ${{ (matrix.extra == 'dev-crewai' || matrix.extra == 'dev-parlant') && '1' || '0' }}
+      # Isolated extras lack modern frameworks; their owning jobs verify
+      # required configs while tolerating other environments' dependencies.
+      BAND_ALLOW_MISSING_FRAMEWORKS: ${{ (matrix.extra == 'dev-crewai' || matrix.extra == 'dev-parlant' || matrix.extra == 'dev-legacy') && '1' || '0' }}
       # Secrets carry an E2E_ prefix in GitHub (so they're clearly scoped to this
       # workflow), but the code reads the unprefixed names — the mapping happens
       # here: the env var keeps its code-expected name, the secret is prefixed.

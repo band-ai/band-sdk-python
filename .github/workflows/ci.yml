@@ -102,10 +102,10 @@ jobs:
       # Linux-only: doc snippets are OS-independent, and this step relies on
       # git ls-files globbing that we don't need to re-run per platform.
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      # examples/ READMEs have illustrative fragments not yet snippet-testable
+      # NOOA snippets run in test-legacy; examples/ READMEs are illustrative.
       run: |
         # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
-        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
 
 
   test-crewai:
@@ -175,6 +175,79 @@ jobs:
           src/band/converters/crewai.py \
           src/band/converters/crewai_flow.py \
           src/band/integrations/crewai/
+
+
+  test-legacy:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.12', '3.13']
+      fail-fast: false
+
+    # Use bash on every OS so the multiline pytest and pyrefly commands stay
+    # identical across Linux and Windows.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Configure git to use HTTPS for GitHub
+      uses: ./.github/actions/git-https-auth
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install legacy dependencies
+      run: uv sync --all-packages --locked --extra dev-legacy
+
+    - name: Collect baseline E2E in the legacy environment
+      env:
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+        BAND_TEST_EXTRA: "dev-legacy"
+      run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
+
+    - name: Run legacy tests
+      env:
+        # dev-legacy lacks modern framework packages;
+        # tolerate missing framework configs instead of failing fast.
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+        BAND_TEST_EXTRA: "dev-legacy"
+      run: |
+        uv run --all-packages pytest \
+          tests/adapters/test_strands_adapter.py \
+          tests/adapters/nooa/ \
+          tests/converters/test_strands.py \
+          tests/framework_conformance/ -k 'strands or nooa or legacy or probe_registry'
+
+    - name: Verify selected legacy coverage
+      env:
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+        BAND_TEST_EXTRA: "dev-legacy"
+      run: uv run --all-packages pytest tests/framework_conformance/test_legacy_job_coverage.py
+
+    - name: Run NOOA markdown examples
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+      run: uv run --all-packages pytest --markdown-docs docs/adapters/nooa.md --no-cov
+
+    - name: Pyrefly check (legacy sources)
+      run: |
+        uv run --all-packages pyrefly check \
+          src/band/adapters/strands.py \
+          src/band/converters/strands.py \
+          src/band/adapters/nooa/ \
+          src/band/converters/nooa.py
 
 
   test-parlant:
@@ -369,3 +442,20 @@ jobs:
 
     - name: Verify band-mcp CLI entry point
       run: /tmp/band-mcp-install/bin/band-mcp --version
+
+
+  wheel-consumers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [pydantic-ai, crewai, strands, nooa, langgraph-strands, langgraph, parlant]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - name: Install uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+    - name: Build wheel
+      run: uv build --wheel
+    - name: Resolve and start clean wheel consumers
+      run: python3 .github/scripts/wheel-consumers.py dist/band_sdk-*.whl --case ${{ matrix.case }}

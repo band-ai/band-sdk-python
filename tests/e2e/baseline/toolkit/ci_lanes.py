@@ -118,25 +118,27 @@ def adapter_home_lanes() -> dict[str, str]:
     return {str(adapter): str(cl.id) for cl in ci_lanes() for adapter in cl.adapters}
 
 
-def hosting_lanes(home_lanes: frozenset[str]) -> frozenset[str]:
-    """CI lane ids whose ``uv`` extra can install *every* framework whose home lane is
-    in ``home_lanes`` — empty if none can (the frameworks need incompatible extras, e.g.
-    crewai + a ``dev``-extra framework); empty ``home_lanes`` → every lane.
+# Extra hosts beyond its adapters' home extras; legacy needs this foreign peer.
+EXTRA_HOSTS: dict[Extra, frozenset[Adapter]] = {
+    Extra.DEV_LEGACY: frozenset({Adapter.LANGGRAPH}),
+}
 
-    A lane *hosts* a framework iff they share a ``uv`` extra
-    (``lane_extra(lane) == lane_extra(home)``): every ``dev`` lane installs every
-    ``dev`` framework, and ``dev-crewai`` installs only the crewai stack. Hosting is thus
-    broader than — and distinct from — an adapter's single *home* lane. Conservative and
-    correct given crewai is the only venv conflict, and derived purely from
-    ``lane_extra`` + the home-lane partition (no hand-maintained table).
-    """
-    if not home_lanes:
-        return known_lane_ids()
-    extras = {lane_extra(Lane(home)) for home in home_lanes}
-    if len(extras) != 1:  # frameworks need incompatible extras — no lane hosts them all
-        return frozenset()
-    (extra,) = extras
-    return frozenset(str(cl.id) for cl in ci_lanes() if cl.extra == extra)
+
+def hosting_lanes(frameworks: frozenset[str]) -> frozenset[str]:
+    """Lanes whose installed dependencies host every requested adapter."""
+    homes = adapter_home_lanes()
+    unknown = frameworks - homes.keys()
+    if unknown:
+        raise ValueError(f"Unknown adapter ids: {sorted(unknown)}")
+    return frozenset(
+        str(cl.id)
+        for cl in ci_lanes()
+        if all(
+            lane_extra(Lane(homes[framework])) == cl.extra
+            or framework in EXTRA_HOSTS.get(cl.extra, frozenset())
+            for framework in frameworks
+        )
+    )
 
 
 # The e2e workflow (REPO_ROOT is the single source of the checkout-depth assumption).

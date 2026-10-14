@@ -225,7 +225,9 @@ def _build_pydantic_ai(
     )
 
 
-@adapter(Adapter.STRANDS, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
+@adapter(
+    Adapter.STRANDS, requires=[Dep.OPENAI, Dep.STRANDS], supports=_EVERY_CAPABILITY
+)
 def _build_strands(
     s: BaselineSettings,
     *,

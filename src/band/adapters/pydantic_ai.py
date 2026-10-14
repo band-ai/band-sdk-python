@@ -46,11 +46,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
-    create_async_http_client,
-    infer_model,
 )
-from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.result import FinalResult
 from pydantic_graph import End
 from typing_extensions import Unpack
@@ -329,29 +325,6 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
-_OPENAI_LEGACY_HTTP_PROVIDERS = frozenset({"openai", "openai-chat"})
-
-
-def _resolve_pydantic_ai_model(model: Model | str) -> Model | str:
-    """Resolve a model string, patching OpenAI providers to use legacy ``httpx``.
-
-    pydantic-ai's OpenAI-compatible providers default to ``httpx2``, while the
-    ``openai`` Python SDK still type-checks for ``httpx.AsyncClient``.
-    """
-    if not isinstance(model, str):
-        return model
-    provider_name = model.partition(":")[0]
-    if provider_name not in _OPENAI_LEGACY_HTTP_PROVIDERS:
-        return model
-
-    def provider_factory(name: str) -> Provider[Any]:
-        if name in _OPENAI_LEGACY_HTTP_PROVIDERS:
-            return OpenAIProvider(http_client=create_async_http_client())
-        return infer_provider(name)
-
-    return infer_model(model, provider_factory)
-
-
 class PydanticAIAdapterConfig(BaseAdapterConfig):
     """Settings for a Pydantic AI agent.
 
@@ -476,7 +449,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._system_prompt = system
 
         agent: Agent[AgentToolsProtocol, str | None] = Agent(
-            _resolve_pydantic_ai_model(self._model),
+            self._model,
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
             # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
             # only on the first request, after which it ages into buried history;
