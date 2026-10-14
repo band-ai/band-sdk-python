@@ -69,6 +69,14 @@ MENTION_HANDLE_CAP = 24
 # silently truncating a handle.
 MAX_MENTIONED_LABEL_LEN = len("invitable")  # 9
 
+# Platform ``validate_length(:name, max: 100)``. A longer register is rejected
+# for length, which is a different 422 from name-taken.
+AGENT_NAME_MAX = 100
+
+# ``uuid4().hex`` width. Labels that may exceed the mention cap take the whole
+# uuid so a leftover row cannot collide with the next provision of that label.
+NAME_TOKEN_HEX = 32
+
 
 def run_id_len() -> int:
     """Hex length for a run id that keeps the longest @mentioned peer name within
@@ -76,22 +84,53 @@ def run_id_len() -> int:
     return MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - MAX_MENTIONED_LABEL_LEN
 
 
+def normalized_label(label: str) -> str:
+    return label.replace("_", "-")
+
+
 def agent_name(*, run_id: str, label: str) -> str:
-    """The provisioned name for ``label`` in run ``run_id``.
+    """The provisioned name for ``label`` and name token ``run_id``.
 
     Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
     repeating a name, so an adapter-id label must already be in the form they echo.
     """
-    return f"{NAME_PREFIX}{run_id}-{label.replace('_', '-')}"
+    return f"{NAME_PREFIX}{run_id}-{normalized_label(label)}"
+
+
+def name_token(label: str) -> str:
+    """A fresh hex token for one provision of ``label``.
+
+    A peer a scenario @mentions only surfaces its full name inside
+    ``MENTION_HANDLE_CAP``, so that token uses whatever width the cap still
+    leaves. Adapter-id labels already pass the cap and take a full uuid slice:
+    every cell of one adapter would otherwise register the same name, and a
+    row left behind makes the next cell's register fail with name-taken.
+    """
+    normalized = normalized_label(label)
+    if len(normalized) <= MAX_MENTIONED_LABEL_LEN:
+        width = MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - len(normalized)
+    else:
+        width = min(
+            NAME_TOKEN_HEX,
+            AGENT_NAME_MAX - len(NAME_PREFIX) - 1 - len(normalized),
+        )
+    if width < run_id_len():
+        raise ValueError(
+            f"label {normalized!r} leaves {width} characters for a unique name "
+            f"token; need at least {run_id_len()} within the "
+            f"{AGENT_NAME_MAX}-character name limit"
+        )
+    return uuid.uuid4().hex[:width]
 
 
 def new_run_id() -> str:
-    """Short token identifying a single test session's provisioned resources.
+    """Short token the session fixture draws once for the orphan sweep's self-skip.
 
-    Its length is *derived* from the mention-handle cap (see :func:`run_id_len`) so
-    the longest @mentioned peer name (see :func:`agent_name`) still surfaces in
-    full rather than as a truncated handle. The resulting entropy
-    (~1M at 5 hex) is ample given the run-id + age guards in ``sweep_orphans``.
+    Its length is derived from the mention-handle cap (see :func:`run_id_len`) so
+    a name that still embeds this token fits the longest @mentioned peer. Each
+    provision draws its own token via :func:`name_token` rather than reusing this
+    one. The sweep still skips names containing this session's token; per-provision
+    names rely on the age gate, the same protection another job's agents have.
     """
     return uuid.uuid4().hex[: run_id_len()]
 
@@ -307,7 +346,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = agent_name(run_id=self._run_id, label=label)
+        name = agent_name(run_id=name_token(label), label=label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
@@ -413,13 +452,30 @@ class ResourceManager:
             except Exception:
                 logger.warning("Failed to reap agent %s", agent_id, exc_info=True)
 
+    @asynccontextmanager
+    async def reap_on_exit(self, *, enabled: bool = True) -> AsyncGenerator[None, None]:
+        """Reap everything provisioned in this block when it exits.
+
+        ``enabled`` is false when ``BAND_E2E_AUTOCLEAN`` is off, so a debug run
+        keeps the resources. ``reap_all`` logs a delete failure and continues, so
+        a teardown error does not replace an exception from the block. A row
+        whose id was never returned is not tracked and is not deleted here; the
+        next provision draws a new name, so that leftover cannot collide.
+        """
+        try:
+            yield
+        finally:
+            if enabled:
+                await self.reap_all()
+
     async def sweep_orphans(self) -> int:
         """Force-delete stale test agents left by crashed prior runs.
 
-        Only touches agents whose name carries ``NAME_PREFIX``, belongs to a
-        *different* run, and is older than ``orphan_max_age_minutes`` — so a
-        concurrent run on the same shared platform is never deleted mid-flight.
-        Returns the number of agents reaped.
+        Only touches agents whose name carries ``NAME_PREFIX`` and that are
+        older than ``orphan_max_age_minutes``. Names that still embed this
+        session's run id are skipped. Per-provision names do not embed it; a
+        concurrent run's fresh agents stay because they are younger than the
+        age gate. Returns the number of agents reaped.
         """
         max_age = timedelta(minutes=self._settings.run.orphan_max_age_minutes)
         cutoff = datetime.now(UTC) - max_age
@@ -439,7 +495,7 @@ class ResourceManager:
                 if not agent.name.startswith(NAME_PREFIX):
                     continue  # name filter is a contains-match; re-check the prefix
                 if f"-{self._run_id}-" in agent.name:
-                    continue  # never reap our own run
+                    continue
                 # inserted_at may be tz-naive depending on serialization; treat
                 # naive as UTC so the comparison never raises (see the codebase's
                 # _coerce_inserted_at). A naive>aware compare would TypeError and
@@ -618,9 +674,9 @@ class AdapterCell:
     async def provision(self, *, label: str | None = None) -> ProvisionedAgent:
         """Register an identity for this cell (tracked + reaped by the manager); no run.
 
-        ``label`` defaults to the adapter id (a readable provisioned name). Pass a
-        distinct label to register more than one identity of the same cell in a single
-        test, else the generated names collide.
+        ``label`` defaults to the adapter id (a readable provisioned name). Each
+        call draws its own name token, so the same label can be registered again
+        in one test without colliding with an agent this run already created.
         """
         provisioned = await self.resources.provision_agent(label or self.adapter_id)
         return replace(provisioned, adapter_id=self.adapter_id)
@@ -708,7 +764,7 @@ class AdapterCell:
         what a same-adapter co-residency gate must probe.
 
         ``labels`` default to ``{adapter_id}-{index}``; an explicit list must be length
-        ``count`` so the provisioned names don't collide. ``prompt`` / ``features`` /
+        ``count`` (one label per member). ``prompt`` / ``features`` /
         ``tools`` pass through to each :meth:`run_as`, preserving the cell defaults when
         omitted.
         """

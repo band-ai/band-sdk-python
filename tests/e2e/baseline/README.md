@@ -402,7 +402,7 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Run the same scenario across every adapter | `@per_adapter()` → `agent` (id via `agent.adapter_id`) |
 | Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
 | Drive the agent lifecycle myself (build-only / reboot / rehydration) | `@per_adapter()` → `cell` (`cell.build()` / `cell.provision()` / `cell.run_as()` — see **AdapterCell**) |
-| Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
+| Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging). Each provision gets its own name, so a missed reap cannot block the next cell. |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | List who the user could invite to a room | `await user_ops.lookup_peers(not_in_room=room_id)` → `list[Peer]` (the invitable roster; `peer_type="Agent"` narrows) |
 | Drive a peer agent (e.g. the `Echo` bounce) | `await resource_manager.peer(peer).send_message(room_id, "ECHO: ...", mention_id=agent.id, mention_name=agent.name)` — posts as that agent, returns the message id to barrier on (needs the peer already in the room) |

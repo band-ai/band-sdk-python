@@ -113,18 +113,18 @@ async def resource_manager(
 ) -> AsyncGenerator[ResourceManager, None]:
     """Per-test provision/reap driver.
 
-    Teardown force-deletes everything provisioned this run, unless
-    ``BAND_E2E_AUTOCLEAN`` is false (kept for on-purpose debugging; surviving
-    ids are logged by ``reap_all``/``provision_*``).
+    Teardown force-deletes everything provisioned this run via
+    ``reap_on_exit``, unless ``BAND_E2E_AUTOCLEAN`` is false (kept for
+    on-purpose debugging; surviving ids are logged by ``reap_all`` /
+    ``provision_*``).
     """
     resources = ResourceManager(
         user_client=baseline_user_client,
         settings=baseline_settings,
         run_id=baseline_run_id,
     )
-    yield resources
-    if baseline_settings.run.autoclean:
-        await resources.reap_all()
+    async with resources.reap_on_exit(enabled=baseline_settings.run.autoclean):
+        yield resources
 
 
 @pytest.fixture(scope="session", autouse=True)
