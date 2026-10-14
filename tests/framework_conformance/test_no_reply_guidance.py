@@ -16,30 +16,29 @@ from band.runtime.tools import BandTool, get_tool_description
 CANONICAL_DESCRIPTION = no_reply_tool()["description"]
 
 ADVERTISED_GUIDANCE = {
-    "base system prompt": render_system_prompt(),
-    "codex and acp communication instructions": COMMUNICATION_INSTRUCTIONS,
-    "claude sdk system prompt": generate_claude_sdk_agent_prompt("Agent")["append"],
+    "base system prompt": lambda: render_system_prompt(),
+    "codex and acp communication instructions": lambda: COMMUNICATION_INSTRUCTIONS,
+    "claude sdk system prompt": lambda: generate_claude_sdk_agent_prompt("Agent")[
+        "append"
+    ],
 }
-EVERY_SURFACE = pytest.mark.parametrize(
-    "guidance", ADVERTISED_GUIDANCE.values(), ids=ADVERTISED_GUIDANCE
-)
 
 
 class TestNoReplyGuidance:
     """The decline rule is one core text, judged over the whole turn."""
 
-    @EVERY_SURFACE
+    @pytest.mark.parametrize("surface", ADVERTISED_GUIDANCE)
     def test_prompt_surfaces_carry_the_canonical_description(
-        self, guidance: str
+        self, surface: str
     ) -> None:
-        assert CANONICAL_DESCRIPTION in guidance
+        assert CANONICAL_DESCRIPTION in ADVERTISED_GUIDANCE[surface]()
 
     def test_the_advertised_tool_description_is_the_canonical_text(self) -> None:
         assert get_tool_description(BandTool.NO_REPLY) == CANONICAL_DESCRIPTION
 
-    @EVERY_SURFACE
-    def test_no_surface_judges_only_the_latest_message(self, guidance: str) -> None:
-        assert "latest message" not in guidance
+    @pytest.mark.parametrize("surface", ADVERTISED_GUIDANCE)
+    def test_no_surface_judges_only_the_latest_message(self, surface: str) -> None:
+        assert "latest message" not in ADVERTISED_GUIDANCE[surface]()
 
     def test_send_message_does_not_restate_the_decline_rule(self) -> None:
         description = get_tool_description(BandTool.SEND_MESSAGE)

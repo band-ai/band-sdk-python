@@ -32,9 +32,8 @@ class TestGoogleADKBatchHistory:
     async def test_a_later_turn_replays_each_original_once_in_order_before_the_reply(
         self,
     ) -> None:
-        adapter, requests = await recording_adapter(FINAL_TEXT)
-
-        await deliver_batch_then_next_turn(adapter)
+        async with recording_adapter(FINAL_TEXT) as (adapter, requests):
+            await deliver_batch_then_next_turn(adapter)
 
         assert replayed_transcript(requests[-1]) == [
             f"[Alice]: {EARLIER_QUESTION}",
