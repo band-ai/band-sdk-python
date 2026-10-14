@@ -379,6 +379,8 @@ class CodexContinuityError(RuntimeError):
 _METHOD_NOT_FOUND = -32601
 # How a turn whose Codex process was lost reports its failure.
 TRANSPORT_LOST_ERROR = "Codex transport closed unexpectedly"
+# How a turn that failed for an unexpected reason reports its failure.
+TURN_PROCESSING_ERROR = "Internal error during turn processing"
 # How a turn reports a room process that did not start or stop within
 # ``retention.transition_timeout_s``.
 PROCESS_NOT_READY_ERROR = "Codex process did not become ready in time"
@@ -531,11 +533,11 @@ class NativeTurn:
         if _native_turn_id(event) == self.turn_id:
             return True
         # Only a sub-agent's requests: its own turn/completed must not end this turn.
-        return event.kind == "request" and _thread_id(event) in self.sub_agents
+        return event.is_request and _thread_id(event) in self.sub_agents
 
     def may_own(self, event: RpcEvent) -> bool:
         """A request from another thread, which a later collab item may name."""
-        return event.kind == "request" and _thread_id(event) not in (
+        return event.is_request and _thread_id(event) not in (
             None,
             self.thread_id,
         )
@@ -1387,13 +1389,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     turn_id=native.turn_id,
                     result=TurnResult(
                         turn_status="failed",
-                        turn_error="Internal error during turn processing",
+                        turn_error=TURN_PROCESSING_ERROR,
                     ),
                     turn_start=turn_start,
                 )
-                raise TurnResultAlreadyReported(
-                    "Internal error during turn processing"
-                ) from None
+                raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
 
         await self._emit_turn_outcome(
             tools=tools,
@@ -1520,7 +1520,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 event = await asyncio.wait_for(native.events.get(), timeout=_remaining)
                 if isinstance(event, Exception):
                     raise event
-                if event.kind == "request":
+                if event.is_request:
                     await self._answer_native_request(
                         native, tools=tools, msg=msg, room_id=room_id, event=event
                     )
@@ -2010,7 +2010,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self, room: RoomCodexClient, client: CodexClientProtocol, event: RpcEvent
     ) -> None:
         """Answer native work no Band turn started, without lending it one's tools."""
-        if event.kind != "request" or event.id is None:
+        if not event.is_request or event.id is None:
             logger.debug(
                 "Room %s: no Band turn owns Codex %s; dropped",
                 room.room_id,

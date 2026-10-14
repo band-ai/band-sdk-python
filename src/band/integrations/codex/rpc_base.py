@@ -63,6 +63,11 @@ class RpcEvent:
     id: JsonRpcId | None
     raw: dict[str, Any]
 
+    @property
+    def is_request(self) -> bool:
+        """The server awaits an answer to this event."""
+        return self.kind == "request"
+
 
 class BaseJsonRpcClient:
     """Abstract bidirectional JSON-RPC client with shared protocol logic.
