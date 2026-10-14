@@ -9,10 +9,10 @@ import time
 import pytest
 
 from band.core.retention.cleanup import report_owned, spawn_owned
+from tests.adapters.hold import Hold
 from tests.adapters.waiting import until
 from tests.core.retention.kit import (
     RETENTION_LOGGER,
-    Barrier,
     ResidenceHost,
     retention_logs,
     retention_records,
@@ -89,7 +89,7 @@ class TestFailureLogging:
         self, impatient_host: ResidenceHost, caplog: pytest.LogCaptureFixture
     ) -> None:
         resident = impatient_host.room()
-        resident.opening = Barrier()
+        resident.opening = Hold()
         with pytest.raises(TimeoutError, match="start abandoned"):
             await resident.turn()
         assert retention_logs(caplog.records) == [

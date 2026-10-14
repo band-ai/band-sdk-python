@@ -31,7 +31,7 @@ class TestDisposal:
         closing = claude.closing = Hold()
 
         leaving = asyncio.create_task(manager.cleanup_session("room-a"))
-        await closing.reached.wait()
+        await closing.arrived()
         leaving.cancel()
         with pytest.raises(CleanupIncompleteError):
             await manager.cleanup_session("room-a")

@@ -11,18 +11,19 @@ from band.core.retention import (
     ReleaseCause,
     Residency,
 )
+from tests.adapters.hold import Hold
 from tests.adapters.waiting import until
-from tests.core.retention.kit import Barrier, ResidenceHost, Resident
+from tests.core.retention.kit import ResidenceHost, Resident
 
 pytestmark = pytest.mark.timeout(10)
 
 
-async def hung_start(resident: Resident) -> tuple[asyncio.Task[None], Barrier]:
+async def hung_start(resident: Resident) -> tuple[asyncio.Task[None], Hold]:
     """A turn waiting at a start's held opening; later starts don't wait."""
-    opening = Barrier()
+    opening = Hold()
     resident.opening = opening
     wake = asyncio.create_task(resident.turn())
-    await opening.reached.wait()
+    await opening.arrived()
     resident.opening = None
     return wake, opening
 
@@ -35,9 +36,9 @@ class TestRecovery:
         host: ResidenceHost,
     ) -> None:
         resident = host.room()
-        resident.opening = Barrier()
+        resident.opening = Hold()
         wake = asyncio.create_task(resident.turn())
-        await resident.opening.reached.wait()
+        await resident.opening.arrived()
         wake.cancel()
         with pytest.raises(asyncio.CancelledError):
             await wake
@@ -76,10 +77,10 @@ class TestRecovery:
         resident = host.room()
         resident.startup_activity = ProviderActivity.ACTIVE
         resident.fail_acquire = True
-        resident.closing = Barrier()
+        resident.closing = Hold()
         with pytest.raises(RuntimeError, match="resume rejected"):
             await resident.turn()
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         assert resident.releases == [ReleaseCause.RECOVERY]
         resident.closing.released.set()
         await resident.suspended.get()
@@ -130,7 +131,7 @@ class TestRecovery:
         impatient_host: ResidenceHost,
     ) -> None:
         resident = impatient_host.room()
-        resident.opening = Barrier()
+        resident.opening = Hold()
         with pytest.raises(TimeoutError):
             await resident.turn()
         assert resident.room.snapshot.state is Residency.ACQUIRING
@@ -195,9 +196,9 @@ class TestRecovery:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         await host.clock.advance(10)
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         generation = resident.room.snapshot.generation
         assert resident.room.recover(generation=generation, reason="crashed") is True
         resident.closing.released.set()

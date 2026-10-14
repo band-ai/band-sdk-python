@@ -9,10 +9,10 @@ import pytest
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention import ReleaseCause, Residency
+from tests.adapters.hold import Hold
 from tests.adapters.waiting import spin, until
 from tests.core.retention.kit import (
     SETTLE_GRACE_S,
-    Barrier,
     ResidenceHost,
     Resident,
     armed,
@@ -21,7 +21,7 @@ from tests.core.retention.kit import (
 pytestmark = pytest.mark.timeout(10)
 
 
-async def parked_work(resident: Resident, barrier: Barrier) -> asyncio.Task[None]:
+async def parked_work(resident: Resident, barrier: Hold) -> asyncio.Task[None]:
     """Owned work leasing the room until ``barrier`` is released."""
 
     async def work() -> None:
@@ -30,7 +30,7 @@ async def parked_work(resident: Resident, barrier: Barrier) -> asyncio.Task[None
 
     task = asyncio.create_task(work())
     resident.room.own(task)
-    await barrier.reached.wait()
+    await barrier.arrived()
     return task
 
 
@@ -61,7 +61,7 @@ class TestDisposalGrace:
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()
-        parked = Barrier()
+        parked = Hold()
         work = await parked_work(resident, parked)
         disposal = await leaving(graceful_host, resident)
 
@@ -77,7 +77,7 @@ class TestDisposalGrace:
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()
-        parked = Barrier()
+        parked = Hold()
         work = await parked_work(resident, parked)
         disposal = await leaving(graceful_host, resident)
 
@@ -95,7 +95,7 @@ class TestDisposalGrace:
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()
-        work = await parked_work(resident, Barrier())
+        work = await parked_work(resident, Hold())
         disposal = await leaving(graceful_host, resident)
 
         await graceful_host.clock.advance(SETTLE_GRACE_S)
@@ -108,7 +108,7 @@ class TestDisposalGrace:
         self, graceful_impatient_host: ResidenceHost
     ) -> None:
         resident = graceful_impatient_host.room()
-        parked = Barrier()
+        parked = Hold()
         work = await parked_work(resident, parked)
 
         with pytest.raises(CleanupIncompleteError):
@@ -127,7 +127,7 @@ class TestDisposalGrace:
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()
-        parked = Barrier()
+        parked = Hold()
         await parked_work(resident, parked)
         disposal = await leaving(graceful_host, resident)
         grace = armed(graceful_host.clock)
@@ -149,7 +149,7 @@ class TestDisposalGrace:
         resident = graceful_host.room()
         await resident.turn()
         resident.fail_close = True
-        work = await parked_work(resident, Barrier())
+        work = await parked_work(resident, Hold())
         disposal = await leaving(graceful_host, resident)
         await graceful_host.clock.advance(SETTLE_GRACE_S)
         with pytest.raises(RuntimeError, match="close refused"):
@@ -167,8 +167,8 @@ class TestDisposalGrace:
     ) -> None:
         first, second = graceful_host.room("first"), graceful_host.room("second")
         works = [
-            await parked_work(first, Barrier()),
-            await parked_work(second, Barrier()),
+            await parked_work(first, Hold()),
+            await parked_work(second, Hold()),
         ]
         stopping = asyncio.create_task(graceful_host.owner.stop())
         await grace_started(graceful_host, rooms=2)
@@ -184,7 +184,7 @@ class TestDisposalGrace:
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()
-        unwinding = Barrier()
+        unwinding = Hold()
 
         async def leave_from_inside() -> None:
             async with resident.room.use():
@@ -194,7 +194,7 @@ class TestDisposalGrace:
 
         work = asyncio.create_task(leave_from_inside())
         resident.room.own(work)
-        await unwinding.reached.wait()
+        await unwinding.arrived()
         await graceful_host.clock.advance(SETTLE_GRACE_S)
         await asyncio.sleep(0)
         assert not work.done()
@@ -209,7 +209,7 @@ class TestDisposalGrace:
         self, graceful_host: ResidenceHost
     ) -> None:
         resident = graceful_host.room()
-        parked, cleanup = asyncio.Event(), Barrier()
+        parked, cleanup = asyncio.Event(), Hold()
 
         async def cancelled_by_its_owner() -> None:
             async with resident.room.use():
@@ -223,7 +223,7 @@ class TestDisposalGrace:
         resident.room.own(work)
         await parked.wait()
         work.cancel()
-        await cleanup.reached.wait()
+        await cleanup.arrived()
         disposal = asyncio.create_task(resident.room.dispose())
         await spin()
 

@@ -56,7 +56,7 @@ class TestLifecycleLeave:
         barrier = host.children[0].closing = Hold()
         with pytest.raises(TimeoutError):
             await host.leave("room-a")
-        await barrier.reached.wait()
+        await barrier.arrived()
         assert host.exited == [False]
         with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
@@ -75,7 +75,7 @@ class TestLifecycleLeave:
         host = brief_grace_host
         starting = host.next_start = Hold()
         opening = asyncio.create_task(host.send("room-a", write_instruction("alpha")))
-        await starting.reached.wait()
+        await starting.arrived()
 
         await host.leave("room-a")
 
@@ -114,7 +114,7 @@ class TestLifecycleLeave:
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         closing = host.children[0].closing = Hold()
         leaving = asyncio.create_task(host.leave("room-a"))
-        await closing.reached.wait()
+        await closing.arrived()
         leaving.cancel()
         with pytest.raises(asyncio.CancelledError):
             await leaving

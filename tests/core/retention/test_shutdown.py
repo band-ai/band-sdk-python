@@ -10,8 +10,9 @@ from band.core.exceptions import RoomClosingError
 from band.core.retention import (
     ReleaseCause,
 )
+from tests.adapters.hold import Hold
 from tests.adapters.waiting import spin
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.core.retention.kit import ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -45,9 +46,9 @@ class TestShutdown:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.leaving = Barrier()
+        resident.leaving = Hold()
         stopping = asyncio.create_task(host.owner.stop())
-        await resident.leaving.reached.wait()
+        await resident.leaving.arrived()
         stopping.cancel()
         with pytest.raises(asyncio.CancelledError):
             await stopping
@@ -76,13 +77,13 @@ class TestShutdown:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         callers = [
             asyncio.create_task(host.owner.stop()),
             asyncio.create_task(host.owner.stop()),
             asyncio.create_task(resident.room.dispose()),
         ]
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         await spin()
         assert not any(caller.done() for caller in callers)
         resident.closing.released.set()

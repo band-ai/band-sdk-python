@@ -111,7 +111,7 @@ class TestTurnTimeout:
         try:
             async with work:
                 sending.cancel()
-                await closing.reached.wait()
+                await closing.arrived()
                 await asyncio.gather(
                     room.adapter.on_interrupt(room.room_id, ControlMode.STOP),
                     room.adapter.on_interrupt(room.room_id, ControlMode.STOP),

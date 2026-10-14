@@ -132,7 +132,7 @@ class TestRoomOwnership:
         assert await host.send("room-a", write_instruction("alpha")) == ["alpha"]
         barrier = host.children[0].closing = Hold()
         first = asyncio.create_task(host.leave("room-a"))
-        await barrier.reached.wait()
+        await barrier.arrived()
         second = asyncio.create_task(host.leave("room-a"))
         await spin()
         assert not second.done()

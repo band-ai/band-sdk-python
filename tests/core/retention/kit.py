@@ -17,6 +17,7 @@ from band.core.retention import (
     RoomRetention,
     RoomRetentionConfig,
 )
+from tests.adapters.hold import Hold
 
 
 @dataclass
@@ -58,16 +59,6 @@ class ManualClock:
 
 
 @dataclass
-class Barrier:
-    reached: asyncio.Event = field(default_factory=asyncio.Event)
-    released: asyncio.Event = field(default_factory=asyncio.Event)
-
-    async def wait(self) -> None:
-        self.reached.set()
-        await self.released.wait()
-
-
-@dataclass
 class Resident:
     room: RetainedRoom = field(init=False)
     live: bool = False
@@ -75,9 +66,9 @@ class Resident:
     resume_requests: list[bool] = field(default_factory=list)
     releases: list[ReleaseCause] = field(default_factory=list)
     suspended: asyncio.Queue[None] = field(default_factory=asyncio.Queue)
-    opening: Barrier | None = None
-    closing: Barrier | None = None
-    leaving: Barrier | None = None
+    opening: Hold | None = None
+    closing: Hold | None = None
+    leaving: Hold | None = None
     startup_activity: ProviderActivity = ProviderActivity.QUIESCENT
     busy: bool = False
     fail_close: bool = False
@@ -98,7 +89,7 @@ class Resident:
         if self.fail_acquire:
             raise RuntimeError("resume rejected")
 
-    async def _open(self, opening: Barrier) -> None:
+    async def _open(self, opening: Hold) -> None:
         """Wait at the opening barrier; a resistant start finishes there anyway."""
         try:
             await opening.wait()
@@ -142,7 +133,7 @@ class Resident:
 
 #: The settle grace a graceful host's disposal gives accepted work.
 SETTLE_GRACE_S = 5.0
-#: An impatient host's transition timeout: its reports time out at once.
+#: An impatient host's transition timeout, which any held transition outlasts.
 IMPATIENT_TRANSITION_S = 0.05
 
 

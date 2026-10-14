@@ -12,7 +12,8 @@ from band.core.retention import (
     ReleaseCause,
     Residency,
 )
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.adapters.hold import Hold
+from tests.core.retention.kit import ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -25,9 +26,9 @@ class TestDisposal:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         await host.clock.advance(10)
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         leaving = asyncio.create_task(resident.room.dispose())
         wake = asyncio.create_task(resident.turn())
         resident.closing.released.set()
@@ -44,14 +45,14 @@ class TestDisposal:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
-        resident.leaving = Barrier()
+        resident.closing = Hold()
+        resident.leaving = Hold()
         await host.clock.advance(10)
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         leaving = asyncio.create_task(resident.room.dispose())
         await asyncio.sleep(0)
         resident.closing.released.set()
-        await resident.leaving.reached.wait()
+        await resident.leaving.arrived()
         resident.fail_dispose = True
         resident.leaving.released.set()
         with pytest.raises(RuntimeError, match="dispose refused"):
@@ -70,9 +71,9 @@ class TestDisposal:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.leaving = Barrier()
+        resident.leaving = Hold()
         leaving = asyncio.create_task(resident.room.dispose())
-        await resident.leaving.reached.wait()
+        await resident.leaving.arrived()
         leaving.cancel()
         with pytest.raises(asyncio.CancelledError):
             await leaving
@@ -113,7 +114,7 @@ class TestDisposal:
     ) -> None:
         resident = impatient_host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         with pytest.raises(CleanupIncompleteError):
             await resident.room.dispose()
         assert resident.room.snapshot.state is Residency.SUSPENDING

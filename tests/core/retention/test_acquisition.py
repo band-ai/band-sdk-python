@@ -6,7 +6,8 @@ import asyncio
 
 import pytest
 
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.adapters.hold import Hold
+from tests.core.retention.kit import ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -36,9 +37,9 @@ class TestAcquisition:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         await host.clock.advance(10)
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         prepared: list[int] = []
 
         async def prepare() -> None:

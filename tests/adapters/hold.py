@@ -6,6 +6,8 @@ import asyncio
 from dataclasses import dataclass, field
 from types import TracebackType
 
+from tests.adapters.waiting import UNTIL_TIMEOUT_S
+
 
 @dataclass
 class Hold:
@@ -16,7 +18,7 @@ class Hold:
     released: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def __aenter__(self) -> None:
-        await self.reached.wait()
+        await self.arrived()
 
     async def __aexit__(
         self,
@@ -25,6 +27,14 @@ class Hold:
         tb: TracebackType | None,
     ) -> None:
         self.released.set()
+
+    async def arrived(self) -> None:
+        """Wait for the turn to reach this step, failing if it never does."""
+        try:
+            async with asyncio.timeout(UNTIL_TIMEOUT_S):
+                await self.reached.wait()
+        except TimeoutError:
+            raise AssertionError("the turn never reached its hold") from None
 
     async def wait(self) -> None:
         """Signal the step is reached and park until the test releases it."""

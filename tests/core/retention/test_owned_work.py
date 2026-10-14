@@ -11,8 +11,9 @@ from band.core.retention import (
     ReleaseCause,
     Residency,
 )
+from tests.adapters.hold import Hold
 from tests.conftest import eager_tasks, requires_eager_tasks
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.core.retention.kit import ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -26,7 +27,7 @@ class TestOwnedWork:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        queued = Barrier()
+        queued = Hold()
 
         async def detached_turn() -> None:
             await queued.wait()
@@ -67,7 +68,7 @@ class TestOwnedWork:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        parked = Barrier()
+        parked = Hold()
 
         async def parked_decision() -> None:
             async with resident.room.use():
@@ -75,7 +76,7 @@ class TestOwnedWork:
 
         task = asyncio.create_task(parked_decision())
         resident.room.own(task)
-        await parked.reached.wait()
+        await parked.arrived()
         await resident.room.dispose()
         assert task.cancelled()
         assert resident.releases == [ReleaseCause.FINAL]
@@ -181,9 +182,9 @@ class TestOwnedWork:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         disposal = asyncio.create_task(resident.room.dispose())
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         ran: list[bool] = []
 
         async def work() -> None:
