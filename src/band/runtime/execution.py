@@ -517,7 +517,6 @@ class ExecutionContext:
         self._pending: deque[PlatformEvent] = deque()
         self._scan_cursor: str | None = None
         self._last_selection: tuple[str, ...] = ()
-        self._resync_absorbed = False
         self._control_cursor: str | None = None
 
         # Graceful shutdown: event signaled when state becomes idle
@@ -1976,16 +1975,23 @@ class ExecutionContext:
             self._pending.append(event)
 
     def _absorb_queue(self) -> None:
-        """Move queued events onto the retained line, keeping arrival order."""
+        """Move queued events onto the retained line, keeping arrival order.
+
+        The live resync request stays queued: this pass began before it, so the
+        loop must still serve it with another pass.
+        """
+        live_resync: ResyncRequest | None = None
         while True:
             try:
                 event = self.queue.get_nowait()
             except asyncio.QueueEmpty:
-                return
-            if isinstance(event, ResyncRequest):
-                self._resync_absorbed |= event is self._pending_resync
-            else:
+                break
+            if not isinstance(event, ResyncRequest):
                 self._retain_arrival(event)
+            elif event is self._pending_resync:
+                live_resync = event
+        if live_resync is not None:
+            self.queue.put_nowait(live_resync)  # type: ignore[arg-type]  # The sentinel only wakes this loop.
 
     async def _service_arrival(self) -> None:
         """React to one arrival: controls only while ordinary work is deferred."""
@@ -1995,9 +2001,6 @@ class ExecutionContext:
             await self._scan_controls()
         else:
             await self._drain_pending()
-        if self._resync_absorbed:
-            self._resync_absorbed = False
-            await self._reconcile()
 
     async def _drain_pending(self) -> ResyncOutcome:
         """Run selection passes until the room is empty, blocked or stopped."""
