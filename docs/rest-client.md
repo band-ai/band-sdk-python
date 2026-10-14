@@ -64,6 +64,70 @@ pinned `band-client-rest` 0.0.41 and remains in released 0.0.46. Public raw resp
 status preserves the distinction without accessing generated private fields or
 adding another HTTP client. Real-client HTTP transport tests pin this boundary.
 
+### Actionable page
+
+`MessageLifecycle.get_actionable_page` (and `BandLink.get_actionable_page`) reads
+one page of `agent_api_messages.list_agent_messages`: ascending, 100 per page
+(`ACTIONABLE_PAGE_SIZE`, the platform's maximum), with `status` omitted so the
+list holds every outstanding delivery, `processing` and `failed` included. The
+cursor is omitted rather than sent as `None`, and a page that reports `has_more`
+without a `next_cursor` raises `ValueError`. Failures propagate to the caller;
+only the room scheduler decides how to retry. `/next` and this list both omit
+some deliveries the WebSocket carries; see
+[queued-message selection](websocket-events.md#queued-message-selection).
+
+### Delivery status metadata
+
+`ChatMessageMetadata` in the pinned client declares only `delegation`. Its
+`delivery_status` survives deserialization only through `extra="allow"`: a
+dependency contract the SDK requires, not a declared field. Batch selection relies on it to skip a
+delivery the platform already reports `failed` for this agent, so a regenerated
+client that stops preserving extras would silently turn that exclusion off. This
+block runs against the real model and fails if the field is dropped:
+
+```python
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+from band_rest.types.chat_message import ChatMessage
+
+from band.core.types import delivery_status_for_agent
+from band.platform.message_lifecycle import MessageLifecycle
+
+failed = ChatMessage.model_validate(
+    {
+        "id": "m1",
+        "content": "@bot hi",
+        "message_type": "text",
+        "sender_id": "u1",
+        "sender_type": "User",
+        "metadata": {"delivery_status": {"agent-1": {"status": "failed"}}},
+    }
+)
+rest = MagicMock()
+rest.agent_api_messages.list_agent_messages = AsyncMock(
+    return_value=SimpleNamespace(
+        data=[failed], metadata=SimpleNamespace(has_more=False, next_cursor=None)
+    )
+)
+
+
+async def main() -> None:
+    page = await MessageLifecycle().get_actionable_page(rest, "room-1")
+
+    assert page.next_cursor is None
+    assert delivery_status_for_agent(page.messages[0].metadata, "agent-1") == "failed"
+    kwargs = rest.agent_api_messages.list_agent_messages.call_args.kwargs
+    assert kwargs["sort_order"] == "asc"
+    assert kwargs["limit"] == 100
+    assert "status" not in kwargs and "cursor" not in kwargs
+
+
+with asyncio.Runner() as runner:
+    runner.run(main())
+```
+
 ### Terminal write results
 
 `mark_processed_result` and `mark_failed_result` (on `BandLink` and
@@ -82,3 +146,12 @@ and `mark_failed` are projections that return `result is SettlementResult.ACCEPT
 so every non-accepted result reads as `False`. `mark_processing` keeps its plain
 bool contract. One call is one logical write, but the generated client's
 `max_retries=3` still permits up to four HTTP attempts on 408/409/429/5xx.
+
+The `*_result` methods are additive: the boolean methods keep their signatures and
+literal `True`/`False` returns, cancellation still propagates, and one-shot
+invocation stays on the boolean facade. Runtime recovery branches on the enum
+(never its truthiness) because it must tell a write to retry (`UNCONFIRMED`) from
+one to park (`NOT_FOUND`, `REJECTED`); see
+[settlement](turn-outcome.md#terminal-intents-and-settlement). `NOT_FOUND` does
+not say whether the message was deleted or room access was lost: the platform
+answers both with the same 404.

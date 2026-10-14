@@ -16,6 +16,13 @@ and `src/band/platform/event.py`. What the code cannot say for itself:
 - **`ExecutionContext` owns room scheduling.** It reuses core's claims, retry
   tracking, participant roster and self-echo rules, with delivery metadata for
   deduplication.
+- **Core owns the claim and settlement state.** `ClaimRegistry` holds in-flight
+  IDs, the completed-ID cache and each original's pending terminal intent
+  (`processed`, or `failed` with its error, plus a parked flag); see
+  [turn outcome](turn-outcome.md#terminal-intents-and-settlement). Python owns
+  which originals form a turn and in what order. The no-reply tool text is core's
+  too. The Python `SettlementResult` classification of a terminal write is SDK
+  code ([REST client](rest-client.md#terminal-write-results)).
 
 ## Room reconciliation
 
@@ -90,3 +97,70 @@ The supervisor finishes the old turn's authoritative idle report before the next
 working report. Cleanup surviving its bounded grace cannot later stop a newer
 turn's activity reporter. Durable completion still retries only its ACK, never
 handler effects.
+
+## Queued-message selection
+
+With `SessionConfig.consume_all_queued` ([guide](consume-all-queued.md)) the room
+selects its next turn from two sources and takes a bounded, ordered prefix of
+the ordinary messages.
+
+- **REST list.** One page of `GET agent/chats/{room}/messages` per scheduling
+  pass: ascending cursor pagination with no status filter, 100 per page, ordered
+  by `(inserted_at, id)`. It returns outstanding agent-addressed text, including
+  `processing` and `failed` deliveries.
+- **Retained WebSocket originals.** The list and `/next` omit some deliveries the
+  WebSocket carries, such as thread replies, and the `message_created` payload
+  does not reliably carry `thread_id`, so coverage is never classified from it.
+  The room therefore keeps each delivered original's payload, not just its ID,
+  until the original settles.
+
+The two sources merge by original ID into one chronological list: an original in
+both counts once, keeping the retained payload and the REST delivery status. A
+retained original the REST read lacks is trusted only once the read has reached
+or passed its `(inserted_at, id)` or ended; it then runs as a singleton, after
+the eligible earlier prefix. Until then the prefix stops short of it, so a
+continuous stream of arrivals never makes a turn wait for the end of the list.
+
+Self-authored, locally settled or settlement-pending deliveries, and those the
+platform reports `processed` or `failed` for this agent, are skipped. A delivery
+whose claim another owner holds ends the prefix and defers it. The `failed` rule reads the REST metadata's `delivery_status` for this agent and does
+not depend on the bounded completed-ID cache, so it holds after a restart too
+([how the field reaches the SDK](rest-client.md#delivery-status-metadata)).
+
+### Event order
+
+Non-message events (participant add/remove, synthetic turns) are kept in the same
+queue as messages, in the order the room observed them. Participant events carry
+no server timestamp comparable to a message's, so that local order is the only
+order used.
+
+- The first queued non-message event bounds the current segment: no REST message
+  past the segment's last original joins the turn, because its position relative
+  to the event is unknown.
+- A leading non-message event runs on its own before the following segment.
+- The queue is absorbed again after the REST read and before the membership is
+  fixed. Events arriving after that point apply at the next serial boundary and
+  never enlarge the running turn.
+
+### Scan progress
+
+One page is read per pass. A page holding only skipped deliveries with a next
+cursor saves the cursor and schedules an immediate continuation after yielding to
+the event loop, not after the periodic resync delay. At the end of the list the
+cursor resets and the room returns to normal wake or idle scheduling. There is
+no skip floor over `failed` rows: another runtime can reopen one as `processing`
+and crash, and a later scan must find it. The cost is that failed history ahead of
+new work is re-read page by page. True ownership, admission or write blockage
+stays on the paced retry cadence.
+
+### Limits of WebSocket-only backlog
+
+A retained original survives local deferral and STOP because the room keeps its
+payload. It does not survive the loss of that payload (process exit, or retirement
+of the room's execution): neither the list nor `/next` can rebuild a thread reply
+afterwards.
+
+The stopped-room `/next` probe is unchanged and still gates PLAY discovery, but
+for backlog that is WebSocket-only its HTTP 204 cannot tell a room that resumed
+with nothing to do from one still stopped whose PLAY push was missed. The SDK adds
+no durable journal or extra polling route to remove that limit.
