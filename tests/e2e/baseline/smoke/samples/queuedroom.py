@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from band.client.streaming import DeliveryStatus
+from band.core.types import MessageType
 from band.runtime.types import SessionConfig
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     liveness_probe,
@@ -16,7 +17,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
 from tests.e2e.baseline.timeouts import SlowTurnBudget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 from tests.e2e.baseline.toolkit.invocations import Hold, InvocationObserver
-from tests.e2e.baseline.toolkit.observations import Replies
+from tests.e2e.baseline.toolkit.observations import Events, Replies
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -80,6 +81,30 @@ class QueuedRun:
 
 
 @dataclass(frozen=True)
+class QueuedBatch:
+    """What one run of ``QueuedRoom.queue_texts_while_busy`` produced.
+
+    ``replies`` are the agent's chat messages after the opener's own reply, read
+    from the platform once every queued original reached a final state;
+    ``processed`` are the originals the agent had processed by then.
+    """
+
+    opener: str
+    queued: list[str]
+    replies: Events
+    processed: list[str]
+
+    @property
+    def originals(self) -> list[str]:
+        return [self.opener, *self.queued]
+
+    @property
+    def batched_turns(self) -> list[tuple[str, ...]]:
+        """The turns of a run that handed the queued originals over together."""
+        return [(self.opener,), tuple(self.queued)]
+
+
+@dataclass(frozen=True)
 class QueuedRoom:
     """A running agent in a room with its senders (the owner first), whose turns are observed."""
 
@@ -102,31 +127,31 @@ class QueuedRoom:
     def hold_next(self) -> Hold:
         return self.observer.hold_next(self.room_id)
 
-    async def ask(self, sender: Sender, marker: str) -> str:
-        """Post a request for the agent to confirm ``marker`` as ``sender``; return the message id."""
+    async def say(self, sender: Sender, text: str) -> str:
+        """Post ``text`` to the agent as ``sender``; return the message id."""
         return await sender.post.send_message(
             self.room_id,
-            liveness_probe(marker),
+            text,
             mention_id=self.agent.id,
             mention_name=self.agent.name,
         )
+
+    async def ask(self, sender: Sender, marker: str) -> str:
+        """Post a request for the agent to confirm ``marker`` as ``sender``; return the message id."""
+        return await self.say(sender, liveness_probe(marker))
 
     async def queue_while_busy(self, senders: Sequence[Sender]) -> QueuedRun:
         """Queue one request per sender behind a held opener turn, send one more while
         the first turn after the opener is held open, then let everything finish."""
         deadline_s = self.budget.deadline_s
         markers = [unique_marker(f"queued{index}") for index in range(len(senders))]
-        opener_hold = self.hold_next()
-        opener = await self.ask(self.owner, unique_marker("opener"))
-        await opener_hold.entered()
+        opener, opener_hold = await self._park_opener()
 
         queued = [
             await self.ask(sender, marker) for sender, marker in zip(senders, markers)
         ]
         queued_hold = self.hold_next()
-        opener_hold.release()
-        await self.capture.wait_for_reply(opener, self.agent.id, deadline_s=deadline_s)
-        after_opener = self.capture.messages.snapshot()
+        after_opener = await self._release_opener(opener, opener_hold)
 
         await queued_hold.entered(deadline_s=deadline_s)
         later = await self.ask(self.owner, unique_marker("later"))
@@ -150,6 +175,53 @@ class QueuedRoom:
             replies=replies,
             processed=processed,
         )
+
+    async def queue_texts_while_busy(self, texts: Sequence[str]) -> QueuedBatch:
+        """Post ``texts`` as the owner behind a held opener turn, release it, and wait
+        for the agent to finish every one of them, answered or not."""
+        opener, opener_hold = await self._park_opener()
+        queued = [await self.say(self.owner, text) for text in texts]
+        after_opener = await self._release_opener(opener, opener_hold)
+        await self.capture.wait_for_delivery(
+            queued[-1],
+            self.agent.id,
+            until={DeliveryStatus.PROCESSED, DeliveryStatus.FAILED},
+            deadline_s=self.budget.deadline_s,
+        )
+        return QueuedBatch(
+            opener=opener,
+            queued=queued,
+            replies=await self._replies_since(after_opener),
+            processed=await self._with_status(
+                [opener, *queued], DeliveryStatus.PROCESSED
+            ),
+        )
+
+    async def _park_opener(self) -> tuple[str, Hold]:
+        """Send the opener and return it once its turn is parked, so the room stays committed to it."""
+        hold = self.hold_next()
+        opener = await self.ask(self.owner, unique_marker("opener"))
+        await hold.entered()
+        return opener, hold
+
+    async def _release_opener(self, opener: str, hold: Hold) -> int:
+        """Let the opener finish; return the capture cursor just past its reply."""
+        hold.release()
+        await self.capture.wait_for_reply(
+            opener, self.agent.id, deadline_s=self.budget.deadline_s
+        )
+        return self.capture.messages.snapshot()
+
+    async def _replies_since(self, cursor: int) -> Events:
+        """The agent's chat messages other than the ones captured before ``cursor``.
+
+        Read from the platform, not the live capture: a reply frame and the
+        delivery-status frame arrive unordered, so only a durable read after the
+        final status proves a turn posted nothing.
+        """
+        earlier = [message.id for message in self.capture.messages[:cursor]]
+        texts = await self.capture.events(MessageType.TEXT, sender_id=self.agent.id)
+        return texts.excluding(*earlier)
 
     async def _with_status(
         self, message_ids: list[str], status: DeliveryStatus
