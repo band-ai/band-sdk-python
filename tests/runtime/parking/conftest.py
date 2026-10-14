@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from collections.abc import AsyncIterator
 
 import pytest
@@ -21,12 +20,6 @@ from tests.runtime.parking.harness import (
 def instant_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the generated client's retry count but not its multi-second backoff."""
     monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
-
-
-@pytest.fixture(autouse=True)
-def unjittered_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make a room's first periodic reconciliation fall a full interval after start."""
-    monkeypatch.setattr(random, "uniform", lambda lower, upper: upper)
 
 
 @pytest.fixture(params=CELLS, ids=lambda scenario: scenario.id)

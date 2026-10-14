@@ -15,6 +15,13 @@ from tests.runtime.admission.barriers import (
     started_room,
 )
 
+# The shortest keep-alive SessionConfig allows: the heartbeat runs on the real
+# clock because its timer hung under the virtual one on Windows.
+HEARTBEAT = REPORT.settings | {
+    "working_keep_alive_seconds": 1.5,
+    "working_request_timeout_seconds": 1,
+}
+
 
 class TestStopDuringTurn:
     @pytest.mark.parametrize("stop", list(Stop), ids=str)
@@ -65,14 +72,13 @@ class TestStopDuringTurn:
             Observed.settled(case.ids, runs=[case.ids, case.ids]),
         )
 
-    @pytest.mark.looptime
     @pytest.mark.parametrize("case", SHAPES, ids=str)
     async def test_a_platform_stop_seen_by_the_heartbeat_aborts_the_model(
         self, case: Case, platform: Platform, model: Model
     ) -> None:
         model.gate = True
         async with started_room(
-            case, platform=platform, model=model, **REPORT.settings
+            case, platform=platform, model=model, **HEARTBEAT
         ) as room:
             await room.arrive()
             await room.until(model.entered.is_set)

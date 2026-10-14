@@ -14,7 +14,6 @@ from band.runtime.runtime import AgentRuntime
 from band.runtime.types import SessionConfig
 from tests.platform.settlement.conftest import instant_retries
 from tests.platform.settlement.kit import link_over
-from tests.runtime.recovery.conftest import first_resync_at_the_base_interval
 from tests.runtime.recovery.kit import (
     AGENT_ID,
     Harness,
@@ -24,9 +23,8 @@ from tests.runtime.recovery.kit import (
 )
 from tests.runtime.watchdog.kit import CYCLE_SECONDS
 
-# Re-exported so one fixture each owns the generated client's retry timing and
-# the room's reconciliation clock.
-__all__ = ["first_resync_at_the_base_interval", "instant_retries"]
+# Re-exported so one fixture owns the generated client's retry timing.
+__all__ = ["instant_retries"]
 
 
 @pytest.fixture

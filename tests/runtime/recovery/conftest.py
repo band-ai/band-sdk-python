@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from collections.abc import AsyncIterator
 
 import pytest
@@ -20,12 +19,6 @@ from tests.runtime.recovery.kit import (
 
 # Re-exported so one fixture owns the generated client's retry timing.
 __all__ = ["instant_retries"]
-
-
-@pytest.fixture(autouse=True)
-def first_resync_at_the_base_interval(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the room's reconciliation clock deterministic."""
-    monkeypatch.setattr(random, "uniform", lambda lower, upper: upper)
 
 
 @pytest.fixture(params=list(Shape))
