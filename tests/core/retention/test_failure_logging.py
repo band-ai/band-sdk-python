@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 import pytest
 
+from band.core.retention.cleanup import report_owned, spawn_owned
 from tests.adapters.waiting import until
 from tests.core.retention.kit import (
     RETENTION_LOGGER,
     Barrier,
     ResidenceHost,
     retention_logs,
+    retention_records,
 )
 
 pytestmark = pytest.mark.timeout(10)
@@ -56,10 +60,30 @@ class TestFailureLogging:
             lambda: bool(retention_logs(caplog.records)),
             failure="the idle release failure was never logged",
         )
-        assert retention_logs(caplog.records) == [
-            (logging.WARNING, "Room room residency transition failed: close refused")
-        ]
-        assert caplog.records[0].exc_info is not None
+        (record,) = retention_records(caplog.records)
+        assert (record.levelno, record.getMessage()) == (
+            logging.WARNING,
+            "Room room residency transition failed: close refused",
+        )
+        assert record.exc_info is not None
+
+    async def test_a_failure_raised_as_its_wait_times_out_is_left_to_its_caller(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The wait's timeout and the task's failure land in one loop step, so
+        the done callback runs after the caller stopped waiting."""
+
+        async def failing_cleanup() -> None:
+            await asyncio.sleep(0.05)
+            raise RuntimeError("close failed")
+
+        cleanup = spawn_owned(failing_cleanup(), label="cleanup")
+        # Blocks the loop until both the cleanup's sleep and the wait's timeout expire.
+        asyncio.get_running_loop().call_soon(time.sleep, 0.2)
+        with pytest.raises(RuntimeError, match="close failed"):
+            await report_owned(cleanup, 0.1)
+        await asyncio.sleep(0)
+        assert retention_logs(caplog.records) == []
 
     async def test_an_abandoned_start_cancelled_for_recovery_is_logged(
         self, impatient_host: ResidenceHost, caplog: pytest.LogCaptureFixture

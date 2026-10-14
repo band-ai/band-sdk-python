@@ -189,10 +189,13 @@ def armed(clock: ManualClock) -> list[float]:
 RETENTION_LOGGER = "band.core.retention"
 
 
+def retention_records(records: list[logging.LogRecord]) -> list[logging.LogRecord]:
+    """The records the retention loggers emitted."""
+    return [record for record in records if record.name.startswith(RETENTION_LOGGER)]
+
+
 def retention_logs(records: list[logging.LogRecord]) -> list[tuple[int, str]]:
     """Each retention log line as (level, message)."""
     return [
-        (record.levelno, record.getMessage())
-        for record in records
-        if record.name.startswith(RETENTION_LOGGER)
+        (record.levelno, record.getMessage()) for record in retention_records(records)
     ]

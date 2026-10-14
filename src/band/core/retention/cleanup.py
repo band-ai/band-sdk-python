@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
 from contextlib import contextmanager
@@ -18,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Callers awaiting each owned task that re-raise its failure themselves.
 _reporters: Counter[asyncio.Task[Any]] = Counter()
+# Tasks a caller saw finish: their failure is that caller's to report even when
+# the done callback runs after it stopped waiting.
+_reported: weakref.WeakSet[asyncio.Task[Any]] = weakref.WeakSet()
 
 
 def spawn_owned(
@@ -45,7 +49,7 @@ def rejoin_owned(
 
 
 def _log_failure(task: asyncio.Task[None], *, label: str) -> None:
-    if task in _reporters or task.cancelled():
+    if task in _reporters or task in _reported or task.cancelled():
         return
     if (error := task.exception()) is not None:
         logger.warning("%s failed: %s", label, error, exc_info=error)
@@ -78,6 +82,7 @@ async def await_owned(
     the caller that reports their failures; whether all finished."""
     with reporting(tasks):
         done, _ = await asyncio.wait(tasks, timeout=timeout)
+    _reported.update(done)
     return len(done) == len(tasks)
 
 
