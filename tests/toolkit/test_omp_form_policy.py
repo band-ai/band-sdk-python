@@ -71,124 +71,133 @@ def approval_message(tool: str) -> str:
     return f"{OMP_TOOL_APPROVAL_HEADER}mcp__band_{tool.removeprefix('band_')}\nArguments: {{}}"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("tool", [BandTool.SEND_MESSAGE, BandTool.NO_REPLY])
-async def test_native_probe_denied_then_completion_accepted(
-    adapter: OmpACPAdapter,
-    emitter: RoomTurnEmitter,
-    tools: FakeAgentTools,
-    form_mode: ElicitationFormSessionMode,
-    tool: BandTool,
-) -> None:
-    client = adapter._runtime_client_factory()
-    handler = adapter._make_elicitation_handler(emitter, "room", "session")
-    assert handler is not None
-    client.set_elicitation_handler("session", handler)
+class TestOmpFormPolicy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", [BandTool.SEND_MESSAGE, BandTool.NO_REPLY])
+    async def test_native_probe_denied_then_completion_accepted(
+        self,
+        adapter: OmpACPAdapter,
+        emitter: RoomTurnEmitter,
+        tools: FakeAgentTools,
+        form_mode: ElicitationFormSessionMode,
+        tool: BandTool,
+    ) -> None:
+        room = adapter._room("room")
+        client = adapter._runtime_client_factory(room, room.generation)
+        handler = adapter._make_elicitation_handler(emitter, "room", "session")
+        assert handler is not None
+        client.set_elicitation_handler("session", handler)
 
-    denied = await client.create_elicitation(FORM_PROBE_TITLE, form_mode)
-    accepted = await client.create_elicitation(approval_message(tool), form_mode)
+        denied = await client.create_elicitation(FORM_PROBE_TITLE, form_mode)
+        accepted = await client.create_elicitation(approval_message(tool), form_mode)
 
-    assert isinstance(denied, DeclineElicitationResponse)
-    assert isinstance(accepted, AcceptElicitationResponse)
-    assert accepted.content == {"choice": OMP_FORM_APPROVE}
-    calls = events_of_type(tools, "tool_call")
-    results = events_of_type(tools, "tool_result")
-    assert len(calls) == len(results) == 1
-    call = json.loads(calls[0]["content"])
-    result = json.loads(results[0]["content"])
-    assert call["args"] == {"message": FORM_PROBE_TITLE}
-    assert result["tool_call_id"] == call["tool_call_id"]
-    assert result["is_error"]
-    assert "cancelled" in result["output"].lower()
-    assert results[0]["metadata"]["permission_outcome"] == "cancelled"
-    assert not tools.turn.complete
-    assert tools.chat == []
+        assert isinstance(denied, DeclineElicitationResponse)
+        assert isinstance(accepted, AcceptElicitationResponse)
+        assert accepted.content == {"choice": OMP_FORM_APPROVE}
+        calls = events_of_type(tools, "tool_call")
+        results = events_of_type(tools, "tool_result")
+        assert len(calls) == len(results) == 1
+        call = json.loads(calls[0]["content"])
+        result = json.loads(results[0]["content"])
+        assert call["args"] == {"message": FORM_PROBE_TITLE}
+        assert result["tool_call_id"] == call["tool_call_id"]
+        assert result["is_error"]
+        assert "cancelled" in result["output"].lower()
+        assert results[0]["metadata"]["permission_outcome"] == "cancelled"
+        assert not tools.turn.complete
+        assert tools.chat == []
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "message",
-    [
-        FORM_PROBE_TITLE,
-        "Allow tool: mcp__other_band_send_message",
-        "Allow tool: mcp__band_send_event",
-        "Allow tool: bash",
-        "Allow tool: band_send_message",
-        " Allow tool: mcp__band_send_message",
-        "Allow tool: mcp__band_send_message suffix",
-        "Allow tool: mcp__band_send_message ",
-        "Allow tool: mcp__band_send_message\r\nArguments: {}",
-        "Description\nAllow tool: mcp__band_send_message",
-    ],
-)
-async def test_native_forms_cannot_broaden_approval(
-    adapter: OmpACPAdapter,
-    emitter: RoomTurnEmitter,
-    form_mode: ElicitationFormSessionMode,
-    message: str,
-) -> None:
-    handler = adapter._make_elicitation_handler(emitter, "room", "session")
-    assert handler is not None
-    response = await handler(message=message, mode=form_mode)
-    assert isinstance(response, DeclineElicitationResponse)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("arguments", [{}, {"message": None}, {"message": 42}])
-async def test_malformed_synthetic_requests_are_denied(
-    arguments: dict[str, JsonValue],
-) -> None:
-    request = ACPPermissionRequest(
-        room_id="room",
-        session_id="session",
-        tool_call=ACPToolCall(
-            tool_call_id="call", name=OMP_APPROVAL_FORM_TOOL_NAME, arguments=arguments
-        ),
-        options=(),
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "message",
+        [
+            FORM_PROBE_TITLE,
+            "Allow tool: mcp__other_band_send_message",
+            "Allow tool: mcp__band_send_event",
+            "Allow tool: bash",
+            "Allow tool: band_send_message",
+            " Allow tool: mcp__band_send_message",
+            "Allow tool: mcp__band_send_message suffix",
+            "Allow tool: mcp__band_send_message ",
+            "Allow tool: mcp__band_send_message\r\nArguments: {}",
+            "Description\nAllow tool: mcp__band_send_message",
+        ],
     )
-    assert await deny_probe_allow_completion(request) is None
+    async def test_native_forms_cannot_broaden_approval(
+        self,
+        adapter: OmpACPAdapter,
+        emitter: RoomTurnEmitter,
+        form_mode: ElicitationFormSessionMode,
+        message: str,
+    ) -> None:
+        handler = adapter._make_elicitation_handler(emitter, "room", "session")
+        assert handler is not None
+        response = await handler(message=message, mode=form_mode)
+        assert isinstance(response, DeclineElicitationResponse)
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("one_shot", [True, False])
-async def test_policy_selects_only_the_offered_one_shot_option(one_shot: bool) -> None:
-    options = [
-        PermissionOption(option_id="persistent", name="Always", kind="allow_always")
-    ]
-    if one_shot:
-        options.append(
-            PermissionOption(option_id="fixture-once", name="Once", kind="allow_once")
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("arguments", [{}, {"message": None}, {"message": 42}])
+    async def test_malformed_synthetic_requests_are_denied(
+        self,
+        arguments: dict[str, JsonValue],
+    ) -> None:
+        request = ACPPermissionRequest(
+            room_id="room",
+            session_id="session",
+            tool_call=ACPToolCall(
+                tool_call_id="call",
+                name=OMP_APPROVAL_FORM_TOOL_NAME,
+                arguments=arguments,
+            ),
+            options=(),
         )
-    request = ACPPermissionRequest(
-        room_id="room",
-        session_id="session",
-        tool_call=ACPToolCall(
-            tool_call_id="call",
-            name=OMP_APPROVAL_FORM_TOOL_NAME,
-            arguments={"message": approval_message(BandTool.SEND_MESSAGE)},
-        ),
-        options=tuple(options),
-    )
-    assert await deny_probe_allow_completion(request) == (
-        "fixture-once" if one_shot else None
-    )
+        assert await deny_probe_allow_completion(request) is None
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("one_shot", [True, False])
+    async def test_policy_selects_only_the_offered_one_shot_option(
+        self, one_shot: bool
+    ) -> None:
+        options = [
+            PermissionOption(option_id="persistent", name="Always", kind="allow_always")
+        ]
+        if one_shot:
+            options.append(
+                PermissionOption(
+                    option_id="fixture-once", name="Once", kind="allow_once"
+                )
+            )
+        request = ACPPermissionRequest(
+            room_id="room",
+            session_id="session",
+            tool_call=ACPToolCall(
+                tool_call_id="call",
+                name=OMP_APPROVAL_FORM_TOOL_NAME,
+                arguments={"message": approval_message(BandTool.SEND_MESSAGE)},
+            ),
+            options=tuple(options),
+        )
+        assert await deny_probe_allow_completion(request) == (
+            "fixture-once" if one_shot else None
+        )
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "name", [BandTool.SEND_MESSAGE, "mcp__band_send_message", "bash"]
-)
-async def test_direct_native_permissions_remain_cancelled(
-    adapter: OmpACPAdapter, emitter: RoomTurnEmitter, name: str
-) -> None:
-    handler = adapter._make_permission_handler(emitter, "room")
-    response = await handler(
-        options=[PermissionOption(option_id="once", name="Once", kind="allow_once")],
-        session_id="session",
-        tool_call={
-            "toolCallId": "native",
-            "title": name,
-            "rawInput": {"message": approval_message(BandTool.SEND_MESSAGE)},
-        },
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "name", [BandTool.SEND_MESSAGE, "mcp__band_send_message", "bash"]
     )
-    assert response == {"outcome": {"outcome": "cancelled"}}
+    async def test_direct_native_permissions_remain_cancelled(
+        self, adapter: OmpACPAdapter, emitter: RoomTurnEmitter, name: str
+    ) -> None:
+        handler = adapter._make_permission_handler(emitter, "room")
+        response = await handler(
+            options=[
+                PermissionOption(option_id="once", name="Once", kind="allow_once")
+            ],
+            session_id="session",
+            tool_call={
+                "toolCallId": "native",
+                "title": name,
+                "rawInput": {"message": approval_message(BandTool.SEND_MESSAGE)},
+            },
+        )
+        assert response == {"outcome": {"outcome": "cancelled"}}

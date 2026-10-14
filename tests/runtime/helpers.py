@@ -20,14 +20,14 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-from band.core.protocols import TURN_FAILURE_PROVIDER
-from band.core.simple_adapter import SimpleAdapter
+from band.core.protocols import TURN_FAILURE_PROVIDER, FrameworkAdapter
 from band.core.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     SYNTHETIC_SENDER_TYPE,
     PlatformMessage,
 )
 from band.platform.event import MessageEvent
+from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
@@ -75,8 +75,8 @@ ROOM_ID = "room-123"
 
 
 def run_through(
-    adapter: SimpleAdapter[Any],
-    link: MagicMock,
+    adapter: FrameworkAdapter,
+    link: BandLink | MagicMock,
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:
@@ -156,6 +156,13 @@ STOP_ECHO: ActivityReport = (True, False)
 IDLE: ActivityReport = (False, False)
 
 
+def page(data: list[dict[str, Any]]) -> httpx.Response:
+    """A listing that fits in one page."""
+    return httpx.Response(
+        200, json={"data": data, "metadata": {"has_more": False, "limit": 50}}
+    )
+
+
 class LifecyclePlatform:
     """A controlled HTTP peer for the real Fern lifecycle and posting client."""
 
@@ -221,16 +228,16 @@ class LifecyclePlatform:
                 (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
             )
             limit = int(request.url.params.get("limit", "100"))
-            page = self.messages[start : start + limit]
+            window = self.messages[start : start + limit]
             has_more = start + limit < len(self.messages)
             return httpx.Response(
                 200,
                 json={
-                    "data": page,
+                    "data": window,
                     "metadata": {
                         "limit": limit,
                         "has_more": has_more,
-                        "next_cursor": page[-1]["id"] if has_more else None,
+                        "next_cursor": window[-1]["id"] if has_more else None,
                     },
                 },
             )
@@ -270,15 +277,33 @@ class LifecyclePlatform:
                     }
                 },
             )
-        return httpx.Response(
-            200, json={"data": [], "metadata": {"has_more": False, "limit": 50}}
-        )
+        return page([])
 
     def marked(self, status: str) -> list[str]:
         return [mid for mid, mark in self.accepted_marks if mark == status]
 
     def requested(self, status: str) -> list[str]:
         return [mid for mid, mark in self.requested_marks if mark == status]
+
+
+#: A room participant the platform lists.
+ALICE = {"id": "user-456", "name": "Alice", "handle": "alice", "type": "User"}
+
+
+class PostingPlatform(LifecyclePlatform):
+    """A running room whose participants are listed and whose posts land."""
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        tail = request.url.path.rsplit("/", 1)[-1]
+        if tail == "participants":
+            return page([ALICE])
+        if request.method == "POST" and tail == "events":
+            return httpx.Response(
+                201, json={"data": {"id": "e-1", "message_type": "event"}}
+            )
+        if request.method == "POST" and tail == "messages":
+            return httpx.Response(201, json={"data": {"id": "m-1", "recipients": []}})
+        return super().answer(request)
 
 
 class ClaimGate:

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from types import TracebackType
+from typing import Self
 
 from band.core.retention import (
     ProviderActivity,
@@ -14,6 +17,7 @@ from band.core.retention import (
     RoomRetention,
     RoomRetentionConfig,
 )
+from tests.adapters.hold import Hold
 
 
 @dataclass
@@ -55,16 +59,6 @@ class ManualClock:
 
 
 @dataclass
-class Barrier:
-    reached: asyncio.Event = field(default_factory=asyncio.Event)
-    released: asyncio.Event = field(default_factory=asyncio.Event)
-
-    async def wait(self) -> None:
-        self.reached.set()
-        await self.released.wait()
-
-
-@dataclass
 class Resident:
     room: RetainedRoom = field(init=False)
     live: bool = False
@@ -72,14 +66,17 @@ class Resident:
     resume_requests: list[bool] = field(default_factory=list)
     releases: list[ReleaseCause] = field(default_factory=list)
     suspended: asyncio.Queue[None] = field(default_factory=asyncio.Queue)
-    opening: Barrier | None = None
-    closing: Barrier | None = None
-    leaving: Barrier | None = None
+    opening: Hold | None = None
+    closing: Hold | None = None
+    leaving: Hold | None = None
     startup_activity: ProviderActivity = ProviderActivity.QUIESCENT
     busy: bool = False
     fail_close: bool = False
     fail_acquire: bool = False
     fail_dispose: bool = False
+    resists_cancel: bool = False
+    # Set once a resistant start took its cancellation and parked to finish.
+    resisted: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def acquire(self, generation: int, resume: bool) -> None:
         assert not self.live, "replacement started before the previous handle closed"
@@ -88,9 +85,19 @@ class Resident:
         self.resume_requests.append(resume)
         self.room.observe(self.startup_activity, generation=generation)
         if self.opening is not None:
-            await self.opening.wait()
+            await self._open(self.opening)
         if self.fail_acquire:
             raise RuntimeError("resume rejected")
+
+    async def _open(self, opening: Hold) -> None:
+        """Wait at the opening barrier; a resistant start finishes there anyway."""
+        try:
+            await opening.wait()
+        except asyncio.CancelledError:
+            if not self.resists_cancel:
+                raise
+            self.resisted.set()
+            await opening.released.wait()
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
         if cause is not ReleaseCause.FINAL:
@@ -124,9 +131,20 @@ class Resident:
         )
 
 
+#: The settle grace a graceful host's disposal gives accepted work.
+SETTLE_GRACE_S = 5.0
+#: An impatient host's transition timeout, which any held transition outlasts.
+IMPATIENT_TRANSITION_S = 0.05
+
+
 class ResidenceHost:
+    """Residents under one owner; leaving ``async with`` closes the host."""
+
     def __init__(
-        self, timeout: float | None = 10, transition_timeout: float = 10.0
+        self,
+        timeout: float | None = 10,
+        transition_timeout: float = 10.0,
+        settle_grace: float = 0.0,
     ) -> None:
         self.clock = ManualClock()
         self.owner = RoomRetention(
@@ -134,6 +152,7 @@ class ResidenceHost:
                 idle_timeout_s=timeout, transition_timeout_s=transition_timeout
             ),
             clock=self.clock,
+            settle_grace_s=settle_grace,
         )
         self.residents: list[Resident] = []
 
@@ -148,6 +167,17 @@ class ResidenceHost:
         self.residents.append(resident)
         return resident
 
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        await self.close()
+
     async def close(self) -> None:
         for resident in self.residents:
             resident.fail_close = resident.fail_acquire = resident.fail_dispose = False
@@ -161,3 +191,19 @@ class ResidenceHost:
 def armed(clock: ManualClock) -> list[float]:
     """Deadlines of the timers still waiting to fire."""
     return [timer.when for timer in clock.timers if not timer.cancelled]
+
+
+#: The logger every retention module logs under.
+RETENTION_LOGGER = "band.core.retention"
+
+
+def retention_records(records: list[logging.LogRecord]) -> list[logging.LogRecord]:
+    """The records the retention loggers emitted."""
+    return [record for record in records if record.name.startswith(RETENTION_LOGGER)]
+
+
+def retention_logs(records: list[logging.LogRecord]) -> list[tuple[int, str]]:
+    """Each retention log line as (level, message)."""
+    return [
+        (record.levelno, record.getMessage()) for record in retention_records(records)
+    ]

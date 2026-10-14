@@ -77,12 +77,24 @@ cause and handles retained. A crashed or abandoned residency goes through
 `recover()`, which revokes its event authority and releases once the reporting
 operation unwinds. `transition_timeout_s` bounds how long a caller waits to
 learn an outcome; an unfinished transition stays owned and is never treated as
-closed.
+closed. Recovery cancels an acquisition whose caller stopped waiting for it, so a
+start that never finishes cannot hold the room.
 
 These ownership rules hold with retention disabled. Room, execution, adapter and
 shared MCP cleanup that fails or is cancelled stays owned, with the agent's
 single-instance guard, and the next `stop()` or `shutdown()` retries it instead
-of reporting success.
+of reporting success. Adapter shutdown refuses new rooms and turns before its
+first wait, and settles running turns and closes rooms within one reporting
+deadline. Every caller joins that same shutdown. The adapter admits work again
+only when the next start has confirmed it.
+
+## Provider integration
+
+| Adapter | Ownership integration | Idle release |
+| --- | --- | --- |
+| Codex | Each room's process, thread and workspace compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A lost process goes through `recover()`; the next process strictly restores the same thread and verifies its provider, workspace and tools. One reader per process routes each native callback by its `turnId` to the Band turn that started it and refuses work no Band turn started. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. Examined Codex shutdown paths cancel background work. |
+| Claude SDK | Each room's CLI session, workspace and native session id compose one `RetainedRoom`. Turns are owned before they run and leased through approvals and outcomes. A crashed CLI goes through `recover()`; callbacks act only for the residency generation that registered them. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. |
+| OMP, Cursor and Copilot ACP | Each room's process, connection and session compose one `RetainedRoom`. Detached work is owned before it runs; a prompt or model switch takes the room's reservation. A failed turn recovers its room, and a deliberate wake strictly reloads the same session. | Rejected by configuration; activity stays `UNKNOWN`, so the shared owner refuses idle release before invoking the release callback. |
 
 The shared mechanics do not certify a provider's release callback. Production
 integration still needs authoritative native inactivity or a demonstrated

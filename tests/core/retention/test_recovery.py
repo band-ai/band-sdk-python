@@ -11,9 +11,21 @@ from band.core.retention import (
     ReleaseCause,
     Residency,
 )
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.adapters.hold import Hold
+from tests.adapters.waiting import until
+from tests.core.retention.kit import ResidenceHost, Resident
 
 pytestmark = pytest.mark.timeout(10)
+
+
+async def hung_start(resident: Resident) -> tuple[asyncio.Task[None], Hold]:
+    """A turn waiting at a start's held opening; later starts don't wait."""
+    opening = Hold()
+    resident.opening = opening
+    wake = asyncio.create_task(resident.turn())
+    await opening.arrived()
+    resident.opening = None
+    return wake, opening
 
 
 class TestRecovery:
@@ -24,9 +36,9 @@ class TestRecovery:
         host: ResidenceHost,
     ) -> None:
         resident = host.room()
-        resident.opening = Barrier()
+        resident.opening = Hold()
         wake = asyncio.create_task(resident.turn())
-        await resident.opening.reached.wait()
+        await resident.opening.arrived()
         wake.cancel()
         with pytest.raises(asyncio.CancelledError):
             await wake
@@ -65,10 +77,10 @@ class TestRecovery:
         resident = host.room()
         resident.startup_activity = ProviderActivity.ACTIVE
         resident.fail_acquire = True
-        resident.closing = Barrier()
+        resident.closing = Hold()
         with pytest.raises(RuntimeError, match="resume rejected"):
             await resident.turn()
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         assert resident.releases == [ReleaseCause.RECOVERY]
         resident.closing.released.set()
         await resident.suspended.get()
@@ -119,7 +131,7 @@ class TestRecovery:
         impatient_host: ResidenceHost,
     ) -> None:
         resident = impatient_host.room()
-        resident.opening = Barrier()
+        resident.opening = Hold()
         with pytest.raises(TimeoutError):
             await resident.turn()
         assert resident.room.snapshot.state is Residency.ACQUIRING
@@ -129,14 +141,64 @@ class TestRecovery:
         assert resident.releases == [ReleaseCause.RECOVERY]
         assert resident.resume_requests == [False, False]
 
+    @pytest.mark.parametrize("stopped", [True, False], ids=["stopped", "timed-out"])
+    async def test_an_abandoned_start_that_never_finishes_is_recovered(
+        self, impatient_host: ResidenceHost, stopped: bool
+    ) -> None:
+        resident = impatient_host.room()
+        wake, _ = await hung_start(resident)
+        if stopped:
+            wake.cancel()
+        with pytest.raises(asyncio.CancelledError if stopped else TimeoutError):
+            await wake
+        await resident.suspended.get()
+        await resident.turn()
+        assert resident.releases == [ReleaseCause.RECOVERY]
+        assert resident.room.snapshot.generation == 2
+
+    async def test_an_operation_joining_an_abandoned_start_is_served(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        wake, _ = await hung_start(resident)
+        joiner = asyncio.create_task(resident.turn())
+        await until(
+            lambda: resident.room.snapshot.accepted == 2,
+            failure="the joining operation was never accepted",
+        )
+        wake.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await wake
+        await joiner
+        assert resident.releases == [ReleaseCause.RECOVERY]
+        assert resident.room.snapshot.generation == 2
+
+    async def test_a_start_resisting_cancellation_is_not_closed_while_it_runs(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        resident.resists_cancel = True
+        wake, opening = await hung_start(resident)
+        wake.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await wake
+        await resident.resisted.wait()
+        assert resident.releases == []
+        assert resident.room.snapshot.state is Residency.ACQUIRING
+        opening.released.set()
+        await resident.suspended.get()
+        await resident.turn()
+        assert resident.releases == [ReleaseCause.RECOVERY]
+        assert resident.room.snapshot.generation == 2
+
     async def test_recovery_during_an_idle_release_is_not_a_strict_resume(
         self, host: ResidenceHost
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         await host.clock.advance(10)
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         generation = resident.room.snapshot.generation
         assert resident.room.recover(generation=generation, reason="crashed") is True
         resident.closing.released.set()

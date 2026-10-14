@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.core.exceptions import CleanupIncompleteError
 from band.core.retention import (
     ProviderActivity,
 )
@@ -46,3 +47,17 @@ class TestAuthority:
         assert not old.room.recover(generation=1, reason="stale")
         assert new.room.snapshot.provider_activity is ProviderActivity.ACTIVE
         assert not new.room.snapshot.pending_cleanup
+
+    async def test_a_stopping_owner_revokes_authority_before_disposal_starts(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+
+        # Stop requested from inside a turn returns before its shutdown runs.
+        async with resident.room.use():
+            with pytest.raises(CleanupIncompleteError):
+                await host.owner.stop()
+            assert resident.room.snapshot.pending_release is None
+            assert not resident.room.has_authority(resident.room.generation)
+        await host.owner.stop()

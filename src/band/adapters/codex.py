@@ -7,9 +7,10 @@ import json
 import logging
 import time as _time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -42,6 +43,7 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -49,11 +51,26 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
-from band.core.retention import RoomRetentionConfig, require_disabled_retention
+from band.core.retention import (
+    ReleaseCause,
+    ReleaseOutcome,
+    RetainedRoom,
+    RoomRetention,
+    RoomRetentionConfig,
+    require_disabled_retention,
+)
+from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    TURN_SETTLE_GRACE_S,
+    ApprovalInterruptMixin,
+    TurnSettleTimeout,
+    TurnTask,
+    bind_turn_task,
+    start_releasable_turn,
+)
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -65,6 +82,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.integrations.codex import (
+    TRANSPORT_CLOSED,
     CodexJsonRpcError,
     CodexStdioClient,
     RpcEvent,
@@ -72,6 +90,7 @@ from band.integrations.codex import (
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
     CODEX_PROVIDER,
+    DYNAMIC_TOOL_CALL_METHOD,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
@@ -88,7 +107,12 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
+from band.runtime.decisions import (
+    DecisionEntry,
+    DecisionRegistry,
+    Registration,
+    Timeout,
+)
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.tools import (
@@ -157,6 +181,10 @@ _APPROVAL_COMMAND_DECISIONS: dict[CodexCommand, ApprovalDecision] = {
     CodexCommand.DECLINE: "decline",
 }
 _APPROVAL_COMMANDS = frozenset({*_APPROVAL_COMMAND_DECISIONS, CodexCommand.APPROVALS})
+# Local commands that ask the room's Codex process.
+_PROCESS_COMMANDS = frozenset(
+    {CodexCommand.MODEL, CodexCommand.MODELS, CodexCommand.REASONING}
+)
 # Membership by plain string: Python 3.11's Enum rejects `"word" in CodexCommand`.
 _COMMAND_WORDS = frozenset(CodexCommand)
 
@@ -258,6 +286,15 @@ _MESSAGE_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
     {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
 )
 
+# Read only to attribute a sub-agent's requests to its turn; never rendered.
+_ROUTING_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {CodexItemType.SUB_AGENT_ACTIVITY}
+)
+
+_UNRENDERED_ITEM_TYPES = (
+    _REQUESTED_TOOL_ITEM_TYPES | _MESSAGE_ITEM_TYPES | _ROUTING_ITEM_TYPES
+)
+
 # item/completed "type" values gated on Emit.THOUGHTS; dispatched in
 # _extract_thought_text.
 _THOUGHT_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
@@ -340,6 +377,54 @@ class CodexClientProtocol(Protocol):
     async def close(self) -> None: ...
 
 
+class CodexContinuityError(RuntimeError):
+    """A retained Codex thread cannot continue as it was; its id is kept."""
+
+
+_METHOD_NOT_FOUND = -32601
+# How a turn whose Codex process was lost reports its failure.
+TRANSPORT_LOST_ERROR = "Codex transport closed unexpectedly"
+# How a turn that failed for an unexpected reason reports its failure.
+TURN_PROCESSING_ERROR = "Internal error during turn processing"
+# How a turn reports a room process that did not start or stop within
+# ``retention.transition_timeout_s``.
+PROCESS_NOT_READY_ERROR = "Codex process did not become ready in time"
+# One acquisition starts the process, refreshes ``model/list`` online and
+# strictly resumes the thread's whole rollout.
+CODEX_TRANSITION_TIMEOUT_S = 60.0
+_UNOWNED_TOOL_CALL_TEXT = (
+    "No Band turn started this Codex turn, so Band tools are unavailable to it."
+)
+
+
+def _text_item(text: str) -> dict[str, Any]:
+    return {"type": "inputText", "text": text}
+
+
+def _tool_response(items: list[dict[str, Any]], *, success: bool) -> dict[str, Any]:
+    """A dynamic tool call's response."""
+    return {"contentItems": items, "success": success}
+
+
+def _tool_result(text: str, *, success: bool) -> dict[str, Any]:
+    """A dynamic tool call's response carrying one text item."""
+    return _tool_response([_text_item(text)], success=success)
+
+
+def _approval_response(decision: ApprovalDecision) -> dict[str, Any]:
+    return {"decision": decision}
+
+
+async def _refuse_unhandled_request(
+    client: CodexClientProtocol, *, request_id: int | str, method: str
+) -> None:
+    await client.respond_error(
+        request_id,
+        code=_METHOD_NOT_FOUND,
+        message=f"Unhandled server request: {method}",
+    )
+
+
 @dataclass
 class PendingApproval:
     request_id: int | str
@@ -348,6 +433,7 @@ class PendingApproval:
     created_at: datetime
     future: asyncio.Future[ApprovalDecision]
     session_key: str = ""
+    native_key: str = ""
 
 
 @dataclass
@@ -375,25 +461,219 @@ class TurnResult:
     turn_error: str = ""
 
 
+def _event_params(event: RpcEvent) -> dict[str, Any]:
+    return event.params if isinstance(event.params, dict) else {}
+
+
+def _native_turn_id(event: RpcEvent) -> str | None:
+    """The native turn ``event`` belongs to: its ``turnId``, or the ``turn.id``
+    that ``turn/started`` and ``turn/completed`` carry instead."""
+    params = _event_params(event)
+    turn_id = params.get("turnId")
+    if turn_id is None and isinstance(turn := params.get("turn"), dict):
+        turn_id = turn.get("id")
+    return str(turn_id) if turn_id else None
+
+
+def _loss_reason(cause: RpcEvent | Exception) -> str:
+    """Why a process's events stopped: the transport's stated reason, if any."""
+    if isinstance(cause, Exception):
+        return repr(cause)
+    params = _event_params(cause)
+    return str(params.get("reason") or cause.method)
+
+
+def _thread_id(event: RpcEvent) -> str | None:
+    params = _event_params(event)
+    thread_id = params.get("threadId")
+    return str(thread_id) if thread_id else None
+
+
+def _delegated_threads(event: RpcEvent) -> set[str]:
+    """Sub-agent threads an item says the turn spawned or addressed."""
+    item = _event_params(event).get("item")
+    if not isinstance(item, dict):
+        return set()
+    match item.get("type"):
+        case CodexItemType.COLLAB_AGENT_TOOL_CALL:
+            threads = item.get("receiverThreadIds") or ()
+        case CodexItemType.SUB_AGENT_ACTIVITY:
+            threads = (item.get("agentThreadId"),)
+        case _:
+            return set()
+    return {str(thread) for thread in threads if thread}
+
+
+@dataclass
+class NativeTurn:
+    """The Band turn that started one native turn, and the events addressed to it.
+
+    Codex names the turn only when ``turn/start`` answers, so events that
+    arrive first wait in ``early`` until ``turn_id`` is known. Sub-agents
+    the turn delegates to ask under their own thread and turn, and Codex
+    names their thread only in the turn's own items, so their requests
+    wait in ``unattributed`` until one does.
+    """
+
+    client: CodexClientProtocol
+    generation: int
+    thread_id: str | None = None
+    turn_id: str | None = None
+    # An exception is the reader's own failure, which ends the turn.
+    events: asyncio.Queue[RpcEvent | Exception] = dataclass_field(
+        default_factory=asyncio.Queue
+    )
+    early: list[RpcEvent] = dataclass_field(default_factory=list)
+    sub_agents: set[str] = dataclass_field(default_factory=set)
+    unattributed: list[RpcEvent] = dataclass_field(default_factory=list)
+    # Why the process stopped -- its closing notice or the reader's failure,
+    # queued behind its requests.
+    loss: RpcEvent | Exception | None = None
+
+    @property
+    def lost(self) -> bool:
+        return self.loss is not None
+
+    def owns(self, event: RpcEvent) -> bool:
+        # Every event a turn handles names its turn; thread-scoped ones do not.
+        if _native_turn_id(event) == self.turn_id:
+            return True
+        # Only a sub-agent's requests: its own turn/completed must not end this turn.
+        return event.is_request and _thread_id(event) in self.sub_agents
+
+    def may_own(self, event: RpcEvent) -> bool:
+        """A request from another thread, which a later collab item may name."""
+        return event.is_request and _thread_id(event) not in (
+            None,
+            self.thread_id,
+        )
+
+    def deliver(self, event: RpcEvent) -> None:
+        """Queue an owned event, then the held requests it names a sub-agent for."""
+        self.events.put_nowait(event)
+        if not (receivers := _delegated_threads(event) - self.sub_agents):
+            return
+        self.sub_agents |= receivers
+        held, self.unattributed = self.unattributed, []
+        for request in held:
+            if self.owns(request):
+                self.events.put_nowait(request)
+            else:
+                self.unattributed.append(request)
+
+    def claim(self, event: RpcEvent) -> bool:
+        """Deliver or hold ``event``; False when this turn can never own it."""
+        if self.owns(event):
+            self.deliver(event)
+        elif self.may_own(event):
+            self.unattributed.append(event)
+        else:
+            return False
+        return True
+
+
+def _result_id(result: Any, key: str) -> str:
+    """The ``id`` of ``result[key]``, or "" when Codex returned none."""
+    entry = result.get(key) if isinstance(result, dict) else None
+    return str(entry.get("id") or "") if isinstance(entry, dict) else ""
+
+
+def _undelivered(native: NativeTurn) -> list[RpcEvent]:
+    """Events still waiting for the native turn when its Band turn ends."""
+    queued = [native.events.get_nowait() for _ in range(native.events.qsize())]
+    return [
+        *native.early,
+        *(item for item in queued if isinstance(item, RpcEvent)),
+        *native.unattributed,
+    ]
+
+
+def _tools_by_name(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(tool.get("name")): tool for tool in tools}
+
+
+@dataclass(frozen=True)
+class ThreadSettings:
+    """Settings Codex reports for a thread that ``turn/start`` does not re-send;
+    a restored thread must report the ones it was started with."""
+
+    model_provider: str | None = None
+    cwd: str | None = None
+
+    @classmethod
+    def reported_by(cls, result: dict[str, Any]) -> ThreadSettings:
+        provider, cwd = result.get("modelProvider"), result.get("cwd")
+        return cls(
+            model_provider=provider if isinstance(provider, str) else None,
+            cwd=cwd if isinstance(cwd, str) else None,
+        )
+
+    def changes_in(self, restored: ThreadSettings) -> list[str]:
+        return [
+            f"{setting.name} {retained!r} became {current!r}"
+            for setting in fields(self)
+            if (retained := getattr(self, setting.name)) is not None
+            and (current := getattr(restored, setting.name)) != retained
+        ]
+
+
 @dataclass
 class RoomCodexClient:
-    """The process and protocol state owned by one Band room."""
+    """One Band room's Codex process and what its thread was started with.
 
+    ``retained`` owns admission and every physical transition. ``client`` and
+    ``reader`` are cleared only once the process is confirmed closed; the
+    room's thread id stays in the adapter's ``_room_threads`` across process
+    replacement until the room is finally disposed.
+    """
+
+    room_id: str
     workspace: str
+    retained: RetainedRoom = dataclass_field(init=False)
     client: CodexClientProtocol | None = None
-    initialized: bool = False
-    unusable: bool = False
-    model_override: str | None = None
+    reader: asyncio.Task[None] | None = None
+    turn: NativeTurn | None = None
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
-    # Serializes this room's turn processing so only one turn/RPC call is in
-    # flight at a time for this room. A pending manual approval blocks
-    # further turns in this room only, for up to ``approval_wait_timeout_s``
-    # (300s default) -- other rooms are unaffected. Approval resolution
-    # commands (/approve, /decline) are handled outside this lock in
-    # ``on_message`` so they can unblock a waiting turn.
+    # The dynamic tools the thread was started with: resume restores these and
+    # ignores any others. None when the thread came from Band history.
+    registration: list[dict[str, Any]] | None = None
+    settings: ThreadSettings = ThreadSettings()
+    # The thread was resumed into this process; a turn confirms its tools.
+    restored: bool = False
+    # Serializes this room's turns, local commands and their preparation; a
+    # turn parked on a manual approval blocks only this room. Approval
+    # replies are handled without it so they can resolve that wait.
     rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+
+    @property
+    def generation(self) -> int:
+        """The residency the room's current process belongs to."""
+        return self.retained.generation
+
+    def bind_thread(
+        self, *, registration: list[dict[str, Any]] | None, settings: ThreadSettings
+    ) -> None:
+        """Record what the thread this process now runs was started with."""
+        self.registration = registration
+        self.settings = settings
+        self.restored = False
+
+    def forget_thread(self) -> None:
+        self.bind_thread(registration=None, settings=ThreadSettings())
+
+    def require_client(self) -> CodexClientProtocol:
+        if self.client is None:
+            raise RuntimeError(f"Room {self.room_id} has no Codex process")
+        return self.client
+
+    async def stop_reader(self) -> None:
+        if (reader := self.reader) is None:
+            return
+        reader.cancel()
+        await asyncio.wait({reader})
+        self.reader = None
 
 
 class _WithoutCwdBinding(PydanticBaseSettingsSource):
@@ -457,7 +737,11 @@ class CodexAdapterConfig(EnvAdapterConfig):
     )
 
     transport: TransportKind = "stdio"
-    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
+    retention: RoomRetentionConfig = Field(
+        default_factory=lambda: RoomRetentionConfig(
+            transition_timeout_s=CODEX_TRANSITION_TIMEOUT_S
+        )
+    )
     model: str | None = None
     # Not validated here: the supported efforts vary by model and Codex CLI
     # version (model/list reports them), and the backend rejects unknown ones.
@@ -512,17 +796,15 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # long-lived room that approves many distinct commands can't grow this
     # set without bound.
     max_session_approved_per_room: int = 100
-    # Upper bound for the transport client's close() during on_cleanup so
-    # _rpc_lock can't be held indefinitely if the underlying subprocess or
-    # socket is unresponsive.  ``None`` disables the bound (legacy behavior).
+    # Upper bound for one attempt at closing the transport client; a close
+    # that runs over stays owned and the next cleanup retries it. ``None``
+    # disables the bound (legacy behavior); ``retention.transition_timeout_s``
+    # still bounds how long a caller waits to learn the outcome.
     client_close_timeout_s: float | None = 10.0
-    # Upper bound for letting a released, still-running turn wind down on its
-    # own during cleanup (see _settle_turn) before it's force-cancelled.
-    # Deliberately not Optional like client_close_timeout_s above: that
-    # field's "disable the bound" is a legacy allowance for a rarely-slow
-    # transport close, not something a turn possibly stuck on real work
-    # should ever be allowed to defeat.
-    turn_settle_timeout_s: float = 10.0
+    # Also bounds answering a finished turn's leftover native requests. Not
+    # Optional like client_close_timeout_s: a turn possibly stuck on real work
+    # must never defeat its bound.
+    turn_settle_timeout_s: TurnSettleTimeout = TURN_SETTLE_GRACE_S
     # Matching rules for session-level auto-approval (``/approve-session``).
     #
     # ``"full_command"`` (default, more restrictive) — the key is the exact
@@ -654,6 +936,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "custom Codex clients cannot guarantee room process isolation"
             )
         self._room_clients: dict[str, RoomCodexClient] = {}
+        # Final disposal gives a room's turn ``turn_settle_timeout_s`` to wind
+        # down before cancelling it.
+        self._retention = RoomRetention(
+            self.config.retention, settle_grace_s=self.config.turn_settle_timeout_s
+        )
         self._workspaces = RoomWorkspaces(self.config.workspace_for_room)
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
@@ -663,16 +950,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
+        # Keep each registry's minting state across room disposal and restart.
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
-        # Rooms in on_cleanup: their turns decline approvals instead of
-        # parking on a human while holding the _rpc_lock cleanup needs.
-        self._closing_rooms: set[str] = set()
         # A turn runs as a detached task so a manual approval can release
         # on_message: Band dispatches one message per room at a time, so the
         # reply that resolves the approval arrives only after on_message returns.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
-        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -686,18 +970,25 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
 
-    def _release_room_workspace(self, room: RoomCodexClient, room_id: str) -> None:
-        """Release this room's workspace claim (see ``release_room_workspace``)."""
-        self._workspaces.release(room_id, room.workspace)
+    def _room_closing(self, room_id: str) -> bool:
+        """Whether the room admits no more work; a forgotten room is closed."""
+        room = self._room_clients.get(room_id)
+        return room is None or room.retained.closing
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
-        if room is None:
-            workspace = self._workspaces.claim(room_id)
-            room = RoomCodexClient(workspace=workspace)
-            self._room_clients[room_id] = room
-        else:
-            self._workspaces.claim(room_id, room.workspace)
+        if room is not None:
+            return room
+        self._retention.require_admission()
+        with self._workspaces.claiming(room_id) as workspace:
+            room = RoomCodexClient(room_id=room_id, workspace=workspace)
+            room.retained = self._retention.register(
+                room_id,
+                acquire=partial(self._acquire, room),
+                release=partial(self._release, room),
+                dispose=partial(self._dispose, room),
+            )
+        self._room_clients[room_id] = room
         return room
 
     def _active_client_state(self) -> RoomCodexClient | None:
@@ -716,34 +1007,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if room_id is None:
             raise RuntimeError("Codex task state requires a room context")
         return self._room_task_titles.setdefault(room_id, OrderedDict())
-
-    @property
-    def _client(self) -> CodexClientProtocol | None:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client requires a room context")
-        return state.client
-
-    @_client.setter
-    def _client(self, value: CodexClientProtocol | None) -> None:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client requires a room context")
-        state.client = value
-
-    @property
-    def _initialized(self) -> bool:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client requires a room context")
-        return state.initialized
-
-    @_initialized.setter
-    def _initialized(self, value: bool) -> None:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client requires a room context")
-        state.initialized = value
 
     @property
     def _selected_model(self) -> str | None:
@@ -779,7 +1042,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         def _handle_set_model(inp: SetModelInput) -> str:
             if not adapter._rpc_lock.locked():
                 raise RuntimeError("_handle_set_model must run under _rpc_lock")
-            adapter._require_active_client_state().model_override = inp.model
             adapter._selected_model = inp.model
             return f"Model changed to {inp.model} for subsequent turns."
 
@@ -815,8 +1077,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         ]
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        if self._room_clients:
+        if self._retention.stopping:
             await self.cleanup_all()
+        self._retention = self._retention.renewed()
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
         self._log_startup_config(agent_name)
@@ -874,14 +1137,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
         command = self._extract_local_command(msg.content)
-        if command is None or (
-            command[0] not in _APPROVAL_COMMANDS and command[0] != CodexCommand.STATUS
-        ):
+        if command is None:
             return False
         room_id = msg.room_id
-        self._room_client(room_id)
-        self._active_room.set(room_id)
-        if command is not None and command[0] in _APPROVAL_COMMANDS:
+        if command[0] in _APPROVAL_COMMANDS:
+            # Resolves a decision its turn already owns: no room or process.
             try:
                 handled = await self._handle_approval_command(
                     tools=tools,
@@ -894,20 +1154,20 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 reraise_delivery_cause(e)
             if handled:
                 tools.turn.settle()
-                return True
-
-        if command is not None and command[0] == CodexCommand.STATUS:
-            await self._handle_local_command(
-                tools=tools,
-                msg=msg,
-                history=CodexSessionState(),
-                room_id=room_id,
-                command=command[0],
-                args=command[1],
-            )
-            tools.turn.settle()
-            return True
-        return False
+            return handled
+        if command[0] != CodexCommand.STATUS:
+            return False
+        self._active_room.set(room_id)
+        await self._handle_local_command(
+            tools=tools,
+            msg=msg,
+            history=CodexSessionState(),
+            room_id=room_id,
+            command=command[0],
+            args=command[1],
+        )
+        tools.turn.settle()
+        return True
 
     async def on_message(
         self,
@@ -921,24 +1181,28 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         room_id: str,
     ) -> None:
         self._admit_turn(room_id, "Codex")
-        self._room_client(room_id)
+        room = self._room_client(room_id)
         self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._turn_release[room_id] = release
-        turn = asyncio.create_task(
-            self._run_turn(
+        turn = start_releasable_turn(
+            room.retained,
+            partial(
+                self._run_turn,
+                room=room,
                 msg=msg,
                 tools=tools,
                 history=history,
                 participants_msg=participants_msg,
                 contacts_msg=contacts_msg,
                 is_session_bootstrap=is_session_bootstrap,
-                room_id=room_id,
                 command=command,
-            )
+            ),
+            tools=tools,
+            room_id=room_id,
         )
+        self._turn_release[room_id] = release
         self._turn_tasks[room_id] = bind_turn_task(tools, turn)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
         try:
@@ -956,217 +1220,252 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _run_turn(
         self,
         *,
+        room: RoomCodexClient,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
         history: CodexSessionState,
         participants_msg: str | None,
         contacts_msg: str | None,
         is_session_bootstrap: bool,
-        room_id: str,
         command: tuple[CodexCommand, str] | None,
     ) -> None:
-        """Run one turn to completion under this room's RPC lock."""
-        async with self._rpc_lock:
-            thread_id: str | None = None
-            turn_id: str | None = None
+        """Run one turn to completion, leasing its room's process throughout."""
+        async with room.rpc_lock:
             try:
-                await self._ensure_client_ready()
-                if self._client is None:
-                    raise RuntimeError(
-                        "Codex client not initialized after _ensure_client_ready"
-                    )
-
-                if command is not None:
-                    handled = await self._handle_local_command(
-                        tools=tools,
+                if command is not None and await self._run_local_command(
+                    room=room, msg=msg, tools=tools, history=history, command=command
+                ):
+                    return
+                async with room.retained.use():
+                    await self._serve_turn(
+                        room=room,
                         msg=msg,
+                        tools=tools,
                         history=history,
-                        room_id=room_id,
-                        command=command[0],
-                        args=command[1],
+                        participants_msg=participants_msg,
+                        contacts_msg=contacts_msg,
+                        is_session_bootstrap=is_session_bootstrap,
                     )
-                    if handled:
-                        tools.turn.settle()
-                        return
-
-                thread_id = await self._ensure_thread(
-                    room_id=room_id,
-                    history=history,
-                    tools=tools,
-                    is_session_bootstrap=is_session_bootstrap,
-                )
-
-                turn_input, has_pending_prompt_injection = self._build_turn_input(
-                    msg=msg,
-                    participants_msg=participants_msg,
-                    contacts_msg=contacts_msg,
-                    room_id=room_id,
-                )
-
-                turn_params: dict[str, Any] = {
-                    "threadId": thread_id,
-                    "input": turn_input,
-                }
-                self._apply_turn_overrides(turn_params, room_id=room_id)
-
-                turn_started = await self._start_turn(turn_params)
-                if has_pending_prompt_injection:
-                    self._prompt_injected_rooms.add(room_id)
-                turn = (
-                    turn_started.get("turn") if isinstance(turn_started, dict) else {}
-                )
-                turn_id = str((turn or {}).get("id") or "")
-
-                if (
-                    Emit.TASK_EVENTS in self.features.emit
-                    and self.config.emit_turn_task_markers
-                ):
-                    await send_event_safe(
-                        tools,
-                        content=self._build_task_event_content(
-                            task_id=turn_id or None,
-                            task="Codex turn",
-                            status="started",
-                            summary=f"Thread: {thread_id}",
-                        ),
-                        message_type="task",
-                        metadata={
-                            "codex_thread_id": thread_id,
-                            "codex_turn_id": turn_id or None,
-                            "codex_room_id": room_id,
-                        },
-                        log_label="turn started task event",
-                        log_level=logging.DEBUG,
-                    )
-
-                # Phase 2: Turn STARTED lifecycle event with input summary
-                if (
-                    self.config.emit_turn_lifecycle_events
-                    and Emit.TASK_EVENTS in self.features.emit
-                ):
-                    input_summary = (msg.content or "")[:200]
-                    await send_event_safe(
-                        tools,
-                        content=self._build_task_event_content(
-                            task_id=turn_id or None,
-                            task="Codex turn lifecycle",
-                            status="started",
-                            summary=f"Thread: {thread_id}",
-                        ),
-                        message_type="task",
-                        metadata={
-                            "codex_event_type": "turn_lifecycle",
-                            "codex_room_id": room_id,
-                            "codex_thread_id": thread_id,
-                            "codex_turn_id": turn_id or None,
-                            "codex_turn_status": "started",
-                            "codex_input_summary": input_summary,
-                        },
-                        log_label="turn started lifecycle event",
-                        log_level=logging.DEBUG,
-                    )
-
-                # Reset per-turn token deltas for the new turn.
-                usage_obj = self._token_usage.get(thread_id)
-                if usage_obj is not None:
-                    usage_obj.reset_turn_deltas()
-
-                # perf_counter (not monotonic): highest-resolution clock, so a fast
-                # turn still measures a non-zero duration on Windows, where
-                # monotonic()'s coarse tick can round an instant turn to 0.0.
-                _turn_start = _time.perf_counter()
-                try:
-                    result = await self._process_turn_events(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        turn_start=_turn_start,
-                    )
-                except TurnResultAlreadyReported:
-                    # A nested handler (e.g. the turn-timeout branch) already
-                    # reported this failure via send_failure; propagate it
-                    # without emitting a friendly _emit_turn_outcome reply or
-                    # a generic "Internal error" fallback.
-                    raise
-                except CodexJsonRpcError as error:
-                    result = TurnResult(
-                        turn_status="failed",
-                        turn_error=str(error),
-                    )
-                    await self._emit_failed_turn_outcome(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        result=result,
-                        turn_start=_turn_start,
-                    )
-                    raise
-                except Exception:
-                    logger.exception(
-                        "Unexpected error during Codex turn event processing "
-                        "(thread=%s, turn=%s)",
-                        thread_id,
-                        turn_id,
-                    )
-                    result = TurnResult(
-                        turn_status="failed",
-                        turn_error="Internal error during turn processing",
-                    )
-                    await tools.send_failure(
-                        AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    await self._emit_failed_turn_outcome(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        result=result,
-                        turn_start=_turn_start,
-                    )
-                    raise TurnResultAlreadyReported(
-                        "Internal error during turn processing"
-                    ) from None
-
-                _turn_duration_s = _time.perf_counter() - _turn_start
-                await self._emit_turn_outcome(
-                    tools=tools,
-                    msg=msg,
-                    room_id=room_id,
-                    thread_id=thread_id,
-                    turn_id=turn_id or None,
-                    turn_status=result.turn_status,
-                    turn_error=result.turn_error,
-                    native_messages=result.native_messages,
-                    duration_s=_turn_duration_s,
-                )
-                # A turn wound down by room cleanup was aborted, not missed.
-                if room_id not in self._closing_rooms:
-                    await judge_detached_turn(tools, room_id=room_id)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
-            except TurnResultAlreadyReported:
+            except (TurnResultAlreadyReported, InputNotAccepted):
+                # A lease refused by a closing room is no failed turn: the
+                # host keeps the message.
                 raise
-            except CodexJsonRpcError as e:
+            except (CodexJsonRpcError, CodexContinuityError) as e:
                 # A structured RPC error from the app-server (e.g. "model not
-                # available") is safe, curated text -- unlike an arbitrary
-                # caught exception, it's worth showing verbatim.
+                # available") or a refused restore is safe, curated text --
+                # unlike an arbitrary caught exception, worth showing verbatim.
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
+                raise
+            except TimeoutError as timeout:
+                # Only waiting on the room's process start or stop raises
+                # this; an abandoned start stays owned until recovery closes it.
+                logger.warning(
+                    "Room %s: Codex process not ready", room.room_id, exc_info=timeout
+                )
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, PROCESS_NOT_READY_ERROR)
+                )
                 raise
             except Exception:
                 logger.exception(
-                    "Unexpected error in Codex on_message (thread=%s, turn=%s)",
-                    thread_id,
-                    turn_id,
+                    "Unexpected error in Codex turn (room=%s)", room.room_id
                 )
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
+
+    async def _run_local_command(
+        self,
+        *,
+        room: RoomCodexClient,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        command: tuple[CodexCommand, str],
+    ) -> bool:
+        """Handle a local command, leasing the room's process only for those
+        that ask it: the rest must work while it cannot start, as
+        ``/thread archive`` must after Codex refuses to restore the thread."""
+        name, args = command
+        lease = room.retained.use() if name in _PROCESS_COMMANDS else nullcontext()
+        async with lease:
+            handled = await self._handle_local_command(
+                tools=tools,
+                msg=msg,
+                history=history,
+                room_id=room.room_id,
+                command=name,
+                args=args,
+            )
+        if handled:
+            tools.turn.settle()
+        return handled
+
+    async def _serve_turn(
+        self,
+        *,
+        room: RoomCodexClient,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: CodexSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        is_session_bootstrap: bool,
+    ) -> None:
+        room_id = room.room_id
+        thread_id = await self._ensure_thread(
+            room=room,
+            history=history,
+            tools=tools,
+            is_session_bootstrap=is_session_bootstrap,
+        )
+        turn_input, has_pending_prompt_injection = self._build_turn_input(
+            msg=msg,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
+            room_id=room_id,
+        )
+        turn_params: dict[str, Any] = {"threadId": thread_id, "input": turn_input}
+        self._apply_turn_overrides(turn_params, room_id=room_id)
+
+        async with self._native_turn(room) as native:
+            await self._start_native_turn(room, native, turn_params)
+            if has_pending_prompt_injection:
+                self._prompt_injected_rooms.add(room_id)
+            await self._emit_turn_started(
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                thread_id=thread_id,
+                turn_id=native.turn_id,
+            )
+
+            usage_obj = self._token_usage.get(thread_id)
+            if usage_obj is not None:
+                usage_obj.reset_turn_deltas()
+
+            # perf_counter (not monotonic): highest-resolution clock, so a fast
+            # turn still measures a non-zero duration on Windows, where
+            # monotonic()'s coarse tick can round an instant turn to 0.0.
+            turn_start = _time.perf_counter()
+            try:
+                result = await self._process_turn_events(
+                    native=native,
+                    tools=tools,
+                    msg=msg,
+                    room_id=room_id,
+                    thread_id=thread_id,
+                    turn_start=turn_start,
+                )
+            except TurnResultAlreadyReported:
+                # A nested handler (e.g. the turn-timeout branch) already
+                # reported this failure via send_failure; propagate it
+                # without emitting a friendly _emit_turn_outcome reply or
+                # a generic "Internal error" fallback.
+                raise
+            except CodexJsonRpcError as error:
+                await self._emit_failed_turn_outcome(
+                    tools=tools,
+                    msg=msg,
+                    room_id=room_id,
+                    thread_id=thread_id,
+                    turn_id=native.turn_id,
+                    result=TurnResult(turn_status="failed", turn_error=str(error)),
+                    turn_start=turn_start,
+                )
+                raise
+            except Exception as error:
+                # The event reader already logged the failure that lost its process.
+                if error is not native.loss:
+                    logger.exception(
+                        "Unexpected error during Codex turn event processing "
+                        "(thread=%s, turn=%s)",
+                        thread_id,
+                        native.turn_id,
+                    )
+                await tools.send_failure(
+                    AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
+                await self._emit_failed_turn_outcome(
+                    tools=tools,
+                    msg=msg,
+                    room_id=room_id,
+                    thread_id=thread_id,
+                    turn_id=native.turn_id,
+                    result=TurnResult(
+                        turn_status="failed",
+                        turn_error=TURN_PROCESSING_ERROR,
+                    ),
+                    turn_start=turn_start,
+                )
+                raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
+
+        await self._emit_turn_outcome(
+            tools=tools,
+            msg=msg,
+            room_id=room_id,
+            thread_id=thread_id,
+            turn_id=native.turn_id,
+            turn_status=result.turn_status,
+            turn_error=result.turn_error,
+            native_messages=result.native_messages,
+            duration_s=_time.perf_counter() - turn_start,
+        )
+        await judge_detached_turn(tools, room_id=room_id)
+
+    async def _emit_turn_started(
+        self,
+        *,
+        tools: AgentToolsProtocol,
+        msg: PlatformMessage,
+        room_id: str,
+        thread_id: str,
+        turn_id: str | None,
+    ) -> None:
+        if Emit.TASK_EVENTS not in self.features.emit:
+            return
+        if self.config.emit_turn_task_markers:
+            await send_event_safe(
+                tools,
+                content=self._build_task_event_content(
+                    task_id=turn_id,
+                    task="Codex turn",
+                    status="started",
+                    summary=f"Thread: {thread_id}",
+                ),
+                message_type="task",
+                metadata={
+                    "codex_thread_id": thread_id,
+                    "codex_turn_id": turn_id,
+                    "codex_room_id": room_id,
+                },
+                log_label="turn started task event",
+                log_level=logging.DEBUG,
+            )
+        if self.config.emit_turn_lifecycle_events:
+            await send_event_safe(
+                tools,
+                content=self._build_task_event_content(
+                    task_id=turn_id,
+                    task="Codex turn lifecycle",
+                    status="started",
+                    summary=f"Thread: {thread_id}",
+                ),
+                message_type="task",
+                metadata={
+                    "codex_event_type": "turn_lifecycle",
+                    "codex_room_id": room_id,
+                    "codex_thread_id": thread_id,
+                    "codex_turn_id": turn_id,
+                    "codex_turn_status": "started",
+                    "codex_input_summary": (msg.content or "")[:200],
+                },
+                log_label="turn started lifecycle event",
+                log_level=logging.DEBUG,
+            )
 
     def _release_turn(self, room_id: str, tools: AgentToolsProtocol) -> None:
         """Let on_message return while the room's turn waits on a human; the
@@ -1180,30 +1479,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         owner = self._turn_tasks.get(room_id)
         if owner is not None and owner.task is task:
             del self._turn_tasks[room_id]
-
-    async def _settle_turn(self, room_id: str) -> None:
-        """Let the room's detached turn wind down, then force-cancel it.
-
-        Once released, the turn is out of reach of the runtime's cancellation
-        of on_message, and it holds the RPC lock closing the room needs --
-        so this bound must always apply, unlike client_close_timeout_s's
-        legacy "None disables it" allowance for a separate, rarer stall.
-        """
-        turn = self._turn_tasks.get(room_id)
-        if turn is None:
-            return
-        # An already terminated turn keeps its original grace instead.
-        if turn.deadline is None:
-            done, _pending = await asyncio.wait(
-                {turn.task}, timeout=self.config.turn_settle_timeout_s
-            )
-            if not done:
-                logger.warning(
-                    "Room %s: turn still running after %ss; cancelling it",
-                    room_id,
-                    self.config.turn_settle_timeout_s,
-                )
-        await self._cancel_turn(room_id)
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1233,17 +1508,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _process_turn_events(
         self,
         *,
+        native: NativeTurn,
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
         room_id: str,
         thread_id: str,
-        turn_id: str | None,
         turn_start: float,
     ) -> TurnResult:
-        """Consume the Codex event stream for a single turn and return the result."""
-        if self._client is None:
-            raise RuntimeError("CodexAdapter client is None during turn event loop")
-
+        """Consume the events addressed to one native turn and return its result."""
+        turn_id = native.turn_id
         result = TurnResult()
         failure_reported = False
         try:
@@ -1252,17 +1525,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     0.0,
                     self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
                 )
-                event = await self._client.recv_event(timeout_s=_remaining)
-                if event.kind == "request":
-                    await self._handle_server_request(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        event=event,
+                event = await asyncio.wait_for(native.events.get(), timeout=_remaining)
+                if isinstance(event, Exception):
+                    raise event
+                if event.is_request:
+                    await self._answer_native_request(
+                        native, tools=tools, msg=msg, room_id=room_id, event=event
                     )
                     continue
 
-                params = event.params if isinstance(event.params, dict) else {}
+                params = _event_params(event)
 
                 if event.method in {
                     "codex/event/task_started",
@@ -1464,18 +1736,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                             )
                     continue
 
-                if event.method == "transport/closed":
+                if event.method == TRANSPORT_CLOSED:
                     result.turn_status = "failed"
-                    result.turn_error = "Codex transport closed unexpectedly"
-                    logger.warning(
-                        "Room %s: %s (thread=%s turn=%s)",
-                        room_id,
-                        result.turn_error,
-                        thread_id,
-                        turn_id,
-                    )
-                    # EOF or a failed reader does not prove the child exited.
-                    await self._retire_client(self._require_active_client_state())
+                    result.turn_error = TRANSPORT_LOST_ERROR
                     # Skipped when an earlier "error" notification in this same
                     # turn already reported one, so one incident isn't posted
                     # twice -- but the turn still fails either way.
@@ -1493,9 +1756,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         if isinstance(params.get("turn"), dict)
                         else {}
                     )
-                    event_turn_id = str(turn_payload.get("id") or "")
-                    if turn_id and event_turn_id and event_turn_id != turn_id:
-                        continue
                     result.turn_status = str(turn_payload.get("status") or "failed")
                     result.turn_error = self._extract_turn_error(turn_payload)
                     if result.turn_status != "failed":
@@ -1532,17 +1792,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 thread_id,
                 turn_id,
             )
-            if turn_id:
-                try:
-                    await self._client.request(
-                        CodexRequestMethod.TURN_INTERRUPT,
-                        {"threadId": thread_id, "turnId": turn_id},
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to send turn/interrupt after timeout",
-                        exc_info=True,
-                    )
+            try:
+                await native.client.request(
+                    CodexRequestMethod.TURN_INTERRUPT,
+                    {"threadId": thread_id, "turnId": turn_id},
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to send turn/interrupt after timeout",
+                    exc_info=True,
+                )
             timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
@@ -1570,88 +1829,318 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             raise TurnResultAlreadyReported(timeout_message)
         return result
 
+    async def _answer_native_request(
+        self,
+        native: NativeTurn,
+        *,
+        tools: AgentToolsProtocol,
+        msg: PlatformMessage,
+        room_id: str,
+        event: RpcEvent,
+    ) -> None:
+        """Answer the turn's request while its process can still read the
+        answer; a lost process's requests go neither to the room nor to it."""
+        if native.lost:
+            return
+        try:
+            await self._handle_server_request(
+                client=native.client,
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                event=event,
+            )
+        except ConnectionError:
+            if not native.lost:
+                raise
+
     async def on_cleanup(self, room_id: str) -> None:
+        """Leave a room: admission closes at once, its turn gets
+        ``turn_settle_timeout_s`` to wind down, then its process closes and the
+        room is forgotten.
+
+        Unfinished or failed cleanup keeps the room registered, refusing work,
+        with its process, thread and workspace claim for a retry to join.
+        """
         room = self._room_clients.get(room_id)
         if room is None:
             return
-        self._active_room.set(room_id)
-        # Physical transport closing has its own configured bound.
-        await self._retire_room(
-            room_id,
-            settle=self._settle_turn,
-            close=partial(self._close_room, room, room_id),
-        )
-
-    async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
-        async with self._rpc_lock:
-            await self._retire_client(room)
-            self._prompt_injected_rooms.discard(room_id)
-            self._needs_history_injection.discard(room_id)
-            self._approval_audit.pop(room_id, None)
-            self._session_approved.pop(room_id, None)
-            self._sandbox_overrides.pop(room_id, None)
-            self._room_task_titles.pop(room_id, None)
-            self._room_clients.pop(room_id, None)
-            self._release_room_workspace(room, room_id)
-
-    async def _retire_client(self, room: RoomCodexClient) -> None:
-        """Retain an unusable client and its claim until cleanup succeeds."""
-        room.unusable = True
-        room.initialized = False
-        room.selected_model = None
-        # A replacement process cannot use the retired process's thread.
-        if (room_id := self._active_room.get()) is not None:
-            thread_id = self._room_threads.pop(room_id, None)
-            self._raw_history_by_room.pop(room_id, None)
-            if thread_id:
-                self._token_usage.pop(thread_id, None)
-            self._clear_pending_approvals_for_room(room_id)
-        if room.client is not None:
-            await asyncio.wait_for(
-                room.client.close(), timeout=self.config.client_close_timeout_s
-            )
-            room.client = None
-        room.unusable = False
+        self._clear_pending_approvals_for_room(room_id)
+        await room.retained.dispose()
 
     async def cleanup_all(self) -> None:
-        """Attempt every room, retaining failed handles and claims for retry."""
-        results = await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in list(self._room_clients)),
-            return_exceptions=True,
-        )
-        errors: list[Exception] = []
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, Exception):
-                errors.append(result)
-        if errors:
-            raise ExceptionGroup("Codex session cleanup failed", errors)
+        """Stop the residency owner: admission closes at once, every room's
+        turn gets ``turn_settle_timeout_s`` to wind down, then its process
+        closes, all reported within one ``retention.transition_timeout_s``.
 
-    async def _ensure_client_ready(self) -> None:
-        room = self._require_active_client_state()
-        if room.unusable:
-            await self._retire_client(room)
-        if room.client is None:
-            room.client = self._build_client(self.config)
-        client = room.client
-        if room.initialized:
+        Callers join the same stop, and a failed one is retried. An unfinished
+        or failed stop keeps every room fenced with its process, thread and
+        workspace. Success stays sealed until ``on_started``.
+        """
+        for room_id in list(self._room_clients):
+            self._clear_pending_approvals_for_room(room_id)
+        await self._retention.stop()
+
+    async def _acquire(
+        self, room: RoomCodexClient, generation: int, resume: bool
+    ) -> None:
+        """Start the room's process and strictly restore the thread it retains.
+
+        A crash keeps the thread id and the room's model, so ``resume``
+        changes nothing: a retained thread is always restored on its model.
+        The reader runs before ``thread/resume``, which can start native work.
+        """
+        room.client = client = self._build_client(room.workspace)
+        await client.connect()
+        room.reader = spawn_owned(
+            self._read_native_events(room, client, generation),
+            label=f"Room {room.room_id} Codex event reader",
+        )
+        await client.initialize(
+            client_name=self.config.client_name,
+            client_title=self.config.client_title,
+            client_version=self.config.client_version,
+            experimental_api=self.config.experimental_api,
+        )
+        await self._register_skill_roots(client)
+        if room.selected_model is None:
+            room.selected_model = await self._select_model(client)
+            logger.info(
+                "Room %s: Codex model selected: %s", room.room_id, room.selected_model
+            )
+        if (thread_id := self._room_threads.get(room.room_id)) is not None:
+            await self._restore_thread(room, client, thread_id)
+
+    def _resume_params(self, room: RoomCodexClient, thread_id: str) -> dict[str, Any]:
+        """``thread/resume`` overrides pinning the thread to the room's workspace.
+
+        Without ``cwd`` Codex reports the thread's recorded cwd, which a later
+        strict restore would see as a changed setting.
+        """
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "cwd": room.workspace,
+            "personality": self.config.personality,
+        }
+        self._apply_thread_sandbox(params, room_id=room.room_id)
+        return params
+
+    async def _restore_thread(
+        self, room: RoomCodexClient, client: CodexClientProtocol, thread_id: str
+    ) -> None:
+        """Resume exactly ``thread_id``; refusal keeps it for the next attempt.
+
+        Sends only overrides ``thread/resume`` supports -- never ``path``,
+        ``history`` or tools, which resume silently ignores -- and never
+        starts a new thread in its place.
+        """
+        result = await client.request(
+            CodexRequestMethod.THREAD_RESUME, self._resume_params(room, thread_id)
+        )
+        resumed = _result_id(result, "thread")
+        if resumed != thread_id:
+            raise CodexContinuityError(
+                f"Codex resumed thread {resumed or 'none'!r} instead of {thread_id!r}"
+            )
+        if changes := room.settings.changes_in(ThreadSettings.reported_by(result)):
+            raise CodexContinuityError(
+                f"Codex restored thread {thread_id} with changed settings: "
+                + "; ".join(changes)
+            )
+        room.restored = True
+
+    async def _read_native_events(
+        self, room: RoomCodexClient, client: CodexClientProtocol, generation: int
+    ) -> None:
+        """The process's one event reader, from connect until release.
+
+        An event goes to the Band turn that started its native turn. Work no
+        Band turn started -- a late item, an autonomous native turn -- is
+        refused rather than handled with another turn's tools.
+        """
+        while True:
+            try:
+                event = await client.recv_event()
+            except Exception as error:
+                logger.exception(
+                    "Room %s: Codex event reader failed; recovering generation %s",
+                    room.room_id,
+                    generation,
+                )
+                self._lose_process(room, generation, error)
+                return
+            if event.method == TRANSPORT_CLOSED:
+                logger.warning(
+                    "Room %s: Codex transport closed (%s); recovering generation %s",
+                    room.room_id,
+                    _loss_reason(event),
+                    generation,
+                )
+                self._lose_process(room, generation, event)
+                return
+            if (
+                unowned := self._route_native_event(room, generation, event)
+            ) is not None:
+                await self._refuse_unowned(room, client, unowned)
+
+    @staticmethod
+    def _route_native_event(
+        room: RoomCodexClient, generation: int, event: RpcEvent
+    ) -> RpcEvent | None:
+        """Hand ``event`` to its Band turn; return it when no turn owns it."""
+        native = room.turn
+        if native is None or native.generation != generation:
+            return event
+        if native.turn_id is None:
+            native.early.append(event)
+            return None
+        return None if native.claim(event) else event
+
+    def _lose_process(
+        self, room: RoomCodexClient, generation: int, cause: RpcEvent | Exception
+    ) -> None:
+        """Hand a process whose events stopped to recovery, and end the turn
+        waiting on them with ``cause``: the transport's closing notice, or the
+        reader's own failure. Recovery closes the process once that turn unwinds.
+        """
+        room.retained.recover(
+            generation=generation,
+            reason=f"Codex events stopped: {_loss_reason(cause)}",
+        )
+        native = room.turn
+        if native is not None and native.generation == generation:
+            native.loss = cause
+            # Approvals the lost process asked for can never be answered.
+            self._clear_pending_approvals_for_room(room.room_id)
+            native.events.put_nowait(cause)
+
+    async def _refuse_unowned(
+        self, room: RoomCodexClient, client: CodexClientProtocol, event: RpcEvent
+    ) -> None:
+        """Answer native work no Band turn started, without lending it one's tools."""
+        if not event.is_request or event.id is None:
+            logger.debug(
+                "Room %s: no Band turn owns Codex %s; dropped",
+                room.room_id,
+                event.method,
+            )
+            return
+        logger.warning(
+            "Room %s: refusing Codex %s from native turn %s, which no Band turn started",
+            room.room_id,
+            event.method,
+            _native_turn_id(event),
+        )
+        try:
+            if event.method == DYNAMIC_TOOL_CALL_METHOD:
+                await client.respond(
+                    event.id, _tool_result(_UNOWNED_TOOL_CALL_TEXT, success=False)
+                )
+            elif event.method in CODEX_APPROVAL_METHODS:
+                await client.respond(event.id, _approval_response("decline"))
+            else:
+                await _refuse_unhandled_request(
+                    client, request_id=event.id, method=event.method
+                )
+        except Exception:
+            logger.warning(
+                "Room %s: could not refuse Codex %s",
+                room.room_id,
+                event.method,
+                exc_info=True,
+            )
+
+    @asynccontextmanager
+    async def _native_turn(self, room: RoomCodexClient) -> AsyncIterator[NativeTurn]:
+        """Bind the native turn this Band turn starts to it until the turn ends.
+
+        Whatever is still undelivered then belongs to no Band turn.
+        """
+        room.turn = native = NativeTurn(
+            client=room.require_client(), generation=room.generation
+        )
+        try:
+            yield native
+        finally:
+            room.turn = None
+            await self._refuse_undelivered(room, native)
+
+    async def _refuse_undelivered(
+        self, room: RoomCodexClient, native: NativeTurn
+    ) -> None:
+        """Refuse a finished turn's leftovers, within the turn's settle bound so
+        a process that stopped reading cannot hold the room's turn open."""
+        if native.lost:
+            # The process can never read a refusal.
             return
         try:
-            await client.connect()
-            await client.initialize(
-                client_name=self.config.client_name,
-                client_title=self.config.client_title,
-                client_version=self.config.client_version,
-                experimental_api=self.config.experimental_api,
+            async with asyncio.timeout(self.config.turn_settle_timeout_s):
+                for event in _undelivered(native):
+                    await self._refuse_unowned(room, native.client, event)
+        except TimeoutError:
+            logger.warning(
+                "Room %s: Codex stopped reading; left native requests unanswered",
+                room.room_id,
             )
-            await self._register_skill_roots(client)
-            room.selected_model = await self._select_model()
-            logger.info("Codex model selected: %s", room.selected_model)
-            room.initialized = True
-        except BaseException:
-            await self._retire_client(room)
-            raise
+
+    async def _start_native_turn(
+        self, room: RoomCodexClient, native: NativeTurn, params: dict[str, Any]
+    ) -> None:
+        """Start the native turn and claim the events that arrived before its id."""
+        native.thread_id = params["threadId"]
+        started = await native.client.request(CodexRequestMethod.TURN_START, params)
+        turn_id = _result_id(started, "turn")
+        if not turn_id:
+            raise RuntimeError("Codex turn/start returned no turn id")
+        native.turn_id = turn_id
+        early, native.early = native.early, []
+        # Claim every early event before any await, or the reader could
+        # queue newer ones ahead of them.
+        refused = [event for event in early if not native.claim(event)]
+        for event in refused:
+            await self._refuse_unowned(room, native.client, event)
+
+    async def _release(
+        self, room: RoomCodexClient, cause: ReleaseCause
+    ) -> ReleaseOutcome:
+        """Close the room's process; its thread id stays for the next process."""
+        await room.stop_reader()
+        if room.client is not None:
+            timeout = self.config.client_close_timeout_s
+            try:
+                await asyncio.wait_for(room.client.close(), timeout=timeout)
+            except TimeoutError as error:
+                # This becomes the leave's error, so it names what overran.
+                raise TimeoutError(
+                    f"Codex process for room {room.room_id} did not close "
+                    f"within {timeout}s"
+                ) from error
+        room.client = None
+        room.restored = False
+        return ReleaseOutcome.RELEASED
+
+    async def _dispose(self, room: RoomCodexClient) -> None:
+        """Erase what only a final leave ends: thread, settings, workspace claim."""
+        room_id = room.room_id
+        self._forget_room_thread(room_id)
+        self._clear_pending_approvals_for_room(room_id)
+        self._approval_audit.pop(room_id, None)
+        self._session_approved.pop(room_id, None)
+        self._sandbox_overrides.pop(room_id, None)
+        self._room_task_titles.pop(room_id, None)
+        self._workspaces.release(room_id, room.workspace)
+        if self._room_clients.get(room_id) is room:
+            del self._room_clients[room_id]
+
+    def _forget_room_thread(self, room_id: str) -> str | None:
+        """Drop the room's thread mapping and per-thread state; return the thread id."""
+        thread_id = self._room_threads.pop(room_id, None)
+        if thread_id is not None:
+            self._token_usage.pop(thread_id, None)
+        self._prompt_injected_rooms.discard(room_id)
+        self._needs_history_injection.discard(room_id)
+        self._raw_history_by_room.pop(room_id, None)
+        return thread_id
 
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
@@ -1664,27 +2153,19 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         except CodexJsonRpcError as exc:
             raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
 
-    def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
-        state = self._active_client_state()
-        if state is None:
-            raise RuntimeError("Codex client creation requires a room context")
+    def _build_client(self, workspace: str) -> CodexClientProtocol:
         return CodexStdioClient(
-            command=config.codex_command,
-            cwd=state.workspace,
-            env=config.codex_env,
+            command=self.config.codex_command,
+            cwd=workspace,
+            env=self.config.codex_env,
         )
 
-    async def _select_model(self) -> str:
-        state = self._require_active_client_state()
-        if state.model_override:
-            return state.model_override
+    async def _select_model(self, client: CodexClientProtocol) -> str:
         if self.config.model:
             return self.config.model
 
-        if self._client is None:
-            raise RuntimeError("Codex client not initialized")
         try:
-            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
+            result = await client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; using default Codex model",
@@ -1701,83 +2182,127 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _ensure_thread(
         self,
         *,
-        room_id: str,
+        room: RoomCodexClient,
         history: CodexSessionState,
         tools: AgentToolsProtocol,
         is_session_bootstrap: bool,
     ) -> str:
-        thread_id = self._room_threads.get(room_id)
-        if thread_id:
+        """The room's thread: the retained one, one Band history names, or new."""
+        room_id = room.room_id
+        if (thread_id := self._room_threads.get(room_id)) is not None:
+            if room.restored:
+                self._confirm_restored_tools(room, tools, thread_id)
             return thread_id
-
-        if self._client is None:
-            raise RuntimeError("Codex client not initialized")
-
-        if is_session_bootstrap and history.has_thread():
-            try:
-                result = await self._client.request(
-                    CodexRequestMethod.THREAD_RESUME,
-                    {
-                        "threadId": history.thread_id,
-                        "personality": self.config.personality,
-                    },
-                )
-                resumed = result.get("thread", {}) if isinstance(result, dict) else {}
-                thread_id = str(resumed.get("id") or history.thread_id or "")
-                if thread_id:
-                    self._room_threads[room_id] = thread_id
-                    self._raw_history_by_room.pop(room_id, None)
-                    if Emit.TASK_EVENTS in self.features.emit:
-                        await send_event_safe(
-                            tools,
-                            content=self._build_task_event_content(
-                                task_id=thread_id,
-                                task="Codex thread",
-                                status="resumed",
-                                summary=f"Room: {room_id}",
-                            ),
-                            message_type="task",
-                            metadata={
-                                "codex_thread_id": thread_id,
-                                "codex_room_id": room_id,
-                                "codex_resumed": True,
-                            },
-                            log_label="thread resumed task event",
-                            log_level=logging.DEBUG,
-                        )
-                    return thread_id
-            except CodexJsonRpcError as exc:
-                logger.warning(
-                    "thread/resume failed for room %s thread %s: %s",
-                    room_id,
-                    history.thread_id,
-                    exc,
-                )
-                if self.config.inject_history_on_resume_failure:
-                    self._needs_history_injection.add(room_id)
+        client = room.require_client()
+        if is_session_bootstrap and (named := history.thread_id):
+            resumed = await self._resume_from_history(
+                room=room, client=client, named=named, tools=tools
+            )
+            if resumed is not None:
+                return resumed
         else:
-            # Not a bootstrap resume — clean up any stashed history
             self._raw_history_by_room.pop(room_id, None)
+        return await self._start_thread(room=room, client=client, tools=tools)
 
+    def _confirm_restored_tools(
+        self, room: RoomCodexClient, tools: AgentToolsProtocol, thread_id: str
+    ) -> None:
+        """Refuse a turn whose tools differ from the restored thread's.
+
+        ``thread/resume`` restores the tools a thread was started with and
+        ignores any others, so new ones would silently never reach the model.
+        """
+        if room.registration is not None:
+            offered = _tools_by_name(self._build_dynamic_tools(tools))
+            registered = _tools_by_name(room.registration)
+            if offered != registered:
+                changed = sorted(offered.keys() ^ registered.keys())
+                raise CodexContinuityError(
+                    f"Codex thread {thread_id} keeps the tools it was started "
+                    f"with; this turn's tools differ ({', '.join(changed) or 'schemas'}). "
+                    f"Send `/{CodexCommand.THREAD} {CodexSubcommand.ARCHIVE}` "
+                    "to start a new thread."
+                )
+        room.restored = False
+
+    async def _resume_from_history(
+        self,
+        *,
+        room: RoomCodexClient,
+        client: CodexClientProtocol,
+        named: str,
+        tools: AgentToolsProtocol,
+    ) -> str | None:
+        """Resume the thread Band history names; None falls back to a new one."""
+        room_id = room.room_id
+        try:
+            result = await client.request(
+                CodexRequestMethod.THREAD_RESUME,
+                self._resume_params(room, named),
+            )
+        except CodexJsonRpcError as exc:
+            logger.warning(
+                "thread/resume failed for room %s thread %s: %s",
+                room_id,
+                named,
+                exc,
+            )
+            if self.config.inject_history_on_resume_failure:
+                self._needs_history_injection.add(room_id)
+            return None
+        thread_id = _result_id(result, "thread") or named
+        self._room_threads[room_id] = thread_id
+        # Band history does not record which tools the thread was started with.
+        room.bind_thread(registration=None, settings=ThreadSettings.reported_by(result))
+        self._raw_history_by_room.pop(room_id, None)
+        if Emit.TASK_EVENTS in self.features.emit:
+            await send_event_safe(
+                tools,
+                content=self._build_task_event_content(
+                    task_id=thread_id,
+                    task="Codex thread",
+                    status="resumed",
+                    summary=f"Room: {room_id}",
+                ),
+                message_type="task",
+                metadata={
+                    "codex_thread_id": thread_id,
+                    "codex_room_id": room_id,
+                    "codex_resumed": True,
+                },
+                log_label="thread resumed task event",
+                log_level=logging.DEBUG,
+            )
+        return thread_id
+
+    async def _start_thread(
+        self,
+        *,
+        room: RoomCodexClient,
+        client: CodexClientProtocol,
+        tools: AgentToolsProtocol,
+    ) -> str:
+        room_id = room.room_id
         dynamic_tools = self._build_dynamic_tools(tools)
         start_params: dict[str, Any] = {
-            "model": self._selected_model,
-            "cwd": self._room_client(room_id).workspace,
+            "model": room.selected_model,
+            "cwd": room.workspace,
             "approvalPolicy": self.config.approval_policy,
             "personality": self.config.personality,
             "dynamicTools": dynamic_tools,
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await self._client.request(
-            CodexRequestMethod.THREAD_START, start_params
-        )
-        thread = started.get("thread") if isinstance(started, dict) else {}
-        thread_id = str((thread or {}).get("id") or "")
+        started = await client.request(CodexRequestMethod.THREAD_START, start_params)
+        thread_id = _result_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")
 
+        # Recorded at once: a process lost from here on restores this thread.
         self._room_threads[room_id] = thread_id
+        room.bind_thread(
+            registration=dynamic_tools, settings=ThreadSettings.reported_by(started)
+        )
 
         if Emit.TASK_EVENTS in self.features.emit:
             await send_event_safe(
@@ -1931,34 +2456,29 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _handle_server_request(
         self,
         *,
+        client: CodexClientProtocol,
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
         room_id: str,
         event: RpcEvent,
     ) -> None:
-        """Dispatch a server-initiated request (tool call, approval).
+        """Dispatch a request the Band turn's native turn sent (tool call, approval).
 
-        Concurrency model: this coroutine mutates room-scoped adapter state
-        (``_pending_approvals``, ``_session_approved``, ``_approval_audit``,
-        ``_task_titles_by_id``) without an explicit lock.  It is safe
-        because the only call site is the turn-processing loop in
-        ``_process_turn_events``, which already serializes this room's turns
-        via its room's ``_rpc_lock`` -- and every structure it touches is
+        ``client`` is the process the request came from; the answer goes back
+        there. Concurrency model: this coroutine mutates room-scoped adapter
+        state (``_pending_approvals``, ``_session_approved``,
+        ``_approval_audit``, ``_task_titles_by_id``) without an explicit lock.
+        It is safe because it runs only inside a turn, which holds its room's
+        ``rpc_lock`` -- and every structure it touches is
         keyed (or routed via ``_active_room``) per room, so a concurrent
         turn in a different room never touches the same state.
-
-        Because asyncio runs one coroutine at a time, every synchronous
-        span inside this method is atomic.  If a new caller is ever added
-        from a different thread, this routine must be re-audited.
         """
-        if self._client is None:
-            raise RuntimeError("CodexAdapter client is None — was on_started() called?")
         if event.id is None:
             return
 
-        params = event.params if isinstance(event.params, dict) else {}
+        params = _event_params(event)
 
-        if event.method == "item/tool/call":
+        if event.method == DYNAMIC_TOOL_CALL_METHOD:
             tool_name = str(params.get("tool") or "")
             arguments = params.get("arguments")
             if not isinstance(arguments, dict):
@@ -2011,13 +2531,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                         if isinstance(result, str)
                         else json.dumps(result, default=str)
                     )
-                    content_items = [{"type": "inputText", "text": text_result}]
-                await self._client.respond(
-                    event.id,
-                    {
-                        "contentItems": content_items,
-                        "success": success,
-                    },
+                    content_items = [_text_item(text_result)]
+                await client.respond(
+                    event.id, _tool_response(content_items, success=success)
                 )
                 if should_report:
                     await tools.send_event(
@@ -2034,13 +2550,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 errors = format_validation_error(exc)
                 error_text = f"Invalid arguments for {tool_name}: {errors}"
                 logger.error("Validation error for tool %s: %s", tool_name, exc)
-                await self._client.respond(
-                    event.id,
-                    {
-                        "contentItems": [{"type": "inputText", "text": error_text}],
-                        "success": False,
-                    },
-                )
+                await client.respond(event.id, _tool_result(error_text, success=False))
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -2055,13 +2565,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             except Exception as exc:
                 error_text = f"Error: {exc}"
                 logger.exception("Tool execution failed for %s", tool_name)
-                await self._client.respond(
-                    event.id,
-                    {
-                        "contentItems": [{"type": "inputText", "text": error_text}],
-                        "success": False,
-                    },
-                )
+                await client.respond(event.id, _tool_result(error_text, success=False))
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -2078,6 +2582,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(
+                client=client,
                 tools=tools,
                 msg=msg,
                 room_id=room_id,
@@ -2086,15 +2591,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        await self._client.respond_error(
-            event.id,
-            code=-32601,
-            message=f"Unhandled server request: {event.method}",
+        await _refuse_unhandled_request(
+            client, request_id=event.id, method=event.method
         )
 
     async def _handle_approval_request(
         self,
         *,
+        client: CodexClientProtocol,
         tools: AgentToolsProtocol,
         msg: PlatformMessage,
         room_id: str,
@@ -2106,8 +2610,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         Splits off from :meth:`_handle_server_request` for readability.
         Same concurrency guarantees apply — see the docstring there.
         """
-        if self._client is None:
-            raise RuntimeError("CodexAdapter client is None — was on_started() called?")
         if event.id is None:
             return
 
@@ -2121,7 +2623,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if session_hit:
             decision: ApprovalDecision = "acceptForSession"
             decided_by = "session_policy"
-        elif room_id in self._closing_rooms:
+        elif self._room_closing(room_id):
             decision = "decline"
             decided_by = "room_cleanup"
         elif self.config.approval_mode == "manual":
@@ -2147,7 +2649,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             decided_by = f"policy:{self.config.approval_mode}"
 
-        await self._client.respond(event.id, {"decision": decision})
+        await client.respond(event.id, _approval_response(decision))
 
         audit_entry = self._record_approval_audit(
             room_id=room_id,
@@ -2449,7 +2951,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return
 
-        if item_type in _REQUESTED_TOOL_ITEM_TYPES or item_type in _MESSAGE_ITEM_TYPES:
+        if item_type in _UNRENDERED_ITEM_TYPES:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
@@ -2645,7 +3147,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
-        token = self._approval_token(event.id, params)
         loop = asyncio.get_running_loop()
         pending = PendingApproval(
             request_id=event.id,
@@ -2654,20 +3155,22 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             created_at=datetime.now(UTC),
             future=loop.create_future(),
             session_key=self._session_approval_key(event.method, params),
+            native_key=self._native_approval_key(event.id, params),
         )
         registry = self._pending_approvals.setdefault(
             room_id,
             DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
         )
-        if (registration := registry.register_keyed(pending, key=token)) is None:
+        if (registration := self._register_approval(registry, pending)) is None:
             logger.warning(
                 "Approval %s in room %s was redelivered after a reply claimed it; "
                 "declining the redelivery",
-                token,
+                pending.native_key,
                 room_id,
             )
             return "decline"
         entry = registration.entry
+        token = entry.token
         for removed in registration.removed:
             removed.payload.future.set_result("decline")
         if (evicted := registration.evicted) is not None:
@@ -3144,10 +3647,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 usage.format_summary() if usage and usage.total_tokens > 0 else "none"
             )
             session_approvals = len(self._session_approved.get(room_id) or ())
+            room = self._active_client_state()
+            selected_model = room.selected_model if room is not None else None
             status_text = (
                 "Codex status:\n"
                 f"- transport: {self.config.transport}\n"
-                f"- selected_model: {self._selected_model or 'unknown'}\n"
+                f"- selected_model: {selected_model or 'unknown'}\n"
                 f"- configured_model: {self.config.model or 'auto'}\n"
                 f"- room_id: {room_id}\n"
                 f"- thread_id: {mapped_thread or 'not mapped'}\n"
@@ -3179,9 +3684,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return True
 
             if model_arg.lower() in _MODEL_LIST_WORDS:
-                if self._client is None:
-                    raise RuntimeError("Codex client not initialized")
-                result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
+                client = self._require_active_client_state().require_client()
+                result = await client.request(CodexRequestMethod.MODEL_LIST, {})
                 models = self._visible_model_ids(result)
                 if models:
                     preview = ", ".join(models[:10])
@@ -3200,9 +3704,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     )
                 return True
 
-            # Model selection belongs to the room's process, never adapter-wide config.
-            state = self._require_active_client_state()
-            state.model_override = model_arg
+            # The room's choice outlives its process; never adapter-wide config.
             self._selected_model = model_arg
             await deliver_notice(
                 tools,
@@ -3374,11 +3876,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 return True
 
             if subcommand == CodexSubcommand.ARCHIVE:
-                mapped_thread = self._room_threads.pop(room_id, None)
-                self._prompt_injected_rooms.discard(room_id)
-                self._token_usage.pop(mapped_thread or "", None)
-                self._raw_history_by_room.pop(room_id, None)
-                self._needs_history_injection.discard(room_id)
+                mapped_thread = self._forget_room_thread(room_id)
+                self._require_active_client_state().forget_thread()
                 await deliver_notice(
                     tools,
                     f"Thread `{mapped_thread or 'none'}` archived. "
@@ -3553,11 +4052,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if state.reasoning_summary or self.config.reasoning_summary:
             params["summary"] = state.reasoning_summary or self.config.reasoning_summary
         self._apply_turn_sandbox(params, room_id=room_id)
-
-    async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
-        if self._client is None:
-            raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        return await self._client.request(CodexRequestMethod.TURN_START, params)
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None
@@ -3865,12 +4359,21 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
 
     @staticmethod
-    def _approval_token(request_id: int | str, params: dict[str, Any]) -> str:
+    def _native_approval_key(request_id: int | str, params: dict[str, Any]) -> str:
         for key in ("approvalId", "approval_id", "itemId", "callId"):
             value = params.get(key)
             if isinstance(value, str) and value:
                 return value
         return f"req-{request_id}"
+
+    @staticmethod
+    def _register_approval(
+        registry: DecisionRegistry[PendingApproval], pending: PendingApproval
+    ) -> Registration[PendingApproval] | None:
+        for token, existing in registry.items():
+            if existing.native_key == pending.native_key:
+                return registry.register_keyed(pending, key=token)
+        return registry.register_minted(pending)
 
     def _open_approval_count(self, room_id: str) -> int:
         registry = self._pending_approvals.get(room_id)
@@ -3883,11 +4386,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if registry is None:
             return
         registry.forget(entry)
-        if len(registry) == 0:
-            self._pending_approvals.pop(room_id, None)
 
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
-        registry = self._pending_approvals.pop(room_id, None)
+        registry = self._pending_approvals.get(room_id)
         if registry is None:
             return
         for entry in registry.cancel_all():
@@ -3931,11 +4432,11 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
     async def _current_model_efforts(self) -> tuple[str, list[str]]:
         """The room's model and the efforts Codex reports for it (empty if unknown)."""
-        if self._client is None:
-            raise RuntimeError("Codex client not initialized")
-        model_id = self._selected_model or await self._select_model()
+        room = self._require_active_client_state()
+        client = room.require_client()
+        model_id = room.selected_model or await self._select_model(client)
         try:
-            result = await self._client.request(CodexRequestMethod.MODEL_LIST, {})
+            result = await client.request(CodexRequestMethod.MODEL_LIST, {})
         except Exception:
             logger.warning(
                 "model/list failed; supported reasoning efforts are unknown",

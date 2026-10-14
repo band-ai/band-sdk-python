@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 
 from band.adapters.claude_sdk import (
     APPROVAL_POLICY_DECISION_TEMPLATE,
     ClaudeSDKAdapterConfig,
 )
-from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom, with_approvals
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import (
+    WRITE_NOTE,
+    OpenRoom,
+    with_approvals,
+)
 
 
 def policy_notice(decision: str) -> str:

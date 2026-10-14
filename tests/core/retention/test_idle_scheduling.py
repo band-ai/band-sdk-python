@@ -8,7 +8,8 @@ from band.core.retention import (
     ProviderActivity,
     Residency,
 )
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.adapters.hold import Hold
+from tests.core.retention.kit import ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -97,9 +98,9 @@ class TestIdleScheduling:
         fast = host.room("fast")
         await slow.turn()
         await fast.turn()
-        slow.closing = Barrier()
+        slow.closing = Hold()
         await host.clock.advance(10)
-        await slow.closing.reached.wait()
+        await slow.closing.arrived()
         await fast.suspended.get()
         await fast.turn()
         assert slow.live and fast.live

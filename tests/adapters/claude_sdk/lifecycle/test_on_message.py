@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 
 import pytest
 
 from band.core.exceptions import InputNotAccepted
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import ClaudeRoom, said
+from tests.adapters.claude_sdk.helpers import OpenRoom, said
 from tests.conftest import eager_tasks, requires_eager_tasks
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 MEMORY_FRAMING = "Your memory of this room so far"
 

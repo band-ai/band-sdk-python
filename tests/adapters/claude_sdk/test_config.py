@@ -3,7 +3,6 @@ a config that could never work is refused when it is loaded."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, get_args
 
@@ -19,10 +18,8 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from tests.adapters.claude_sdk.fakecli import Hold
-from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom
+from tests.adapters.claude_sdk.helpers import WRITE_NOTE, OpenRoom
 from tests.baseline.decisions import ModelDecision
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 ADMIN = {"id": "admin-1", "name": "Admin"}
 LIST_FILES = ModelDecision.call("Bash", command="ls")

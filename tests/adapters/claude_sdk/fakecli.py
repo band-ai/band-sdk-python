@@ -14,22 +14,29 @@ import itertools
 import json
 import re
 from collections import deque
-from collections.abc import AsyncIterator, Sequence
-from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
-from types import TracebackType
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import AbstractAsyncContextManager, contextmanager
+from dataclasses import dataclass
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 from mcp import ClientSession
 
 from band.adapters.claude_sdk import AUTO_FALLBACK_PERMISSION_MODE, ClaudePermissionMode
+from band.integrations.claude_sdk import session_manager
 from band.integrations.mcp import BandMCPTransport
+from tests.adapters.hold import Hold
 from tests.baseline.decisions import ModelDecision, ToolCall
 from tests.mcpclient import mcp_session
 
 MODEL = "claude-fake"
+# What the fake raises when its startup or its close fails.
+STARTUP_EXITED = "Claude CLI exited during startup"
+CLEANUP_FAILED = "Claude CLI cleanup failed"
+MCP_DISCONNECTED = "Band MCP endpoint disconnected"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
 
@@ -39,6 +46,13 @@ class Raw:
     """A wire message the CLI emits verbatim, for shapes no decision produces."""
 
     message: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class UnavailableMcp:
+    """A tool call whose advertised HTTP server is gone; the CLI fails the turn."""
+
+    decision: ModelDecision
 
 
 @dataclass(frozen=True)
@@ -59,6 +73,31 @@ class EndTurn:
 
 
 @dataclass(frozen=True)
+class Remember:
+    """The model keeps a private note in its session; the room never sees it."""
+
+    note: str
+
+
+@dataclass(frozen=True)
+class Recall:
+    """The model answers from every note its session holds; a session that
+    lost its conversation answers with none."""
+
+    answer: Callable[[str], ModelDecision]
+
+
+@dataclass(frozen=True)
+class AfterResult:
+    """A message the CLI emits after the turn's result, as background work
+    finishing between turns does; ``gate`` delays it until set. An exception
+    fails the read instead, as a malformed line does while the CLI runs on."""
+
+    message: dict[str, Any] | Exception
+    gate: asyncio.Event | None = None
+
+
+@dataclass(frozen=True)
 class Hangup:
     """The CLI process dies: the stream ends with no result."""
 
@@ -71,27 +110,19 @@ class StreamFails:
     error: Exception
 
 
-@dataclass
-class Hold:
-    """Parks the turn at this step: ``async with hold`` waits for the turn to
-    reach it and lets the turn continue on exit."""
-
-    reached: asyncio.Event = field(default_factory=asyncio.Event)
-    released: asyncio.Event = field(default_factory=asyncio.Event)
-
-    async def __aenter__(self) -> None:
-        await self.reached.wait()
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self.released.set()
-
-
-Step = ModelDecision | Thinking | Raw | Hold | EndTurn | Hangup | StreamFails
+Step = (
+    ModelDecision
+    | UnavailableMcp
+    | Thinking
+    | Raw
+    | Hold
+    | EndTurn
+    | Remember
+    | Recall
+    | AfterResult
+    | Hangup
+    | StreamFails
+)
 Turn = Sequence[Step]
 
 
@@ -103,12 +134,16 @@ class FakeClaude:
         self._session_ids = itertools.count(1)
         self.sessions: list[FakeCLISession] = []
         self.prompts: list[str] = []
+        # The CLI's session store: each conversation's private notes outlive
+        # the process that wrote them and come back with a resume.
+        self.notes: dict[str, list[str]] = {}
         self.unresumable: set[str] = set()
         # permissions.ask rules in the project's settings file, which the CLI
         # only reads when the options load the "project" setting source.
         self.project_ask_rules: list[str] = []
         self.refuse_connect = False
-        # Parks every connect, e.g. to land a shutdown while a session starts.
+        # Parks the next connect, e.g. to land a shutdown while a session
+        # starts; the session that reaches it takes it.
         self.connecting: Hold | None = None
         # Modes the account or model can't run; the CLI falls back to
         # AUTO_FALLBACK_PERMISSION_MODE instead of failing.
@@ -117,7 +152,10 @@ class FakeClaude:
         # neither stops nor ends.
         self.ignore_interrupt = False
         self.interrupted = asyncio.Event()
+        # The process exits when interrupted, before the turn's result.
+        self.exit_on_interrupt = False
         self.errors: list[BaseException] = []
+        # Parks the next close; the session that reaches it takes it.
         self.closing: Hold | None = None
         self.refuse_close = False
 
@@ -154,6 +192,19 @@ class FakeClaude:
         assert not self._turns, f"{len(self._turns)} scripted turn(s) never ran"
 
 
+@contextmanager
+def scripted_claude() -> Iterator[FakeClaude]:
+    """The scripted Claude CLI behind every ``ClaudeSDKClient`` opened inside.
+
+    The transport factory is the one seam patched: past it the SDK would
+    spawn the real CLI subprocess.
+    """
+    claude = FakeClaude()
+    with patch.object(session_manager, "create_transport", claude.transport):
+        yield claude
+    claude.assert_done()
+
+
 class FakeCLISession(Transport):
     """One CLI process: the CLI side of the stream-json control protocol."""
 
@@ -162,21 +213,28 @@ class FakeCLISession(Transport):
         self.options = options
         self.permission_mode = options.permission_mode
         self.session_id = options.resume or claude.new_session_id()
+        self.notes = claude.notes.setdefault(self.session_id, [])
+        self.close_calls = 0
         self._outbox: asyncio.Queue[dict[str, Any] | Exception | None] = asyncio.Queue()
         self._awaiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._ids = itertools.count(1)
         self._hooks: dict[str, list[dict[str, Any]]] = {}
         self._served: dict[str, set[str]] = {}
         self._turn: asyncio.Task[None] | None = None
+        self._background: set[asyncio.Task[None]] = set()
         self.alive = True
         self.refuse_close = False
 
     async def connect(self) -> None:
         if (hold := self.claude.connecting) is not None:
-            hold.reached.set()
-            await hold.released.wait()
+            self.claude.connecting = None
+            await hold.wait()
         if self.claude.refuse_connect or self.options.resume in self.claude.unresumable:
-            raise CLIConnectionError("Claude CLI exited during startup")
+            # Like the SDK transport, the startup error is raised from its cause.
+            try:
+                raise OSError("Claude CLI exited with status 1")
+            except OSError as exited:
+                raise CLIConnectionError(STARTUP_EXITED) from exited
 
     def is_ready(self) -> bool:
         return self.alive
@@ -184,11 +242,12 @@ class FakeCLISession(Transport):
     async def end_input(self) -> None: ...
 
     async def close(self) -> None:
+        self.close_calls += 1
         if (hold := self.claude.closing) is not None:
-            hold.reached.set()
-            await hold.released.wait()
+            self.claude.closing = None
+            await hold.wait()
         if self.claude.refuse_close or self.refuse_close:
-            raise RuntimeError("Claude CLI cleanup failed")
+            raise RuntimeError(CLEANUP_FAILED)
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()
@@ -236,12 +295,16 @@ class FakeCLISession(Transport):
             self._interrupt()
 
     def _interrupt(self) -> None:
-        """Stop the running turn; like the real CLI it still ends with a result."""
+        """Stop the running turn; like the real CLI it still ends with a result
+        unless the process exits instead."""
         self.claude.interrupted.set()
         if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
             return
         self._turn.cancel()
-        self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
+        if self.claude.exit_on_interrupt:
+            self.die()
+        else:
+            self._emit_result(EndTurn(is_error=True, result="Request interrupted"))
 
     def _emit(self, **message: Any) -> None:
         self._outbox.put_nowait(message)
@@ -256,6 +319,7 @@ class FakeCLISession(Transport):
     async def _play(self, turn: Turn) -> None:
         denials: list[dict[str, Any]] = []
         ending = EndTurn()
+        later: list[AfterResult] = []
         try:
             self._emit(type="system", subtype="init", session_id=self.session_id)
             if self.permission_mode in self.claude.unavailable_modes:
@@ -272,6 +336,15 @@ class FakeCLISession(Transport):
                 match step:
                     case ModelDecision():
                         denials += await self._decide(step)
+                    case UnavailableMcp():
+                        unavailable = False
+                        try:
+                            await self._decide(step.decision)
+                        except* httpx.ConnectError:
+                            unavailable = True
+                        if not unavailable:
+                            raise AssertionError("the MCP endpoint was still reachable")
+                        ending = EndTurn(is_error=True, result=MCP_DISCONNECTED)
                     case Thinking(text=text):
                         self._assistant(
                             {"type": "thinking", "thinking": text, "signature": ""}
@@ -279,10 +352,15 @@ class FakeCLISession(Transport):
                     case Raw(message=message):
                         self._outbox.put_nowait(message)
                     case Hold():
-                        step.reached.set()
-                        await step.released.wait()
+                        await step.wait()
                     case EndTurn():
                         ending = step
+                    case Remember(note=note):
+                        self.notes.append(note)
+                    case Recall(answer=answer):
+                        denials += await self._decide(answer(" ".join(self.notes)))
+                    case AfterResult():
+                        later.append(step)
                     case Hangup():
                         self.alive = False
                         self._outbox.put_nowait(None)
@@ -296,6 +374,15 @@ class FakeCLISession(Transport):
             self.claude.errors.append(error)
             ending = EndTurn(is_error=True, result=str(error))
         self._emit_result(ending, denials)
+        for step in later:
+            task = asyncio.create_task(self._emit_after(step))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+
+    async def _emit_after(self, step: AfterResult) -> None:
+        if step.gate is not None:
+            await step.gate.wait()
+        self._outbox.put_nowait(step.message)
 
     def _emit_result(
         self, ending: EndTurn, denials: list[dict[str, Any]] | None = None

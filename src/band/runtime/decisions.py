@@ -65,13 +65,11 @@ class DecisionRegistry(Mapping[str, T]):
     def __len__(self) -> int:
         return len(self._entries)
 
-    def register_minted(
-        self, payload: T, *, room_id: str | None = None
-    ) -> Registration[T]:
-        """Add ``payload`` under a freshly minted token, optionally scoped to
-        ``room_id``, evicting the oldest open ask first when at capacity."""
+    def register_minted(self, payload: T) -> Registration[T]:
+        """Add ``payload`` under a freshly minted token, evicting the oldest
+        open ask first when at capacity."""
         evicted = self._evict_oldest()
-        if (registered := self._core.register_minted(room_id)) is None:
+        if (registered := self._core.register_minted()) is None:
             raise RuntimeError("DecisionRegistry ran out of tickets")
         token, ticket = registered
         return Registration(
@@ -141,9 +139,6 @@ class DecisionRegistry(Mapping[str, T]):
         """Entries still awaiting an answer -- what a room should see as pending."""
         return self._entries_for(self._core.unclaimed())
 
-    def unclaimed_in_room(self, room_id: str) -> list[DecisionEntry[T]]:
-        return self._entries_for(self._core.unclaimed_in_room(room_id))
-
     def unclaimed_count(self) -> int:
         return self._core.unclaimed_count()
 
@@ -164,10 +159,6 @@ class DecisionRegistry(Mapping[str, T]):
         """Remove every entry, returning the unclaimed ones for the caller to
         resolve -- a claimed entry's claimant still resolves it."""
         return self._drop_cancelled(self._core.cancel_all())
-
-    def cancel_room(self, room_id: str) -> list[DecisionEntry[T]]:
-        """:meth:`cancel_all`, limited to entries registered in ``room_id``."""
-        return self._drop_cancelled(self._core.cancel_room(room_id))
 
     async def wait(
         self, entry: DecisionEntry[T], future: asyncio.Future[R], *, timeout_s: float

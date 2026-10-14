@@ -6,31 +6,20 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
-from unittest.mock import patch
 
 import looptime
 import pytest
 import pytest_asyncio
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter, ClaudeSDKAdapterConfig
-from tests.adapters.claude_sdk.fakecli import FakeClaude
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.fakecli import FakeClaude, scripted_claude
+from tests.adapters.claude_sdk.helpers import AGENT_DESCRIPTION, AGENT_NAME, ClaudeRoom
 
 
 @pytest.fixture
 def claude() -> Iterator[FakeClaude]:
-    """The scripted Claude CLI behind every ``ClaudeSDKClient`` the test opens.
-
-    The transport factory is the one seam patched: past it the SDK would spawn the
-    real CLI subprocess.
-    """
-    claude = FakeClaude()
-    with patch(
-        "band.integrations.claude_sdk.session_manager.create_transport",
-        claude.transport,
-    ):
+    with scripted_claude() as claude:
         yield claude
-    claude.assert_done()
 
 
 # The adapter's session manager runs on the loop that started it, so setup,
@@ -50,7 +39,7 @@ async def claude_room(
         **adapter_kwargs: Any,
     ) -> ClaudeRoom:
         adapter = ClaudeSDKAdapter(config, **adapter_kwargs)
-        await adapter.on_started("Test Agent", "An agent under test")
+        await adapter.on_started(AGENT_NAME, AGENT_DESCRIPTION)
         loop = asyncio.get_running_loop()
         cleanup_clock = (
             looptime.enabled(strict=True)

@@ -25,6 +25,8 @@ KIT_DIR = REPO_ROOT / "docker" / "band_python_kit"
 BAND_MCP_DIR = REPO_ROOT / "packages" / "band-mcp"
 # Every shipped source tree, for the repo-wide AST guards.
 SHIPPED_SOURCE_ROOTS = (SRC_ROOT, BAND_MCP_DIR / "src")
+# The scripted provider child the room lifecycle tests run.
+ROOM_PEER = REPO_ROOT / "tests" / "adapters" / "roompeer.py"
 ENV_TEST_FILE = REPO_ROOT / ".env.test"
 BUG_HUNTING_SCRIPTS = (
     REPO_ROOT / ".claude" / "skills" / "bug-hunting-via-example" / "scripts"

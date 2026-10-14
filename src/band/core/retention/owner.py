@@ -6,8 +6,13 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from functools import partial
 
-from band.core.exceptions import CleanupIncompleteError
-from band.core.retention.cleanup import report_owned, spawn_owned, task_failure
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
+from band.core.retention.cleanup import (
+    await_owned,
+    rejoin_owned,
+    report_owned,
+    task_failure,
+)
 from band.core.retention.clock import Cancellable, MonotonicClock, RetentionClock
 from band.core.retention.config import RoomRetentionConfig
 from band.core.retention.room import RetainedRoom
@@ -22,10 +27,17 @@ class RoomRetention:
     """
 
     def __init__(
-        self, config: RoomRetentionConfig, *, clock: RetentionClock | None = None
+        self,
+        config: RoomRetentionConfig,
+        *,
+        clock: RetentionClock | None = None,
+        settle_grace_s: float = 0.0,
     ) -> None:
+        """``settle_grace_s`` is how long final disposal lets accepted work
+        finish on its own, admission already closed, before cancelling it."""
         self.config = config
         self.clock = clock or MonotonicClock()
+        self.settle_grace_s = settle_grace_s
         self.stopping = False
         self._rooms: dict[str, RetainedRoom] = {}
         self._timer: Cancellable | None = None
@@ -39,14 +51,18 @@ class RoomRetention:
         release: Callable[[ReleaseCause], Awaitable[ReleaseOutcome]],
         dispose: Callable[[], Awaitable[None]],
     ) -> RetainedRoom:
-        if self.stopping:
-            raise RuntimeError("Room retention is stopping")
+        self.require_admission()
         if room_id in self._rooms:
             raise ValueError(f"Room {room_id} already has a residency owner")
         room = RetainedRoom(self, room_id, acquire, release, dispose)
         self._rooms[room_id] = room
         self.reschedule()
         return room
+
+    def require_admission(self) -> None:
+        """Refuse new work before it claims provider resources."""
+        if self.stopping:
+            raise RoomClosingError("Room retention is stopping")
 
     def _forget(self, room: RetainedRoom) -> None:
         if self._rooms.get(room.room_id) is room:
@@ -88,20 +104,34 @@ class RoomRetention:
         ]
         self.stopping = True
         self.reschedule()
-        shutdown = self._owned_shutdown()
+        self._shutdown = shutdown = rejoin_owned(
+            self._shutdown, self._run_stop, label="Room retention shutdown"
+        )
         if any(requested_from_inside):
             raise CleanupIncompleteError(
                 "Room retention shutdown waits for the calling work to finish"
             )
         await report_owned(shutdown, self.config.transition_timeout_s)
 
-    def _owned_shutdown(self) -> asyncio.Task[None]:
-        """Join the running or settled shutdown; restart one that failed."""
-        shutdown = self._shutdown
-        if shutdown is None or (shutdown.done() and task_failure(shutdown) is not None):
-            shutdown = spawn_owned(self._run_stop(), label="Room retention shutdown")
-            self._shutdown = shutdown
-        return shutdown
+    def renewed(self) -> RoomRetention:
+        """The owner to serve with after a restart.
+
+        A stop is terminal for its owner, so a stopped one is replaced by a
+        fresh owner with the same settings, and only once its stop confirmed
+        every room closed.
+
+        Raises:
+            CleanupIncompleteError: The stop is unfinished or failed.
+        """
+        if not self.stopping:
+            return self
+        if self._rooms:
+            raise CleanupIncompleteError(
+                "Room retention cannot renew while rooms from its stop remain"
+            )
+        return RoomRetention(
+            self.config, clock=self.clock, settle_grace_s=self.settle_grace_s
+        )
 
     async def _run_stop(self) -> None:
         pending = [
@@ -110,7 +140,7 @@ class RoomRetention:
             if (disposal := room._begin_disposal()) is not None
         ]
         if pending:
-            await asyncio.wait(pending)
+            await await_owned(pending, None)
         failures = [error for task in pending if (error := task_failure(task))]
         if failures:
             raise BaseExceptionGroup("Room cleanup remains incomplete", failures)
