@@ -7,6 +7,17 @@ fails when an adapter declares batch support without a probe registered.
 
 from __future__ import annotations
 
-from tests.framework_conformance.batchprobes import BatchProbe, agentloops, toolloop
+from tests.framework_conformance.batchprobes import (
+    BatchProbe,
+    agentloops,
+    crewai,
+    parlant,
+    toolloop,
+)
 
-BATCH_PROBES: dict[str, BatchProbe] = {**toolloop.PROBES, **agentloops.PROBES}
+BATCH_PROBES: dict[str, BatchProbe] = {
+    **agentloops.PROBES,
+    **crewai.PROBES,
+    **parlant.PROBES,
+    **toolloop.PROBES,
+}

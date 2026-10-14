@@ -116,11 +116,12 @@ async def relay_agent_response(
     room_id: str,
     min_offset: int,
     tools: AgentToolsProtocol,
-    sender_name: str,
+    audience: Sequence[str],
     timeout: float,
     poll: float,
 ) -> None:
-    """Relay the engine's final reply to *sender_name*, waiting up to *timeout*.
+    """Relay the engine's final reply to the *audience* (sender ids), waiting up
+    to *timeout*.
 
     Waiting polls in *poll*-second windows and keeps going past empty ones,
     so a slow (cold-start) turn is still answered. If the budget elapses with
@@ -154,7 +155,7 @@ async def relay_agent_response(
             await relay_reply(
                 tools,
                 FINAL_SEGMENT_SEPARATOR.join(batch.final_texts),
-                mentions=[sender_name],
+                mentions=list(audience),
             )
         if batch.final_seen or tools.turn.replied:
             return

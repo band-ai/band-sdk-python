@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from band.core.types import PlatformMessage
+from band.runtime.formatters import format_current_inputs
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
@@ -16,10 +18,13 @@ SYSTEM_UPDATE_PREFIX = "[System Update]: "
 
 
 def compose_user_message(
-    *, msg: PlatformMessage, participants_msg: str | None, contacts_msg: str | None
+    *,
+    messages: Sequence[PlatformMessage],
+    participants_msg: str | None,
+    contacts_msg: str | None,
 ) -> str:
-    """The turn's message with any roster/contacts updates in front of it."""
-    user_message = msg.format_for_llm()
+    """The turn's inputs with any roster/contacts updates in front of them."""
+    user_message = format_current_inputs(messages)
     for update in (participants_msg, contacts_msg):
         if update:
             user_message = f"{SYSTEM_UPDATE_PREFIX}{update}\n\n{user_message}"
