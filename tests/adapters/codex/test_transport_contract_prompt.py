@@ -12,10 +12,8 @@ from band.integrations.codex.types import (
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from band.runtime.tools import BandTool
 from tests.adapters.codex.kit import (
-    ROOM_ID,
-    ToolSchemaFakeTools,
-    make_platform_message,
     run_codex_turn,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -23,7 +21,6 @@ from tests.adapters.codexturns import (
     tool_call_request,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestTransportContractPrompt:
@@ -58,16 +55,7 @@ class TestTransportContractPrompt:
             client, config=CodexAdapterConfig(system_prompt="custom")
         )
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            ToolSchemaFakeTools(),
-            CodexSessionState(thread_id="restored"),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, history=CodexSessionState(thread_id="restored"))
         inputs = client.params_of(CodexRequestMethod.TURN_START)[0]["input"]
         assert inputs[0]["text"].count(COMMUNICATION_INSTRUCTIONS) == 1
         assert client.params_of(CodexRequestMethod.THREAD_RESUME)

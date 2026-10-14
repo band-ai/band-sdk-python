@@ -5,11 +5,9 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
-    ROOM_ID,
     ToolSchemaFakeTools,
-    make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -17,7 +15,6 @@ from tests.adapters.codexturns import (
     make_codex_adapter,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestContextCompaction:
@@ -37,16 +34,7 @@ class TestContextCompaction:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         compaction_events = [
             e
@@ -72,16 +60,7 @@ class TestContextCompaction:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         compaction_events = [
             e

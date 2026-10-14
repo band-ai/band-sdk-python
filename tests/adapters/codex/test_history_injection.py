@@ -30,6 +30,7 @@ from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     agent_input,
     make_platform_message,
+    send_bootstrap,
     start_room_process,
     wire_codex_room,
 )
@@ -600,16 +601,7 @@ class TestHistoryInjection:
         tools = ValidationErrorTools()
 
         await adapter.on_started("Bot", "desc")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         # The adapter should have responded to the tool call with success=False
         error_responses = [

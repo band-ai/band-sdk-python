@@ -5,12 +5,10 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.integrations.codex.types import CodexSessionState
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
-    ROOM_ID,
     ToolSchemaFakeTools,
-    make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -21,7 +19,6 @@ from tests.adapters.codexturns import (
     make_codex_adapter,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestRealtimeStreaming:
@@ -42,16 +39,7 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         thought_events = [
             e
@@ -79,16 +67,7 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         streaming_events = [
             e for e in tools.events_sent if e["metadata"].get("streaming")
@@ -112,16 +91,7 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         plan_thoughts = [
             e
@@ -154,16 +124,7 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         commentary_thoughts = [
             e for e in tools.events_sent if e["metadata"].get("subtype") == "commentary"
@@ -198,16 +159,7 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         assert tools.messages_sent == []
         assert [e["content"] for e in events_of_type(tools, "thought")] == [
@@ -236,16 +188,7 @@ class TestRealtimeStreaming:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         assert tools.messages_sent == []
         assert [e["content"] for e in events_of_type(tools, "thought")] == [

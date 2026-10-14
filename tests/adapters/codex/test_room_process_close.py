@@ -8,21 +8,17 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
 )
-from band.integrations.codex.types import (
-    CodexSessionState,
-)
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
-    make_platform_message,
     patch_codex_clients_by_room,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestRoomProcessClose:
@@ -33,16 +29,7 @@ class TestRoomProcessClose:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(room_id=ROOM_ID),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         assert fake_client.closed is False
         await adapter.on_cleanup(ROOM_ID)
@@ -56,16 +43,7 @@ class TestRoomProcessClose:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(room_id=ROOM_ID),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         await adapter.on_cleanup(ROOM_ID)
         assert fake_client.closed is True
@@ -88,16 +66,7 @@ class TestRoomProcessClose:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         for room_id in (ROOM_ID, "room-2"):
-            await deliver_message(
-                adapter,
-                make_platform_message(room_id=room_id),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id=room_id,
-            )
+            await send_bootstrap(adapter, room_id=room_id, tools=tools)
 
         await adapter.on_cleanup(ROOM_ID)
         assert clients[ROOM_ID].closed is True

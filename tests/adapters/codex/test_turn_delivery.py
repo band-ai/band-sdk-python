@@ -106,16 +106,7 @@ class TestTurnDelivery:
         await adapter.on_started("Codex Agent", "A coding agent")
 
         with pytest.raises(CodexJsonRpcError, match="not available"):
-            await deliver_message(
-                adapter,
-                make_platform_message(room_id=ROOM_ID, content="first try"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id=ROOM_ID,
-            )
+            await send_bootstrap(adapter, content="first try", tools=tools)
         assert ROOM_ID not in adapter._prompt_injected_rooms
 
         await deliver_message(
@@ -233,15 +224,10 @@ class TestTurnDelivery:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await deliver_message(
+        await send_bootstrap(
             adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(thread_id="thr-old", room_id=ROOM_ID),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
+            tools=tools,
+            history=CodexSessionState(thread_id="thr-old", room_id=ROOM_ID),
         )
 
         methods = fake_client.request_methods

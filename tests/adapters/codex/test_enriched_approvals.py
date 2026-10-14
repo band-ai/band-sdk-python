@@ -8,12 +8,11 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
     ToolSchemaFakeTools,
-    make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -21,7 +20,6 @@ from tests.adapters.codexturns import (
     make_codex_adapter,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestEnrichedApprovals:
@@ -61,16 +59,7 @@ class TestEnrichedApprovals:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
 
         audit_events = [
             e
@@ -88,16 +77,7 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/sandbox read-only"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, content="/sandbox read-only", tools=tools)
 
         # Per-room override is set, global config is unchanged
         assert adapter._sandbox_overrides.get(ROOM_ID) == "read-only"
@@ -123,15 +103,8 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/sandbox danger-full-access"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
+        await send_bootstrap(
+            adapter, content="/sandbox danger-full-access", tools=tools
         )
 
         # Override should NOT be set — confirmation was required
@@ -149,15 +122,8 @@ class TestEnrichedApprovals:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
         with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
-            await deliver_message(
-                adapter,
-                make_platform_message(content="/sandbox danger-full-access --confirm"),
-                tools,
-                CodexSessionState(),
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id=ROOM_ID,
+            await send_bootstrap(
+                adapter, content="/sandbox danger-full-access --confirm", tools=tools
             )
 
         assert adapter._sandbox_overrides.get(ROOM_ID) == "danger-full-access"
@@ -173,16 +139,7 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/sandbox invalid-mode"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, content="/sandbox invalid-mode", tools=tools)
 
         assert adapter.config.sandbox is None
         assert ROOM_ID not in adapter._sandbox_overrides
@@ -195,16 +152,7 @@ class TestEnrichedApprovals:
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="/permissions"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, content="/permissions", tools=tools)
 
         assert "Effective permissions:" in tools.messages_sent[0]["content"]
         assert "approval_mode: manual" in tools.messages_sent[0]["content"]

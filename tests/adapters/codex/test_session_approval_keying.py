@@ -13,6 +13,7 @@ from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
     make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -88,16 +89,7 @@ class TestSessionApprovalKeying:
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
 
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, tools=tools)
         await await_released_turn(adapter, ROOM_ID)
 
         # Manual approval times out and the pending record is cleared,

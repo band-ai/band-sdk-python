@@ -7,11 +7,10 @@ from collections import OrderedDict
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
-from band.integrations.codex.types import CodexSessionState
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
-    make_platform_message,
+    send_bootstrap,
 )
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -19,7 +18,6 @@ from tests.adapters.codexturns import (
     make_codex_adapter,
     turn_completed,
 )
-from tests.adapters.dispatch import deliver_message
 
 
 class TestSessionAutoApproval:
@@ -48,16 +46,7 @@ class TestSessionAutoApproval:
             [("commandExecution:npm install", None)]
         )
 
-        await deliver_message(
-            adapter,
-            make_platform_message(content="install deps"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, content="install deps", tools=tools)
 
         # The request should have been auto-approved via session policy
         responses = fake_client.responses
@@ -89,16 +78,7 @@ class TestSessionAutoApproval:
             [("commandExecution:npm install", None)]
         )
 
-        await deliver_message(
-            adapter,
-            make_platform_message(content="publish package"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, content="publish package", tools=tools)
 
         # npm publish should have been declined, not auto-approved
         responses = fake_client.responses
@@ -130,16 +110,7 @@ class TestSessionAutoApproval:
             [("commandExecution:npm", None)]
         )
 
-        await deliver_message(
-            adapter,
-            make_platform_message(content="install deps"),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id=ROOM_ID,
-        )
+        await send_bootstrap(adapter, content="install deps", tools=tools)
 
         # npm install should be auto-approved because binary matches
         responses = fake_client.responses
