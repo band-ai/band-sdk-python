@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from tests.framework_configs.adapters import ADAPTER_CONFIGS
+from tests.framework_conformance.batchprobes.acp import ADAPTERS as ACP_ADAPTERS
 from tests.framework_conformance.batchprobes.registry import BATCH_PROBES
 
 
 def declaring_adapters() -> set[str]:
+    """Every adapter in the conformance matrix, plus the ACP family it excludes."""
+    factories = {cfg.framework_id: cfg.adapter_factory for cfg in ADAPTER_CONFIGS}
+    factories.update(ACP_ADAPTERS)
     return {
-        cfg.framework_id
-        for cfg in ADAPTER_CONFIGS
-        if cfg.adapter_factory().supports_batch_input
+        framework_id
+        for framework_id, build in factories.items()
+        if build().supports_batch_input
     }
 
 

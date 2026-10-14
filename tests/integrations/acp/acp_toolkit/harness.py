@@ -11,12 +11,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
-from band.core.types import PlatformMessage
+from band.core.protocols import TurnResultAlreadyReported
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -25,6 +26,7 @@ from band.integrations.acp.client_adapter import (
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
+from band.runtime.formatters import format_current_inputs
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
@@ -341,7 +343,7 @@ class AcpSession:
             tools.set_room_context(room_context)
         self._last_tools = tools
         await self.adapter.on_message(
-            _message(content, room),
+            live_message(content, room_id=room),
             tools,
             history or ACPClientSessionState(),
             participants_msg=participants_msg,
@@ -349,6 +351,34 @@ class AcpSession:
             is_session_bootstrap=bootstrap,
             room_id=room,
         )
+        return tools.reply
+
+    async def send_batch(
+        self,
+        *messages: PlatformMessage,
+        room: str = DEFAULT_ROOM,
+        bootstrap: bool = False,
+    ) -> Reply:
+        """Deliver ``messages`` to ``room`` as one turn through the batch entry.
+
+        The scripted peer answers in text rather than through a Band tool, so
+        the turn's reply verdict is not what a test observes here and is let go.
+        """
+        tools = TranscriptTools()
+        self._last_tools = tools
+        with contextlib.suppress(TurnResultAlreadyReported):
+            await self.adapter.on_messages(
+                AgentInput(
+                    msg=messages[0],
+                    messages=messages,
+                    tools=tools,
+                    history=HistoryProvider(raw=[]),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=bootstrap,
+                    room_id=room,
+                )
+            )
         return tools.reply
 
     def session_id(self, room: str) -> str:
@@ -455,26 +485,37 @@ async def _exit(agent: FakeACPAgent) -> None:
 
 
 LIVE_SENDER_NAME = "Peer"
+LIVE_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def live_message(
+    content: str,
+    *,
+    room_id: str = DEFAULT_ROOM,
+    sender_id: str = "peer-1",
+    sender_name: str = LIVE_SENDER_NAME,
+) -> PlatformMessage:
+    """The message ``AcpSession.send`` delivers for ``content``.
+
+    Deterministic, so a test can name the exact record the model must be shown.
+    """
+    return PlatformMessage(
+        id=str(uuid5(NAMESPACE_URL, content)),
+        room_id=room_id,
+        content=content,
+        sender_id=sender_id,
+        sender_type="Agent",
+        sender_name=sender_name,
+        message_type="text",
+        metadata={},
+        created_at=LIVE_TIMESTAMP,
+    )
 
 
 def live_line(content: str) -> str:
-    """The attributed live-message line ``AcpSession.send`` delivers.
+    """The current-input record ``AcpSession.send`` delivers for ``content``.
 
     The adapter's contract puts it last in every prompt, so tests assert
-    position against this projection instead of hand-building the line.
+    position against this projection instead of hand-building the record.
     """
-    return f"[{LIVE_SENDER_NAME}]: {content}"
-
-
-def _message(content: str, room_id: str) -> PlatformMessage:
-    return PlatformMessage(
-        id=str(uuid4()),
-        room_id=room_id,
-        content=content,
-        sender_id="peer-1",
-        sender_type="Agent",
-        sender_name=LIVE_SENDER_NAME,
-        message_type="text",
-        metadata={},
-        created_at=datetime.now(UTC),
-    )
+    return format_current_inputs([live_message(content)]).splitlines()[-1]
