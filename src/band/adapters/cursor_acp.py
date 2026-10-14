@@ -14,9 +14,10 @@ from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 from typing_extensions import Unpack
 
 from band.client.streaming import ControlMode
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.turn import judge_detached_turn
+from band.core.turn_lifecycle import finished_within_grace
 from band.core.types import (
     ApprovalMode,
     FeatureKwargs,
@@ -169,9 +170,16 @@ class CursorTurn:
             self.task.cancel()
 
     async def terminated(self) -> None:
-        """Wait for the provider task to end, without cancelling it."""
-        if self.task is not None:
-            await asyncio.wait({self.task})
+        """Wait up to one cleanup grace for the provider task to end, without
+        cancelling it; a task that outlives it keeps the provider slot.
+
+        Raises:
+            CleanupIncompleteError: The task is still running after the grace.
+        """
+        if self.task is not None and not await finished_within_grace(self.task):
+            raise CleanupIncompleteError(
+                f"Room {self.room_id}: Cursor turn is still cleaning up"
+            )
 
 
 @dataclass
@@ -430,9 +438,10 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     ) -> None:
         """Room retirement: stop the room's provider turn before its runtime.
 
-        Waits for the turn's task so ``session/cancel`` leaves before the
-        connection closes; only external callers reach this, never the turn's
-        own cleanup, which would otherwise wait on itself.
+        Waits, within one cleanup grace, for the turn's task so ``session/cancel``
+        leaves before the connection closes; a retry joins the same task. Only
+        external callers reach this, never the turn's own cleanup, which would
+        otherwise wait on itself.
         """
         if await self._owns_runtime(room_id, expected_runtime):
             turn = self._close_room_turn(room_id)

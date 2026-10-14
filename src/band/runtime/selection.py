@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 
+from band.core.timestamps import assume_utc
 from band.platform.event import MessageEvent
 from band.runtime.types import PlatformMessage
 
@@ -27,19 +28,16 @@ class MessageKey:
 
     @classmethod
     def of_message(cls, message: PlatformMessage) -> MessageKey:
-        return cls(_aware(message.created_at), message.id)
+        return cls(assume_utc(message.created_at), message.id)
 
     @classmethod
     def of_event(cls, event: MessageEvent) -> MessageKey:
         if event.payload is None:
             raise ValueError("a message event without a payload has no position")
         return cls(
-            _aware(datetime.fromisoformat(event.payload.inserted_at)), event.payload.id
+            assume_utc(datetime.fromisoformat(event.payload.inserted_at)),
+            event.payload.id,
         )
-
-
-def _aware(moment: datetime) -> datetime:
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 class Disposition(StrEnum):
