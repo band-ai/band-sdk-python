@@ -1,4 +1,4 @@
-"""Room workspace lifecycle: a replacement process continues the room native conversation or refuses to run."""
+"""Codex room lifecycle: native conversation continuity."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Codex adapter: ``_extract_local_command`` reads a command only when one leads the message."""
+"""Codex adapter: slash command extraction."""
 
 from __future__ import annotations
 

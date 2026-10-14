@@ -1,4 +1,4 @@
-"""Codex adapter: enabling both turn-task channels warns operators once at startup."""
+"""Codex adapter: double emit startup warning."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Codex adapter: tests for forwarding internal Codex operations as platform events."""
+"""Codex adapter: item completed forwarding."""
 
 from __future__ import annotations
 

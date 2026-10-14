@@ -1,4 +1,4 @@
-"""Codex adapter: native callbacks reach only the Band turn that started their native turn, on the process that sent them, and a room keeps its lease through detached decisions."""
+"""Codex adapter: native turn ownership."""
 
 from __future__ import annotations
 

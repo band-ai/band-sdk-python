@@ -1,4 +1,4 @@
-"""Codex adapter: _session_approval_key behaviour across method/param shapes."""
+"""Codex adapter: session approval keying."""
 
 from __future__ import annotations
 

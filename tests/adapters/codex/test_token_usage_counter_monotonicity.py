@@ -1,4 +1,4 @@
-"""Codex adapter: codexTokenUsage protection against non-monotonic cumulative updates."""
+"""Codex adapter: token usage counter monotonicity."""
 
 from __future__ import annotations
 

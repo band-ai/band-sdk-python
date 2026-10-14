@@ -1,4 +1,4 @@
-"""Codex adapter: a closing room shares one close and admits work again only once it succeeds."""
+"""Codex adapter: room retirement."""
 
 from __future__ import annotations
 

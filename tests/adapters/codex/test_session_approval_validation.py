@@ -1,4 +1,4 @@
-"""Codex adapter: guards that stop /approve-session from storing bogus session keys."""
+"""Codex adapter: session approval validation."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Codex adapter: ``turn/diff/updated`` metadata is bounded in UTF-8 bytes, not chars."""
+"""Codex adapter: diff byte cap."""
 
 from __future__ import annotations
 

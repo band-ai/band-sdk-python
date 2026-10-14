@@ -1,4 +1,4 @@
-"""Codex adapter: an interrupted turn is settled by the notice that reports it."""
+"""Codex adapter: interrupted turn outcome."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Codex adapter: build_agent_failure passes codexErrorInfo through verbatim -- no remediation/suggested-action policy; that belongs to a consumer, not this shared shape."""
+"""Codex adapter: structured error mappings."""
 
 from __future__ import annotations
 

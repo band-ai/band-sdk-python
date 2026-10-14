@@ -1,4 +1,4 @@
-"""Room workspace lifecycle: a lost process is reaped while the room keeps its workspace."""
+"""Room workspace lifecycle: process loss."""
 
 from __future__ import annotations
 

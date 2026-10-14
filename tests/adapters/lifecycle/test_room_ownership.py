@@ -1,4 +1,4 @@
-"""Room workspace lifecycle: a room keeps its child and workspace until cleanup provably completes."""
+"""Room workspace lifecycle: room ownership."""
 
 from __future__ import annotations
 

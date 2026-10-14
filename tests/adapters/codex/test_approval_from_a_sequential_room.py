@@ -1,4 +1,4 @@
-"""Codex adapter: band hands a room its messages one at a time, so the reply resolving an approval is delivered only after the asking message's on_message returns. Approval waits are an hour long: a regression that waits on the human hangs until pytest's timeout instead of passing by luck."""
+"""Codex adapter: approval from a sequential room."""
 
 from __future__ import annotations
 

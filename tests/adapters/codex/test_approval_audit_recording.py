@@ -1,4 +1,4 @@
-"""Codex adapter: _record_approval_audit API surface."""
+"""Codex adapter: approval audit recording."""
 
 from __future__ import annotations
 

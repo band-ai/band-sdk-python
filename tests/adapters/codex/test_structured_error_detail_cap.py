@@ -1,4 +1,4 @@
-"""Codex adapter: ``additionalDetails`` is attacker-influenceable and must be capped."""
+"""Codex adapter: structured error detail cap."""
 
 from __future__ import annotations
 

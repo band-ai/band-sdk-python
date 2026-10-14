@@ -1,4 +1,4 @@
-"""Codex adapter: a room resumes its Codex thread from Band history, or rebuilds context when it cannot."""
+"""Codex adapter: thread resumption."""
 
 from __future__ import annotations
 

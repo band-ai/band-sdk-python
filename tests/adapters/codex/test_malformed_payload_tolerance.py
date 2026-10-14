@@ -1,4 +1,4 @@
-"""Codex adapter: adapter must survive notifications that are missing or misshapen."""
+"""Codex adapter: malformed payload tolerance."""
 
 from __future__ import annotations
 

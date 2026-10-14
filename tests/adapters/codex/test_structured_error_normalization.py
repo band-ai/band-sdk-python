@@ -1,4 +1,4 @@
-"""Codex adapter: build_agent_failure handling of non-standard inputs."""
+"""Codex adapter: structured error normalization."""
 
 from __future__ import annotations
 

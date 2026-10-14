@@ -1,4 +1,4 @@
-"""Codex adapter: a room's process starts within its budget."""
+"""Codex adapter: process residency."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Codex adapter: a turn released to wait on a human is judged at its real end."""
+"""Codex adapter: detached turn outcome."""
 
 from __future__ import annotations
 

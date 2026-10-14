@@ -1,4 +1,4 @@
-"""Codex adapter: races between a room reply and the approval wait's own timeout."""
+"""Codex adapter: manual approval races."""
 
 from __future__ import annotations
 

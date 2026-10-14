@@ -1,4 +1,4 @@
-"""Room workspace lifecycle: one room starting or closing never blocks another room."""
+"""Room workspace lifecycle: room independence."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Codex adapter: every Codex thread receives the mandatory Band transport contract."""
+"""Codex adapter: transport contract prompt."""
 
 from __future__ import annotations
 

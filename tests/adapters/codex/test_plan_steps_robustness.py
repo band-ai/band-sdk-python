@@ -1,4 +1,4 @@
-"""Codex adapter: parse_plan_steps tolerance for malformed payloads."""
+"""Codex adapter: plan steps robustness."""
 
 from __future__ import annotations
 

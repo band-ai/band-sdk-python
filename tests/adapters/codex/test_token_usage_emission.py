@@ -1,4 +1,4 @@
-"""Codex adapter: emission guards for _emit_token_usage_event."""
+"""Codex adapter: token usage emission."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""A Codex room's leave owns its process until the close is confirmed."""
+"""Codex room lifecycle: leave ownership."""
 
 from __future__ import annotations
 

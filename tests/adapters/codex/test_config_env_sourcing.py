@@ -1,4 +1,4 @@
-"""Codex adapter: aliased fields source from CODEX_* env names only, never bare vars."""
+"""Codex adapter: config env sourcing."""
 
 from __future__ import annotations
 

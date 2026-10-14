@@ -1,4 +1,4 @@
-"""Codex adapter: native agent messages become thoughts unless a reply effect settles them."""
+"""Codex adapter: native message thoughts."""
 
 from __future__ import annotations
 
