@@ -536,7 +536,6 @@ class StopsReadingAfterTurnClient(SlowTurnStartClient):
 
 
 # The notice a client queues once its Codex process has exited.
-# Why the app-server says its transport closed when its process exits.
 PROCESS_EXIT_REASON = "Codex process exited unexpectedly"
 PROCESS_EXITED = event_notification(TRANSPORT_CLOSED, {"reason": PROCESS_EXIT_REASON})
 
