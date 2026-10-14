@@ -10,6 +10,7 @@ MESSAGE_KIND = "message"
 AI_AGENT_SOURCE = "ai_agent"
 # The session the mock Application creates, and who sends the sample message.
 SESSION_ID = "session-123"
+SENDER_ID = "user-456"
 SENDER_NAME = "Alice"
 # The Band agent's own name and description, handed to on_started.
 BAND_NAME = "BandName"
