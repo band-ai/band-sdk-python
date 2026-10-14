@@ -23,7 +23,7 @@ from band.adapters.omp_acp import OmpACPAdapter, OmpACPAdapterConfig
 from band.core.retention import RetainedRoom
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import ACPClientAdapter
-from band.integrations.omp import OMP_ACP_SUBCOMMAND
+from band.integrations.omp import OMP_ACP_SUBCOMMAND, OMP_CWD_FLAG
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import LifecycleBridge, RetentionHost, pause_at
 from tests.adapters.roompeer import CLEANUP_FAILURE
@@ -32,8 +32,8 @@ from tests.paths import REPO_ROOT
 ACPProfile = Literal["omp_acp", "cursor_acp", "copilot_acp"]
 
 PEER_MODULE = "tests.integrations.acp.acp_toolkit.workspacepeer"
-# OMP's flag for the room workspace, which it gets instead of a launch cwd.
-OMP_CWD_FLAG = "--cwd="
+# How OMP is told its room workspace, which it gets instead of a launch cwd.
+OMP_CWD_PREFIX = f"{OMP_CWD_FLAG}="
 
 
 class LifecycleChild:
@@ -143,8 +143,8 @@ def _workspace(command: Sequence[str], cwd: str | None) -> str | None:
     """The room workspace a process was started in."""
     if cwd is not None:
         return cwd
-    flagged = (arg for arg in command if arg.startswith(OMP_CWD_FLAG))
-    return next((arg.removeprefix(OMP_CWD_FLAG) for arg in flagged), None)
+    flagged = (arg for arg in command if arg.startswith(OMP_CWD_PREFIX))
+    return next((arg.removeprefix(OMP_CWD_PREFIX) for arg in flagged), None)
 
 
 def _residency(adapter: ACPClientAdapter[Any], room_id: str) -> RetainedRoom | None:

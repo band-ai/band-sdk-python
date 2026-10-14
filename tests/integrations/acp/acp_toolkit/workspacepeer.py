@@ -13,6 +13,7 @@ from typing import Any
 from acp import RequestError, run_agent
 from acp.schema import InitializeResponse
 
+from band.integrations.omp import OMP_CWD_FLAG
 from band.runtime.tools import BandTool
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import (
@@ -79,7 +80,7 @@ async def main() -> None:
     parser.add_argument(FAIL_STARTUP_ARG, type=Path)
     parser.add_argument(HOLD_STARTUP_ARG, type=Path)
     # OMP passes its room's workspace as a flag instead of the launch cwd.
-    parser.add_argument("--cwd")
+    parser.add_argument(OMP_CWD_FLAG)
     # Each profile adds its own launch flags and subcommand.
     options, _ = parser.parse_known_args()
     if options.cwd is not None:
