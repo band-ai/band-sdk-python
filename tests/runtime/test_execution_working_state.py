@@ -9,7 +9,8 @@ import pytest
 
 from band.platform.event import ReconnectedEvent
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import (
     make_message_event,
     make_participant_added_event,

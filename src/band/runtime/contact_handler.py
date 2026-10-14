@@ -40,11 +40,8 @@ from band.platform.event import (
 )
 from band.platform.posting import post_event
 from band.runtime.contact_tools import ContactTools
-from band.runtime.types import (
-    ContactEventConfig,
-    ContactEventStrategy,
-    normalize_handle,
-)
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
+from band.runtime.handles import normalize_handle
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink

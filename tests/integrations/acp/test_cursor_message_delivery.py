@@ -9,7 +9,7 @@ import pytest
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.client.streaming import ControlMode
 from band.platform.link import BandLink
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, allow_or_reject
 from tests.integrations.acp.acp_toolkit.harness import pair_in_process

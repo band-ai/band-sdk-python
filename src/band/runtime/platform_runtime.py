@@ -15,18 +15,14 @@ from band.core.exceptions import CleanupIncompleteError
 from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.platform.link import BandLink
+from band.runtime.agentconfig import AgentConfig
+from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.contact_handler import ContactEventHandler
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.single_instance import SingleInstanceGuard
-from band.runtime.types import (
-    AgentConfig,
-    ContactEventConfig,
-    ContactEventStrategy,
-    ParticipantAddedCallback,
-    ParticipantRemovedCallback,
-    SessionConfig,
-)
 
 logger = logging.getLogger(__name__)
 

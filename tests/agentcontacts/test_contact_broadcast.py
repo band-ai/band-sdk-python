@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from band.agent import Agent
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 
 class TestAgentContactBroadcast:

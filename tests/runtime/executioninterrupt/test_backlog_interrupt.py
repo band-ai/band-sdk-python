@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 from band.runtime.execution import ExecutionContext, ResyncOutcome, TurnOutcome
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,

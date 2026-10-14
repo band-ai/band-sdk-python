@@ -63,8 +63,8 @@ from band.platform.event import (
     RoomRemovedEvent,
 )
 from band.platform.link import BandLink
+from band.runtime.messages import PlatformMessage
 from band.runtime.single_instance import SingleInstanceGuard
-from band.runtime.types import PlatformMessage
 from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour

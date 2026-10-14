@@ -21,6 +21,7 @@ from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
+from band.runtime.context import ConversationContext
 from band.runtime.execution import (
     Execution,
     ExecutionContext,
@@ -30,8 +31,9 @@ from band.runtime.execution import (
     _error_label,
     _observe_phase,
 )
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools import AgentTools
-from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import (

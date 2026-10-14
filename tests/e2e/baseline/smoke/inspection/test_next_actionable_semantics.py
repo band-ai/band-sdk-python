@@ -29,7 +29,7 @@ from band.client.streaming import ControlMode, DeliveryStatus
 from band.core.exceptions import RoomExecutionStoppedError
 from band.platform.link import BandLink
 from band.platform.posting import post_event, post_message
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory

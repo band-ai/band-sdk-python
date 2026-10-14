@@ -13,14 +13,13 @@ import pytest_asyncio
 from band.platform.event import MessageEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
-    LifecyclePlatform,
     rest_client_over,
 )
-from tests.runtime.resync.kit import ReconciledRoom
+from tests.runtime.resync.kit import ReconciledRoom, ReconciliationPeer
 
 
 @pytest.fixture
@@ -74,9 +73,10 @@ def mock_handler():
 @pytest_asyncio.fixture(loop_scope="function")
 async def reconciled_room(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> AsyncIterator[ReconciledRoom]:
     monkeypatch.setattr(random, "uniform", lambda lower, upper: upper)
-    peer = LifecyclePlatform()
+    peer = ReconciliationPeer()
     invoked: list[str] = []
 
     async def handler(ctx: ExecutionContext, event: Any) -> None:
@@ -92,7 +92,9 @@ async def reconciled_room(
             handler,
             agent_id=AGENT_ID,
             config=SessionConfig(
-                enable_context_hydration=False, enable_working_state=False
+                enable_context_hydration=False,
+                enable_working_state=False,
+                **getattr(request, "param", {}),
             ),
         )
         try:

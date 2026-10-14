@@ -29,7 +29,7 @@ class PlatformSettings(BaseSettings):
 
 class RuntimeSettings(BaseSettings):
     """Process-wide runtime tuning knobs, overridable via environment
-    variables. Distinct from ``SessionConfig`` (``band.runtime.types``),
+    variables. Distinct from ``SessionConfig`` (``band.runtime.sessionconfig``),
     which holds per-agent-instance tunables.
     """
 

@@ -16,8 +16,8 @@ from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.runtime import AgentRuntime
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.types import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.helpers import (
     AGENT_ID,

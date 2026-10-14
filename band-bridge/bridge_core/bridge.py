@@ -42,7 +42,7 @@ from band.platform.event import (
     RoomRemovedEvent,
 )
 from band.platform.link import BandLink
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 
 from .config import AgentConfig, BridgeConfig, ReconnectConfig
 from .control import ControlSignalHandler
