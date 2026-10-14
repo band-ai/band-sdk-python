@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from band.core.timestamps import assume_utc
 from band.core.types import metadata_to_dict
 
 logger = logging.getLogger(__name__)
@@ -310,13 +311,13 @@ def _coerce_inserted_at(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
+        return assume_utc(value)
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value)
         except ValueError:
             return None
-        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+        return assume_utc(dt)
     return None
 
 
