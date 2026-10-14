@@ -807,11 +807,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             _native_turn.reset(trace_token)
             if native_output_type is not None and not tools.turn.complete:
                 logger.warning(
-                    "Room %s message %s: native run ended without a turn outcome "
+                    "Room %s messages %s: native run ended without a turn outcome "
                     "(output_type=%s, output_chars=%s, tool_calls=%s, "
                     "tool_results=%s, failed_tool_results=%s)",
                     room_id,
-                    msg.id,
+                    message_ids,
                     native_output_type,
                     native_output_chars,
                     tool_call_count,
