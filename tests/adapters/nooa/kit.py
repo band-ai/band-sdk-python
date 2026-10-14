@@ -23,6 +23,7 @@ from band.adapters.nooa import NooaAdapter, NooaAdapterConfig, NooaRoomAgent
 from band.adapters.nooa.adapter import TOOLS_BLOCK
 from band.core.types import FeatureKwargs, MessageType, PlatformMessage, ToolEventKey
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
+from band.runtime.formatters import InputField
 from band.runtime.tools import BandTool, ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type
 from band.testing.nooa import (
@@ -32,6 +33,8 @@ from band.testing.nooa import (
     room_call,
     scripted_llm,
 )
+from tests.framework_conformance.batchprobes import current_records
+from tests.framework_conformance.batchprobes.nooa import model_input
 
 ROOM_ID = "room-nooa"
 
@@ -344,6 +347,11 @@ async def run_turn(
 def prompt_text(llm: FakeLLMClient) -> str:
     """Everything the model was sent on its latest call, as one string."""
     return "\n".join(str(message.get("content")) for message in llm.last_messages)
+
+
+def received_contents(llm: FakeLLMClient) -> list[str]:
+    """The content of every current input the model has been shown, in order."""
+    return [record[InputField.CONTENT] for record in current_records(model_input(llm))]
 
 
 def execution_context(llm: FakeLLMClient) -> str:
