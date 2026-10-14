@@ -2142,6 +2142,12 @@ class ExecutionContext:
             for c in retained
             if c.disposition is Disposition.SKIP or c.message_id in rest_skipped
         ]
+        if gone:
+            logger.debug(
+                "ExecutionContext %s: Releasing retained message(s) %s that no turn will run",
+                self.room_id,
+                gone,
+            )
         self._release(gone)
         return bool(gone)
 
@@ -2149,6 +2155,11 @@ class ExecutionContext:
         self, selection: Selection, next_cursor: str | None, pruned: bool
     ) -> ResyncOutcome:
         if selection.stop is Stop.HELD and selection.at is not None:
+            logger.debug(
+                "ExecutionContext %s: Message %s is held by another claim; deferring behind it",
+                self.room_id,
+                selection.at.message_id,
+            )
             self._set_deferred_head(selection.at.message_id)
             return ResyncOutcome.BLOCKED
         # Stop.LIMIT is no page verdict: the retained prefix before a boundary was
@@ -2165,6 +2176,12 @@ class ExecutionContext:
         events = selection.events
         ids = _message_ids(events)
         if ids == self._last_selection:
+            logger.debug(
+                "ExecutionContext %s: Selection %s repeated without progress; "
+                "leaving it for the next resync",
+                self.room_id,
+                ids,
+            )
             return ResyncOutcome.BLOCKED
         self._last_selection = ids
         if selection.members[0].disposition is Disposition.CONTROL:
