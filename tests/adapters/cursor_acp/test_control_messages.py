@@ -15,11 +15,13 @@ from band.adapters.cursor_acp import (
 )
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
+from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.types import ACPToolCall
 from tests.adapters.cursor_acp.kit import (
     DecisionTools,
     cursor_turn,
     pending_tokens,
+    room_message,
 )
 
 
@@ -186,10 +188,7 @@ class TestCursorACPAdapterControlMessages:
         token = first_prompt.removeprefix("Plan ")
 
         await adapter._handle_control_message(
-            cast(
-                PlatformMessage,
-                SimpleNamespace(content=f"/cursor accept {token}", sender_id="user-1"),
-            ),
+            room_message(f"{ROOM_COMMAND} {CursorCommandWord.ACCEPT} {token}"),
             tools["room-1"],
             "room-1",
         )
