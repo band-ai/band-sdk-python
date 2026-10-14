@@ -2122,7 +2122,9 @@ class ExecutionContext:
         if selection.stop is Stop.HELD and selection.at is not None:
             self._set_deferred_head(selection.at.message_id)
             return ResyncOutcome.BLOCKED
-        if next_cursor is not None:
+        # Stop.LIMIT is no page verdict: the retained prefix before a boundary was
+        # all skipped and has just been pruned, so the first page is read again.
+        if next_cursor is not None and selection.stop is not Stop.LIMIT:
             self._scan_cursor = next_cursor
             return None
         self._scan_cursor = None

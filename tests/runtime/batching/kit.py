@@ -80,6 +80,7 @@ class FakeRoom:
         message_id: str,
         *,
         sender_id: str = "alice",
+        sender_type: str = "User",
         at: int | None = None,
         in_rest: bool = True,
         status: str | None = None,
@@ -92,7 +93,7 @@ class FakeRoom:
             room_id=ROOM_ID,
             content=message_id,
             sender_id=sender_id,
-            sender_type="User",
+            sender_type=sender_type,
             sender_name=None,
             message_type="text",
             metadata=self.metadata(status),
@@ -103,6 +104,7 @@ class FakeRoom:
             room_id=ROOM_ID,
             msg_id=message_id,
             sender_id=sender_id,
+            sender_type=sender_type,
             inserted_at=moment.isoformat(),
         )
 
@@ -195,6 +197,11 @@ class Turns:
     fail_on: set[str] = field(default_factory=set)
     # While False the host refuses ordinary input, as a busy adapter does.
     accepting: bool = True
+
+    @property
+    def order(self) -> list[str]:
+        """Every input the host was given, in the order it saw them."""
+        return [item for turn in self.ids for item in turn]
 
     async def single(self, ctx: ExecutionContext, event: Any) -> None:
         await self.record(
