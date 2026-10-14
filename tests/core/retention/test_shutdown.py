@@ -10,6 +10,7 @@ from band.core.exceptions import RoomClosingError
 from band.core.retention import (
     ReleaseCause,
 )
+from tests.adapters.waiting import spin
 from tests.core.retention.kit import Barrier, ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
@@ -68,3 +69,23 @@ class TestShutdown:
         await stopping
         assert resident.resume_requests == []
         assert not resident.live
+
+    async def test_concurrent_stops_and_a_leave_join_one_close(
+        self,
+        host: ResidenceHost,
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        resident.closing = Barrier()
+        callers = [
+            asyncio.create_task(host.owner.stop()),
+            asyncio.create_task(host.owner.stop()),
+            asyncio.create_task(resident.room.dispose()),
+        ]
+        await resident.closing.reached.wait()
+        await spin()
+        assert not any(caller.done() for caller in callers)
+        resident.closing.released.set()
+        await asyncio.gather(*callers)
+        assert resident.releases == [ReleaseCause.FINAL]
+        assert resident.identity is None
