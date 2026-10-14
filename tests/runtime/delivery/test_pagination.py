@@ -59,7 +59,7 @@ class TestYieldedPagination:
             await session.quiesce()
             peer.post_failed(FAILED_ROWS)
             event = peer.post("new")
-            seen = len(peer.journal), len(peer.reads)
+            journal_from, reads_from = len(peer.journal), len(peer.reads)
             woke_at = asyncio.get_running_loop().time()
             match wake:
                 case "arrival":
@@ -73,8 +73,8 @@ class TestYieldedPagination:
                     await asyncio.sleep(IDLE_INTERVAL)
 
         assert (
-            peer.journal[seen[0] :],
-            {page.at for page in peer.reads[seen[1] :]},
+            peer.journal[journal_from:],
+            {page.at for page in peer.reads[reads_from:]},
         ) == (TRAVERSAL, {woke_at})
 
     async def test_a_control_arriving_mid_traversal_runs_before_the_new_input(
