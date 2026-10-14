@@ -31,6 +31,7 @@ from band.adapters.agno import (
 )
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage
+from band.runtime.formatters import format_current_inputs
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.agno.helpers import (
     CapturingModel,
@@ -607,7 +608,7 @@ class TestPersistAndAccumulate:
         seed = [Message(role="user", content="earlier")]
 
         run_input_msgs = adapter._build_run_input(
-            sample_platform_message,
+            [sample_platform_message],
             seed,
             None,
             None,
@@ -617,7 +618,7 @@ class TestPersistAndAccumulate:
 
         assert [m.content for m in run_input_msgs] == [
             "earlier",
-            sample_platform_message.format_for_llm(),
+            format_current_inputs([sample_platform_message]),
         ]
         # Committed transcript holds only the rehydrated seed.
         assert [m.content for m in adapter._message_history["room-1"]] == ["earlier"]
@@ -632,7 +633,7 @@ class TestPersistAndAccumulate:
         adapter._message_history["room-1"] = [Message(role="user", content="committed")]
 
         adapter._build_run_input(
-            sample_platform_message,
+            [sample_platform_message],
             [],
             "participants",
             "contacts",
@@ -683,10 +684,10 @@ class TestFailedRunDoesNotContaminateNextTurn:
         # No residue from the failed turn 1.
         assert not any("P1-participants" in c for c in contents)
         assert not any("C1-contacts" in c for c in contents)
-        assert first.format_for_llm() not in contents
+        assert format_current_inputs([first]) not in contents
         # Turn 2's own injected context and live message are present.
         assert any("P2-participants" in c for c in contents)
-        assert contents[-1] == second.format_for_llm()
+        assert contents[-1] == format_current_inputs([second])
 
 
 class TestOnCleanup:
@@ -713,7 +714,7 @@ class TestUsedBeforeStarted:
 
         with pytest.raises(RuntimeError, match="before on_started"):
             await adapter._run_agent(
-                [], FakeAgentTools(), room_id="room-1", msg_id="m1"
+                [], FakeAgentTools(), room_id="room-1", msg_ids="m1"
             )
 
 

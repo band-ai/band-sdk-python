@@ -88,7 +88,33 @@ async def run_pydantic_ai(inp: AgentInput, final_text: str) -> str:
     return "\n".join(received)
 
 
+async def run_agno(inp: AgentInput, final_text: str) -> str:
+    pytest.importorskip("agno")
+    from agno.agent import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
+        Agent,
+    )
+
+    from band.adapters.agno import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
+        AgnoAdapter,
+    )
+    from tests.adapters.agno.helpers import (  # noqa: PLC0415 -- agno extra, absent from some lane venvs
+        CapturingModel,
+    )
+
+    model = CapturingModel(final_text)
+    # emit=() keeps the run non-streaming, the only path CapturingModel serves.
+    adapter = AgnoAdapter(agent=Agent(model=model, telemetry=False), emit=())
+    await adapter.on_started("Agent", "A test agent")
+    await deliver(adapter, inp)
+    return "\n".join(
+        str(message.content)
+        for message in model.captured_messages or []
+        if message.role != "system"
+    )
+
+
 PROBES: dict[str, BatchProbe] = {
     "langgraph": BatchProbe(run=run_langgraph),
     "pydantic_ai": BatchProbe(run=run_pydantic_ai),
+    "agno": BatchProbe(run=run_agno),
 }
