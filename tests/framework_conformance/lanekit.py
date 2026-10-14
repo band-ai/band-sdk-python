@@ -1,19 +1,4 @@
-"""Unit guards for the baseline toolkit's derived CI-lane scheduling.
-
-Pure-function tests (no live platform), so they run in the ordinary unit suite on
-every PR rather than only in the manually-triggered E2E job — the lane logic is
-load-bearing for CI sharding and a regression here silently re-shards or hides tests.
-
-Covered:
-* single-adapter cells schedule exactly by their home lane (matrix-invariance — the
-  renovation must not change how the existing matrix shards);
-* the schedulability guard fails a test whose frameworks span >1 home lane, is
-  peer-aware (a ``@per_adapter(peer=...)`` cross-lane cell trips it too), and is
-  satisfied by an explicit ``@lane(L)`` override;
-* ``@per_adapter(peer=...)`` folds the peer's requirements into each cell's single
-  ``requires`` mark (a second stacked mark would be dropped by ``get_closest_marker``);
-* ``tools=[]`` builds no custom tools (withholding a tool from an agent must stick).
-"""
+"""Pytest item doubles for baseline lane-scheduling guards."""
 
 from __future__ import annotations
 
@@ -79,18 +64,3 @@ def _two_adapters_in_different_lanes() -> tuple[Adapter, Adapter]:
     if len(populated) < 2:
         pytest.skip("need >=2 populated CI lanes to exercise the schedulability guard")
     return populated[0].adapters[0], populated[1].adapters[0]
-
-
-# --- matrix-invariance: single-adapter cells shard exactly by their home lane --------
-
-
-# --- schedulability guard: cross-lane spans fail unless assigned --------------------
-
-
-# --- hosting: which lanes a framework set can run in, and @lane validation -----------
-
-
-# --- dep gating: peer requirements fold into ONE merged mark -------------------------
-
-
-# --- withholding a tool sticks ------------------------------------------------------

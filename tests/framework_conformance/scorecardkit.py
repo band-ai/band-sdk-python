@@ -1,19 +1,4 @@
-"""Unit guards for the adapter×test scorecard (``ExcludedAdapter`` + ``scorecard``).
-
-Pure-function tests (no live platform), so they run in the ordinary unit suite on every
-PR rather than only in the manually-triggered E2E job — the scorecard is what keeps an
-excluded adapter from vanishing from the matrix, and its reasons feed CI gating, so a
-regression here silently drops rows or loses the N/A explanations.
-
-Covered:
-* ``ExcludedAdapter`` requires a non-empty reason at construction (so ``@per_adapter``
-  cannot exclude an adapter without saying why);
-* ``@per_adapter`` drops the excluded adapters from the fanned cells yet carries their
-  reasons on the ``PerAdapter`` marker, and rejects an unregistered exclusion;
-* ``na_rows`` turns those marker records into N/A rows; ``outcome_row`` maps a test
-  report to pass / fail / skip; ``merge`` unions per-lane cards (a real outcome beats a
-  skip, an N/A is never clobbered).
-"""
+"""Pytest marker, item, and report doubles for scorecard guards."""
 
 from __future__ import annotations
 
@@ -26,11 +11,6 @@ from tests.e2e.baseline.agents import (
     PerAdapter,
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
-
-# --- ExcludedAdapter: a reason is mandatory -----------------------------------------
-
-
-# --- @per_adapter: excluded cells drop out, but their reasons ride the marker --------
 
 
 def _per_adapter_marker(fn: object) -> PerAdapter:
@@ -48,9 +28,6 @@ def _parametrized_adapter_ids(fn: object) -> list[str]:
     raise AssertionError("no parametrize marker on the decorated function")
 
 
-# --- na_rows: marker exclusions become N/A rows -------------------------------------
-
-
 class ScorecardItem:
     """A ``pytest.Item`` stand-in exposing only what ``na_rows`` reads."""
 
@@ -61,9 +38,6 @@ class ScorecardItem:
 
     def get_closest_marker(self, name: str) -> object | None:
         return self._marker if name == PER_ADAPTER_MARKER else None
-
-
-# --- outcome_row: a test report -> a cell verdict -----------------------------------
 
 
 def _report(
@@ -85,11 +59,6 @@ def _report(
         keywords=frozenset(keywords),
     )
 
-
-# --- collector + merge: a run's rows, then the cross-lane union ----------------------
-
-
-# --- gate: required lane x OS cells ---------------------------------------------------
 
 # Two distinct lanes with at least one adapter each, read off the real registry rather
 # than hand-picked ids — a gate case only needs "two different homes", not which ones.
@@ -113,6 +82,3 @@ class FakeMatrixItem:
         if name == LANE_MARKER and self._override is not None:
             return SimpleNamespace(args=(self._override,))
         return None
-
-
-# --- digest_body: the email-safe half of gate_summary (no header, no grid) ----------
