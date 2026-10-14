@@ -115,9 +115,7 @@ class FakeACPAgent:
         self.auth_methods: list[str] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
-        # Sessions the client sent ``session/cancel`` for, and a signal for the first.
         self.cancelled_sessions: list[str] = []
-        self.cancel_received = asyncio.Event()
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -675,7 +673,6 @@ class FakeACPAgent:
         """Record a ``session/cancel`` notification."""
         del kwargs
         self.cancelled_sessions.append(session_id)
-        self.cancel_received.set()
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""

@@ -180,7 +180,7 @@ class SessionConfig:
             or not 1 <= self.max_queued_messages <= ACTIONABLE_PAGE_SIZE
         ):
             raise ValueError(
-                f"max_queued_messages must be an integer from 1 to "
+                "max_queued_messages must be an integer from 1 to "
                 f"{ACTIONABLE_PAGE_SIZE} (got {self.max_queued_messages!r})"
             )
         if (

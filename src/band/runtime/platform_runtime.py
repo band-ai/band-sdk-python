@@ -203,14 +203,14 @@ class PlatformRuntime:
 
         Args:
             on_execute: Callback for message execution
+            on_cleanup: Callback for session cleanup
+            on_control: Callback for an interrupt/stop control signal, for
+                adapter work that outlives the message cycle it started in
             on_execute_batch: Callback for a turn over several originals;
                 required when ``SessionConfig.consume_all_queued`` is set
             is_message_control: Read-only recognition of a delivery the adapter
                 would handle as a control
             capacity: Adapter arbitrating shared capacity among rooms
-            on_cleanup: Callback for session cleanup
-            on_control: Callback for an interrupt/stop control signal, for
-                adapter work that outlives the message cycle it started in
 
         Raises:
             AgentAlreadyRunningError: When a duplicate start is refused, by the

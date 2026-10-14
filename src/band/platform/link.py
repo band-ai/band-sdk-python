@@ -39,10 +39,7 @@ from band.platform.event import (
     RoomRemovedEvent,
     WebSocketDisconnectedEvent,
 )
-from band.platform.message_lifecycle import (
-    ActionablePage,
-    MessageLifecycle,
-)
+from band.platform.message_lifecycle import ActionablePage, MessageLifecycle
 from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage
 

@@ -1,4 +1,4 @@
-"""What a terminal (processed/failed) write established about the platform."""
+"""Result vocabulary for terminal message writes."""
 
 from __future__ import annotations
 

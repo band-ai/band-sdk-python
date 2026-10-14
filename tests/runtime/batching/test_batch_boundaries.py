@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
-import pytest
-
 from tests.conftest import make_participant_added_event
 from tests.runtime.batching.kit import ROOM_ID, FakeRoom, started_room
 
 
 class TestBatchBoundaries:
-    @pytest.mark.asyncio
     async def test_a_participant_change_runs_between_the_turns_around_it(
-        self, platform: FakeRoom, mock_rest_client: MagicMock
+        self, platform: FakeRoom
     ) -> None:
-        async with started_room(platform, mock_rest_client, gate=True) as room:
+        async with started_room(platform, gate=True) as room:
             await room.deliver(platform.post("m1"))
             await room.until(lambda: room.turns.ids == [("m1",)])
             await room.deliver(
@@ -34,15 +29,14 @@ class TestBatchBoundaries:
             ("m4",),
         ]
 
-    @pytest.mark.asyncio
     async def test_a_boundary_that_arrives_during_the_page_read_still_bounds_the_turn(
-        self, platform: FakeRoom, mock_rest_client: MagicMock
+        self, platform: FakeRoom
     ) -> None:
         first = platform.post("m1")
         platform.post("m2")
         platform.during_read.append(make_participant_added_event(room_id=ROOM_ID))
 
-        async with started_room(platform, mock_rest_client, arrived=(first,)) as room:
+        async with started_room(platform, arrived=(first,)) as room:
             await room.settled("m1", "m2")
 
         assert room.turns.ids == [("m1",), ("participant_added",), ("m2",)]

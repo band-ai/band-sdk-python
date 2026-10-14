@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
+from collections.abc import Awaitable
 from enum import StrEnum
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
@@ -21,6 +22,7 @@ from band.core.protocols import (
     BatchFrameworkAdapter,
     BatchPreprocessor,
     CapacityWaitingAdapter,
+    ControlRecognizer,
     FrameworkAdapter,
     Preprocessor,
 )
@@ -578,15 +580,7 @@ class Agent:
         if inp is None or await self._try_control(inp):
             return
 
-        rejected = False
-        try:
-            await self._adapter.on_event(inp)
-        except InputNotAccepted:
-            rejected = True
-            raise
-        finally:
-            if not rejected and inp.commit_context is not None:
-                inp.commit_context()
+        await self._commit_unless_refused(inp, self._adapter.on_event(inp))
 
     async def _on_execute_batch(
         self, ctx: ExecutionContext, events: tuple[MessageEvent, ...]
@@ -599,14 +593,19 @@ class Agent:
         if inp is None:
             return
 
-        rejected = False
+        await self._commit_unless_refused(inp, adapter.on_messages(inp))
+
+    @staticmethod
+    async def _commit_unless_refused(inp: AgentInput, turn: Awaitable[None]) -> None:
+        """Await ``turn``, then commit the input's context unless it was refused."""
+        refused = False
         try:
-            await adapter.on_messages(inp)
+            await turn
         except InputNotAccepted:
-            rejected = True
+            refused = True
             raise
         finally:
-            if not rejected and inp.commit_context is not None:
+            if not refused and inp.commit_context is not None:
                 inp.commit_context()
 
     @property
@@ -622,11 +621,14 @@ class Agent:
         transform content before handling, so anything else is probed as a
         possible control rather than misclassified as ordinary.
         """
-        recognizer = getattr(self._adapter, "is_control_message", None)
-        if recognizer is None or type(self._preprocessor) is not DefaultPreprocessor:
+        adapter = self._adapter
+        if (
+            not isinstance(adapter, ControlRecognizer)
+            or type(self._preprocessor) is not DefaultPreprocessor
+        ):
             return True
         msg = DefaultPreprocessor.message(ctx, event, self._runtime.agent_id)
-        return msg is not None and bool(recognizer(msg))
+        return msg is not None and adapter.is_control_message(msg)
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
         """Handle controls with their delivery tools, preserving active ownership."""

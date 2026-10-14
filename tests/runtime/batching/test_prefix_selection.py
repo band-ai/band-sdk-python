@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
+from datetime import timedelta
 
 import pytest
 
@@ -15,8 +16,7 @@ from band.runtime.selection import (
     select_prefix,
 )
 from tests.conftest import make_message_event
-
-EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
+from tests.runtime.batching.kit import EPOCH
 
 
 def candidate(
@@ -31,20 +31,38 @@ def ids(selection: Selection) -> list[str]:
     return [member.message_id for member in selection.members]
 
 
+def outcome(selection: Selection) -> tuple[list[str], Stop]:
+    return ids(selection), selection.stop
+
+
+def select_at_end(
+    rest: Sequence[Candidate],
+    retained: Sequence[Candidate] = (),
+    *,
+    cap: int = 10,
+    limit: MessageKey | None = None,
+) -> Selection:
+    """Select from a REST read that reached the end of the actionable list."""
+    return select_prefix(
+        rest,
+        retained,
+        cap=cap,
+        page_reaches=None,
+        exhausted=True,
+        limit=limit,
+    )
+
+
 class TestPrefixSelection:
     def test_rest_order_is_the_turn_order(self) -> None:
         rest = [candidate("a", 1), candidate("b", 2), candidate("c", 3)]
 
-        selection = select_prefix(rest, [], cap=10, page_reaches=None, exhausted=True)
-
-        assert (ids(selection), selection.stop) == (["a", "b", "c"], Stop.END)
+        assert outcome(select_at_end(rest)) == (["a", "b", "c"], Stop.END)
 
     def test_the_ceiling_ends_the_prefix(self) -> None:
         rest = [candidate("a", 1), candidate("b", 2), candidate("c", 3)]
 
-        selection = select_prefix(rest, [], cap=2, page_reaches=None, exhausted=True)
-
-        assert (ids(selection), selection.stop) == (["a", "b"], Stop.CAP)
+        assert outcome(select_at_end(rest, cap=2)) == (["a", "b"], Stop.CAP)
 
     def test_settled_and_failed_originals_are_not_members(self) -> None:
         rest = [
@@ -53,9 +71,7 @@ class TestPrefixSelection:
             candidate("c", 3, Disposition.SKIP),
         ]
 
-        selection = select_prefix(rest, [], cap=10, page_reaches=None, exhausted=True)
-
-        assert ids(selection) == ["b"]
+        assert ids(select_at_end(rest)) == ["b"]
 
     def test_an_owned_original_holds_back_everything_after_it(self) -> None:
         rest = [
@@ -64,9 +80,7 @@ class TestPrefixSelection:
             candidate("c", 3),
         ]
 
-        selection = select_prefix(rest, [], cap=10, page_reaches=None, exhausted=True)
-
-        assert (ids(selection), selection.stop) == (["a"], Stop.HELD)
+        assert outcome(select_at_end(rest)) == (["a"], Stop.HELD)
 
     def test_an_original_in_both_sources_counts_once_and_keeps_its_payload(
         self,
@@ -74,9 +88,7 @@ class TestPrefixSelection:
         from_rest = candidate("a", 1)
         delivered = candidate("a", 1)
 
-        selection = select_prefix(
-            [from_rest], [delivered], cap=10, page_reaches=None, exhausted=True
-        )
+        selection = select_at_end([from_rest], [delivered])
 
         assert [m.event for m in selection.members] == [delivered.event]
 
@@ -97,7 +109,7 @@ class TestPrefixSelection:
             exhausted=False,
         )
 
-        assert [(ids(s), s.stop) for s in (first, second)] == [
+        assert [outcome(s) for s in (first, second)] == [
             (["a"], Stop.BOUNDARY),
             (["b"], Stop.BOUNDARY),
         ]
@@ -112,23 +124,18 @@ class TestPrefixSelection:
             rest, [later], cap=10, page_reaches=rest[-1].key, exhausted=False
         )
 
-        assert (ids(selection), selection.stop) == (["a", "b"], Stop.FRONTIER)
+        assert outcome(selection) == (["a", "b"], Stop.FRONTIER)
 
     def test_a_local_barrier_ends_the_prefix_at_its_segment(self) -> None:
         rest = [candidate("a", 1), candidate("b", 2), candidate("c", 3)]
 
-        selection = select_prefix(
-            rest, [], cap=10, page_reaches=None, exhausted=True, limit=rest[1].key
+        assert outcome(select_at_end(rest, limit=rest[1].key)) == (
+            ["a", "b"],
+            Stop.LIMIT,
         )
-
-        assert (ids(selection), selection.stop) == (["a", "b"], Stop.LIMIT)
 
     @pytest.mark.parametrize("cap", [1, 2])
     def test_a_boundary_original_alone_is_always_a_valid_turn(self, cap: int) -> None:
         only = candidate("a", 1)
 
-        selection = select_prefix(
-            [], [only], cap=cap, page_reaches=None, exhausted=True
-        )
-
-        assert (ids(selection), selection.stop) == (["a"], Stop.BOUNDARY)
+        assert outcome(select_at_end([], [only], cap=cap)) == (["a"], Stop.BOUNDARY)

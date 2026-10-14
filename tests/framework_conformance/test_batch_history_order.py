@@ -9,11 +9,12 @@ from tests.framework_conformance.batchprobes import (
     BATCH,
     EARLIER_ANSWER,
     EARLIER_QUESTION,
-    FINAL_TEXT,
     LATER_PENDING,
-    delivery_input,
 )
-from tests.framework_conformance.batchprobes.registry import BATCH_PROBES
+from tests.framework_conformance.batchprobes.registry import (
+    BATCH_PROBES,
+    provider_received,
+)
 
 
 class TestBatchHistoryOrder:
@@ -21,9 +22,7 @@ class TestBatchHistoryOrder:
     async def test_earlier_conversation_precedes_the_current_inputs(
         self, framework_id: str
     ) -> None:
-        provider_input = await BATCH_PROBES[framework_id].run(
-            await delivery_input(BATCH), FINAL_TEXT
-        )
+        provider_input = await provider_received(framework_id, BATCH)
 
         current_at = provider_input.index(CURRENT_INPUTS_HEADING)
         assert provider_input.index(EARLIER_QUESTION) < current_at
@@ -33,9 +32,7 @@ class TestBatchHistoryOrder:
     async def test_history_ends_before_the_earliest_input_and_is_shown_once(
         self, framework_id: str
     ) -> None:
-        provider_input = await BATCH_PROBES[framework_id].run(
-            await delivery_input(BATCH), FINAL_TEXT
-        )
+        provider_input = await provider_received(framework_id, BATCH)
 
         assert [
             provider_input.count(text)

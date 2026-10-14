@@ -89,10 +89,13 @@ One-shot keeps its one-event-per-invocation drain; it never batches.
 
 ## Supported adapters
 
-An adapter opts in by setting `supports_batch_input = True` and implementing
-`on_messages(inp: AgentInput)`. The runtime hands such a turn to `on_messages`,
-and `AgentInput` carries every original; `msg` stays the first one, so a
-singleton consumer keeps working:
+An adapter opts in by setting `supports_batch_input = True`. A `SimpleAdapter`
+overrides `on_turn(messages, ...)`, its one model-input builder, and makes
+`on_message` call `on_turn((msg,), ...)`, so a singleton and a batch share one
+tool loop and one judge. A bare `FrameworkAdapter` implements
+`on_messages(inp: AgentInput)` itself. The runtime hands a batch to
+`on_messages`, and `AgentInput` carries every original; `msg` stays the first
+one, so a singleton consumer keeps working:
 
 ```python
 from datetime import UTC, datetime
@@ -148,13 +151,12 @@ assert single.messages == (single.msg,)  # a turn of one is the singleton case
 ```
 
 <!-- TO FINALIZE: adapter list. Update as adapters declare supports_batch_input. -->
-Built-in adapters that declare `supports_batch_input` today: **none**. Until one
-does, enabling `consume_all_queued` with any built-in adapter raises
-`BandConfigError` at `Agent.start()`.
+Enabling `consume_all_queued` with a built-in adapter that does not declare
+`supports_batch_input` raises `BandConfigError` at `Agent.start()`.
 
 | Adapter | `supports_batch_input` |
 | --- | --- |
-| (none yet) | |
+| `AnthropicAdapter` | yes |
 <!-- END TO FINALIZE: adapter list -->
 
 ## Replies and declines

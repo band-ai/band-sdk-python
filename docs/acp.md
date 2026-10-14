@@ -166,13 +166,14 @@ batching on or off:
   cancelled before it first ran. A failed task launch gives the slot back
   immediately, and a stale task never unbinds a newer turn.
 
-Rooms are not queued for the slot: a busy adapter answers every ordinary input
-with `InputNotAccepted`, and each room retries on its own schedule.
-
-<!-- TO FINALIZE (capacity-wait queue) -->
-**Planned, not implemented:** a cancellable first-come queue of capacity requests
-so runnable waiting rooms are admitted fairly. Today a room that retries just
-after the slot frees can win it ahead of a longer-waiting room.
+A refused room registers a capacity request with the adapter
+(`register_capacity_wait`) and withdraws it when it stops waiting
+(`withdraw_capacity_wait`). Requests form a first-come line and are not accepted
+input: they hold no delivery claim, tool or capacity, and the adapter never
+waits on one. A free slot goes only to the room at the head of the line, or to
+any room when the line is empty; any other room's input is refused. A room has
+at most one request, tied to its scheduler's generation, so a replaced
+incarnation cannot cancel its successor's.
 
 ## Server prompt outcomes
 

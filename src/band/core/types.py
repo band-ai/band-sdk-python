@@ -553,19 +553,12 @@ class AgentInput:
 
     @property
     def sender_ids(self) -> tuple[str, ...]:
-        """The distinct nonempty sender IDs of the originals, in arrival order."""
-        return distinct_sender_ids(self.messages)
+        """Each nonempty sender ID of the originals once, in arrival order.
 
-
-def distinct_sender_ids(messages: Iterable[PlatformMessage]) -> tuple[str, ...]:
-    """Each nonempty sender ID once, in first-appearance order.
-
-    The one projection from a turn's originals to the audience of an automatic
-    reply or notice; it never invents an ID for a message that has none.
-    """
-    return tuple(
-        dict.fromkeys(message.sender_id for message in messages if message.sender_id)
-    )
+        The audience of an automatic reply or notice; never invents an ID for a
+        message that has none.
+        """
+        return tuple(dict.fromkeys(m.sender_id for m in self.messages if m.sender_id))
 
 
 def delivery_status_for_agent(metadata: Any, agent_id: str | None) -> str | None:
