@@ -65,7 +65,7 @@ async def test_watch_task_drains_the_turn_that_started_it() -> None:
             session_id="sess-1",
             client=fake_client,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
         adapter._finish_turn(room_state)
         await orig_prompt(*args, **kwargs)
@@ -113,7 +113,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
         session_id="sess-1",
         client=FakeOpencodeClient(),
         tools=tools_protocol(tools),
-        sender_id="user-1",
+        sender_ids=("user-1",),
     )
     first_turn.usage_by_message["msg-1"] = TurnUsage(input_tokens=100, output_tokens=20)
     # The next turn begins before the first turn's usage is drained.
@@ -122,7 +122,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
         session_id="sess-1",
         client=FakeOpencodeClient(),
         tools=tools_protocol(tools),
-        sender_id="user-2",
+        sender_ids=("user-2",),
     )
     assert next_turn.usage_by_message == {}
 
@@ -155,7 +155,7 @@ async def test_orphaned_turns_pending_permission_replies_against_its_own_client(
         session_id="sess-a",
         client=client_a,
         tools=tools_protocol(tools),
-        sender_id="user-1",
+        sender_ids=("user-1",),
     )
     await turn_a.approvals.on_permission_asked(
         OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -167,7 +167,7 @@ async def test_orphaned_turns_pending_permission_replies_against_its_own_client(
         session_id="sess-b",
         client=client_b,
         tools=tools_protocol(tools),
-        sender_id="user-2",
+        sender_ids=("user-2",),
     )
 
     assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
@@ -189,7 +189,7 @@ async def test_orphaned_turns_abandon_aborts_its_own_session(
         session_id="sess-a",
         client=client_a,
         tools=tools_protocol(tools),
-        sender_id="user-1",
+        sender_ids=("user-1",),
     )
     await turn_a.approvals.on_permission_asked(
         OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -201,7 +201,7 @@ async def test_orphaned_turns_abandon_aborts_its_own_session(
         session_id="sess-b",
         client=client_b,
         tools=tools_protocol(tools),
-        sender_id="user-2",
+        sender_ids=("user-2",),
     )
 
     assert await turn_a.approvals.abandon()
