@@ -173,7 +173,7 @@ DEFERRED_OUTCOMES = frozenset({TurnOutcome.RETRY_LATER, TurnOutcome.NOT_ACCEPTED
 
 
 class ControlOutcome(Enum):
-    CONSUMED = "consumed"  # the adapter handled the message as a control
+    CONSUMED = "consumed"  # settled as a control: handled, interrupted or failed
     DECLINED = "declined"  # not a control (now); it is an ordinary input
     DEFERRED = "deferred"  # a control that could not be attempted yet
 
@@ -1526,8 +1526,12 @@ class ExecutionContext:
         self._retain(event)
         if _is_synthetic(event):
             return
-        if not self._stopped and self._on_message_control is not None:
-            await self._scan_controls()
+        if self._stopped or self._on_message_control is None:
+            return
+        await self._scan_controls()
+        # A control may have settled the deferred head the input waited behind.
+        if self._sync_complete and not self._has_pending_work and not self._stopped:
+            await self._reconcile()
 
     async def _scan_controls(self) -> None:
         """Offer each candidate, retained originals included, to control handling."""
@@ -1605,33 +1609,50 @@ class ExecutionContext:
                 if not await self._mark_processing(msg_id):
                     return ControlOutcome.DEFERRED
                 if not self._owns_attempt(scope, revision):
-                    if scope.kind is not None:
-                        self._select_intent(scope, None, timed_out=False)
-                        await self._abort_cycle(scope.kind, scope)
-                    return ControlOutcome.DEFERRED
+                    if scope.kind is None:
+                        return ControlOutcome.DEFERRED
+                    self._select_intent(scope, None, timed_out=False)
+                    await self._abort_cycle(scope.kind, scope)
+                    return self._aborted_control_outcome(event, scope)
                 await self._ensure_fresh_context()
                 if revision != self._control_revision:
                     return ControlOutcome.DEFERRED
                 if not await self._run_cycle(scope, event, handler=probe):
-                    return ControlOutcome.DEFERRED
+                    return self._aborted_control_outcome(event, scope)
                 if not scope.consumed:
                     return ControlOutcome.DECLINED
                 await self._settle_originals(scope)
-                self._release((msg_id,))
-                return ControlOutcome.CONSUMED
+                return self._settled_control(event)
             except RoomExecutionStoppedError:
                 return ControlOutcome.DEFERRED
             except Exception as error:  # noqa: BLE001 -- control boundary uses the normal delivery-failure policy
                 _log_turn_error(error, "Error handling control message %s", msg_id)
                 attempts, _ = self._retry_tracker.record_attempt(msg_id)
                 await self._handle_turn_failure(msg_id, attempts, error)
-                if attempts >= self._retry_tracker.max_retries:
-                    self._retry_tracker.mark_permanently_failed(msg_id)
-                return ControlOutcome.DEFERRED
+                if attempts < self._retry_tracker.max_retries:
+                    return ControlOutcome.DEFERRED
+                self._retry_tracker.mark_permanently_failed(msg_id)
+                return self._settled_control(event)
             finally:
                 scope.settled = True
                 self._turn_failure_reported = False
                 self._set_state(ExecutionState.IDLE)
+
+    def _aborted_control_outcome(
+        self, event: MessageEvent, scope: TurnScope
+    ) -> ControlOutcome:
+        """An aborted control is settled once it stored an intent (an INTERRUPT);
+        a stopped or superseded one stays recoverable."""
+        if scope.intent is None:
+            return ControlOutcome.DEFERRED
+        return self._settled_control(event)
+
+    def _settled_control(self, event: MessageEvent) -> ControlOutcome:
+        """A settled control leaves the line, no longer heads it and stops
+        waiting for capacity."""
+        self._release((_event_message_id(event),))
+        self._clear_deferred_head_for((event,))
+        return ControlOutcome.CONSUMED
 
     async def _retry_pending_terminal_acks(self) -> bool:
         """Retry every unparked pending write once; False while any stays retryable."""
@@ -1999,7 +2020,7 @@ class ExecutionContext:
             return
         if self._deferred_message_id is not None:
             await self._scan_controls()
-        else:
+        if self._deferred_message_id is None:
             await self._drain_pending()
 
     async def _drain_pending(self) -> ResyncOutcome:
@@ -2145,6 +2166,7 @@ class ExecutionContext:
                 case ControlOutcome.CONSUMED:
                     return None
                 case ControlOutcome.DEFERRED:
+                    self._withdraw_capacity_wait()
                     self._set_deferred_head(ids[0])
                     return ResyncOutcome.RETRY
         outcome = await self._run_message_attempt(events, revision=revision)

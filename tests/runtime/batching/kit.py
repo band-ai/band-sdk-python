@@ -66,6 +66,8 @@ class FakeRoom:
     rest: MagicMock
     page_size: int = 100
     refuse_processing: set[str] = field(default_factory=set)
+    # Messages whose next admission is refused and every one after it accepted.
+    refuse_processing_once: set[str] = field(default_factory=set)
     unconfirmed_terminal: bool = False
     deliveries: dict[str, Delivery] = field(default_factory=dict)
     # Messages the room asked to admit, in order, whether or not it was refused.
@@ -76,6 +78,9 @@ class FakeRoom:
     # Control signals that reach the room while the next page read is in flight.
     read_actions: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
     deliver: Callable[[Any], Awaitable[None]] | None = None
+    # Messages whose processing write is overtaken by an INTERRUPT.
+    interrupt_during_processing: set[str] = field(default_factory=set)
+    interrupt: Callable[[], bool] | None = None
 
     def post(
         self,
@@ -149,7 +154,13 @@ class FakeRoom:
 
     async def mark_processing(self, room_id: str, message_id: str) -> bool:
         self.admission_attempts.append(message_id)
+        if message_id in self.interrupt_during_processing and self.interrupt:
+            self.interrupt_during_processing.discard(message_id)
+            self.interrupt()
         if message_id in self.refuse_processing:
+            return False
+        if message_id in self.refuse_processing_once:
+            self.refuse_processing_once.discard(message_id)
             return False
         self.deliveries[message_id].status = DeliveryStatus.PROCESSING
         return True
@@ -235,11 +246,16 @@ class ControlScript:
 
     ``recognized`` is read live, so a handler can change what the next
     candidate classifies as. ``declines`` are recognized messages the handler
-    then refuses to consume (an expired request).
+    then refuses to consume (an expired request), ``raises`` ones whose handler
+    fails and ``hangs`` ones whose handler runs until it is cancelled.
     """
 
     recognized: set[str] = field(default_factory=set)
     declines: set[str] = field(default_factory=set)
+    raises: set[str] = field(default_factory=set)
+    hangs: set[str] = field(default_factory=set)
+    # Recognized messages whose handler began, consumed or not.
+    started: list[str] = field(default_factory=list)
     handled: list[str] = field(default_factory=list)
     on_handled: Callable[[str], None] = lambda message_id: None
 
@@ -250,6 +266,11 @@ class ControlScript:
         message_id = _payload_id(event)
         if message_id in self.declines or message_id not in self.recognized:
             return False
+        self.started.append(message_id)
+        if message_id in self.hangs:
+            await asyncio.Event().wait()
+        if message_id in self.raises:
+            raise RuntimeError("the control handler failed")
         self.handled.append(message_id)
         self.on_handled(message_id)
         return True
@@ -369,6 +390,7 @@ async def started_room(
         is_message_control=controls.recognizes if controls else None,
     )
     platform.deliver = ctx.on_event
+    platform.interrupt = ctx.interrupt
     for event in arrived:
         await ctx.on_event(event)
     await ctx.start()

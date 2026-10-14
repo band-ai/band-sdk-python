@@ -6,6 +6,7 @@ import pytest
 
 from tests.runtime.batching.kit import (
     CapacityAction,
+    ControlScript,
     FakeRoom,
     SharedCapacity,
     started_room,
@@ -95,3 +96,21 @@ class TestCapacityRegistration:
             await room.until(lambda: capacity.actions()[-1] == CapacityAction.WITHDRAW)
 
         assert capacity.registrations == registrations
+
+    async def test_a_control_that_cannot_start_stops_competing(
+        self, platform: FakeRoom
+    ) -> None:
+        controls = ControlScript()
+        capacity = SharedCapacity()
+
+        async with started_room(platform, controls=controls, capacity=capacity) as room:
+            await room.queue_for_capacity("m1", capacity)
+            # A pending question turns the refused input into a control whose
+            # processing write the platform now refuses.
+            controls.recognized.add("m1")
+            platform.refuse_processing.add("m1")
+            await room.resync()
+            await room.quiesce()
+            last_request = capacity.actions()[-1]
+
+        assert last_request == CapacityAction.WITHDRAW

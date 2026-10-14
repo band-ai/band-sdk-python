@@ -94,3 +94,16 @@ class TestDeferredControls:
         assert while_refused == ([], [], None)
         assert (controls.handled, room.turns.ids) == (["approve"], [("m2",)])
         assert platform.status_of("approve") == DeliveryStatus.PROCESSED
+
+    async def test_a_control_refused_once_at_the_head_is_never_run_as_input(
+        self, platform: FakeRoom
+    ) -> None:
+        platform.post("approve")
+        platform.refuse_processing_once.add("approve")
+        controls = ControlScript(recognized={"approve"})
+
+        async with started_room(platform, controls=controls) as room:
+            await room.settled("approve")
+            await room.quiesce()
+
+        assert (controls.handled, room.turns.ids) == (["approve"], [])
