@@ -957,7 +957,9 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=nooa uv run --locked --isolated --python 3.
 NOOA remains POSIX-only on Python 3.12–3.13; its CI E2E lane is Linux-only.
 Strands runs on both CI operating systems. Core tests retain exact collection
 of lazy legacy matrix cells even though those cells execute in their own lanes.
-Only modules absent at import time (such as Parlant) need a manifest union.
+Only cells whose collection imports an absent module need a manifest union: Parlant's
+smoke, and the Strands and NOOA cells `@per_adapter(batch_input=True)` selects (it
+reads `supports_batch_input` off the adapter class, which core cannot import for them).
 The legacy cross-framework wrapper assigns Strands + LangGraph to the Strands
 lane; `@per_adapter(lane=...)` filters adapter selection and `@lane(...)` assigns
 execution. These are separate decisions.

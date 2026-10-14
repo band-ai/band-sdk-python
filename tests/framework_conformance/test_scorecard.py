@@ -45,6 +45,7 @@ from tests.framework_conformance.scorecardkit import (
     _parametrized_adapter_ids,
     _per_adapter_marker,
     _report,
+    lanes_without_an_installable_adapter,
 )
 from tests.paths import REPO_ROOT
 
@@ -334,14 +335,17 @@ class TestScorecard:
             assert owned[0]["lanes"] == [str(Lane.STRANDS)]
 
         extra = [cell for key, cell in expected.items() if key not in current]
-        if importlib.util.find_spec("parlant") is not None:
-            assert not extra
-        else:
-            assert extra
-        assert all(
-            cell["test"].startswith(
+        parlant_extra = [
+            cell
+            for cell in extra
+            if cell["test"].startswith(
                 "tests/e2e/baseline/smoke/adapters/test_parlant.py::"
             )
+        ]
+        assert bool(parlant_extra) == (importlib.util.find_spec("parlant") is None)
+        uncollectable_lanes = lanes_without_an_installable_adapter()
+        assert all(
+            cell in parlant_extra or set(cell["lanes"]) <= uncollectable_lanes
             for cell in extra
         )
 

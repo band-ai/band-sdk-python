@@ -1633,7 +1633,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -1786,7 +1786,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -1939,7 +1939,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -2092,7 +2092,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -2245,7 +2245,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -2398,7 +2398,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -2551,7 +2551,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
       "adapter": "strands",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -2704,7 +2704,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-strands]",
       "adapter": "suite",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
@@ -2857,7 +2857,7 @@
       "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-strands]",
       "adapter": "suite",
       "lanes": [
-        "core"
+        "strands"
       ],
       "status": "pass",
       "reason": null
