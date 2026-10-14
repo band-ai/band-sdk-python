@@ -15,7 +15,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     released,
     send_to,
 )
-from tests.integrations.acp.clientadapter.kit import adapter_on, scripted_conn
+from tests.integrations.acp.clientadapter.kit import AdapterOn, scripted_conn
 
 
 class TestACPClientAdapterDeadConnectionRecovery:
@@ -23,7 +23,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
 
     @pytest.mark.asyncio
     async def test_prompt_error_recovers_the_process_and_keeps_the_session(
-        self,
+        self, adapter_on: AdapterOn
     ) -> None:
         conn = scripted_conn({"room-1": "sess-1"})
         conn.prompt = AsyncMock(side_effect=RuntimeError("Process died"))
@@ -41,7 +41,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert len(reported_failures(tools)) == 1
 
     @pytest.mark.asyncio
-    async def test_closing_thought_delivery_failure_leaves_connection_up(self) -> None:
+    async def test_closing_thought_delivery_failure_leaves_connection_up(
+        self, adapter_on: AdapterOn
+    ) -> None:
         """The agent answered fine; posting its reply to the room is what
         failed. That must not recover a healthy process, nor be reported as
         an ACP provider failure."""
@@ -70,7 +72,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
-    async def test_session_bookkeeping_failure_leaves_connection_up(self) -> None:
+    async def test_session_bookkeeping_failure_leaves_connection_up(
+        self, adapter_on: AdapterOn
+    ) -> None:
         """A failed session task event must not turn a completed prompt into an ACP failure."""
         adapter = adapter_on(scripted_conn({"room-1": "sess-1"}))
         tools = FakeAgentTools()
@@ -83,7 +87,9 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
-    async def test_turn_timeout_preserves_other_room_connection(self) -> None:
+    async def test_turn_timeout_preserves_other_room_connection(
+        self, adapter_on: AdapterOn
+    ) -> None:
         """A timed-out room must not interrupt another room's prompt."""
         conn = scripted_conn({"room-a": "sess-a", "room-b": "sess-b"})
         adapter = adapter_on(conn, turn_timeout_s=1)

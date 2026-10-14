@@ -13,7 +13,6 @@ from acp.schema import (
     ElicitationFormSessionMode,
     ElicitationSchema,
     ElicitationStringPropertySchema,
-    NewSessionResponse,
 )
 from pydantic import BaseModel
 
@@ -39,13 +38,16 @@ from band.integrations.omp import (
 )
 from band.testing import FakeAgentTools
 from tests.integrations.acp.acp_toolkit import (
-    FakeSpawn,
     inject_acp_spawn,
     launch_for,
-    make_acp_connection,
     room_holder,
 )
-from tests.integrations.acp.acp_toolkit.harness import send_to
+from tests.integrations.acp.acp_toolkit.harness import (
+    SCRIPTED_SESSION,
+    scripted_session_spawn,
+    send_to,
+    torn_down,
+)
 
 
 def omp_in(
@@ -438,16 +440,13 @@ class TestOmpElicitationHandlerWiring:
     async def test_elicitation_handler_wired_on_message(self) -> None:
         """``on_message`` must register the OMP form elicitation handler."""
         adapter = OmpACPAdapter(OmpACPAdapterConfig(inject_band_tools=False))
-        conn = make_acp_connection()
-        conn.new_session = AsyncMock(
-            return_value=NewSessionResponse(session_id="acp-session-123")
-        )
-        inject_acp_spawn(adapter, FakeSpawn(conn=conn))
+        inject_acp_spawn(adapter, scripted_session_spawn())
 
-        await send_to(adapter, "room-123")
+        async with torn_down(adapter):
+            await send_to(adapter, "room-123")
+            client = adapter._rooms["room-123"].runtime.client
 
-        client = adapter._rooms["room-123"].runtime.client
-        assert "acp-session-123" in client._elicitation_handlers
+        assert SCRIPTED_SESSION in client._elicitation_handlers
 
 
 class TestOmpDeterministicMcpReply:

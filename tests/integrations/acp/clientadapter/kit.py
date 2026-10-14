@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from acp.schema import (
-    NewSessionResponse,
-)
+from acp.schema import NewSessionResponse
 
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -22,6 +21,9 @@ from tests.integrations.acp.acp_toolkit.harness import (
 )
 
 MOCK_ROOM = "room-123"
+# Builds an adapter as ``adapter_on`` does; the conftest fixture of that name
+# tears each one down.
+AdapterOn = Callable[..., ACPClientAdapter]
 CODEX = ACPClientAdapterConfig(command="codex")
 
 
@@ -64,7 +66,7 @@ def scripted_conn(sessions: dict[str, str]) -> AsyncMock:
 def adapter_on(conn: AsyncMock, **settings: object) -> ACPClientAdapter:
     """An adapter whose room processes all run on ``conn``."""
     adapter = ACPClientAdapter(
-        ACPClientAdapterConfig(command="codex", inject_band_tools=False, **settings)
+        CODEX.model_copy(update={"inject_band_tools": False, **settings})
     )
     inject_acp_spawn(adapter, FakeSpawn(conn=conn))
     return adapter

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
+from acp.schema import NewSessionResponse
 
 from band.adapters.cursor_acp import CursorACPAdapter
 from band.core.protocols import AgentToolsProtocol
@@ -166,6 +167,25 @@ class FakeSpawn:
     @property
     def last_kwargs(self) -> dict[str, Any]:
         return self.calls[-1][1]
+
+
+SCRIPTED_SESSION = "acp-session-123"
+
+
+def scripted_session_spawn(session_id: str = SCRIPTED_SESSION) -> FakeSpawn:
+    """A spawn whose scripted connection opens ``session_id`` for every room."""
+    conn = make_acp_connection()
+    conn.new_session = AsyncMock(return_value=NewSessionResponse(session_id=session_id))
+    return FakeSpawn(conn=conn)
+
+
+@asynccontextmanager
+async def torn_down(adapter: ACPClientAdapter) -> AsyncIterator[None]:
+    """Tear down every room ``adapter`` opened, on exit."""
+    try:
+        yield
+    finally:
+        await adapter.cleanup_all()
 
 
 @dataclass(frozen=True)
