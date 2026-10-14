@@ -14,6 +14,7 @@ import pytest
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
+from tests.framework_configs.adapters import ADAPTER_EXCLUDED_MODULES
 from tests.framework_conformance.batchprobes import BatchProbe, deliver
 
 if TYPE_CHECKING:
@@ -59,4 +60,6 @@ async def run_nooa(inp: AgentInput, final_text: str) -> str:
     return model_input(llm)
 
 
-PROBES: dict[str, BatchProbe] = {"nooa": BatchProbe(run=run_nooa)}
+PROBES: dict[str, BatchProbe] = (
+    {"nooa": BatchProbe(run=run_nooa)} if "nooa" not in ADAPTER_EXCLUDED_MODULES else {}
+)

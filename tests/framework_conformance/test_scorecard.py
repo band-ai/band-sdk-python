@@ -52,6 +52,7 @@ from tests.e2e.baseline.scorecard import (
     to_markdown,
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
+from tests.framework_configs.adapters import ADAPTER_EXCLUDED_MODULES
 from tests.paths import REPO_ROOT
 
 # --- ExcludedAdapter: a reason is mandatory -----------------------------------------
@@ -383,6 +384,16 @@ def test_manifest_gate_rejects_skip_and_respects_explicit_na() -> None:
     assert [row.test for row in result.missing] == [required.test]
 
 
+def lanes_without_an_installable_adapter() -> set[str]:
+    """Lanes whose adapters this environment cannot install (NOOA off POSIX 3.12-3.13)."""
+    return {
+        str(lane.id)
+        for lane in ci_lanes()
+        if lane.adapters
+        and all(str(adapter) in ADAPTER_EXCLUDED_MODULES for adapter in lane.adapters)
+    }
+
+
 def test_expected_manifest_matches_collected_baseline(tmp_path: Path) -> None:
     generated = tmp_path / "expected-cells.json"
     result = subprocess.run(
@@ -408,8 +419,10 @@ def test_expected_manifest_matches_collected_baseline(tmp_path: Path) -> None:
     expected = {(cell["test"], cell["adapter"]): cell for cell in committed["cells"]}
     assert all(expected.get(key) == cell for key, cell in current.items())
     extra = [cell for key, cell in expected.items() if key not in current]
+    uncollectable_lanes = lanes_without_an_installable_adapter()
     assert extra and all(
         cell["test"].startswith("tests/e2e/baseline/smoke/adapters/test_parlant.py::")
+        or set(cell["lanes"]) <= uncollectable_lanes
         for cell in extra
     )
 
