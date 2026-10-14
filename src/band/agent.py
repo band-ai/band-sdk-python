@@ -351,6 +351,7 @@ class Agent:
                 await self._runtime.start(
                     on_execute=self._on_execute,
                     on_execute_batch=self._on_execute_batch,
+                    is_message_control=self._is_control,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
                     # A bare FrameworkAdapter predates on_interrupt and needn't
@@ -605,6 +606,19 @@ class Agent:
         finally:
             if not rejected and inp.commit_context is not None:
                 inp.commit_context()
+
+    def _is_control(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
+        """Whether the adapter would handle the delivery as a control; writes nothing.
+
+        Only the stock preprocessor's projection is trusted: a subclass may
+        transform content before handling, so anything else is probed as a
+        possible control rather than misclassified as ordinary.
+        """
+        recognizer = getattr(self._adapter, "is_control_message", None)
+        if recognizer is None or type(self._preprocessor) is not DefaultPreprocessor:
+            return True
+        msg = DefaultPreprocessor.message(ctx, event, self._runtime.agent_id)
+        return msg is not None and bool(recognizer(msg))
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
         """Handle controls with their delivery tools, preserving active ownership."""

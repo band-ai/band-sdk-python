@@ -91,6 +91,7 @@ class TestStartupRaceCondition:
                 on_control=None,
                 on_message_control=None,
                 on_execute_batch=None,
+                is_message_control=None,
             ):
                 self._on_execute = on_execute
 

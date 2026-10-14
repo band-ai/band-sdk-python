@@ -126,6 +126,12 @@ class BacklogProcessResult(Enum):
     NOT_ACCEPTED = "not_accepted"
 
 
+class ControlOutcome(Enum):
+    CONSUMED = "consumed"  # the adapter handled the message as a control
+    DECLINED = "declined"  # not a control (now); it is an ordinary input
+    DEFERRED = "deferred"  # a control that could not be attempted yet
+
+
 class ResyncOutcome(Enum):
     EMPTY = "empty"
     WORK = "work"
@@ -354,6 +360,8 @@ class ExecutionContext:
         on_platform_stop: Callable[[ExecutionContext, TurnScope], Awaitable[None]]
         | None = None,
         on_execute_batch: BatchExecutionHandler | None = None,
+        is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+        | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -375,6 +383,9 @@ class ExecutionContext:
                 instance for standalone contexts.
             on_execute_batch: Callback running one turn over several originals.
                 Required when ``config.consume_all_queued`` is set.
+            is_message_control: Read-only recognition of a delivery the
+                adapter would handle as a control. Without it every candidate
+                is probed through ``on_message_control``.
 
         Raises:
             BandConfigError: ``config.consume_all_queued`` without a batch host.
@@ -389,6 +400,7 @@ class ExecutionContext:
         self._on_execute = on_execute
         self._on_execute_batch = on_execute_batch
         self._on_message_control = on_message_control
+        self._is_message_control = is_message_control
         self.config = config or SessionConfig()
         self._agent_id = agent_id
         self._on_participant_added = on_participant_added
@@ -1378,6 +1390,7 @@ class ExecutionContext:
             await self._scan_controls()
 
     async def _scan_controls(self) -> None:
+        """Offer each candidate, retained originals included, to control handling."""
         if self._on_message_control is None:
             return
         revision = self._control_revision
@@ -1387,21 +1400,46 @@ class ExecutionContext:
             )
             if revision != self._control_revision:
                 return
-            for msg in page.messages:
+            for event in self._control_candidates(page.messages):
                 if self._stopped or revision != self._control_revision:
                     return
-                if msg.id != self._deferred_message_id:
-                    await self._try_control(_backlog_event(msg))
+                await self._try_control(event)
             self._control_cursor = page.next_cursor
         except RoomExecutionStoppedError:
             return
         except Exception:
             logger.exception("Control recovery failed for room %s", self.room_id)
 
+    def _control_candidates(
+        self, messages: Iterable[PlatformMessage]
+    ) -> list[MessageEvent]:
+        """REST candidates and retained originals, once each, oldest first.
+
+        A retained payload wins over its REST copy; the deferred head is
+        included because a pending question may now make it a control.
+        """
+        events = {_event_message_id(e): e for e in map(_backlog_event, messages)}
+        for event in self._pending:
+            if isinstance(event, MessageEvent) and _is_ordinary(event):
+                events[_event_message_id(event)] = event
+        return sorted(events.values(), key=MessageKey.of_event)
+
     async def _try_control(self, event: MessageEvent) -> bool:
-        """Probe a gated candidate without invoking or charging model work."""
+        return await self._probe_control(event) is ControlOutcome.CONSUMED
+
+    def _recognizes_control(self, event: MessageEvent) -> bool:
+        return self._is_message_control is None or self._is_message_control(self, event)
+
+    async def _probe_control(self, event: MessageEvent) -> ControlOutcome:
+        """Offer a delivery to control handling without invoking or charging model work.
+
+        Recognition runs first and writes nothing: an ordinary candidate never
+        receives a processing write merely because it was probed. A recognized
+        control runs under its own claim, accepted processing and scope; if the
+        handler then declines it, it is an ordinary input after all.
+        """
         if self._on_message_control is None or event.payload is None:
-            return False
+            return ControlOutcome.DECLINED
         payload = event.payload
         msg_id = payload.id
         if self._agent_id and is_self_echo(
@@ -1409,20 +1447,22 @@ class ExecutionContext:
             sender_type=payload.sender_type or "",
             agent_id=self._agent_id,
         ):
-            return False
+            return ControlOutcome.DECLINED
         if self.claims.is_completed(
             self.room_id, msg_id
         ) or self._retry_tracker.is_permanently_failed(msg_id):
-            return False
+            return ControlOutcome.DECLINED
         if self.claims.is_ack_pending(self.room_id, msg_id):
             await self._retry_terminal_ack(msg_id)
-            return True
+            return ControlOutcome.CONSUMED
         if self._message_processed_for_agent(msg_id, payload.metadata):
             self.claims.remember_completed(self.room_id, msg_id)
-            return False
+            return ControlOutcome.DECLINED
+        if not self._recognizes_control(event):
+            return ControlOutcome.DECLINED
         with self._claim_message(msg_id) as acquired:
             if not acquired or (scope := await self._begin_scope()) is None:
-                return False
+                return ControlOutcome.DEFERRED
             revision = self._control_revision
             scope.originals = (event,)
 
@@ -1431,28 +1471,29 @@ class ExecutionContext:
 
             try:
                 if not await self.link.mark_processing(self.room_id, msg_id):
-                    return False
+                    return ControlOutcome.DEFERRED
                 if not self._owns_attempt(scope, revision):
-                    return False
+                    return ControlOutcome.DEFERRED
                 scope.admitted = True
                 await self._ensure_fresh_context()
                 if revision != self._control_revision:
-                    return False
+                    return ControlOutcome.DEFERRED
                 if not await self._run_cycle(scope, event, handler=probe):
-                    return False
+                    return ControlOutcome.DEFERRED
                 if not scope.consumed:
-                    return False
+                    return ControlOutcome.DECLINED
                 await self._settle_originals(scope)
-                return True
+                self._release((msg_id,))
+                return ControlOutcome.CONSUMED
             except RoomExecutionStoppedError:
-                return False
+                return ControlOutcome.DEFERRED
             except Exception as error:  # noqa: BLE001 -- control boundary uses the normal delivery-failure policy
                 _log_turn_error(error, "Error handling control message %s", msg_id)
                 attempts, _ = self._retry_tracker.record_attempt(msg_id)
                 await self._handle_turn_failure(msg_id, attempts, error)
                 if attempts >= self._retry_tracker.max_retries:
                     self._retry_tracker.mark_permanently_failed(msg_id)
-                return False
+                return ControlOutcome.DEFERRED
             finally:
                 scope.settled = True
                 self._turn_failure_reported = False
@@ -1866,13 +1907,16 @@ class ExecutionContext:
 
     def _candidate(self, event: MessageEvent, metadata: Any) -> Candidate:
         payload = _payload(event)
-        return Candidate(
-            MessageKey.of_event(event),
-            event,
-            self._disposition(
-                payload.id, payload.sender_id, payload.sender_type, metadata
-            ),
+        disposition = self._disposition(
+            payload.id, payload.sender_id, payload.sender_type, metadata
         )
+        if (
+            disposition is Disposition.RUNNABLE
+            and self._on_message_control is not None
+            and self._recognizes_control(event)
+        ):
+            disposition = Disposition.CONTROL
+        return Candidate(MessageKey.of_event(event), event, disposition)
 
     def _disposition(
         self,
@@ -1926,6 +1970,13 @@ class ExecutionContext:
         if ids == self._last_selection:
             return ResyncOutcome.BLOCKED
         self._last_selection = ids
+        if selection.members[0].disposition is Disposition.CONTROL:
+            match await self._probe_control(events[0]):
+                case ControlOutcome.CONSUMED:
+                    return None
+                case ControlOutcome.DEFERRED:
+                    self._set_deferred_head(ids[0])
+                    return ResyncOutcome.RETRY
         outcome = await self._run_message_attempt(events, revision=revision)
         if self._stopped:
             return ResyncOutcome.STOPPED

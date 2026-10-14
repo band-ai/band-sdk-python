@@ -190,6 +190,8 @@ class PlatformRuntime:
         on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
         | None = None,
         on_execute_batch: BatchExecutionHandler | None = None,
+        is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+        | None = None,
     ) -> None:
         """
         Start platform runtime (begin processing messages).
@@ -201,6 +203,8 @@ class PlatformRuntime:
             on_execute: Callback for message execution
             on_execute_batch: Callback for a turn over several originals;
                 required when ``SessionConfig.consume_all_queued`` is set
+            is_message_control: Read-only recognition of a delivery the adapter
+                would handle as a control
             on_cleanup: Callback for session cleanup
             on_control: Callback for an interrupt/stop control signal, for
                 adapter work that outlives the message cycle it started in
@@ -234,6 +238,7 @@ class PlatformRuntime:
                 on_control=on_control,
                 on_message_control=on_message_control,
                 on_execute_batch=on_execute_batch,
+                is_message_control=is_message_control,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
             )

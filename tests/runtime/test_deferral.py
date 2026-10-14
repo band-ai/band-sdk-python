@@ -40,6 +40,9 @@ class ApprovalAdapter(SimpleAdapter[Any]):
         self.controls: list[str] = []
         self.reject = False
 
+    def is_control_message(self, msg: Any) -> bool:
+        return msg.content == "approve"
+
     async def try_handle_control(self, msg: Any, tools: Any) -> bool:
         if msg.content != "approve":
             return False
@@ -181,7 +184,9 @@ async def test_approval_beyond_first_page_releases_ordered_work(recovery: str) -
                 *[f"D{i}" for i in range(100)],
             ]
             assert peer.marked("failed") == []
-            assert any(cursor is not None for cursor in peer.actionable_cursors)
+            if recovery != "live":
+                # A live approval is retained locally and found without paging.
+                assert any(cursor is not None for cursor in peer.actionable_cursors)
             # A terminal duplicate cannot reopen or reapply the approval.
             await ctx.on_event(
                 make_message_event(room_id=ROOM_ID, msg_id="C", content="approve")

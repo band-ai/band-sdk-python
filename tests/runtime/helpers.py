@@ -84,6 +84,7 @@ def run_through(
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
         on_message_control=agent._on_control,
+        is_message_control=agent._is_control,
     )
 
 

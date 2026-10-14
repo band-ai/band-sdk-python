@@ -395,9 +395,11 @@ class SimpleAdapter(ABC, Generic[H]):
         Read-only: it may read existing pending-request state but never
         creates state, claims a request, posts or consumes context. A
         recognized message is handled on its own even if it turns out invalid
-        or unauthorized.
+        or unauthorized. An adapter that overrides ``try_handle_control``
+        without overriding this answers True for every message, so its
+        controls are still discovered by probing.
         """
-        return False
+        return type(self).try_handle_control is not SimpleAdapter.try_handle_control
 
     async def on_messages(self, inp: AgentInput) -> None:
         """Run one turn over ``inp.messages``; adapters declaring

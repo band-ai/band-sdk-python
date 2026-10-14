@@ -48,6 +48,7 @@ class Disposition(StrEnum):
     RUNNABLE = "runnable"
     SKIP = "skip"  # settled, failed, self-authored or otherwise not this turn's
     HELD = "held"  # another owner holds its claim; the prefix waits for it
+    CONTROL = "control"  # the adapter handles it individually, never in a batch
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class Stop(StrEnum):
     CAP = "cap"
     HELD = "held"
     BOUNDARY = "boundary"  # an unmatched retained original runs on its own
+    CONTROL = "control"  # a recognized control runs on its own
     FRONTIER = "frontier"  # a retained original lies beyond the page read
     LIMIT = "limit"  # a later local segment starts here
     END = "end"
@@ -131,14 +133,20 @@ def select_prefix(
             continue
         if candidate.disposition is Disposition.HELD:
             return Selection(tuple(members), Stop.HELD, candidate)
-        if candidate.message_id not in rest_ids:
-            read_passed = exhausted or (
-                page_reaches is not None and page_reaches >= candidate.key
-            )
-            if not read_passed:
-                return Selection(tuple(members), Stop.FRONTIER, candidate)
-            return Selection(tuple(members) or (candidate,), Stop.BOUNDARY, candidate)
+        unmatched = candidate.message_id not in rest_ids
+        if unmatched and not _read_reaches(candidate, page_reaches, exhausted):
+            return Selection(tuple(members), Stop.FRONTIER, candidate)
+        if unmatched or candidate.disposition is Disposition.CONTROL:
+            stop = Stop.BOUNDARY if unmatched else Stop.CONTROL
+            return Selection(tuple(members) or (candidate,), stop, candidate)
         members.append(candidate)
         if len(members) == cap:
             return Selection(tuple(members), Stop.CAP)
     return Selection(tuple(members), Stop.END)
+
+
+def _read_reaches(
+    candidate: Candidate, page_reaches: MessageKey | None, exhausted: bool
+) -> bool:
+    """Whether the REST read has reached or passed the candidate's position."""
+    return exhausted or (page_reaches is not None and page_reaches >= candidate.key)
