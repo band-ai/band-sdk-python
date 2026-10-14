@@ -2,28 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from band.preprocessing.default import DefaultPreprocessor
-from tests.conftest import make_message_event
-from tests.runtime.batching.kit import AGENT_ID, room_context
-
-
-def stored(message_id: str) -> dict[str, Any]:
-    return {
-        "id": message_id,
-        "sender_type": "User",
-        "sender_name": "Alice",
-        "content": message_id,
-    }
-
-
-async def history_contents(*, stored_ids: list[str]) -> list[str]:
-    ctx = room_context(stored=[stored(i) for i in stored_ids])
-    events = [make_message_event(msg_id=i) for i in ("m1", "m2")]
-    inp = await DefaultPreprocessor().process_batch(ctx, events, AGENT_ID)
-    assert inp is not None
-    return [message["content"] for message in inp.history.raw]
+from tests.runtime.batching.kit import history_contents
 
 
 class TestBatchHistory:

@@ -8,6 +8,7 @@ from band_rest.core import ParsingError
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
 from tests.platform.settlement.kit import (
+    HTTP_ATTEMPTS,
     Reply,
     SettlementPeer,
     Terminal,
@@ -37,7 +38,7 @@ class TestUnconfirmedFailures:
 
         await terminal.detailed(link)
 
-        assert settlement_peer.writes == [terminal.write] * 4
+        assert settlement_peer.writes == [terminal.write] * HTTP_ATTEMPTS
 
     async def test_a_transport_failure_is_unconfirmed(self, terminal: Terminal) -> None:
         async with refused_rest_client() as rest:

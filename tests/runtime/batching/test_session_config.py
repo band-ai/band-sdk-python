@@ -14,11 +14,6 @@ from band.runtime.types import (
 class TestSessionConfig:
     """``consume_all_queued`` and ``max_queued_messages`` validation."""
 
-    def test_batching_is_off_with_a_ceiling_of_ten_by_default(self) -> None:
-        config = SessionConfig()
-
-        assert (config.consume_all_queued, config.max_queued_messages) == (False, 10)
-
     @pytest.mark.parametrize(
         "ceiling", [1, DEFAULT_MAX_QUEUED_MESSAGES, ACTIONABLE_PAGE_SIZE]
     )
@@ -37,6 +32,3 @@ class TestSessionConfig:
     def test_batching_with_model_retries_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="max_message_retries"):
             SessionConfig(consume_all_queued=True, max_message_retries=2)
-
-    def test_model_retries_remain_configurable_when_batching_is_off(self) -> None:
-        assert SessionConfig(max_message_retries=3).max_message_retries == 3

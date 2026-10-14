@@ -24,11 +24,13 @@ from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import make_message_event, make_participant_mock
 from tests.core.agentlifecycle.kit import make_runtime
 from tests.runtime.conftest import wait_for_condition
+from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
-AGENT_ID = "agent-1"
-ROOM_ID = "room-1"
 EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
 WAIT_SECONDS = 5.0
+# Longer than any step a room takes and shorter than its periodic wake: on the
+# virtual clock the loop only gets here once nothing is runnable.
+QUIET_SECONDS = 1.0
 
 
 def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
@@ -291,6 +293,10 @@ class Room:
     async def settled(self, *message_ids: str) -> None:
         await self.reached(DeliveryStatus.PROCESSED, *message_ids)
 
+    async def quiesce(self) -> None:
+        """Let the room run until it has nothing left to do, on the virtual clock."""
+        await asyncio.sleep(QUIET_SECONDS)
+
     async def admission_attempted(self, message_id: str) -> None:
         await self.until(lambda: message_id in self.platform.admission_attempts)
 
@@ -321,22 +327,24 @@ async def started_room(
     *,
     batching: bool = True,
     max_queued: int = 10,
+    config: SessionConfig | None = None,
     gate: bool = False,
     fail_on: frozenset[str] = frozenset(),
     arrived: tuple[MessageEvent, ...] = (),
     controls: ControlScript | None = None,
     capacity: SharedCapacity | None = None,
 ) -> AsyncIterator[Room]:
+    """A started room over a host that can run a batch; ``config`` replaces the
+    one ``batching`` and ``max_queued`` describe."""
     turns = Turns(gate=gate, fail_on=set(fail_on))
     ctx = ExecutionContext(
         ROOM_ID,
         platform.link(),
         turns.single,
-        config=SessionConfig(
-            consume_all_queued=batching, max_queued_messages=max_queued
-        ),
+        config=config
+        or SessionConfig(consume_all_queued=batching, max_queued_messages=max_queued),
         agent_id=AGENT_ID,
-        on_execute_batch=turns.batch if batching else None,
+        on_execute_batch=turns.batch,
         on_message_control=controls.handle if controls else None,
         capacity=capacity,
         is_message_control=controls.recognizes if controls else None,
@@ -384,6 +392,38 @@ class LegacyPreprocessor:
 
 class RewritingPreprocessor(DefaultPreprocessor):
     """A subclass may transform content, so its projection is not trusted."""
+
+
+def stored_message(message_id: str) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "sender_type": "User",
+        "sender_name": "Alice",
+        "content": message_id,
+    }
+
+
+async def history_contents(*, stored_ids: list[str]) -> list[str]:
+    """The history a preprocessed batch of ``m1`` and ``m2`` carries."""
+    ctx = room_context(stored=[stored_message(i) for i in stored_ids])
+    events = [make_message_event(msg_id=i) for i in ("m1", "m2")]
+    inp = await DefaultPreprocessor().process_batch(ctx, events, AGENT_ID)
+    assert inp is not None
+    return [message["content"] for message in inp.history.raw]
+
+
+async def classify(
+    adapter: SimpleAdapter[Any],
+    ctx: MagicMock,
+    content: str,
+    preprocessor: DefaultPreprocessor | None = None,
+) -> bool:
+    """Whether a started agent tells its runtime a delivery is a control."""
+    runtime = make_runtime()
+    runtime.agent_id = AGENT_ID
+    async with Agent(runtime=runtime, adapter=adapter, preprocessor=preprocessor):
+        is_control = runtime.start.await_args.kwargs["is_message_control"]
+        return is_control(ctx, make_message_event(content=content))
 
 
 def batching_agent(adapter: SimpleAdapter[Any], **kwargs: Any) -> Agent:

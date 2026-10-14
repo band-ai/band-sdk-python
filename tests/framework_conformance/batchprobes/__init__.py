@@ -18,7 +18,6 @@ every framework installed.
 from __future__ import annotations
 
 import contextlib
-import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
@@ -27,10 +26,11 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
 from band.preprocessing.default import DefaultPreprocessor
-from band.runtime.formatters import CURRENT_INPUTS_HEADING, InputField
+from band.runtime.formatters import InputField
 from band.testing.fake_tools import FakeAgentTools
 from tests.conftest import make_message_event
 from tests.runtime.batching.kit import AGENT_ID, ROOM_ID, room_context
+from tests.runtime.currentrecords import current_records as current_records
 
 
 @dataclass(frozen=True)
@@ -159,9 +159,3 @@ async def deliver(adapter: SimpleAdapter[Any], inp: AgentInput) -> None:
 def posted_messages(inp: AgentInput) -> list[dict[str, Any]]:
     """The room posts the turn made through its fake tools."""
     return cast(FakeAgentTools, inp.tools).messages_sent
-
-
-def current_records(provider_input: str) -> list[dict[str, str | None]]:
-    """The current-input records the model was shown, in order."""
-    _, _, current = provider_input.partition(CURRENT_INPUTS_HEADING)
-    return [json.loads(line) for line in current.splitlines() if line.startswith("{")]

@@ -75,18 +75,21 @@ class TestCapacityRegistration:
 
         assert len(capacity.generations()) == 2
 
-    @pytest.mark.parametrize("blocker", ["terminal-write", "processing"])
+    @pytest.mark.parametrize(
+        ("unconfirmed_terminal", "refused"),
+        [(True, set()), (False, {"m1"})],
+        ids=["terminal-write", "processing"],
+    )
     async def test_a_room_blocked_by_something_else_stops_competing(
-        self, platform: FakeRoom, blocker: str
+        self, platform: FakeRoom, unconfirmed_terminal: bool, refused: set[str]
     ) -> None:
         capacity = SharedCapacity()
 
         async with started_room(platform, capacity=capacity) as room:
             await room.queue_for_capacity("m1", capacity)
             room.turns.accepting = True
-            platform.unconfirmed_terminal = blocker == "terminal-write"
-            if blocker == "processing":
-                platform.refuse_processing.add("m1")
+            platform.unconfirmed_terminal = unconfirmed_terminal
+            platform.refuse_processing |= refused
             registrations = capacity.registrations
             await room.ctx.request_resync()
             await room.until(lambda: capacity.actions()[-1] == CapacityAction.WITHDRAW)

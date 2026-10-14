@@ -15,21 +15,21 @@ from tests.platform.settlement.kit import (
     accepted,
 )
 
-PROJECTIONS = [
-    pytest.param(
-        accepted(DeliveryStatus.PROCESSED),
-        SettlementResult.ACCEPTED,
-        True,
-        id="accepted",
-    ),
-    pytest.param(Reply(404), SettlementResult.NOT_FOUND, False, id="not-found"),
-    pytest.param(MISSING_ATTEMPT, SettlementResult.REJECTED, False, id="rejected"),
-    pytest.param(Reply(401), SettlementResult.UNCONFIRMED, False, id="unconfirmed"),
-]
+# Each outcome's reply, the result it settles to and the bool it projects to.
+PROJECTIONS = {
+    "accepted": (accepted(DeliveryStatus.PROCESSED), SettlementResult.ACCEPTED, True),
+    "not-found": (Reply(404), SettlementResult.NOT_FOUND, False),
+    "rejected": (MISSING_ATTEMPT, SettlementResult.REJECTED, False),
+    "unconfirmed": (Reply(401), SettlementResult.UNCONFIRMED, False),
+}
 
 
 class TestBooleanProjection:
-    @pytest.mark.parametrize(("reply", "result", "legacy"), PROJECTIONS)
+    @pytest.mark.parametrize(
+        ("reply", "result", "legacy"),
+        list(PROJECTIONS.values()),
+        ids=list(PROJECTIONS),
+    )
     async def test_each_result_projects_to_a_literal_bool(
         self,
         terminal: Terminal,
@@ -44,15 +44,17 @@ class TestBooleanProjection:
         assert await terminal.detailed(link) is result
         assert await terminal.legacy(link) is legacy
 
-    @pytest.mark.parametrize(("reply", "result", "legacy"), PROJECTIONS)
+    @pytest.mark.parametrize(
+        "reply",
+        [reply for reply, _, _ in PROJECTIONS.values()],
+        ids=list(PROJECTIONS),
+    )
     async def test_each_call_is_one_logical_write(
         self,
         terminal: Terminal,
         settlement_peer: SettlementPeer,
         link: BandLink,
         reply: Reply,
-        result: SettlementResult,
-        legacy: bool,
     ) -> None:
         settlement_peer.reply = reply
 

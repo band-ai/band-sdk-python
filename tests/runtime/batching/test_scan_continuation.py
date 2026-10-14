@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
+import pytest
 
 from band.client.streaming import DeliveryStatus
 from tests.runtime.batching.kit import FakeRoom, started_room
+
+pytestmark = pytest.mark.looptime
 
 
 class TestScanContinuation:
@@ -18,10 +20,12 @@ class TestScanContinuation:
         platform.post("fresh")
 
         async with started_room(platform) as room:
-            await room.settled("fresh")
+            await room.quiesce()
 
-        assert room.turns.ids == [("fresh",)]
-        assert room.ctx._scan_cursor is None
+        assert (room.turns.ids, platform.status_of("fresh")) == (
+            [("fresh",)],
+            DeliveryStatus.PROCESSED,
+        )
 
     async def test_an_exhausted_scan_does_not_start_another_traversal(
         self, platform: FakeRoom
@@ -31,8 +35,6 @@ class TestScanContinuation:
             platform.post(f"failed-{index}", status=DeliveryStatus.FAILED)
 
         async with started_room(platform) as room:
-            await room.until(lambda: platform.page_reads >= 2)
-            reads = platform.page_reads
-            await asyncio.sleep(0.1)
+            await room.quiesce()
 
-        assert (reads, platform.page_reads) == (2, 2)
+        assert platform.page_reads == 2

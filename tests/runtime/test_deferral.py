@@ -114,8 +114,13 @@ async def test_unaccepted_work_logs_why_it_remains_pending(
     assert rejection.levelno == logging.DEBUG
 
 
-@pytest.mark.parametrize("recovery", ["live", "missed", "reconnect", "startup"])
-async def test_approval_beyond_first_page_releases_ordered_work(recovery: str) -> None:
+@pytest.mark.parametrize(
+    ("recovery", "must_page_to_find_it"),
+    [("live", False), ("missed", True), ("reconnect", True), ("startup", True)],
+)
+async def test_approval_beyond_first_page_releases_ordered_work(
+    recovery: str, must_page_to_find_it: bool
+) -> None:
     peer = LifecyclePlatform()
     peer.add_message("A")
     adapter = ApprovalAdapter()
@@ -181,9 +186,9 @@ async def test_approval_beyond_first_page_releases_ordered_work(recovery: str) -
                 *[f"D{i}" for i in range(100)],
             ]
             assert peer.marked("failed") == []
-            if recovery != "live":
-                # A live approval is retained locally and found without paging.
-                assert any(cursor is not None for cursor in peer.actionable_cursors)
+            # A live approval is retained locally, so only recovery must page for it.
+            paged = any(cursor is not None for cursor in peer.actionable_cursors)
+            assert paged or not must_page_to_find_it
             # A terminal duplicate cannot reopen or reapply the approval.
             await ctx.on_event(
                 make_message_event(room_id=ROOM_ID, msg_id="C", content="approve")

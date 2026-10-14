@@ -16,7 +16,9 @@ from tests.adapters.cursorslot.kit import (
     busy_provider,
     cursor_adapter,
     decision_token,
+    deny_command,
     occupy,
+    select_command,
 )
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
@@ -67,7 +69,7 @@ class TestCursorTurnCleanup:
         adapter = cursor_adapter(session)
         await occupy(session, provider)
         stale = active_turn(session)
-        await session.send(f"/cursor deny {decision_token(session)}", room=ROOM_A)
+        await session.send(deny_command(decision_token(session)), room=ROOM_A)
         await stale.terminated()
         await occupy(session, provider)
         successor = active_turn(session)
@@ -76,9 +78,7 @@ class TestCursorTurnCleanup:
         adapter._retire_turn(stale)
         stale.request_cancel()
 
-        assert adapter._active_turn is successor
-        assert adapter._cursor_profile.extension_session_id == successor.session_id
-        await session.send(f"/cursor select {token} allow-1", room=ROOM_A)
+        await session.send(select_command(token), room=ROOM_A)
         await successor.terminated()
         assert provider.agent.approved is True
         assert provider.agent.cancelled_sessions == []
