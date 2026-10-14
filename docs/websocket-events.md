@@ -32,7 +32,10 @@ Both values must be finite and positive; the effective cap is `max(base, maximum
 so a maximum at or below the base disables growth.
 
 A received STOP suppresses local message triggers while `/next` probes continue
-at the base interval. A current nonempty response permits discovery of a missed
+at a fixed interval: `SessionConfig.stopped_resync_seconds`, or the base interval
+when unset. Stopped probes never grow, and a resumed room returns to the base
+interval. A longer stopped interval lowers request volume for paused rooms but
+delays discovering a missed PLAY by up to that long. A current nonempty response permits discovery of a missed
 PLAY, followed by normal acknowledgement recovery and an accepted claim. Newer
 STOP, PLAY or INTERRUPT controls invalidate obsolete recovery results. A 204
 response preserves the local pause because it cannot distinguish stopped from

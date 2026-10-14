@@ -407,7 +407,9 @@ class ExecutionContext:
         self._pending_system_messages: list[str] = []
         self._pending_resync: ResyncRequest | None = None
         self._resync_schedule = ResyncSchedule(
-            self.config.idle_resync_seconds, self.config.idle_resync_max_seconds
+            self.config.idle_resync_seconds,
+            self.config.idle_resync_max_seconds,
+            stopped=self.config.stopped_resync_seconds,
         )
         self._resync_handled_work = False
         self._queue_wait: asyncio.Timeout | None = None
@@ -761,7 +763,9 @@ class ExecutionContext:
     def _reset_resync_interval(self) -> None:
         if self._resync_schedule.due_at is None:
             return
-        self._resync_schedule.reset(asyncio.get_running_loop().time())
+        self._resync_schedule.reset(
+            asyncio.get_running_loop().time(), stopped=self._stopped
+        )
         if self._queue_wait is not None and not self._queue_wait.expired():
             self._queue_wait.reschedule(self._resync_schedule.due_at)
 
@@ -1418,7 +1422,8 @@ class ExecutionContext:
             await self._scan_controls()
         self._resync_schedule.complete(
             asyncio.get_running_loop().time(),
-            empty=outcome is ResyncOutcome.EMPTY and not self._stopped,
+            empty=outcome is ResyncOutcome.EMPTY,
+            stopped=self._stopped,
         )
 
     async def _wait_until_resync_complete(self) -> ResyncOutcome:

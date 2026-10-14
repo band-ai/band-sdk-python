@@ -87,7 +87,8 @@ class SessionConfig:
     # constructor validates this range itself -- no second Python-side check.
     max_message_retries: int = 1
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
-    # Base reconciliation interval, also used for stopped probes and retries.
+    # Base reconciliation interval, also used for retries and, unless
+    # stopped_resync_seconds is set, for stopped-room probes.
     # Queue traffic cannot postpone a check; active handlers remain serial.
     idle_resync_seconds: float = 60.0
 
@@ -125,9 +126,20 @@ class SessionConfig:
     # periodic check is spread within the base interval. Equal caps disable growth.
     idle_resync_max_seconds: float = 120.0
 
+    # Fixed interval for /next probes while a received STOP pauses the room.
+    # These probes are the only way to discover a missed PLAY, so a longer
+    # interval delays resuming by up to that long. None uses idle_resync_seconds.
+    stopped_resync_seconds: float | None = None
+
     def __post_init__(self) -> None:
-        for name in ("idle_resync_seconds", "idle_resync_max_seconds"):
+        for name in (
+            "idle_resync_seconds",
+            "idle_resync_max_seconds",
+            "stopped_resync_seconds",
+        ):
             value = getattr(self, name)
+            if value is None:
+                continue
             if not isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and > 0 (got {value})")
 

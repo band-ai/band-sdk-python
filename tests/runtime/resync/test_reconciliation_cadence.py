@@ -110,6 +110,46 @@ class TestReconciliationCadence:
         assert invoked == []
 
     @pytest.mark.looptime
+    async def test_stopped_room_probes_at_its_configured_interval(
+        self,
+        reconciled_room: ReconciledRoom,
+    ) -> None:
+        ctx, peer, invoked = reconciled_room
+        ctx.config = SessionConfig(
+            stopped_resync_seconds=300, enable_working_state=False
+        )
+        ctx._resync_schedule = ResyncSchedule(60, 120, stopped=300)
+        await ctx.start()
+        await wait_for_condition(lambda: ctx._sync_complete)
+        ctx.stop_room()
+        peer.stopped = True
+        await asyncio.sleep(661)
+        assert peer.next_reads == pytest.approx([0, 60, 360, 660])
+        assert invoked == []
+
+    @pytest.mark.looptime
+    async def test_missed_play_restores_base_interval(
+        self,
+        reconciled_room: ReconciledRoom,
+    ) -> None:
+        ctx, peer, invoked = reconciled_room
+        ctx.config = SessionConfig(
+            stopped_resync_seconds=300, enable_working_state=False
+        )
+        ctx._resync_schedule = ResyncSchedule(60, 120, stopped=300)
+        await ctx.start()
+        await wait_for_condition(lambda: ctx._sync_complete)
+        ctx.stop_room()
+        peer.stopped = True
+        peer.add_message("resumed")
+        await asyncio.sleep(61)
+        peer.stopped = False
+        await asyncio.sleep(361)
+        assert invoked == ["resumed"]
+        # The resuming probe drains /next until empty, so 360 is read twice.
+        assert peer.next_reads == pytest.approx([0, 60, 360, 360, 420])
+
+    @pytest.mark.looptime
     async def test_deadline_does_not_cancel_handler_or_issue_catchup_burst(
         self,
         reconciled_room: ReconciledRoom,

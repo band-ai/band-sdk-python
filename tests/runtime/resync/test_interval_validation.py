@@ -11,7 +11,8 @@ class TestIntervalValidation:
     """Reconciliation intervals must be finite and positive."""
 
     @pytest.mark.parametrize(
-        "field", ["idle_resync_seconds", "idle_resync_max_seconds"]
+        "field",
+        ["idle_resync_seconds", "idle_resync_max_seconds", "stopped_resync_seconds"],
     )
     @pytest.mark.parametrize(
         "value", [0, -1, float("nan"), float("inf"), -float("inf")]
