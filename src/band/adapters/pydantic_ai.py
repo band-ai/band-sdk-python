@@ -28,6 +28,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     capture_run_messages,
 )
+from pydantic_ai._agent_graph import AgentNode, ModelRequestNode
 from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
@@ -41,7 +42,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    create_async_http_client,
+    infer_model,
+)
+from pydantic_ai.providers import infer_provider
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.result import FinalResult
+from pydantic_graph import End
 from typing_extensions import Unpack
 
 from band.converters.pydantic_ai import (
@@ -154,6 +164,27 @@ def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
         if part.tool_name == BandTool.NO_REPLY:
             declined = True
     return declined
+
+
+async def _finish_explicit_decline_after_tools(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    node: AgentNode[Any, Any],
+    result: AgentNode[Any, Any] | End[FinalResult[Any]],
+) -> AgentNode[Any, Any] | End[FinalResult[Any]]:
+    """End the run after a terminal decline without scheduling another model step.
+
+    pydantic-ai 2.55+ enforces ``request_limit`` before ``before_model_request`` hooks,
+    so a follow-up ``ModelRequestNode`` after tools can trip the limit even when the
+    hook would have skipped the call. Converting that node to ``End`` avoids the extra
+    step entirely.
+    """
+    if isinstance(result, ModelRequestNode) and _explicit_decline_is_terminal(
+        result.request
+    ):
+        ctx.messages.append(result.request)
+        return End(FinalResult(None))
+    return result
 
 
 def _finish_explicit_decline(
@@ -297,6 +328,26 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
+def _resolve_pydantic_ai_model(model: Model | str) -> Model | str:
+    """Resolve a model string, patching OpenAI providers to use legacy ``httpx``.
+
+    pydantic-ai's OpenAI-compatible providers default to ``httpx2``, while the
+    ``openai`` Python SDK still type-checks for ``httpx.AsyncClient``.
+    """
+    if not isinstance(model, str):
+        return model
+    provider_name = model.partition(":")[0]
+    if provider_name not in ("openai", "openai-chat"):
+        return model
+
+    def provider_factory(name: str):
+        if name in ("openai", "openai-chat"):
+            return OpenAIProvider(http_client=create_async_http_client())
+        return infer_provider(name)
+
+    return infer_model(model, provider_factory)
+
+
 class PydanticAIAdapterConfig(BaseAdapterConfig):
     """Settings for a Pydantic AI agent.
 
@@ -421,7 +472,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._system_prompt = system
 
         agent: Agent[AgentToolsProtocol, str | None] = Agent(
-            self._model,
+            _resolve_pydantic_ai_model(self._model),
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
             # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
             # only on the first request, after which it ages into buried history;
@@ -455,8 +506,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # handled where the run is driven.
             retries={"tools": 3, "output": 0},
             capabilities=[
-                # Inspect native run metadata before replay history is processed.
-                Hooks(before_model_request=_finish_explicit_decline),
+                Hooks(
+                    before_model_request=_finish_explicit_decline,
+                    after_node_run=_finish_explicit_decline_after_tools,
+                ),
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
                 ProcessHistory(_drop_non_replayable_messages),

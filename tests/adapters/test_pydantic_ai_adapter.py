@@ -366,7 +366,7 @@ class TestInitialization:
         an empty/thinking-only response within a single turn, and pydantic-ai would
         otherwise replay it to the provider as assistant content:null.
         """
-        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
+        adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="test"))
         adapter.agent_name = "TestBot"
 
         with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
@@ -697,7 +697,7 @@ class TestOnStarted:
         """Should persist rendered prompt for capability-gating visibility."""
         with patch("band.adapters.pydantic_ai.Agent"):
             adapter = PydanticAIAdapter(
-                PydanticAIAdapterConfig(model="openai:gpt-5.4"),
+                PydanticAIAdapterConfig(model="test"),
                 capabilities=Capability.MEMORY,
             )
             await adapter.on_started(
@@ -734,6 +734,15 @@ class TestOnStarted:
             assert tool in tool_names, f"Tool {tool} not found"
 
 
+def _wire_tool_call_args(args: Any) -> dict[str, Any] | str:
+    """Shape tool args the way providers send them on the wire (JSON text or object)."""
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        return args
+    return json.dumps(args)
+
+
 def _scripted_tool_calls(*calls: tuple[str, Any]) -> FunctionModel:
     """A model that makes ``calls``, one per turn, then answers in plain text.
 
@@ -746,7 +755,7 @@ def _scripted_tool_calls(*calls: tuple[str, Any]) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if pending:
             name, args = pending.pop(0)
-            return ModelResponse(parts=[ToolCallPart(name, args)])
+            return ModelResponse(parts=[ToolCallPart(name, _wire_tool_call_args(args))])
         return ModelResponse(parts=[TextPart("done")])
 
     return FunctionModel(respond)
@@ -2969,7 +2978,7 @@ class TestCustomTools:
             return f"Echo: {message}"
 
         adapter = PydanticAIAdapter(
-            PydanticAIAdapterConfig(model="openai:gpt-5.4"), additional_tools=[my_echo]
+            PydanticAIAdapterConfig(model="test"), additional_tools=[my_echo]
         )
 
         # Mock the Agent class to track tool registrations
