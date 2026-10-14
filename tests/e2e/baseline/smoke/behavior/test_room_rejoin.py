@@ -1,8 +1,8 @@
 """A running coding agent removed from a room and re-added there answers again.
 
-The Band agent keeps running across the removal, so the room's process is
-disposed and a fresh residency serves the rejoin; a reply carrying the second
-turn's own marker shows the rejoined room is served.
+The Band agent keeps running across the removal and re-add; a reply carrying
+the second turn's own marker shows the room is still served afterwards. The
+test does not observe whether the agent processed the leave in between.
 """
 
 from __future__ import annotations
