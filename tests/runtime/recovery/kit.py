@@ -106,6 +106,17 @@ class Ending(StrEnum):
         return DeliveryStatus.FAILED if self in failing else DeliveryStatus.PROCESSED
 
 
+# The (shape, ending) pairs that leave a terminal intent to retain. Aggregation
+# off keeps no failed intent: a failed singleton follows its own retry policy.
+TURNS = [
+    (Shape.OFF, Ending.DECLINES),
+    (Shape.SINGLETON, Ending.DECLINES),
+    (Shape.SINGLETON, Ending.RAISES),
+    (Shape.BATCH, Ending.DECLINES),
+    (Shape.BATCH, Ending.RAISES),
+]
+
+
 class Route(StrEnum):
     BACKLOG = "backlog"  # stored before the room starts; REST delivers it
     LIVE = "live"  # the WebSocket pushes it to a running room

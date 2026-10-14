@@ -7,23 +7,15 @@ import pytest
 from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.recovery.kit import (
     RESYNC_SECONDS,
+    TURNS,
     Ending,
     Entrance,
     Fault,
     Harness,
     Route,
-    Shape,
 )
 
 pytestmark = pytest.mark.looptime
-
-TURNS = [
-    (Shape.OFF, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.RAISES),
-    (Shape.BATCH, Ending.DECLINES),
-    (Shape.BATCH, Ending.RAISES),
-]
 
 
 @pytest.mark.parametrize(("shape", "ending"), TURNS)

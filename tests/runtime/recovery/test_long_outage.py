@@ -8,12 +8,12 @@ from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.recovery.kit import (
     CONTROL,
     RESYNC_SECONDS,
+    TURNS,
     Ending,
     Entrance,
     Fault,
     Harness,
     Route,
-    Shape,
 )
 
 pytestmark = pytest.mark.looptime
@@ -21,13 +21,6 @@ pytestmark = pytest.mark.looptime
 # The budget this replaced was the room's max_message_retries, 1 with batching on.
 OUTAGE_PASSES = 12
 PACED_INTERVALS = 5
-TURNS = [
-    (Shape.OFF, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.RAISES),
-    (Shape.BATCH, Ending.DECLINES),
-    (Shape.BATCH, Ending.RAISES),
-]
 
 
 @pytest.mark.parametrize(("shape", "ending"), TURNS)

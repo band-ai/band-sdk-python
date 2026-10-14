@@ -5,23 +5,14 @@ from __future__ import annotations
 import pytest
 
 from tests.runtime.recovery.kit import (
+    TURNS,
     Ending,
     Entrance,
     Fault,
     Harness,
-    Shape,
 )
 
 pytestmark = pytest.mark.looptime
-
-# Aggregation off keeps no failed intent: a failed singleton follows its retry policy.
-TURNS = [
-    (Shape.OFF, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.RAISES),
-    (Shape.BATCH, Ending.DECLINES),
-    (Shape.BATCH, Ending.RAISES),
-]
 
 
 @pytest.mark.parametrize(("shape", "ending"), TURNS)

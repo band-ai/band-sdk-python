@@ -8,22 +8,14 @@ import pytest
 
 from band.client.streaming import DeliveryStatus
 from tests.runtime.recovery.kit import (
+    TURNS,
     Ending,
     Fault,
     Harness,
     Route,
-    Shape,
 )
 
 pytestmark = pytest.mark.looptime
-
-TURNS = [
-    (Shape.OFF, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.RAISES),
-    (Shape.BATCH, Ending.DECLINES),
-    (Shape.BATCH, Ending.RAISES),
-]
 
 
 @pytest.mark.parametrize(("shape", "ending"), TURNS)

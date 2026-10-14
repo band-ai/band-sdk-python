@@ -7,6 +7,7 @@ import pytest
 from band.client.streaming import DeliveryStatus
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.runtime.recovery.kit import (
+    TURNS,
     Ending,
     Entrance,
     Fault,
@@ -17,14 +18,6 @@ from tests.runtime.recovery.kit import (
 pytestmark = pytest.mark.looptime
 
 RETRY_PASSES = 3
-# Aggregation off keeps no failed intent: a failed singleton follows its retry policy.
-TURNS = [
-    (Shape.OFF, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.DECLINES),
-    (Shape.SINGLETON, Ending.RAISES),
-    (Shape.BATCH, Ending.DECLINES),
-    (Shape.BATCH, Ending.RAISES),
-]
 
 
 @pytest.mark.parametrize("fault", list(Fault))

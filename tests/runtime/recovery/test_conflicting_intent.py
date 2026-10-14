@@ -8,12 +8,12 @@ from band.client.streaming import DeliveryStatus
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.recovery.kit import (
+    TURNS,
     Ending,
     Entrance,
     Fault,
     Harness,
     Route,
-    Shape,
 )
 
 pytestmark = pytest.mark.looptime
@@ -21,15 +21,7 @@ pytestmark = pytest.mark.looptime
 OTHER_ERROR = "another error"
 
 
-@pytest.mark.parametrize(
-    ("shape", "ending"),
-    [
-        (Shape.SINGLETON, Ending.DECLINES),
-        (Shape.SINGLETON, Ending.RAISES),
-        (Shape.BATCH, Ending.DECLINES),
-        (Shape.BATCH, Ending.RAISES),
-    ],
-)
+@pytest.mark.parametrize(("shape", "ending"), TURNS)
 class TestConflictingIntent:
     async def test_the_stored_intent_survives_an_attempt_to_replace_it(
         self, harness: Harness, ending: Ending
