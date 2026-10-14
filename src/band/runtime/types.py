@@ -10,9 +10,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from math import isfinite
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any, Self
 from uuid import UUID
+
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.types import ConflictPolicy
 
@@ -76,9 +78,17 @@ def _require_positive_when_set(name: str, value: float | None) -> None:
         raise ValueError(f"{name} must be > 0 when set (got {value})")
 
 
-@dataclass
-class SessionConfig:
-    """Configuration for execution context."""
+PositiveFiniteSeconds = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+
+
+class SessionConfig(BaseSettings):
+    """Execution settings; explicit values override case-insensitive environment values."""
+
+    model_config = SettingsConfigDict(
+        extra="ignore",
+        case_sensitive=False,
+        env_ignore_empty=True,
+    )
 
     enable_context_cache: bool = True
     context_cache_ttl_seconds: int = 300
@@ -90,7 +100,7 @@ class SessionConfig:
     # Base reconciliation interval, also used for retries and, unless
     # stopped_resync_seconds is set, for stopped-room probes.
     # Queue traffic cannot postpone a check; active handlers remain serial.
-    idle_resync_seconds: float = 60.0
+    idle_resync_seconds: PositiveFiniteSeconds = 60.0
 
     # --- Working-state (boolean "is the agent reasoning") reporting ---
     # Kill-switch: disable all working-state reporting instantly if needed.
@@ -124,25 +134,15 @@ class SessionConfig:
 
     # Empty checks double the interval up to max(base, maximum). Only the first
     # periodic check is spread within the base interval. Equal caps disable growth.
-    idle_resync_max_seconds: float = 120.0
+    idle_resync_max_seconds: PositiveFiniteSeconds = 120.0
 
     # Fixed interval for /next probes while a received STOP pauses the room.
     # These probes are the only way to discover a missed PLAY, so a longer
     # interval delays resuming by up to that long. None uses idle_resync_seconds.
-    stopped_resync_seconds: float | None = None
+    stopped_resync_seconds: PositiveFiniteSeconds | None = None
 
-    def __post_init__(self) -> None:
-        for name in (
-            "idle_resync_seconds",
-            "idle_resync_max_seconds",
-            "stopped_resync_seconds",
-        ):
-            value = getattr(self, name)
-            if value is None:
-                continue
-            if not isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and > 0 (got {value})")
-
+    @model_validator(mode="after")
+    def validate_timing(self) -> Self:
         # Working-state invariants only matter when reporting is enabled.
         if self.enable_working_state:
             ttl_half = PLATFORM_WORKING_STATE_TTL_SECONDS / 2
@@ -169,6 +169,7 @@ class SessionConfig:
             )
 
         _require_positive_when_set("max_cycle_seconds", self.max_cycle_seconds)
+        return self
 
 
 @dataclass

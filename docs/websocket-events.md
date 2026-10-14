@@ -35,9 +35,13 @@ A received STOP suppresses local message triggers while `/next` probes continue
 at a fixed interval: `SessionConfig.stopped_resync_seconds`, or the base interval
 when unset. Stopped probes never grow, and a resumed room returns to the base
 interval. A longer stopped interval lowers request volume for paused rooms but
-delays discovering a missed PLAY by up to that long. A current nonempty response permits discovery of a missed
-PLAY, followed by normal acknowledgement recovery and an accepted claim. Newer
-STOP, PLAY or INTERRUPT controls invalidate obsolete recovery results. A 204
+delays discovering a missed PLAY by up to that long. `STOPPED_RESYNC_SECONDS`
+provides an environment default through Pydantic settings; an explicit
+`SessionConfig(stopped_resync_seconds=...)` takes precedence, including `None`
+to use the base interval. Set values must be finite and positive; an empty
+environment value is ignored. A current nonempty response permits discovery of
+a missed PLAY, followed by normal acknowledgement recovery and an accepted claim.
+Newer STOP, PLAY or INTERRUPT controls invalidate obsolete recovery results. A 204
 response preserves the local pause because it cannot distinguish stopped from
 empty rooms.
 
@@ -58,6 +62,13 @@ retry cadence. A completed or skipped head that cannot advance ends the pass
 without spinning; retryable handler failures retain their normal attempt budget.
 These intervals bound scheduling, subject to active handlers, HTTP operations
 and recovery retries.
+
+`SessionConfig` uses Pydantic settings for all fields. Environment names match
+the field names without regard to case, explicit keyword arguments override
+the environment, and empty environment values use defaults. For example,
+`IDLE_RESYNC_SECONDS=30` sets the base interval. Construct it with keyword
+arguments and serialize it with `model_dump()`; dataclass utilities and
+positional construction are no longer supported.
 
 ## Pending work and control recovery
 

@@ -22,3 +22,10 @@ class TestIntervalValidation:
     ) -> None:
         with pytest.raises(ValueError, match=field):
             SessionConfig(**{field: value})
+
+    @pytest.mark.parametrize(
+        "field", ["idle_resync_seconds", "idle_resync_max_seconds"]
+    )
+    def test_required_intervals_reject_none(self, field: str) -> None:
+        with pytest.raises(ValueError, match=field):
+            SessionConfig(**{field: None})
