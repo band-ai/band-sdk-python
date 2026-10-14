@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -81,8 +82,9 @@ class TestSettings:
 
     @pytest.mark.asyncio
     async def test_a_switch_waiting_for_a_prompt_never_holds_the_rooms_leave(
-        self,
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        caplog.set_level(logging.WARNING)
         async with switch_behind_held_prompt() as queued:
             async with asyncio.timeout(TEST_GUARD_S):
                 # The runtime cancels the room's handler, then the room leaves.
@@ -99,8 +101,10 @@ class TestSettings:
                 await leaving
                 with pytest.raises(BandConfigError, match="ended mid-switch") as ended:
                     await queued.switch
-                # The failure the closing room caused stays on the record.
+                # The failure the closing room caused stays on the record, for
+                # the caller to report.
                 assert isinstance(ended.value.__cause__, RoomClosingError)
+                assert caplog.records == []
                 await asyncio.gather(queued.held, return_exceptions=True)
 
         assert queued.agent.config_selections(queued.session_id) == []

@@ -504,11 +504,6 @@ class ACPClientAdapter(
                 raise
             if not room.retained.closing:
                 raise
-            logger.warning(
-                "Room %s: model switch failed as the room closed: %r",
-                room_id,
-                error,
-            )
             raise _session_ended_mid_switch(room_id) from error
 
     async def _switch_room(self, room: ACPRoom, selection: ModelSelection) -> None:
