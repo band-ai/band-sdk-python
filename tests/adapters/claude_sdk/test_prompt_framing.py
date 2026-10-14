@@ -3,7 +3,11 @@ ahead of the message itself."""
 
 from __future__ import annotations
 
+from band.runtime.prompts import system_updates
 from tests.adapters.claude_sdk.helpers import OpenRoom
+
+JOINED = "Alice joined the room"
+CONTACTED = "Carol is now a contact"
 
 
 class TestPromptFraming:
@@ -15,13 +19,10 @@ class TestPromptFraming:
 
         await room.send(
             "hello",
-            participants_msg="Alice joined the room",
-            contacts_msg="Carol is now a contact",
+            participants_msg=JOINED,
+            contacts_msg=CONTACTED,
         )
 
         participants, contacts, message = room.claude.prompts[-1].split("\n\n")
-        assert (participants, contacts) == (
-            "[System]: Alice joined the room",
-            "[System]: Carol is now a contact",
-        )
+        assert [participants, contacts] == system_updates(JOINED, CONTACTED)
         assert message.endswith("hello")

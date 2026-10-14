@@ -136,6 +136,7 @@ from band.runtime.decisions import (
     Timeout,
 )
 from band.runtime.formatters import format_tokens, strip_leading_mentions
+from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BAND_MCP_SERVER_NAME,
@@ -962,11 +963,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
 
         if participants_msg:
-            messages_to_send.append(f"[System]: {participants_msg}")
+            messages_to_send.append(f"{SYSTEM_UPDATE_PREFIX}{participants_msg}")
             logger.info("Room %s: Participants updated", room_id)
 
         if contacts_msg:
-            messages_to_send.append(f"[System]: {contacts_msg}")
+            messages_to_send.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
             logger.info("Room %s: Contacts broadcast received", room_id)
 
         messages_to_send.append(msg.format_for_llm())
