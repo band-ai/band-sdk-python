@@ -12,12 +12,17 @@ from typing import Any, Literal
 from acp.schema import AllowedOutcome, ToolCallUpdate
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorTurn
+from band.core.exceptions import InputNotAccepted
 from band.integrations.acp.client_runtime import ACPRuntime
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate, allow_or_reject
 from tests.integrations.acp.acp_toolkit.harness import AcpSession
 
 ROOM_A = "room-A"
 ROOM_B = "room-B"
+ROOM_C = "room-C"
+
+# A hang in a peer or a held slot fails a test within this, not at the suite timeout.
+WAIT_S = 5.0
 
 BusyKind = Literal["prompt", "approval"]
 
@@ -26,20 +31,22 @@ BusyKind = Literal["prompt", "approval"]
 class BusyProvider:
     """A peer whose chosen prompts (1-based) stay in flight; the rest return at once.
 
-    ``prompt`` parks inside the prompt itself. ``approval`` parks on a Cursor
-    permission request, so the delivery worker is released while the provider
-    keeps running.
+    ``prompt`` parks inside the prompt itself until ``finish`` is set.
+    ``approval`` parks on a Cursor permission request, so the delivery worker
+    is released while the provider keeps running.
     """
 
     agent: FakeACPAgent
     kind: BusyKind
     parked: asyncio.Event
+    finish: asyncio.Event
 
 
 def busy_provider(
     kind: BusyKind, *, on_prompts: Collection[int] = (1,)
 ) -> BusyProvider:
     parked = asyncio.Event()
+    finish = asyncio.Event()
     agent = FakeACPAgent()
 
     @agent.on_prompt
@@ -49,7 +56,7 @@ def busy_provider(
         parked.set()
         match kind:
             case "prompt":
-                await asyncio.Event().wait()
+                await finish.wait()
             case "approval":
                 response = await peer.ask_permission(
                     session_id,
@@ -58,7 +65,7 @@ def busy_provider(
                 )
                 peer.approved = isinstance(response.outcome, AllowedOutcome)
 
-    return BusyProvider(agent=agent, kind=kind, parked=parked)
+    return BusyProvider(agent=agent, kind=kind, parked=parked, finish=finish)
 
 
 def cursor_adapter(session: AcpSession) -> CursorACPAdapter:
@@ -83,10 +90,37 @@ async def occupy(
     """
     provider.parked.clear()
     sending = asyncio.create_task(session.send("go", room=room))
-    await provider.parked.wait()
-    if provider.kind == "approval":
-        await sending
+    async with asyncio.timeout(WAIT_S):
+        await provider.parked.wait()
+        if provider.kind == "approval":
+            await sending
     return sending
+
+
+async def finish_turn(provider: BusyProvider, sending: asyncio.Task[Any]) -> None:
+    """Let the peer end the occupying prompt and wait for the delivery to return,
+    which frees the slot."""
+    provider.finish.set()
+    async with asyncio.timeout(WAIT_S):
+        await sending
+
+
+async def is_accepted(session: AcpSession, *, room: str) -> bool:
+    """Whether Cursor takes ``room``'s next input; a taken input runs its turn."""
+    try:
+        async with asyncio.timeout(WAIT_S):
+            await session.send("next", room=room)
+    except InputNotAccepted:
+        return False
+    return True
+
+
+def line_up(session: AcpSession, *rooms: str, generation: int = 1) -> None:
+    """Register each room's capacity request, in order, as its scheduler would."""
+    for room in rooms:
+        cursor_adapter(session).register_capacity_wait(
+            room_id=room, generation=generation
+        )
 
 
 def decision_token(session: AcpSession) -> str:

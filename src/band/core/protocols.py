@@ -569,3 +569,36 @@ class ControlRecognizer(Protocol):
     """
 
     def is_control_message(self, msg: PlatformMessage) -> bool: ...
+
+
+@runtime_checkable
+class CapacityWaitingAdapter(Protocol):
+    """An adapter that arbitrates one shared capacity among rooms, in arrival order.
+
+    Optional: an adapter without it keeps refusing busy input with
+    ``InputNotAccepted`` and every host works unchanged. A room's request is
+    identified by ``(room_id, generation)``; ``generation`` is the room
+    scheduler's own counter for its current incarnation, so cleanup from an
+    older incarnation cannot cancel its replacement's request.
+
+    A request is a place in line, not accepted input: it holds no delivery
+    claim, tool or capacity, and the adapter never waits on it. The scheduler
+    keeps retrying its input; only the first valid request may take free
+    capacity, and new work queues behind earlier requests.
+    """
+
+    def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
+        """Queue the room's request at the tail, unless this one is already queued.
+
+        Idempotent: repeating it keeps the request's position. A request for a
+        different generation replaces the room's earlier one, at the tail.
+        """
+        ...
+
+    def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
+        """Drop the room's request if it is still the one for ``generation``.
+
+        Idempotent; a no-op when the request is gone or belongs to another
+        generation.
+        """
+        ...

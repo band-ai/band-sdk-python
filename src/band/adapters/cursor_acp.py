@@ -202,6 +202,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         config = config or CursorACPAdapterConfig()
         self._cursor_profile = CursorACPClientProfile(self._resolve_extension_method)
         self._active_turn: CursorTurn | None = None
+        # room id -> generation of its capacity request, oldest first; a room
+        # has at most one, so insertion order is the line.
+        self._capacity_requests: dict[str, int] = {}
         self._pending_decisions: DecisionRegistry[PendingDecision] = DecisionRegistry(
             max_pending=config.max_pending_decisions
         )
@@ -265,8 +268,22 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             # as before this turn body ran detached.
             await turn_task
 
+    def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
+        if self._capacity_requests.get(room_id) == generation:
+            return
+        self._capacity_requests.pop(room_id, None)
+        self._capacity_requests[room_id] = generation
+
+    def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
+        if self._capacity_requests.get(room_id) == generation:
+            del self._capacity_requests[room_id]
+
     def _provider_slot_free(self) -> bool:
         return self._active_turn is None
+
+    def _room_is_next_in_line(self, room_id: str) -> bool:
+        """Whether no other room's request is ahead of ``room_id``'s input."""
+        return next(iter(self._capacity_requests), room_id) == room_id
 
     def _reserve_provider_slot(
         self, *, room_id: str, tools: AgentToolsProtocol, requester_id: str | None
@@ -275,10 +292,15 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
 
         Cursor binds session-less notifications to the active turn, so one
         provider turn runs per adapter. Synchronous, so no await separates the
-        check from the claim.
+        check from the claim. Only the room at the head of the capacity line
+        may take a free slot; a room with no request is served only when the
+        line is empty.
         """
         if not self._provider_slot_free():
             raise InputNotAccepted("Cursor is already running a turn")
+        if not self._room_is_next_in_line(room_id):
+            raise InputNotAccepted("Cursor is reserved for a room waiting longer")
+        self._capacity_requests.pop(room_id, None)
         turn = CursorTurn(
             room_id=room_id,
             tools=tools,
