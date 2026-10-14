@@ -26,7 +26,7 @@ from band.platform.message_lifecycle import (
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import DEFAULT_MAX_MESSAGE_RETRIES, SessionConfig
-from tests.conftest import make_message_event
+from tests.conftest import make_message_event, make_room_removed_event
 from tests.platform.settlement.kit import (
     MISSING_ATTEMPT,
     ROOM_ID,
@@ -37,7 +37,7 @@ from tests.platform.settlement.kit import (
     link_over,
 )
 from tests.runtime.batching.kit import EPOCH, WAIT_SECONDS, Turns
-from tests.runtime.conftest import wait_for_condition
+from tests.runtime.conftest import admit_room, wait_for_condition
 
 AGENT_ID = "agent-123"
 SENDER_ID = "user-1"
@@ -373,14 +373,16 @@ class Harness:
         return ROOM_ID in self.runtime.executions
 
     async def join(self) -> None:
-        """Join as presence does and wait until the room is serving."""
+        """Join through presence's callback (a real join needs a live socket)
+        and wait until the room is serving."""
         await self.runtime.presence.on_room_joined(ROOM_ID, {})
         await self.converged()
         self.claims = self.execution.claims
 
     async def leave(self) -> None:
-        """Observe the membership loss presence reports and wait for retirement."""
-        await self.runtime.presence.on_room_left(ROOM_ID)
+        """Deliver the room-removed event to presence and wait for retirement."""
+        admit_room(self.runtime.presence, ROOM_ID)
+        await self.runtime.presence._on_platform_event(make_room_removed_event(ROOM_ID))
         await self.converged()
 
     async def converged(self) -> None:
