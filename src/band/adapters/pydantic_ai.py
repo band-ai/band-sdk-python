@@ -24,11 +24,13 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstrumentationSettings,
+    ModelRequestNode,
     RunContext,
     UnexpectedModelBehavior,
     capture_run_messages,
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     BinaryContent,
@@ -41,7 +43,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+)
+from pydantic_ai.result import FinalResult
+from pydantic_graph import End
 from typing_extensions import Unpack
 
 from band.converters.pydantic_ai import (
@@ -155,6 +162,27 @@ def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
         if part.tool_name == BandTool.NO_REPLY:
             declined = True
     return declined
+
+
+async def _finish_explicit_decline_after_tools(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    node: AgentNode[Any],
+    result: NodeResult[Any],
+) -> NodeResult[Any]:
+    """End the run after a terminal decline without scheduling another model step.
+
+    pydantic-ai 2.55+ enforces ``request_limit`` before ``before_model_request`` hooks,
+    so a follow-up ``ModelRequestNode`` after tools can trip the limit even when the
+    hook would have skipped the call. Converting that node to ``End`` avoids the extra
+    step entirely.
+    """
+    if isinstance(result, ModelRequestNode) and _explicit_decline_is_terminal(
+        result.request
+    ):
+        ctx.messages.append(result.request)
+        return End(FinalResult(None))
+    return result
 
 
 def _finish_explicit_decline(
@@ -457,8 +485,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # handled where the run is driven.
             retries={"tools": 3, "output": 0},
             capabilities=[
-                # Inspect native run metadata before replay history is processed.
-                Hooks(before_model_request=_finish_explicit_decline),
+                Hooks(
+                    before_model_request=_finish_explicit_decline,
+                    after_node_run=_finish_explicit_decline_after_tools,
+                ),
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
                 ProcessHistory(_drop_non_replayable_messages),
@@ -574,6 +604,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # pydantic-ai's result.usage is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
+        tool_call_count = 0
+        tool_result_count = 0
+        failed_tool_result_count = 0
+        native_output_type: str | None = None
+        native_output_chars = 0
         # Snapshot the prior messages' identities so the fallback usage path
         # (any run that raises) can sum only THIS run's responses: capture_run_messages()
         # records the passed message_history + the new turn, so summing the whole
@@ -619,6 +654,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             events=event_count,
                             tool=event.part.tool_name,
                         )
+                        tool_call_count += 1
                         if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
@@ -645,6 +681,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             events=event_count,
                             tool=event.part.tool_name,
                         )
+                        tool_result_count += 1
+                        if isinstance(event.part, RetryPromptPart) or (
+                            isinstance(event.part, ToolReturnPart)
+                            and (
+                                event.part.outcome != "success"
+                                or is_failed_tool_output(event.part.content)
+                            )
+                        ):
+                            failed_tool_result_count += 1
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
                         if (
@@ -686,6 +731,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 )
                     elif isinstance(event, AgentRunResultEvent):
                         _log_native_progress("result_received", events=event_count)
+                        native_output_type = type(event.result.output).__name__
+                        if isinstance(event.result.output, str):
+                            native_output_chars = len(event.result.output)
                         turn_usage = self._usage_from_result(event.result)
                         # Keep native run history, but drop responses that replay as
                         # content:null (e.g. thinking-only) — providers reject them
@@ -757,6 +805,19 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             raise
         finally:
             _native_turn.reset(trace_token)
+            if native_output_type is not None and not tools.turn.complete:
+                logger.warning(
+                    "Room %s message %s: native run ended without a turn outcome "
+                    "(output_type=%s, output_chars=%s, tool_calls=%s, "
+                    "tool_results=%s, failed_tool_results=%s)",
+                    room_id,
+                    msg.id,
+                    native_output_type,
+                    native_output_chars,
+                    tool_call_count,
+                    tool_result_count,
+                    failed_tool_result_count,
+                )
             capture_cm.__exit__(None, None, None)
             # Single emit point for every exit. A run that raised (benign
             # empty-final or a hard failure) never saw the result event, so

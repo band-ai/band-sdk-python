@@ -1,30 +1,32 @@
-"""Shared machinery for the `test_<framework>_job_coverage.py` drift guards.
-
-A framework whose deps conflict with the rest of `dev` (crewai, parlant) lives in
-its own venv (`dev-crewai`, `dev-parlant`), which cannot import the other
-frameworks — so its CI job cannot just run `pytest`, it names the test files one
-by one. That list is the only thing standing between one of its tests and never
-running anywhere: the default `test` job skips whatever needs the isolated venv's
-deps, and the isolated job only collects what its list names. A file dropped from
-it goes silently uncovered (this happened once, to the crewai cases in
-`test_capability_gating_e2e.py`).
-
-So each per-framework guard derives the set that *needs* its venv from the tests
-themselves — via the deps only that venv has — and asserts the workflow covers
-every one. This module holds the generic mechanics; `test_crewai_job_coverage.py`
-and `test_parlant_job_coverage.py` supply the framework-specific module names and
-job/step identifiers.
-"""
+"""Coverage of isolated jobs, derived from real consumers and pytest selection."""
 
 from __future__ import annotations
 
+import ast
+import json
 import re
+import shlex
+import subprocess
+import sys
+import tempfile
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tests.e2e.baseline.toolkit.deps import Extra
 from tests.paths import REPO_ROOT
+
+
+class CoverageSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+    BAND_TEST_EXTRA: Extra | None = None
+
 
 CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 _TESTS_ROOT = REPO_ROOT / "tests"
@@ -59,17 +61,38 @@ def only_distributions(extra: str, baseline_extra: str = "dev") -> set[str]:
     return {name(r) for r in extras[extra]} - {name(r) for r in extras[baseline_extra]}
 
 
-def tests_needing_venv(pattern: re.Pattern[str]) -> set[Path]:
-    """Repo-relative unit-test files that only a venv matching ``pattern`` can run.
+def consumer_source(path: Path, visited: set[Path] | None = None) -> str:
+    """Include same-suite helpers so extracting a probe cannot hide its consumers."""
+    seen = visited if visited is not None else set()
+    if path in seen:
+        return ""
+    seen.add(path)
+    source = path.read_text(encoding="utf-8")
+    helpers = {
+        REPO_ROOT.joinpath(*node.module.split(".")).with_suffix(".py")
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+        and node.module is not None
+        and node.module.startswith("tests.")
+    }
+    return (
+        source
+        + "\n"
+        + "\n".join(
+            consumer_source(helper, seen)
+            for helper in sorted(helpers)
+            if helper.parent == path.parent and helper.exists()
+        )
+    )
 
-    `tests/e2e/**` is excluded: those run from the e2e workflow's own lane, not a
-    ci.yml job.
-    """
+
+def tests_needing_venv(pattern: re.Pattern[str]) -> set[Path]:
+    """Unit-test consumers of a real dependency, including their shared probes."""
     return {
         path.relative_to(REPO_ROOT)
         for path in _TESTS_ROOT.rglob("test_*.py")
         if "e2e" not in path.relative_to(_TESTS_ROOT).parts
-        and pattern.search(path.read_text(encoding="utf-8"))
+        and pattern.search(consumer_source(path))
     }
 
 
@@ -97,4 +120,88 @@ def covered_by(target: Path, listed: set[Path], command: str) -> bool:
         return True
     return not _KEYWORD_FILTER.search(command) and any(
         parent in listed for parent in target.parents
+    )
+
+
+@dataclass(frozen=True)
+class CollectedNode:
+    nodeid: str
+    frameworks: frozenset[str]
+    skipped: bool
+
+
+def collected_nodes(arguments: list[str]) -> tuple[CollectedNode, ...]:
+    """Collect nodes and framework bindings after pytest applies the job selectors."""
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "nodes.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "tests.framework_conformance.venv_job_coverage",
+                str(output),
+                *arguments,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(result.stdout + result.stderr)
+        return tuple(
+            CollectedNode(row["nodeid"], frozenset(row["frameworks"]), row["skipped"])
+            for row in json.loads(output.read_text(encoding="utf-8"))
+        )
+
+
+def selected_nodes(arguments: list[str]) -> set[str]:
+    """The exact node IDs surviving a job's pytest selectors."""
+    return {node.nodeid for node in collected_nodes(arguments)}
+
+
+def framework_bindings(item: pytest.Item) -> set[str]:
+    """Read actual parametrized framework identities, independent of node names."""
+    params = getattr(getattr(item, "callspec", None), "params", {})
+    return {
+        str(value.framework_id) if hasattr(value, "framework_id") else str(value)
+        for name, value in params.items()
+        if name in {"framework_id", "adapter_id", "adapter_config", "converter_config"}
+    }
+
+
+def collection_row(item: pytest.Item) -> dict[str, object]:
+    skipped = item.get_closest_marker("skip") is not None or any(
+        marker.args and marker.args[0] is True for marker in item.iter_markers("skipif")
+    )
+    return {
+        "nodeid": item.nodeid,
+        "frameworks": sorted(framework_bindings(item)),
+        "skipped": skipped,
+    }
+
+
+def pytest_arguments(command: str) -> list[str]:
+    """Read selectors after the workflow's pytest executable."""
+    tokens = shlex.split(command)
+    return tokens[tokens.index("pytest") + 1 :]
+
+
+class NodeCollector:
+    def __init__(self, output: Path) -> None:
+        self.output = output
+
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        self.output.write_text(
+            json.dumps([collection_row(item) for item in session.items]),
+            encoding="utf-8",
+        )
+
+
+if __name__ == "__main__":
+    raise SystemExit(
+        pytest.main(
+            [*sys.argv[2:], "--collect-only", "--no-cov"],
+            plugins=[NodeCollector(Path(sys.argv[1]))],
+        )
     )

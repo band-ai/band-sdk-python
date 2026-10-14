@@ -32,6 +32,7 @@ from tests.e2e.baseline.fixtures.capture import (
     judge,
     reply_capture,
 )
+from tests.e2e.baseline.fixtures.diagnostics import diagnostic_logs
 from tests.e2e.baseline.fixtures.platform import (
     baseline_run_id,
     baseline_settings,
@@ -63,6 +64,7 @@ __all__ = [
     "baseline_user_client",
     "baseline_ws",
     "cell",
+    "diagnostic_logs",
     "invocation_observer",
     "judge",
     "orphan_sweep",

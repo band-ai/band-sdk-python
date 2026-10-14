@@ -11,11 +11,13 @@ from band.logging_config import more_verbose
 
 
 @contextmanager
-def sdk_logs_at(package: ModuleType, level: int) -> Iterator[None]:
+def sdk_logs_at(package: ModuleType | str, level: int) -> Iterator[None]:
     """Let ``package``'s records at ``level`` reach pytest's captured log, which
     a failing test prints; the root logger's WARNING default otherwise drops them.
     Never raises the threshold, so a run at ``--log-level=DEBUG`` keeps its DEBUG."""
-    sdk_logger = logging.getLogger(package.__name__)
+    sdk_logger = logging.getLogger(
+        package if isinstance(package, str) else package.__name__
+    )
     previous_level = sdk_logger.level
     sdk_logger.setLevel(more_verbose(level, sdk_logger.getEffectiveLevel()))
     try:
