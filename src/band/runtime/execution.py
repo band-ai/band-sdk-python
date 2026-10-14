@@ -28,6 +28,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Protocol,
+    TypeGuard,
     runtime_checkable,
 )
 
@@ -231,12 +232,12 @@ def _delivery_id(event: PlatformEvent) -> str | None:
     return None
 
 
-def _is_ordinary(event: PlatformEvent) -> bool:
+def _is_ordinary(event: PlatformEvent) -> TypeGuard[MessageEvent]:
     """Whether the event is a real delivery a turn can include."""
     return _delivery_id(event) is not None and not _is_synthetic(event)
 
 
-def _is_synthetic(event: PlatformEvent) -> bool:
+def _is_synthetic(event: PlatformEvent) -> TypeGuard[MessageEvent]:
     """Whether the event is a contact-hub turn that owes no delivery write."""
     return (
         isinstance(event, MessageEvent)
@@ -1565,7 +1566,7 @@ class ExecutionContext:
         """
         events = {_event_message_id(e): e for e in map(_backlog_event, messages)}
         for event in self._pending:
-            if isinstance(event, MessageEvent) and _is_ordinary(event):
+            if _is_ordinary(event):
                 events[_event_message_id(event)] = event
         return sorted(events.values(), key=MessageKey.of_event)
 
@@ -1930,7 +1931,7 @@ class ExecutionContext:
     def _oldest_synthetic(self) -> MessageEvent | None:
         """The oldest retained synthetic turn, still sitting in the queue."""
         for event in self._pending:
-            if isinstance(event, MessageEvent) and _is_synthetic(event):
+            if _is_synthetic(event):
                 return event
         return None
 
@@ -1974,7 +1975,7 @@ class ExecutionContext:
         live: list[MessageEvent] = []
         dead: list[str] = []
         for event in self._pending:
-            if not (isinstance(event, MessageEvent) and _is_ordinary(event)):
+            if not _is_ordinary(event):
                 continue
             payload = _payload(event)
             if self._is_nonrunnable(payload):
@@ -2100,7 +2101,7 @@ class ExecutionContext:
         """
         segment: list[MessageEvent] = []
         for event in self._pending:
-            if not (isinstance(event, MessageEvent) and _is_ordinary(event)):
+            if not _is_ordinary(event):
                 return segment, MessageKey.of_event(segment[-1]) if segment else None
             segment.append(event)
         return segment, None
