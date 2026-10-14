@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -48,12 +48,19 @@ _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task e
 
 RELEASED = frozenset({Residency.SUSPENDED, Residency.CLOSED})
 
-# A command naming a pending Cursor decision, capturing its token.
+# A command naming a pending Cursor decision, capturing its word and token.
 _DECISION_COMMAND = re.compile(
     re.escape(f"`{ROOM_COMMAND} ")
-    + f"(?:{'|'.join(map(re.escape, CursorCommandWord))})"
+    + f"({'|'.join(map(re.escape, CursorCommandWord))})"
     + r" (\S+)"
 )
+
+
+class DecisionCommand(NamedTuple):
+    """The first command a Cursor decision prompt asks the room to reply with."""
+
+    word: CursorCommandWord
+    token: str
 
 
 @dataclass(frozen=True)
@@ -267,11 +274,22 @@ def room_holder(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> ACPRoom:
     return ACPRoom(room_id=room, workspace=adapter._workspaces.claim(room))
 
 
+def decision_command(text: str) -> DecisionCommand | None:
+    """The command ``text`` asks the room to reply with, when it is a Cursor
+    decision prompt."""
+    match = _DECISION_COMMAND.search(text)
+    return (
+        None
+        if match is None
+        else DecisionCommand(CursorCommandWord(match[1]), match[2])
+    )
+
+
 def decision_token(prompt: str) -> str:
     """The token a Cursor decision prompt asks the room to answer with."""
-    match = _DECISION_COMMAND.search(prompt)
-    assert match is not None, prompt
-    return match[1]
+    command = decision_command(prompt)
+    assert command is not None, prompt
+    return command.token
 
 
 async def launch_for(adapter: ACPClientAdapter, room: str = DEFAULT_ROOM) -> Launch:

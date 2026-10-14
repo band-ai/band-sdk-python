@@ -33,6 +33,7 @@ from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     Reply,
     acp_adapter,
+    decision_command,
     decision_token,
     fake_agent_config,
     released,
@@ -88,12 +89,17 @@ async def woken(adapter: ACPClientAdapter, room: ACPRoom) -> AsyncIterator[None]
 
 def decisions(reply: Reply) -> list[str]:
     """Every decision prompt ``reply`` has posted: each tells the room how to reply."""
-    return [text for text in reply.texts if f"Reply `{ROOM_COMMAND} " in text]
+    return [text for text in reply.texts if decision_command(text) is not None]
 
 
 def questions(reply: Reply) -> list[str]:
     """The Cursor question decisions ``reply`` has posted to the room."""
-    return [text for text in reply.texts if "Cursor needs input" in text]
+    return [
+        text
+        for text in reply.texts
+        if (command := decision_command(text)) is not None
+        and command.word == CursorCommandWord.ANSWER
+    ]
 
 
 async def question_asked(reply: Reply) -> None:
