@@ -17,6 +17,7 @@ class TurnScope:
     stop_revision: int | None = None
     observer_task: asyncio.Task[None] | None = None
     handler: TurnTask | None = None
+    admitted: bool = False
     settled: bool = False
     kind: ControlMode | None = None
     deadline: float | None = None

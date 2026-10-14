@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from tests.conftest import BlockingHandler, make_message_event
 
 
@@ -28,7 +28,7 @@ class TestInterruptInFlightCycle:
         assert ctx.interrupt() is True
 
         result = await proc
-        assert result is True  # loop continues, not a failure
+        assert result is TurnOutcome.ADVANCED  # loop continues, not a failure
         assert handler.cancelled.is_set()  # cycle was aborted
         assert "msg-1" not in handler.completed  # nothing was sent
         # Consumed: durable mark + local dedupe.
@@ -40,7 +40,7 @@ class TestInterruptInFlightCycle:
         handler2 = BlockingHandler(block=False)
         ctx._on_execute = handler2
         result2 = await ctx._process_event(make_message_event(msg_id="msg-2"))
-        assert result2 is True
+        assert result2 is TurnOutcome.ADVANCED
         assert handler2.completed == ["msg-2"]
 
     async def test_interrupt_during_tool_call_drops_result(self, mock_link):
@@ -75,7 +75,7 @@ class TestInterruptInFlightCycle:
 
         # Next cycle runs normally.
         result = await ctx._process_event(make_message_event(msg_id="m1"))
-        assert result is True
+        assert result is TurnOutcome.ADVANCED
         mock_link.mark_processed.assert_awaited_once_with("room-123", "m1")
 
     async def test_interrupted_cleanup_failure_is_logged(
@@ -95,7 +95,7 @@ class TestInterruptInFlightCycle:
             turn = asyncio.create_task(ctx._process_event(make_message_event()))
             await started.wait()
             ctx.interrupt()
-            assert await turn
+            assert await turn is TurnOutcome.ADVANCED
 
         [record] = caplog.records
         assert record.exc_info is not None
@@ -120,7 +120,7 @@ class TestInterruptInFlightCycle:
             turn = asyncio.create_task(ctx._process_event(make_message_event()))
             await started.wait()
             ctx.interrupt()
-            assert await turn
+            assert await turn is TurnOutcome.ADVANCED
 
         [record] = caplog.records
         assert record.levelno == logging.WARNING

@@ -92,6 +92,16 @@ def run_through(
     )
 
 
+def synthetic_message(message_id: str) -> MessageEvent:
+    """A contact-hub message: it exists only in the room's local queue."""
+    return make_message_event(
+        room_id=ROOM_ID,
+        msg_id=message_id,
+        sender_type=SYNTHETIC_SENDER_TYPE,
+        sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    )
+
+
 async def deliver(ctx: ExecutionContext, path: str) -> None:
     """Deliver one user message live over the socket, or from the backlog."""
     match path:
