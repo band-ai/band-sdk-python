@@ -15,8 +15,8 @@ from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
+from tests.runtime.deferral.kit import ApprovalAdapter
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
-from tests.runtime.test_deferral import ApprovalAdapter
 
 
 class ControlPolicy(DefaultPreprocessor):
