@@ -183,6 +183,25 @@ def liveness_probe(marker: str) -> str:
     )
 
 
+# Sets the role and nothing else, so whether a turn replies or declines is left to
+# the SDK's own turn guidance -- the thing the queued-decision smokes exercise.
+ASSISTANT_PROMPT = "You are a helpful assistant in a chat room."
+
+# Announcements that ask nothing of the agent.
+FYI_NOTICES = (
+    "FYI: the weekly sync moved to Thursday at 4pm.",
+    "FYI: the staging database was refreshed overnight.",
+)
+
+
+def correction_probe(marker: str) -> str:
+    """Follow-up that replaces the token an earlier ``liveness_probe`` asked for."""
+    return (
+        "Correction: reply with this complete token instead of the previous one, "
+        f"exactly as written: {marker}."
+    )
+
+
 def unique_marker(label: str) -> str:
     """A high-entropy token to assert verbatim in event/memory content.
 

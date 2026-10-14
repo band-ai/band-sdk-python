@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -62,3 +63,23 @@ class DecliningAdapter(SimpleAdapter[Any]):
     ) -> None:
         self.built.append(tuple(message.id for message in messages))
         await tools.no_reply("nothing owed")
+
+
+class BusyAdapter(DecliningAdapter):
+    """A batch-capable adapter whose room is busy for its first attempt, then free."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.busy = True
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if self.busy:
+            self.busy = False
+            raise InputNotAccepted("The room already has an active turn")
+        await super().on_turn(messages, tools, *args, **kwargs)
