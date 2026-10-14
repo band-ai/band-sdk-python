@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from band.integrations.codex.types import CodexApprovalMethod
 from tests.adapters.codex.kit import CodexRoom
 from tests.adapters.codexturns import (
     event_request,
@@ -19,7 +20,7 @@ class TestNetworkContext:
         room = await codex_room(
             event_request(
                 10,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {
                     "command": "npm install lodash",
                     "cwd": "/workspace",

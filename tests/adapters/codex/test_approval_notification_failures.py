@@ -7,6 +7,7 @@ import pytest
 from band.adapters.codex import (
     CodexAdapterConfig,
 )
+from band.integrations.codex.types import CodexApprovalMethod
 from band.testing import (
     reported_failures,
 )
@@ -30,7 +31,7 @@ class TestApprovalNotificationFailures:
         events = [
             event_request(
                 7,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {"command": "rm -rf tmp"},
             ),
             turn_completed(),
@@ -57,7 +58,7 @@ class TestApprovalNotificationFailures:
         events = [
             event_request(
                 7,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {"command": "rm -rf tmp"},
             ),
             turn_completed(),
@@ -86,7 +87,7 @@ class TestApprovalNotificationFailures:
         events = [
             event_request(
                 7,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {"command": "rm -rf tmp"},
             ),
             turn_completed(),

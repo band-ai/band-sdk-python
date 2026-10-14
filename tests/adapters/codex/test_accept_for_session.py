@@ -7,6 +7,7 @@ from collections import OrderedDict
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
+from band.integrations.codex.types import CodexApprovalMethod
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
@@ -27,7 +28,7 @@ class TestAcceptForSession:
         events = [
             event_request(
                 20,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {"command": "npm install"},
             ),
             turn_completed(),

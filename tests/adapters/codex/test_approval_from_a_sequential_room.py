@@ -107,7 +107,7 @@ class TestApprovalFromASequentialRoom:
         room = await codex_room(
             *parked_on_approval(
                 event_request(
-                    11, "item/commandExecution/requestApproval", {"command": "b"}
+                    11, CodexApprovalMethod.COMMAND_EXECUTION, {"command": "b"}
                 ),
                 turn_completed(),
             ),

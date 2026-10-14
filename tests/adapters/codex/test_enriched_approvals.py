@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from band.adapters.codex import CodexAdapterConfig
+from band.integrations.codex.types import CodexApprovalMethod
 from tests.adapters.codex.kit import (
     ROOM_ID,
     CodexRoom,
@@ -28,7 +29,7 @@ class TestEnrichedApprovals:
     ) -> None:
         room = await codex_room(
             event_request(
-                10, "item/commandExecution/requestApproval", {"command": "npm test"}
+                10, CodexApprovalMethod.COMMAND_EXECUTION, {"command": "npm test"}
             ),
             turn_completed(),
         )
@@ -47,7 +48,7 @@ class TestEnrichedApprovals:
         events = [
             event_request(
                 7,
-                "item/commandExecution/requestApproval",
+                CodexApprovalMethod.COMMAND_EXECUTION,
                 {"command": "rm -rf tmp"},
             ),
             turn_completed(),

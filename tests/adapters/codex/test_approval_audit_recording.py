@@ -6,6 +6,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
 )
+from band.integrations.codex.types import CodexApprovalMethod
 from tests.adapters.codex.kit import ROOM_ID
 
 
@@ -18,7 +19,7 @@ class TestApprovalAuditRecording:
         entry = adapter._record_approval_audit(
             room_id=ROOM_ID,
             request_id="req-1",
-            method="item/commandExecution/requestApproval",
+            method=CodexApprovalMethod.COMMAND_EXECUTION,
             decision="accept",
             decided_by="tester",
             summary="command: ls",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from band.adapters.codex import CodexAdapterConfig
+from band.integrations.codex.types import CodexApprovalMethod
 from tests.adapters.codex.kit import ROOM_ID
 from tests.adapters.codexturns import (
     FakeCodexClient,
@@ -21,7 +22,7 @@ class TestAuditCap:
             adapter._record_approval_audit(
                 room_id=ROOM_ID,
                 request_id=str(i),
-                method="item/commandExecution/requestApproval",
+                method=CodexApprovalMethod.COMMAND_EXECUTION,
                 decision="accept",
                 decided_by="test",
             )

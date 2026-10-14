@@ -12,6 +12,7 @@ from band.adapters.codex import (
     CodexAdapterConfig,
 )
 from band.integrations.codex.types import (
+    CodexApprovalMethod,
     CodexItemType,
     CodexTokenUsage,
     build_agent_failure,
@@ -139,7 +140,7 @@ class TestCodexTypes:
         """Session approval key includes full command string by default."""
         adapter = CodexAdapter(config=CodexAdapterConfig())
         key = adapter._session_approval_key(
-            "item/commandExecution/requestApproval", {"command": "npm test"}
+            CodexApprovalMethod.COMMAND_EXECUTION, {"command": "npm test"}
         )
         assert key == "commandExecution:npm test"
 
@@ -149,14 +150,14 @@ class TestCodexTypes:
             config=CodexAdapterConfig(session_approval_granularity="binary")
         )
         key = adapter._session_approval_key(
-            "item/commandExecution/requestApproval", {"command": "npm test"}
+            CodexApprovalMethod.COMMAND_EXECUTION, {"command": "npm test"}
         )
         assert key == "commandExecution:npm"
 
     def test_session_approval_key_empty_for_missing_command(self) -> None:
         """Session approval key returns empty when command is missing (no wildcard)."""
         adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key("item/commandExecution/requestApproval", {})
+        key = adapter._session_approval_key(CodexApprovalMethod.COMMAND_EXECUTION, {})
         assert key == ""
 
     def test_session_approval_key_empty_for_file_changes_without_paths(self) -> None:

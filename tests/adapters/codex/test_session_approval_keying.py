@@ -8,7 +8,7 @@ from band.adapters.codex import (
     CodexAdapter,
     CodexAdapterConfig,
 )
-from band.integrations.codex.types import CodexSessionState
+from band.integrations.codex.types import CodexApprovalMethod, CodexSessionState
 from tests.adapters.codex.kit import (
     ROOM_ID,
     ToolSchemaFakeTools,
@@ -112,7 +112,7 @@ class TestSessionApprovalKeying:
     def test_session_approval_key_empty_prevents_wildcard_match(self) -> None:
         """Empty session key from missing command cannot match any session set."""
         adapter = CodexAdapter(config=CodexAdapterConfig())
-        key = adapter._session_approval_key("item/commandExecution/requestApproval", {})
+        key = adapter._session_approval_key(CodexApprovalMethod.COMMAND_EXECUTION, {})
         # Empty key is falsy, so `key and key in session_set` is always False
         assert not key
         assert not (key and key in {"commandExecution:npm"})
