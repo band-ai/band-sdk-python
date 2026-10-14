@@ -34,6 +34,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstrumentationSettings,
+    PydanticAIDeprecationWarning,
     RunContext,
     UnexpectedModelBehavior,
     _tool_execution,
@@ -53,6 +54,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 
@@ -66,6 +68,7 @@ from band.adapters.pydantic_ai import (
     _is_replayable_history_message,
     _log_native_progress,
     _native_turn,
+    _resolve_pydantic_ai_model,
 )
 from band.core.exceptions import BandToolError
 from band.core.protocols import (
@@ -345,6 +348,31 @@ class TestInitialization:
         await adapter.on_started(agent_name="Bot", agent_description="")
 
         assert adapter._agent.model is llm
+
+    def test_non_openai_models_skip_the_legacy_http_patch(self):
+        llm = TestModel()
+
+        assert _resolve_pydantic_ai_model(llm) is llm
+        assert _resolve_pydantic_ai_model("anthropic:claude") == "anthropic:claude"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("model_name", "model_type"),
+        [
+            ("openai:gpt-4o-mini", OpenAIResponsesModel),
+            ("openai-chat:gpt-4o-mini", OpenAIChatModel),
+        ],
+    )
+    async def test_openai_model_strings_use_the_legacy_http_client(
+        self, monkeypatch: pytest.MonkeyPatch, model_name: str, model_type: type[Any]
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+        with pytest.warns(PydanticAIDeprecationWarning, match="httpx.AsyncClient"):
+            model = _resolve_pydantic_ai_model(model_name)
+
+        assert isinstance(model, model_type)
+        await model.provider.client.close()
 
     @pytest.mark.parametrize(
         ("config", "llm"),
@@ -736,9 +764,7 @@ class TestOnStarted:
 
 def _wire_tool_call_args(args: Any) -> dict[str, Any] | str:
     """Shape tool args the way providers send them on the wire (JSON text or object)."""
-    if isinstance(args, dict):
-        return args
-    if isinstance(args, str):
+    if isinstance(args, dict | str):
         return args
     return json.dumps(args)
 

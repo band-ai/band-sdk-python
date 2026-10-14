@@ -24,12 +24,13 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstrumentationSettings,
+    ModelRequestNode,
     RunContext,
     UnexpectedModelBehavior,
     capture_run_messages,
 )
-from pydantic_ai._agent_graph import AgentNode, ModelRequestNode
 from pydantic_ai.capabilities import Hooks, ProcessHistory
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     BinaryContent,
@@ -48,7 +49,7 @@ from pydantic_ai.models import (
     create_async_http_client,
     infer_model,
 )
-from pydantic_ai.providers import infer_provider
+from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.result import FinalResult
 from pydantic_graph import End
@@ -169,9 +170,9 @@ def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
 async def _finish_explicit_decline_after_tools(
     ctx: RunContext[AgentToolsProtocol],
     *,
-    node: AgentNode[Any, Any],
-    result: AgentNode[Any, Any] | End[FinalResult[Any]],
-) -> AgentNode[Any, Any] | End[FinalResult[Any]]:
+    node: AgentNode[Any],
+    result: NodeResult[Any],
+) -> NodeResult[Any]:
     """End the run after a terminal decline without scheduling another model step.
 
     pydantic-ai 2.55+ enforces ``request_limit`` before ``before_model_request`` hooks,
@@ -328,6 +329,9 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 
+_OPENAI_LEGACY_HTTP_PROVIDERS = frozenset({"openai", "openai-chat"})
+
+
 def _resolve_pydantic_ai_model(model: Model | str) -> Model | str:
     """Resolve a model string, patching OpenAI providers to use legacy ``httpx``.
 
@@ -337,11 +341,11 @@ def _resolve_pydantic_ai_model(model: Model | str) -> Model | str:
     if not isinstance(model, str):
         return model
     provider_name = model.partition(":")[0]
-    if provider_name not in ("openai", "openai-chat"):
+    if provider_name not in _OPENAI_LEGACY_HTTP_PROVIDERS:
         return model
 
-    def provider_factory(name: str):
-        if name in ("openai", "openai-chat"):
+    def provider_factory(name: str) -> Provider[Any]:
+        if name in _OPENAI_LEGACY_HTTP_PROVIDERS:
             return OpenAIProvider(http_client=create_async_http_client())
         return infer_provider(name)
 
