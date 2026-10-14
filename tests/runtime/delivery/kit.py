@@ -35,6 +35,8 @@ OTHER_AGENT_ID = "agent-2"
 # A full page of failed rows and half of the next, ahead of any new input.
 FAILED_ROWS = ACTIONABLE_PAGE_SIZE + ACTIONABLE_PAGE_SIZE // 2
 WAIT_SECONDS = 5.0
+# The periodic wake the room falls back on when nothing else prompts it.
+IDLE_INTERVAL = SessionConfig().idle_resync_seconds
 # Longer than any step the room takes and shorter than its periodic wake: on
 # the virtual clock the loop only gets here once nothing is runnable.
 QUIET_SECONDS = 1.0

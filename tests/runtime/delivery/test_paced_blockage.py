@@ -8,16 +8,14 @@ import pytest
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import DeliveryStatus
-from band.runtime.types import SessionConfig
-from tests.runtime.delivery.kit import RestPeer, started_session
+from tests.runtime.delivery.kit import IDLE_INTERVAL, RestPeer, started_session
 from tests.runtime.helpers import ROOM_ID
 
 pytestmark = pytest.mark.looptime
 
-INTERVAL = SessionConfig().idle_resync_seconds
 # The startup pass, then one retry per interval; never a rescan in between.
-PACED = [0, INTERVAL, 2 * INTERVAL]
-THREE_INTERVALS = 2 * INTERVAL + 1
+PACED = [0, IDLE_INTERVAL, 2 * IDLE_INTERVAL]
+THREE_INTERVALS = 2 * IDLE_INTERVAL + 1
 
 
 class TestPacedBlockage:

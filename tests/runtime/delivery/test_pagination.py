@@ -11,6 +11,7 @@ from band.runtime.types import ACTIONABLE_PAGE_SIZE
 from tests.runtime.delivery.kit import (
     EARLIER_ROW,
     FAILED_ROWS,
+    IDLE_INTERVAL,
     LAST_ON_FIRST_PAGE,
     RestPeer,
     control,
@@ -50,7 +51,7 @@ class TestYieldedPagination:
             {session.started_at},
         )
 
-    @pytest.mark.parametrize("wake", ["arrival", "resync"])
+    @pytest.mark.parametrize("wake", ["arrival", "resync", "periodic"])
     async def test_a_later_wake_scans_through_at_one_instant(
         self, peer: RestPeer, wake: str
     ) -> None:
@@ -60,11 +61,16 @@ class TestYieldedPagination:
             event = peer.post("new")
             seen = len(peer.journal), len(peer.reads)
             woke_at = asyncio.get_running_loop().time()
-            if wake == "arrival":
-                await session.deliver(event)
-            else:
-                await session.ctx.request_resync()
-            await session.quiesce()
+            match wake:
+                case "arrival":
+                    await session.deliver(event)
+                    await session.quiesce()
+                case "resync":
+                    await session.ctx.request_resync()
+                    await session.quiesce()
+                case "periodic":
+                    woke_at = session.started_at + IDLE_INTERVAL
+                    await asyncio.sleep(IDLE_INTERVAL)
 
         assert (
             peer.journal[seen[0] :],
