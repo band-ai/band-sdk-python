@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from band.adapters.codex import CodexCommand
 from band.core.exceptions import InputNotAccepted
 from band.integrations.codex.types import CodexSessionState
 from band.testing import events_of_type
@@ -13,6 +14,7 @@ from tests.adapters.codex.kit import (
     ToolSchemaFakeTools,
     make_platform_message,
     parked_on_approval,
+    requested_approval_token,
 )
 from tests.adapters.codexturns import final_text, turn_completed
 from tests.integrations.slack.test_wrapping import _make_adapter, _mention_event
@@ -59,7 +61,8 @@ class TestSlackControls:
                 await deliver("another ordinary request")
         assert room.client.responses == []
 
-        handled = await deliver("/approve req-10")
+        token = requested_approval_token(original_tools)
+        handled = await deliver(f"/{CodexCommand.APPROVE} {token}")
         if entry == "recovery":
             assert handled is True
         await room.settled()
