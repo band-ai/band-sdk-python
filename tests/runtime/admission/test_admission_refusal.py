@@ -9,7 +9,6 @@ from tests.runtime.admission.barriers import (
     Answer,
     Call,
     Case,
-    Endpoint,
     Model,
     Observed,
     Platform,
@@ -25,15 +24,15 @@ class TestAdmissionRefusal:
     async def test_nothing_runs_or_settles_and_recovery_runs_every_original_once(
         self, case: Case, answer: Answer, platform: Platform, model: Model
     ) -> None:
-        target = Call(Endpoint.PROCESSING, case.target)
-        async with started_room(platform, model, case) as room:
-            platform.script(target, answer)
+        target = Call.processing(case.target)
+        async with started_room(case, platform=platform, model=model) as room:
+            platform.script(target, answer=answer)
             await room.arrive()
             await room.called(target)
             await room.quiet()
             deferred = room.observed()
 
-            platform.script(target, Answer.ACCEPT)
+            platform.script(target, answer=Answer.ACCEPT)
             await room.recover()
             await room.settled()
             recovered = room.observed()

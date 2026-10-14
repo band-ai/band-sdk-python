@@ -8,7 +8,6 @@ from tests.runtime.admission.barriers import (
     POSITIONS,
     Call,
     Case,
-    Endpoint,
     Model,
     Observed,
     Platform,
@@ -23,8 +22,8 @@ class TestStopDuringAdmission:
     async def test_nothing_runs_and_resuming_runs_every_original_once(
         self, case: Case, stop: Stop, platform: Platform, model: Model
     ) -> None:
-        async with started_room(platform, model, case) as room:
-            pending = platform.hold(Call(Endpoint.PROCESSING, case.target), stop.answer)
+        async with started_room(case, platform=platform, model=model) as room:
+            pending = platform.hold(Call.processing(case.target), answer=stop.answer)
             await room.arrive()
             await room.reached(pending)
             await stop.deliver(room)

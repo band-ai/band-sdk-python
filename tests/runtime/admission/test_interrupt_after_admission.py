@@ -23,7 +23,7 @@ class TestInterruptAfterAdmission:
         self, case: Case, window: Window, platform: Platform, model: Model
     ) -> None:
         async with started_room(
-            platform, model, case, warm=window.warm, **window.settings
+            case, platform=platform, model=model, warm=window.warm, **window.settings
         ) as room:
             pending = platform.hold(window.call)
             await room.arrive()
@@ -39,7 +39,7 @@ class TestInterruptAfterAdmission:
         self, case: Case, platform: Platform, model: Model
     ) -> None:
         model.gate = True
-        async with started_room(platform, model, case) as room:
+        async with started_room(case, platform=platform, model=model) as room:
             await room.arrive()
             await room.until(model.entered.is_set)
             room.interrupt()

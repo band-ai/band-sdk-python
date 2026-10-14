@@ -12,7 +12,7 @@ from tests.runtime.admission.barriers import (
     Model,
     Platform,
     Stop,
-    processed,
+    all_processed,
     started_room,
 )
 
@@ -23,8 +23,8 @@ class TestStopDuringAcknowledgement:
     async def test_the_finished_turn_is_settled_after_the_stop_without_a_second_run(
         self, case: Case, stop: Stop, platform: Platform, model: Model
     ) -> None:
-        async with started_room(platform, model, case) as room:
-            pending = platform.hold(Call(Endpoint.PROCESSED, case.target), stop.answer)
+        async with started_room(case, platform=platform, model=model) as room:
+            pending = platform.hold(Call.processed(case.target), answer=stop.answer)
             await room.arrive()
             await room.reached(pending)
             await stop.deliver(room)
@@ -40,7 +40,7 @@ class TestStopDuringAcknowledgement:
             resumed.runs,
             platform.writes_to(Endpoint.FAILED),
         ) == (
-            processed(case.ids),
+            all_processed(case.ids),
             [case.ids],
             [],
         )
@@ -51,8 +51,8 @@ class TestStopDuringAcknowledgement:
         self, case: Case, stop: Stop, platform: Platform, model: Model
     ) -> None:
         model.gate = True
-        async with started_room(platform, model, case) as room:
-            pending = platform.hold(Call(Endpoint.PROCESSED, case.target), stop.answer)
+        async with started_room(case, platform=platform, model=model) as room:
+            pending = platform.hold(Call.processed(case.target), answer=stop.answer)
             await room.arrive()
             await room.until(model.entered.is_set)
             room.interrupt()
@@ -64,5 +64,5 @@ class TestStopDuringAcknowledgement:
             await stop.resume(room)
             await room.settled()
 
-        assert room.observed().statuses == processed(case.ids)
+        assert room.observed().statuses == all_processed(case.ids)
         assert platform.writes_to(Endpoint.FAILED) == []

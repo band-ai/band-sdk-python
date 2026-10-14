@@ -10,7 +10,6 @@ from tests.runtime.admission.barriers import (
     Answer,
     Call,
     Case,
-    Endpoint,
     Model,
     Observed,
     Platform,
@@ -26,8 +25,8 @@ class TestInterruptBeforeAdmission:
     async def test_a_pending_processing_write_cannot_revive_the_interrupted_scope(
         self, case: Case, answer: Answer, platform: Platform, model: Model
     ) -> None:
-        async with started_room(platform, model, case) as room:
-            pending = platform.hold(Call(Endpoint.PROCESSING, case.target), answer)
+        async with started_room(case, platform=platform, model=model) as room:
+            pending = platform.hold(Call.processing(case.target), answer=answer)
             await room.arrive()
             await room.reached(pending)
             room.interrupt()
@@ -49,9 +48,9 @@ class TestInterruptBeforeAdmission:
         self, case: Case, platform: Platform, model: Model
     ) -> None:
         async with started_room(
-            platform, model, case, enable_context_hydration=True
+            case, platform=platform, model=model, enable_context_hydration=True
         ) as room:
-            pending = platform.hold(Call(Endpoint.CONTEXT))
+            pending = platform.hold(Call.context())
             await room.arrive()
             await room.reached(pending)
             room.interrupt()

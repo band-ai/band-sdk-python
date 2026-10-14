@@ -22,8 +22,10 @@ class TestStopDuringTurn:
     async def test_a_stop_before_the_model_is_invoked_runs_nothing(
         self, case: Case, stop: Stop, platform: Platform, model: Model
     ) -> None:
-        async with started_room(platform, model, case, **REPORT.settings) as room:
-            pending = platform.hold(REPORT.call, stop.answer)
+        async with started_room(
+            case, platform=platform, model=model, **REPORT.settings
+        ) as room:
+            pending = platform.hold(REPORT.call, answer=stop.answer)
             await room.arrive()
             await room.reached(pending)
             await stop.deliver(room)
@@ -46,7 +48,7 @@ class TestStopDuringTurn:
         self, case: Case, stop: Stop, platform: Platform, model: Model
     ) -> None:
         model.gate = True
-        async with started_room(platform, model, case) as room:
+        async with started_room(case, platform=platform, model=model) as room:
             await room.arrive()
             await room.until(model.entered.is_set)
             await stop.deliver(room)
@@ -69,7 +71,9 @@ class TestStopDuringTurn:
         self, case: Case, platform: Platform, model: Model
     ) -> None:
         model.gate = True
-        async with started_room(platform, model, case, **REPORT.settings) as room:
+        async with started_room(
+            case, platform=platform, model=model, **REPORT.settings
+        ) as room:
             await room.arrive()
             await room.until(model.entered.is_set)
             await Stop.PLATFORM.deliver(room)

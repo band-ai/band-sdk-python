@@ -56,32 +56,58 @@ class Call:
     message_id: str | None = None
 
     @classmethod
+    def processing(cls, message_id: str) -> Call:
+        return cls(endpoint=Endpoint.PROCESSING, message_id=message_id)
+
+    @classmethod
+    def processed(cls, message_id: str) -> Call:
+        return cls(endpoint=Endpoint.PROCESSED, message_id=message_id)
+
+    @classmethod
+    def working(cls) -> Call:
+        return cls(endpoint=Endpoint.WORKING)
+
+    @classmethod
+    def context(cls) -> Call:
+        return cls(endpoint=Endpoint.CONTEXT)
+
+    @classmethod
     def of(cls, request: httpx.Request) -> Call | None:
         """The scriptable call a request is, or ``None`` for any other request."""
         path = request.url.path.split("/")
         match (request.method, path[-1]):
             case ("POST", "processing" | "processed" | "failed" as tail):
-                return cls(Endpoint(tail), path[-2])
+                return cls(endpoint=Endpoint(tail), message_id=path[-2])
             case ("POST", "activity") if b'"working":true' in request.content.replace(
                 b" ", b""
             ):
-                return cls(Endpoint.WORKING)
+                return cls.working()
             case ("GET", "context"):
-                return cls(Endpoint.CONTEXT)
+                return cls.context()
         return None
 
     def __str__(self) -> str:
         return " ".join(filter(None, (self.endpoint, self.message_id)))
 
 
-def writes(endpoint: Endpoint, message_ids: Iterable[str]) -> list[str]:
-    """The timeline entries of one ``endpoint`` write per message, in order."""
-    return [str(Call(endpoint, message_id)) for message_id in message_ids]
+def processing_writes(message_ids: Iterable[str]) -> list[str]:
+    """The timeline entries of one processing write per message, in order."""
+    return [str(Call.processing(message_id)) for message_id in message_ids]
+
+
+def processed_writes(message_ids: Iterable[str]) -> list[str]:
+    """The timeline entries of one processed write per message, in order."""
+    return [str(Call.processed(message_id)) for message_id in message_ids]
 
 
 def run(message_ids: Iterable[str]) -> str:
     """The timeline entry of one model invocation over ``message_ids``."""
     return f"run {' '.join(message_ids)}"
+
+
+def all_processed(message_ids: Iterable[str]) -> dict[str, str | None]:
+    """The delivery states of originals the platform has settled."""
+    return dict.fromkeys(message_ids, DeliveryStatus.PROCESSED)
 
 
 class Answer(StrEnum):
@@ -158,19 +184,19 @@ class Platform:
             )
         return events
 
-    def script(self, call: Call, answer: Answer) -> None:
+    def script(self, call: Call, *, answer: Answer) -> None:
         """Answer every ``call`` this way until it is scripted again."""
         self.scripts[call] = answer
 
     def hold(
         self,
         call: Call,
-        answer: Answer = Answer.ACCEPT,
         *,
+        answer: Answer = Answer.ACCEPT,
         suppress_cancel: bool = False,
     ) -> Hold:
         """Decide the next ``call`` as ``answer`` but deliver nothing until released."""
-        self.holds[call] = hold = Hold(answer, suppress_cancel=suppress_cancel)
+        self.holds[call] = hold = Hold(answer=answer, suppress_cancel=suppress_cancel)
         return hold
 
     def stop(self) -> None:
@@ -197,7 +223,7 @@ class Platform:
         self.journal.append(str(call))
         held = self.holds.pop(call, None)
         answer = held.answer if held else self.scripts.get(call, Answer.ACCEPT)
-        response = self.decide(request, answer)
+        response = self.decide(request, call=call, answer=answer)
         if held is not None:
             held.entered.set()
             await held.wait()
@@ -205,13 +231,15 @@ class Platform:
             raise httpx.ReadTimeout("the response never arrived", request=request)
         return response
 
-    def decide(self, request: httpx.Request, answer: Answer) -> httpx.Response:
+    def decide(
+        self, request: httpx.Request, *, call: Call, answer: Answer
+    ) -> httpx.Response:
         match answer:
             case Answer.ACCEPT | Answer.LOST:
                 return self.peer.answer(request)
             case Answer.REFUSE:
                 return httpx.Response(422, json=REFUSAL)
-            case Answer.STOP if request.url.path.endswith("/activity"):
+            case Answer.STOP if call.endpoint is Endpoint.WORKING:
                 return httpx.Response(200, json={"data": {"working": False}})
             case Answer.STOP:
                 return httpx.Response(204)
@@ -259,9 +287,9 @@ class Case:
         return self.name
 
 
-OFF = Case("off-singleton", batching=False)
-ON = Case("on-singleton", batching=True)
-BATCH = Case("on-batch", batching=True, size=3)
+OFF = Case(name="off-singleton", batching=False)
+ON = Case(name="on-singleton", batching=True)
+BATCH = Case(name="on-batch", batching=True, size=3)
 FIRST, MIDDLE, LAST = (
     replace(BATCH, name=f"batch-{where}", at=at)
     for at, where in enumerate(("first", "middle", "last"))
@@ -289,20 +317,17 @@ class Window:
 
 
 REFRESH = Window(
-    "context-refresh",
-    Call(Endpoint.CONTEXT),
-    {"enable_context_hydration": True, "context_cache_ttl_seconds": 0},
+    name="context-refresh",
+    call=Call.context(),
+    settings={"enable_context_hydration": True, "context_cache_ttl_seconds": 0},
     warm=True,
 )
 REPORT = Window(
-    "activity-report", Call(Endpoint.WORKING), {"enable_working_state": True}
+    name="activity-report",
+    call=Call.working(),
+    settings={"enable_working_state": True},
 )
 WINDOWS = (REFRESH, REPORT)
-
-
-def processed(ids: Iterable[str]) -> dict[str, str | None]:
-    """The delivery states of originals the platform has settled."""
-    return dict.fromkeys(ids, DeliveryStatus.PROCESSED)
 
 
 @dataclass(frozen=True)
@@ -339,9 +364,9 @@ class Observed:
     ) -> Observed:
         """Every original processed by one write each, after the given model runs."""
         return cls(
-            statuses=processed(ids),
+            statuses=all_processed(ids),
             runs=[ids] if runs is None else runs,
-            terminal_writes=writes(Endpoint.PROCESSED, ids),
+            terminal_writes=processed_writes(ids),
         )
 
 
@@ -381,7 +406,7 @@ class Room:
 
     async def settled(self) -> None:
         """Wait until the platform has every original processed."""
-        await self.until(lambda: self.platform.statuses == processed(self.case.ids))
+        await self.until(lambda: self.platform.statuses == all_processed(self.case.ids))
 
     def interrupt(self) -> None:
         self.ctx.interrupt()
@@ -399,7 +424,11 @@ class Room:
         """Replace the room's execution, keeping the runtime's claim registry."""
         await self.ctx.stop()
         self.ctx = build_context(
-            self.case, self.link, self.model, self.registry, self.settings
+            self.case,
+            link=self.link,
+            model=self.model,
+            registry=self.registry,
+            settings=self.settings,
         )
         await self.ctx.start()
 
@@ -453,6 +482,7 @@ class Stop(StrEnum):
 
 def build_context(
     case: Case,
+    *,
     link: BandLink,
     model: Model,
     registry: ClaimRegistry,
@@ -471,10 +501,10 @@ def build_context(
 
 @contextlib.asynccontextmanager
 async def started_room(
-    platform: Platform,
-    model: Model,
     case: Case,
     *,
+    platform: Platform,
+    model: Model,
     warm: bool = False,
     **settings: Any,
 ) -> AsyncIterator[Room]:
@@ -490,11 +520,21 @@ async def started_room(
     async with rest_client_over(platform.answer) as rest:
         link = BandLink(agent_id=AGENT_ID, api_key="test-key")
         link.rest = rest
-        ctx = build_context(case, link, model, registry, settings)
+        ctx = build_context(
+            case, link=link, model=model, registry=registry, settings=settings
+        )
         if warm:
             await ctx.hydrate()
         await ctx.start()
-        room = Room(case, platform, model, ctx, registry, link, settings)
+        room = Room(
+            case=case,
+            platform=platform,
+            model=model,
+            ctx=ctx,
+            registry=registry,
+            link=link,
+            settings=settings,
+        )
         try:
             yield room
         finally:

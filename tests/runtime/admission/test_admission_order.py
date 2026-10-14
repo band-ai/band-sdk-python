@@ -7,12 +7,12 @@ import pytest
 from tests.runtime.admission.barriers import (
     SHAPES,
     Case,
-    Endpoint,
     Model,
     Platform,
+    processed_writes,
+    processing_writes,
     run,
     started_room,
-    writes,
 )
 
 
@@ -21,12 +21,12 @@ class TestAdmissionOrder:
     async def test_the_model_runs_only_after_the_last_original_is_admitted(
         self, case: Case, platform: Platform, model: Model, journal: list[str]
     ) -> None:
-        async with started_room(platform, model, case) as room:
+        async with started_room(case, platform=platform, model=model) as room:
             await room.arrive()
             await room.settled()
 
         assert journal == [
-            *writes(Endpoint.PROCESSING, case.ids),
+            *processing_writes(case.ids),
             run(case.ids),
-            *writes(Endpoint.PROCESSED, case.ids),
+            *processed_writes(case.ids),
         ]
