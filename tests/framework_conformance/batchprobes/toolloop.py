@@ -7,8 +7,9 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
-import pytest
+from anthropic.types import Message, TextBlock, Usage
 
+from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AgentInput
 from tests.framework_conformance.batchprobes import BatchProbe, deliver
 
@@ -24,17 +25,6 @@ def flattened(messages: list[dict[str, Any]]) -> str:
 
 
 async def run_anthropic(inp: AgentInput, final_text: str) -> str:
-    pytest.importorskip("anthropic")
-    from anthropic.types import (  # noqa: PLC0415 -- anthropic extra, absent from some lane venvs
-        Message,
-        TextBlock,
-        Usage,
-    )
-
-    from band.adapters.anthropic import (  # noqa: PLC0415 -- anthropic extra, absent from some lane venvs
-        AnthropicAdapter,
-    )
-
     reply = Message(
         id="msg",
         type="message",

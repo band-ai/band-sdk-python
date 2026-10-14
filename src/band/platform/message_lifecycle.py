@@ -121,6 +121,10 @@ class MessageLifecycle:
         # Debounces activity-report warnings: keep-alive runs every few
         # seconds, so a down endpoint would otherwise flood the log.
         self._activity_report_failing = False
+        # (message_id, action) of terminal writes whose last attempt went
+        # unconfirmed. Every recovery entrance retries a pending intent per
+        # arrival, so only the first unconfirmed result per intent warns.
+        self._unconfirmed_writes: set[tuple[str, str]] = set()
 
     async def mark_processing(
         self, rest: AsyncRestClient, room_id: str, message_id: str
@@ -182,7 +186,12 @@ class MessageLifecycle:
     ) -> SettlementResult:
         """Write the failed mark once and report what it established."""
         error = error.strip() or "Unknown error"
-        logger.warning("Marking message %s as failed: %s", message_id, error)
+        logger.log(
+            self._write_level(message_id, "failed"),
+            "Marking message %s as failed: %s",
+            message_id,
+            error,
+        )
         return await self._settle(
             rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
                 chat_id=room_id,
@@ -209,11 +218,35 @@ class MessageLifecycle:
             raise
         except Exception as e:  # noqa: BLE001 -- a failed write is an outcome, never a crash of the turn/link
             result = _failure_result(e)
-            logger.warning(
-                "Marking message %s as %s ended %s: %s", message_id, action, result, e
-            )
+            self._record_failed_write(message_id, action, result, e)
             return result
+        self._unconfirmed_writes.discard((message_id, action))
         return SettlementResult.ACCEPTED
+
+    def _record_failed_write(
+        self, message_id: str, action: str, result: SettlementResult, error: Exception
+    ) -> None:
+        unconfirmed = result is SettlementResult.UNCONFIRMED
+        level = (
+            self._write_level(message_id, action) if unconfirmed else logging.WARNING
+        )
+        logger.log(
+            level,
+            "Marking message %s as %s ended %s: %s",
+            message_id,
+            action,
+            result,
+            error,
+        )
+        if unconfirmed:
+            self._unconfirmed_writes.add((message_id, action))
+        else:
+            self._unconfirmed_writes.discard((message_id, action))
+
+    def _write_level(self, message_id: str, action: str) -> int:
+        """WARNING for an intent's first unconfirmed write, DEBUG for its repeats."""
+        repeats = (message_id, action) in self._unconfirmed_writes
+        return logging.DEBUG if repeats else logging.WARNING
 
     async def report_activity(
         self,

@@ -100,7 +100,12 @@ one, so a singleton consumer keeps working:
 ```python
 from datetime import UTC, datetime
 
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    HistoryProvider,
+    PlatformMessage,
+    distinct_sender_ids,
+)
 from band.testing.fake_tools import FakeAgentTools
 
 
@@ -136,7 +141,7 @@ batch = agent_input(
 )
 assert [m.id for m in batch.messages] == ["m1", "m2", "m3"]  # arrival order
 assert batch.msg is batch.messages[0]  # the real first original, not a composite
-assert batch.sender_ids == ("alice", "bob")  # each distinct sender once
+assert distinct_sender_ids(batch.messages) == ("alice", "bob")  # each sender once
 
 single = AgentInput(
     msg=message("m1", "alice"),
@@ -238,5 +243,7 @@ Each original keeps its own sender ID, name and type, and the model input
 labels each current input with them. An automatic reply or notice (one the SDK
 sends, not one the model addresses itself) mentions each distinct original
 sender once, in first-appearance order: a batch from A, B, A addresses A and B.
+Adapters read that audience with `distinct_sender_ids(messages)` from
+`band.core.types`.
 Mentions the model chooses are never rewritten. Approval authorization comes
 from the adapter's configured rules, never from the union of message senders.

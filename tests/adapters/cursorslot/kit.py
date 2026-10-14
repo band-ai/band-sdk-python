@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Awaitable, Callable, Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,6 +14,8 @@ from band.adapters.cursor_acp import CursorACPAdapter, CursorTurn
 from band.client.streaming import ControlMode
 from band.core.exceptions import InputNotAccepted
 from band.integrations.acp.client_runtime import ACPRuntime
+from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
+from tests.adapters.test_cursor_acp_adapter import decision_token as prompt_token
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate, allow_or_reject
 from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
@@ -185,9 +186,17 @@ def line_up(session: AcpSession, *rooms: str, generation: int = 1) -> None:
 
 def decision_token(session: AcpSession) -> str:
     """The token in the decision prompt the last delivery posted."""
-    match = re.search(r"`/cursor \w+ (\S+)", session.last_reply.texts[-1])
-    assert match is not None
-    return match[1]
+    return prompt_token(session.last_reply.texts[-1])
+
+
+def select_command(token: str, option: str = "allow-1") -> str:
+    """The room command that picks ``option`` for the decision ``token``."""
+    return f"{ROOM_COMMAND} {CursorCommandWord.SELECT} {token} {option}"
+
+
+def deny_command(token: str) -> str:
+    """The room command that denies the decision ``token``."""
+    return f"{ROOM_COMMAND} {CursorCommandWord.DENY} {token}"
 
 
 def hold_cancellation(session: AcpSession) -> Gate:

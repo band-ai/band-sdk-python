@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 
 from band.core.types import PlatformMessage
 from band.runtime.formatters import CURRENT_INPUTS_HEADING, format_current_inputs
-from tests.framework_conformance.batchprobes import current_records
+from tests.runtime.currentrecords import current_records
+from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
 
 def original(
@@ -19,7 +20,7 @@ def original(
 ) -> PlatformMessage:
     return PlatformMessage(
         id=message_id,
-        room_id="room-1",
+        room_id=ROOM_ID,
         content=content,
         sender_id=sender_id,
         sender_type="User",
@@ -63,7 +64,7 @@ class TestCurrentInputs:
                     sender_id="u-1",
                     sender_name="Sam",
                     content="hi",
-                    metadata={"delivery_status": {"agent-1": {"status": "pending"}}},
+                    metadata={"delivery_status": {AGENT_ID: {"status": "pending"}}},
                 )
             ]
         )

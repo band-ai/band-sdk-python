@@ -385,15 +385,18 @@ Singleton and batched attempts share one admission order, in `ExecutionContext`:
 
 1. Claim every original's ID locally. A conflict releases this attempt's claims
    and defers it.
-2. Mark each original processing, in order, under one control revision, and
+2. Charge one execution attempt per original (one past its retry limit is
+   skipped) and hydrate context if the room has none yet. An original the
+   platform already reports processed is completed and dropped.
+3. Mark each original processing, in order, under one control revision, and
    recheck ownership after every await. Any refusal, error, cancellation or newer
-   revision defers the whole selection: no model call, no terminal write, no
-   execution-attempt charge.
-3. Only after the last acceptance, synchronously mark the scope admitted, then
-   charge the attempt, hydrate context and invoke the handler once.
+   revision defers the whole selection and refunds the charge: no model call, no
+   terminal write, no attempt left charged.
+4. Only after the last acceptance, synchronously mark the scope admitted, refresh
+   context if it expired and invoke the handler once.
 
-INTERRUPT before step 3 consumes nothing, even if the platform already accepted
-a delayed mark; a late response cannot revive that scope. After step 3 an
+INTERRUPT before step 4 consumes nothing, even if the platform already accepted
+a delayed mark; a late response cannot revive that scope. After step 4 an
 accepted INTERRUPT consumes every original, even before the handler starts.
 STOP and shutdown leave originals recoverable at every point.
 

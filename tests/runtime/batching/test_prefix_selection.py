@@ -20,10 +20,20 @@ from tests.runtime.batching.kit import EPOCH
 
 
 def candidate(
-    message_id: str, second: int, disposition: Disposition = Disposition.RUNNABLE
+    message_id: str,
+    second: int,
+    disposition: Disposition = Disposition.RUNNABLE,
+    *,
+    content: str = "",
+    naive: bool = False,
 ) -> Candidate:
+    """An original ``second`` seconds after the epoch; ``naive`` drops the UTC offset."""
     moment = EPOCH + timedelta(seconds=second)
-    event = make_message_event(msg_id=message_id, inserted_at=moment.isoformat())
+    if naive:
+        moment = moment.replace(tzinfo=None)
+    event = make_message_event(
+        msg_id=message_id, content=content or message_id, inserted_at=moment.isoformat()
+    )
     return Candidate(MessageKey.of_event(event), event, disposition)
 
 
@@ -31,8 +41,31 @@ def ids(selection: Selection) -> list[str]:
     return [member.message_id for member in selection.members]
 
 
+def contents(selection: Selection) -> list[str]:
+    return [member.event.payload.content for member in selection.members]
+
+
 def outcome(selection: Selection) -> tuple[list[str], Stop]:
     return ids(selection), selection.stop
+
+
+def omitted_original_outcomes(
+    rest: Sequence[Candidate], omitted: Candidate
+) -> list[tuple[list[str], Stop]]:
+    """Selections made before and after the list's first original has run, for a
+    delivered original the list omits."""
+    return [
+        outcome(
+            select_prefix(
+                listed,
+                [omitted],
+                cap=10,
+                page_reaches=rest[-1].key,
+                exhausted=False,
+            )
+        )
+        for listed in (rest, rest[1:])
+    ]
 
 
 def select_at_end(
@@ -82,34 +115,54 @@ class TestPrefixSelection:
 
         assert outcome(select_at_end(rest)) == (["a"], Stop.HELD)
 
-    def test_an_original_in_both_sources_counts_once_and_keeps_its_payload(
+    def test_an_original_in_both_sources_counts_once_and_runs_as_delivered(
         self,
     ) -> None:
-        from_rest = candidate("a", 1)
+        listed = candidate("a", 1, content="as the list returned it")
+        delivered = candidate("a", 1, content="as the WebSocket delivered it")
+
+        selection = select_at_end([listed], [delivered])
+
+        assert (ids(selection), contents(selection)) == (
+            ["a"],
+            ["as the WebSocket delivered it"],
+        )
+
+    def test_the_lists_failed_status_outranks_the_delivered_original_without_one(
+        self,
+    ) -> None:
+        listed_failed = candidate("a", 1, Disposition.SKIP)
         delivered = candidate("a", 1)
 
-        selection = select_at_end([from_rest], [delivered])
+        selection = select_at_end([listed_failed, candidate("b", 2)], [delivered])
 
-        assert [m.event for m in selection.members] == [delivered.event]
+        assert ids(selection) == ["b"]
 
     def test_a_retained_original_the_list_omits_runs_alone_after_earlier_work(
         self,
     ) -> None:
         rest = [candidate("a", 1), candidate("c", 3)]
-        thread_reply = candidate("b", 2)
 
-        first = select_prefix(
-            rest, [thread_reply], cap=10, page_reaches=rest[-1].key, exhausted=False
-        )
-        second = select_prefix(
-            [rest[1]],
-            [thread_reply],
-            cap=10,
-            page_reaches=rest[-1].key,
-            exhausted=False,
-        )
+        assert omitted_original_outcomes(rest, candidate("b", 2)) == [
+            (["a"], Stop.BOUNDARY),
+            (["b"], Stop.BOUNDARY),
+        ]
 
-        assert [outcome(s) for s in (first, second)] == [
+    @pytest.mark.parametrize(
+        ("rest_naive", "delivered_naive"),
+        [(True, False), (False, True)],
+        ids=["naive-list", "naive-websocket"],
+    )
+    def test_a_naive_timestamp_is_placed_against_an_aware_one_as_utc(
+        self, rest_naive: bool, delivered_naive: bool
+    ) -> None:
+        rest = [
+            candidate("a", 1, naive=rest_naive),
+            candidate("c", 3, naive=rest_naive),
+        ]
+        omitted = candidate("b", 2, naive=delivered_naive)
+
+        assert omitted_original_outcomes(rest, omitted) == [
             (["a"], Stop.BOUNDARY),
             (["b"], Stop.BOUNDARY),
         ]

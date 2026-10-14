@@ -551,11 +551,6 @@ class AgentInput:
         if not self.messages:
             object.__setattr__(self, "messages", (self.msg,))
 
-    @property
-    def sender_ids(self) -> tuple[str, ...]:
-        """The distinct nonempty sender IDs of the originals, in arrival order."""
-        return distinct_sender_ids(self.messages)
-
 
 def distinct_sender_ids(messages: Iterable[PlatformMessage]) -> tuple[str, ...]:
     """Each nonempty sender ID once, in first-appearance order.
