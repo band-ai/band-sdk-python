@@ -16,7 +16,7 @@ already does it (or nearly does):
 - **A scenario like yours may already exist.** `grep -rl` the `smoke/` tree for
   the behaviour; if a test covers it for one adapter or a hardcoded subset,
   *parametrize/extend it* (or flip a registry selector — `runs_tool_loop=True`,
-  `supports={Capability.MEMORY}`) instead of adding a parallel test. A matrix test
+  `batch_input=True`, `supports={Capability.MEMORY}`) instead of adding a parallel test. A matrix test
   supersedes a hardcoded-list one; delete what it subsumes rather than stacking.
 - **Custom tools / driving instructions already exist** in
   `smoke/samples/sample_tools.py` (`LOOKUP_TOOL`, `WEATHER_TOOL`, `EXECUTION_REPORTING`)
@@ -102,7 +102,7 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 | several named adapters in one room | `@with_adapters(Adapter.LANGGRAPH, Adapter.ANTHROPIC)` | `agents` — list; `a, b = agents` |
 | two of the **same** adapter | `@with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
 | the **same scenario across every adapter** | `@per_adapter()` (the full matrix, explicitly) | `agent` (id via `agent.adapter_id`) |
-| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "reason")] / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `agent` |
+| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "reason")] / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True / batch_input=True)` | `agent` |
 | to **drive the lifecycle yourself** (build-only, reboot, rehydration) | `@per_adapter()` | `cell` — an `AdapterCell` (see **AdapterCell** below) |
 | a **fanned cell A + one different-framework peer B** (cross-framework) | `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "it is the peer")], peer=Adapter.X)` | `cell` (A) + `peer` (B, an `AdapterCell` you drive); peer deps fold into the cell's `@requires` |
 | custom tools (any tool-capable framework) | `@with_adapters(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
@@ -152,6 +152,46 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
   `wait_for_processed` durable read).
 - **Inspect (read-after-barrier):** `capture.tool_calls()`, `capture.thoughts()/errors()/tasks()`,
   `capture.memory(agent)` — see the inspection sections below.
+
+### Observing adapter turns
+
+Reply counts cannot show how many model turns ran or which messages shared one. For
+that, pass an `InvocationObserver` (the `invocation_observer` fixture) to the cell:
+it wraps `on_turn` of the real adapter the cell builds — the one model-input builder
+every singleton and batch dispatch reaches — records the original message ids each
+turn was handed, and calls the real method, so admission, judgement and settlement run
+as in production. A `Hold` parks one turn at its entry (its originals are already
+admitted), so everything sent meanwhile queues behind it with no sleeps:
+
+```python notest
+# batch_input=True: every adapter whose class declares supports_batch_input
+@per_adapter(batch_input=True)
+async def test_queued_messages(
+    cell, resource_manager, user_ops, reply_capture, invocation_observer
+):
+    async with cell.running(
+        session_config=SessionConfig(consume_all_queued=True),
+        observer=invocation_observer,
+    ) as agent:
+        room_id = await resource_manager.provision_room(participants=[agent.id])
+        async with reply_capture(room_id) as capture:
+            send = functools.partial(
+                user_ops.send_message,
+                room_id,
+                mention_id=agent.id,
+                mention_name=agent.name,
+            )
+            hold = invocation_observer.hold_next(room_id)
+            first = await send("first")
+            await hold.entered()  # the first turn is open
+            queued = [await send("a"), await send("b"), await send("c")]
+            hold.release()
+            await capture.wait_for_processed(queued[-1], agent.id)
+    assert invocation_observer.partition(room_id) == [(first,), tuple(queued)]
+```
+
+`smoke/samples/queuedroom.py` wraps this flow for the queued-message smokes. Parked turns
+are freed when the cell's run block exits, so a failing test never waits on its own hold.
 
 ## Rules (clean, lean, reuse — no reinvention)
 
@@ -219,13 +259,14 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/builders.py` | the per-framework `@adapter` builder functions (one `_build_*` each); imported by `adapters.py` for the registration side-effect — no public API. Add a new adapter's builder here (see `ADDING_AN_ADAPTER.md`) |
 | `toolkit/ci_lanes.py` | the CI-lane partition + workflow-drift guards: `CILane`, `ci_lanes`, `hosting_lanes` (which lanes' `uv` extra can host a framework), `assert_every_adapter_has_a_ci_home`, `assert_workflow_lane_*` |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
-| `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
+| `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop/batch_input, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
 | `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_adapters(..., **SHAPE)` / `@per_adapter(..., **SHAPE)`, and the `*_instruction(...)` builders |
 | `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target) |
 | `agent_wiring.py` | `assert_agent_fixtures_wired` — the collection-time guard that rejects mis-wired decorator/fixture pairings (see **Wiring fences**) |
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events, `lookup_peers` — the invitable roster) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_reply` (reply barrier), `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
+| `toolkit/invocations.py` | `InvocationObserver`: records each adapter turn (`on_turn` of the real adapter a cell built) with the original message ids it was handed, per room, and parks chosen turns (`hold_next`) so messages queue behind them — see **Observing adapter turns** |
 | `toolkit/deps.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
@@ -237,7 +278,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
 | `smoke/samples/` | shared driving glue (not tests): `sample_agents.py`, `sample_tools.py` |
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
-| `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_duplicate_start.py` (the platform refuses a second start of a live agent id under `ConflictPolicy.REJECT`), `test_agent_scenarios.py`, `test_approvals.py` (chat-mediated approve/decline/timeout for every coding agent; builds via `smoke/samples/approvals.py`) |
+| `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_duplicate_start.py` (the platform refuses a second start of a live agent id under `ConflictPolicy.REJECT`), `test_agent_scenarios.py`, `test_approvals.py` (chat-mediated approve/decline/timeout for every coding agent; builds via `smoke/samples/approvals.py`), `test_queued_messages.py` / `test_queued_rooms.py` (what an invocation is handed when messages queue behind a busy turn, `consume_all_queued` on and off; every adapter declaring `supports_batch_input`; drives `smoke/samples/queuedroom.py`) |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
 | `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
@@ -257,7 +298,7 @@ fixture-closure / platform-touching cases under `guards/`.
 ## Fixtures (from `conftest.py`)
 
 `baseline_settings`, `user_ops`, `second_user_ops`, `resource_manager`,
-`reply_capture`, `judge`, `agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
+`reply_capture`, `invocation_observer`, `judge`, `agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
 
 - `second_user_ops` drives a second human (`BAND_API_KEY_USER_2`), for scenarios
   where who sends a message matters (e.g. an approver allowlist). It fails, never
@@ -299,6 +340,10 @@ defaults (a method argument overrides).
 | `await cell.provision(label=…)` | registers a tracked+reaped identity (`ProvisionedAgent`) | yes | no |
 | `async with cell.run_as(identity)` | runs a *fresh* adapter under an existing identity | no | yes |
 | `async with cell.running(label=…)` | provision **and** run in one step (what `agent` uses) | yes | yes |
+
+`run_as` / `running` also take `session_config=` (the agent's execution policy, e.g.
+`SessionConfig(consume_all_queued=True)`) and `observer=` (an `InvocationObserver`; see
+**Observing adapter turns**).
 
 Build-only (cheap, sync test):
 
@@ -400,7 +445,7 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Run a specific named agent | `@with_adapters(Adapter.ANTHROPIC)` → `agent` (or `agents` for several); auto-gates + runs + reaps |
 | Run a standard prompt/features shape | `@with_adapters(Adapter.X, **TOOL_AGENT)` / `**MEMORY_AGENT` — don't re-spell `prompt=`/`features=` |
 | Run the same scenario across every adapter | `@per_adapter()` → `agent` (id via `agent.adapter_id`) |
-| Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
+| Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, runs_tool_loop=True for the custom-tool subgroup, or batch_input=True for the adapters declaring batch support)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
 | Drive the agent lifecycle myself (build-only / reboot / rehydration) | `@per_adapter()` → `cell` (`cell.build()` / `cell.provision()` / `cell.run_as()` — see **AdapterCell**) |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
@@ -412,6 +457,9 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Wait for a specific delivery state (e.g. a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
+| Count an agent's turns / see which original messages each was handed | `cell.running(observer=invocation_observer)`, then `invocation_observer.partition(room_id)` — one tuple of message ids per turn |
+| Make messages queue behind a busy turn, deterministically | `hold = invocation_observer.hold_next(room_id)`, send, `await hold.entered()`, send more, `hold.release()` |
+| Run the agent with an execution policy (e.g. `consume_all_queued`) | `cell.running(session_config=SessionConfig(...))` / `cell.run_as(identity, session_config=...)` |
 | Scope a read to a later turn (reused capture) | `mark = capture.messages.snapshot()` before sending; `capture.messages.since(mark)` after the barrier |
 | See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.TOOL_CALLS`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive, subset args) |
