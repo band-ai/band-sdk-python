@@ -22,7 +22,11 @@ from band.core.protocols import FrameworkAdapter
 from band.core.retention import Residency, RetainedRoom
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from tests.adapters.hold import Hold
-from tests.adapters.roompeer import STARTING_MARKER
+from tests.adapters.roompeer import (
+    FAIL_STARTUP_ARG,
+    HOLD_STARTUP_ARG,
+    STARTING_MARKER,
+)
 from tests.adapters.waiting import until
 from tests.framework_conformance.turnprobes import DispatchingFakeTools
 
@@ -134,9 +138,9 @@ class RetentionHost:
     def peer_arguments(self) -> tuple[str, ...]:
         """Flags that let ``fail_startup``/``hold_startup`` steer the peer."""
         return (
-            "--fail-startup",
+            FAIL_STARTUP_ARG,
             str(self.fail_startup),
-            "--hold-startup",
+            HOLD_STARTUP_ARG,
             str(self.hold_startup),
         )
 

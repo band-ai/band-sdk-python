@@ -8,7 +8,7 @@ import pytest
 
 from band.core.retention import Residency
 from tests.adapters.lifecycle.kit import RetentionHost, workspace_still_claimed
-from tests.adapters.roompeer import PeerCommand, write_instruction
+from tests.adapters.roompeer import PeerCommand, read_reply, write_instruction
 
 
 class TestProcessLoss:
@@ -29,14 +29,14 @@ class TestProcessLoss:
             await host.send("room-a", loss)
         await host.settled("room-a")
         assert host.exited == [True]
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("alpha")]
         assert host.exited == [True, False]
 
         new_directory = Path(host.workspace("room-a"))
         new_directory.mkdir(parents=True)
         (new_directory / "notes.txt").write_text("bravo")
         await host.leave("room-a")
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: bravo"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("bravo")]
         assert (original / "notes.txt").read_text() == "alpha"
 
     async def test_transport_loss_with_failed_cleanup_can_recover_safely(
@@ -56,6 +56,6 @@ class TestProcessLoss:
         assert (len(host.children), host.overlaps) == (1, 0)
 
         host.children[0].refuse_close = False
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("alpha")]
         assert host.exited == [True, False]
         assert host.overlaps == 0

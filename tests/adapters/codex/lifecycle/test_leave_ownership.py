@@ -14,6 +14,7 @@ from tests.adapters.roompeer import (
     CLEANUP_FAILURE,
     PeerCommand,
     memo_instruction,
+    read_reply,
     write_instruction,
 )
 from tests.framework_conformance.turnprobes import DispatchingFakeTools
@@ -40,7 +41,7 @@ class TestLifecycleLeave:
         assert host.native_id("room-a") is None
         assert await host.send("room-a", PeerCommand.RECALL) == ["Recalled: None"]
         assert host.native_id("room-a") not in (None, left_thread)
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("alpha")]
         with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
         assert host.exited == [True, False]

@@ -6,7 +6,7 @@ import asyncio
 
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import RetentionHost
-from tests.adapters.roompeer import PeerCommand, write_instruction
+from tests.adapters.roompeer import PeerCommand, read_reply, write_instruction
 
 
 class TestRoomIndependence:
@@ -26,6 +26,6 @@ class TestRoomIndependence:
         closing = host.children[0].closing = Hold()
         leaving = asyncio.create_task(host.leave("room-a"))
         async with closing:
-            assert await host.send("room-b", PeerCommand.READ) == ["Read: bravo"]
+            assert await host.send("room-b", PeerCommand.READ) == [read_reply("bravo")]
         await leaving
         assert host.exited == [True, False]

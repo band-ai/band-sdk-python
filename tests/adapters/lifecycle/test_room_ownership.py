@@ -17,6 +17,7 @@ from tests.adapters.lifecycle.kit import (
 from tests.adapters.roompeer import (
     CLEANUP_FAILURE,
     PeerCommand,
+    read_reply,
     write_instruction,
 )
 from tests.adapters.waiting import spin
@@ -33,7 +34,7 @@ class TestRoomOwnership:
         for room in ("room-a", "room-b", "room-c"):
             assert await host.send(room, write_instruction(room)) == [room]
         assert host.exited == [False, False, False]
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: room-a"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("room-a")]
         assert host.exited == [False, False, False]
         await host.shutdown()
         assert host.exited == [True, True, True]
@@ -84,7 +85,7 @@ class TestRoomOwnership:
             await host.leave("room-a")
         host.children[0].refuse_close = False
         await host.leave("room-a")
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("alpha")]
         assert host.exited == [True, False]
         with workspace_still_claimed():
             await host.send("room-b", write_instruction("bravo"))
@@ -164,7 +165,7 @@ class TestRoomOwnership:
         host.children[0].refuse_close = False
         await host.adapter.on_started("Peer", "Restarting after failed cleanup")
         assert host.exited == [True, True]
-        assert await host.send("room-a", PeerCommand.READ) == ["Read: alpha"]
+        assert await host.send("room-a", PeerCommand.READ) == [read_reply("alpha")]
         assert host.overlaps == 0
 
     async def test_failed_startup_cleanup_blocks_replacement_until_retry(

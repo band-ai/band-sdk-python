@@ -34,6 +34,9 @@ NO_ROLLOUT = "no rollout found for thread id"
 CODEX_HOME = "codex-home"
 # How often a held start checks whether its hold file is gone.
 HOLD_POLL_S = 0.01
+# Flags that fail or hold a peer's start while their file exists.
+FAIL_STARTUP_ARG = "--fail-startup"
+HOLD_STARTUP_ARG = "--hold-startup"
 
 
 class PeerCommand(StrEnum):
@@ -65,8 +68,13 @@ def perform(tool_name: str, arguments: dict[str, str]) -> str:
     return path.read_text()
 
 
+def read_reply(value: str) -> str:
+    """The peer's reply to a READ that found ``value``."""
+    return f"Read: {value}"
+
+
 def reply_text(tool_name: str, value: str) -> str:
-    return f"Read: {value}" if tool_name == "Read" else value
+    return read_reply(value) if tool_name == "Read" else value
 
 
 async def reply(url: str, content: str) -> None:
@@ -283,8 +291,8 @@ class AppServer:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fail-startup", type=Path)
-    parser.add_argument("--hold-startup", type=Path)
+    parser.add_argument(FAIL_STARTUP_ARG, type=Path)
+    parser.add_argument(HOLD_STARTUP_ARG, type=Path)
     parser.add_argument("--stay", action="store_true")
     parser.add_argument("--band-url")
     parser.add_argument("--home", type=Path, default=Path(CODEX_HOME))

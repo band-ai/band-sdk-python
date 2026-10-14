@@ -16,7 +16,9 @@ from acp.schema import InitializeResponse
 from band.runtime.tools import BandTool
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import (
+    FAIL_STARTUP_ARG,
     HOLD_POLL_S,
+    HOLD_STARTUP_ARG,
     STARTUP_FAILURE,
     PeerCommand,
     begin_startup,
@@ -74,8 +76,8 @@ class WorkspacePeer(FakeACPAgent):
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fail-startup", type=Path)
-    parser.add_argument("--hold-startup", type=Path)
+    parser.add_argument(FAIL_STARTUP_ARG, type=Path)
+    parser.add_argument(HOLD_STARTUP_ARG, type=Path)
     # OMP passes its room's workspace as a flag instead of the launch cwd.
     parser.add_argument("--cwd")
     # Each profile adds its own launch flags and subcommand.
