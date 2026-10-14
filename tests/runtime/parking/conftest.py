@@ -29,20 +29,20 @@ def unjittered_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(random, "uniform", lambda lower, upper: upper)
 
 
-@pytest.fixture(params=CELLS, ids=lambda cell: cell.id)
-def cell(request: pytest.FixtureRequest) -> Cell:
+@pytest.fixture(params=CELLS, ids=lambda scenario: scenario.id)
+def scenario(request: pytest.FixtureRequest) -> Cell:
     return request.param
 
 
 @pytest.fixture
-def room_peer(cell: Cell) -> RoomPeer:
+def room_peer(scenario: Cell) -> RoomPeer:
     room_peer = RoomPeer()
-    for message_id in cell.mode.queued:
+    for message_id in scenario.mode.queued:
         room_peer.post(message_id)
     return room_peer
 
 
 @pytest.fixture
-async def room(room_peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
-    async with harness_over(room_peer, cell) as harness:
+async def room(room_peer: RoomPeer, scenario: Cell) -> AsyncIterator[Harness]:
+    async with harness_over(room_peer, scenario) as harness:
         yield harness

@@ -22,7 +22,7 @@ PASSES_AT_START = 2
 @pytest.mark.looptime
 class TestParkedHead:
     @pytest.mark.parametrize(
-        "cell", [OFF_PROCESSED], ids=[OFF_PROCESSED.id], indirect=True
+        "scenario", [OFF_PROCESSED], ids=[OFF_PROCESSED.id], indirect=True
     )
     @pytest.mark.parametrize("refusal", [Refusal.REJECTED, Refusal.ACCESS_LOST])
     async def test_the_head_is_not_reread_at_one_instant(

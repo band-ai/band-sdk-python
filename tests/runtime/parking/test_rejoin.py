@@ -19,39 +19,39 @@ from tests.runtime.parking.harness import (
 class TestRejoin:
     @pytest.mark.parametrize("refusal", list(Refusal))
     async def test_a_rejoin_retries_the_terminal_write_alone_and_a_refusal_keeps_it_parked(
-        self, cell: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
+        self, scenario: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        room_peer.refuse(refusal, *cell.queued)
+        room_peer.refuse(refusal, *scenario.queued)
         await room.join()
-        await room.attempted_terminal_writes(len(cell.queued))
+        await room.attempted_terminal_writes(len(scenario.queued))
 
         await room.leave()
         await room.join()
-        await room.attempted_terminal_writes(2 * len(cell.queued))
+        await room.attempted_terminal_writes(2 * len(scenario.queued))
         await room.elapse(1)
 
         assert room.outcome() == replace(
-            cell.after_first_attempt(parked=refusal.parked),
-            terminal_writes=cell.writes() * 2,
+            scenario.after_first_attempt(parked=refusal.parked),
+            terminal_writes=scenario.writes() * 2,
         )
 
     @pytest.mark.parametrize("refusal", RELENTING_REFUSALS)
     async def test_only_an_accepted_retry_completes_the_intent(
-        self, cell: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
+        self, scenario: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        room_peer.refuse(refusal, *cell.queued)
+        room_peer.refuse(refusal, *scenario.queued)
         await room.join()
-        await room.attempted_terminal_writes(len(cell.queued))
+        await room.attempted_terminal_writes(len(scenario.queued))
         await room.leave()
         await room.join()
-        await room.attempted_terminal_writes(2 * len(cell.queued))
+        await room.attempted_terminal_writes(2 * len(scenario.queued))
         still_refused = room.outcome()
 
         room_peer.relent()
         await room.leave()
         await room.join()
-        await room.attempted_terminal_writes(3 * len(cell.queued))
+        await room.attempted_terminal_writes(3 * len(scenario.queued))
         await room.intents_resolved()
 
         assert still_refused.completed == []
-        assert room.outcome() == cell.after_acceptance(rounds=3)
+        assert room.outcome() == scenario.after_acceptance(rounds=3)

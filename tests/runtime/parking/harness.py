@@ -403,7 +403,7 @@ class RoomPeer(SettlementPeer):
 class Harness:
     """A runtime serving one room against a ``RoomPeer``."""
 
-    room_peer: RoomPeer
+    peer: RoomPeer
     turns: Turns
     runtime: AgentRuntime
     claims: ClaimRegistry | None = None
@@ -482,9 +482,9 @@ class Harness:
 
 
 @asynccontextmanager
-async def harness_over(room_peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
+async def harness_over(peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness]:
     """A runtime for ``cell``; its model fails exactly when the cell's terminal is failed."""
-    async with room_peer.client() as rest:
+    async with peer.client() as rest:
         link = link_over(rest)
         fails = cell.terminal is DeliveryStatus.FAILED
         turns = Turns(fail_on=set(cell.queued) if fails else set())
@@ -502,6 +502,6 @@ async def harness_over(room_peer: RoomPeer, cell: Cell) -> AsyncIterator[Harness
             ),
         )
         try:
-            yield Harness(room_peer, turns, runtime)
+            yield Harness(peer, turns, runtime)
         finally:
             await runtime.stop(timeout=1)

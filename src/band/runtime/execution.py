@@ -745,8 +745,10 @@ class ExecutionContext:
             self._stop_graceful = True
             if timeout is not None and self.is_processing:
                 self._stop_graceful = await self._wait_for_idle(timeout)
-            # A released worker belongs to adapter room cleanup, not shutdown.
-            if (scope := self._running_scope) is not None:
+            # A released worker belongs to adapter room cleanup, not shutdown; an
+            # attempt still being admitted is not released yet and must not run.
+            scope = self.current_scope
+            if scope is not None and not scope.settled:
                 scope.terminate(shutdown=True)
             self._is_running = False
             loop_owner = TurnTask(self._process_loop_task)

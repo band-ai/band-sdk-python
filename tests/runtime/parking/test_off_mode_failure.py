@@ -20,7 +20,7 @@ QUEUED = "m1"
 
 
 @pytest.mark.looptime
-@pytest.mark.parametrize("cell", [OFF_FAILED], ids=[OFF_FAILED.id], indirect=True)
+@pytest.mark.parametrize("scenario", [OFF_FAILED], ids=[OFF_FAILED.id], indirect=True)
 class TestOffModeFailure:
     @pytest.mark.parametrize(
         "reply",

@@ -26,11 +26,11 @@ REPRESENTATIVE_REPLIES = (
 class TestUnconfirmedBackpressure:
     @pytest.mark.parametrize("reply", REPRESENTATIVE_REPLIES)
     async def test_other_input_waits_until_the_retained_intent_is_accepted(
-        self, cell: Cell, room_peer: RoomPeer, room: Harness, reply: str
+        self, scenario: Cell, room_peer: RoomPeer, room: Harness, reply: str
     ) -> None:
-        room_peer.script(UNCONFIRMED_REPLIES[reply], *cell.queued)
+        room_peer.script(UNCONFIRMED_REPLIES[reply], *scenario.queued)
         await room.join()
-        await room.attempted_terminal_writes(len(cell.queued))
+        await room.attempted_terminal_writes(len(scenario.queued))
 
         await room.deliver(room_peer.post(OTHER))
         await room.elapse(RECONCILE_SECONDS - 1)
@@ -40,7 +40,8 @@ class TestUnconfirmedBackpressure:
         await room.elapse(RECONCILE_SECONDS)
         await room.settled(OTHER)
 
-        assert waiting == cell.after_first_attempt(parked=None)
+        assert waiting == scenario.after_first_attempt(parked=None)
         assert (
-            room.outcome().once_each() == cell.after_acceptance().with_other_settled()
+            room.outcome().once_each()
+            == scenario.after_acceptance().with_other_settled()
         )

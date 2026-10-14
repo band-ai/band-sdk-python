@@ -18,16 +18,16 @@ from tests.runtime.parking.harness import (
 class TestRoomRetirement:
     @pytest.mark.parametrize("refusal", NOT_FOUND_REFUSALS)
     async def test_observed_removal_retires_the_room_without_settling_the_intent(
-        self, cell: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
+        self, scenario: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:
-        room_peer.refuse(refusal, *cell.queued)
+        room_peer.refuse(refusal, *scenario.queued)
         await room.join()
-        await room.attempted_terminal_writes(len(cell.queued))
+        await room.attempted_terminal_writes(len(scenario.queued))
 
         await room.leave()
         await room.elapse(2 * RECONCILE_SECONDS + 1)
 
         assert (room.serving, room.outcome()) == (
             False,
-            cell.after_first_attempt(parked=refusal.parked),
+            scenario.after_first_attempt(parked=refusal.parked),
         )
