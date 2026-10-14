@@ -131,8 +131,8 @@ failure fails that room turn visibly instead of falling back.
   an active turn. If Cursor offers no allow-once option, the configured approval
   policy applies instead. Late Band permission requests are refused after the
   turn closes or is interrupted. Cursor omits the session id on its
-  extension notifications, so the adapter holds a turn lock and binds them to that turn's
-  session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
+  extension notifications, so the adapter binds them to the one active turn and runs
+  one provider turn per adapter instance ([provider slot](#cursor-provider-slot)). Decision prompts, timeout notices and `/cursor`
   replies post through `send_notice`, so they never count as the model's reply, and a
   `/cursor` message settles its own turn without reaching the agent. A turn parked on a
   decision releases its message early (`tools.turn.detach()`), so it is judged when the
@@ -142,6 +142,37 @@ failure fails that room turn visibly instead of falling back.
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
   as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
+
+## Cursor provider slot
+
+One `CursorACPAdapter` runs one provider turn at a time, across all its rooms.
+The active `CursorTurn` owns that slot and the provider task it runs in, with
+batching on or off:
+
+- **Admission is a synchronous check-and-claim.** Ordinary input arriving while
+  the slot is held raises `InputNotAccepted` before any provider submission,
+  failure notice, context commit or completion write. The room scheduler keeps
+  the delivery outstanding and retries at its own pace. `/cursor` decision
+  replies never need the slot.
+- **Early delivery release does not free the slot.** A turn parked on a decision
+  releases its message (`tools.turn.detach()`) but keeps the slot until its task
+  ends.
+- **STOP, INTERRUPT and shutdown cancel the owned task**, also after that
+  release. The task's `CancelledError` path sends `session/cancel` to Cursor.
+  Cancellation is requested once per turn; it is not confirmation. Room
+  retirement (`on_cleanup`) waits for the task to end before closing the
+  connection. The turn's own error and timeout cleanup never waits on that task.
+- **Capacity returns only when the task has actually ended**, including a task
+  cancelled before it first ran. A failed task launch gives the slot back
+  immediately, and a stale task never unbinds a newer turn.
+
+Rooms are not queued for the slot: a busy adapter answers every ordinary input
+with `InputNotAccepted`, and each room retries on its own schedule.
+
+<!-- TO FINALIZE (capacity-wait queue) -->
+**Planned, not implemented:** a cancellable first-come queue of capacity requests
+so runnable waiting rooms are admitted fairly. Today a room that retries just
+after the slot frees can win it ahead of a longer-waiting room.
 
 ## Server prompt outcomes
 

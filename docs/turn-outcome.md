@@ -44,7 +44,8 @@ async def main() -> None:
     assert tools.turn.replied  # the model's final text is not relayed
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 A turn that ends without completing is reported, then raised as
@@ -112,7 +113,8 @@ async def main() -> None:
     ]
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 ## Input that was not accepted
@@ -148,6 +150,24 @@ acknowledgements, or someone already answered them. An FYI never cancels another
 input's outstanding request, a correction or cancellation is read in context,
 and one reply may answer several inputs. A decline ends the whole turn, never a
 single input. The call is local only; its `reason` goes to the agent log.
+
+One input is simply a turn of one, so the same text serves a singleton and a
+[batched turn](consume-all-queued.md). The prompt carries core's description
+verbatim, and `TURN_COMPLETION_GUIDANCE` speaks of the turn's inputs rather than
+"the message":
+
+```python
+import band_sdk_core
+
+from band.runtime.prompts import BASE_INSTRUCTIONS
+
+description = band_sdk_core.no_reply_tool()["description"]
+assert "every current input message together" in description
+assert description in BASE_INSTRUCTIONS
+```
+
+This is guidance, not a coverage check: the judge still sees only the effects
+above (a reply, a decline or real work), never whether each input was answered.
 
 Pydantic AI ends its native model loop after a successful current-run decline
 whose other tool results in that response also succeeded. Tool results, history
@@ -190,7 +210,8 @@ async def main() -> None:
     assert tools.turn.complete
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 `REPLY` declares a tool that delivers the answer itself, and `DECLINE` one
@@ -238,7 +259,8 @@ async def main() -> None:
     assert tools.turn.complete
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 `relay_reply(tools, text, mentions)` from `band.core.delivery` is the one gate
@@ -314,7 +336,8 @@ async def main() -> None:
     assert len(reported_failures(tools)) == 1
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 ## Exempt adapters
@@ -346,15 +369,81 @@ its `finally` cleanup must release uncommitted claims. SDK delivery admission
 remains separate because it runs before the handler and owns the trigger's retry
 accounting.
 
-Once the handler completes, its delivery is `ACK_PENDING` until the platform
-accepts completion. A stopped refusal retains that marker and retries only the
-acknowledgement, without replaying handler effects or charging the acknowledgement
+Once the handler completes, its stored terminal intent (see below) is written
+until the platform accepts it. A stopped refusal retains the intent and retries
+only that write, without replaying handler effects or charging the acknowledgement
 retry budget. This protects the running process; it does not provide exactly-once
-side effects across process restarts. Ordinary acknowledgement failures retain
-the existing retry policy.
+side effects across process restarts.
 
 One-shot invocations also require accepted claims and completion. They raise on
 refusal instead of returning `DONE`; a drain records only accepted messages.
+
+## Admission
+
+Singleton and batched attempts share one admission order, in `ExecutionContext`:
+
+1. Claim every original's ID locally. A conflict releases this attempt's claims
+   and defers it.
+2. Mark each original processing, in order, under one control revision, and
+   recheck ownership after every await. Any refusal, error, cancellation or newer
+   revision defers the whole selection: no model call, no terminal write, no
+   execution-attempt charge.
+3. Only after the last acceptance, synchronously mark the scope admitted, then
+   charge the attempt, hydrate context and invoke the handler once.
+
+INTERRUPT before step 3 consumes nothing, even if the platform already accepted
+a delayed mark; a late response cannot revive that scope. After step 3 an
+accepted INTERRUPT consumes every original, even before the handler starts.
+STOP and shutdown leave originals recoverable at every point.
+
+## Terminal intents and settlement
+
+At the synchronous point where a handler has finished or been stopped, before any
+cleanup, activity-report or acknowledgement await, the scope fixes the one write
+each of its originals owes and stores it in the runtime's `ClaimRegistry`
+(`band-sdk-core`), keyed by room and original ID. The first stored intent wins;
+storing another for the same original changes nothing.
+
+| What ended the scope | Stored intent for every original |
+| --- | --- |
+| Handler returned, including a detached early release | `processed` |
+| Accepted INTERRUPT after admission | `processed` |
+| STOP, shutdown, `InputNotAccepted`, or a stopped handler | none; the originals stay recoverable |
+| Handler raised, or `max_cycle_seconds` expired | `failed` with the generic provider-failure message (never exception text), only with `consume_all_queued`; otherwise none and the message's own retry policy applies |
+
+A failed batch is reported to the room once, when `report_turn_failures_to_room`
+is on and the adapter has not already reported it. Once an intent is
+stored, a later STOP or refusal only defers its write: it never turns `processed`
+into `failed` and never reruns the model.
+
+The write goes through `mark_processed_result` or `mark_failed_result` and is
+classified by [`SettlementResult`](rest-client.md#terminal-write-results):
+
+| Result | Effect on the stored intent |
+| --- | --- |
+| `ACCEPTED` | The original completes locally. This means the delivery is settled, not that the model succeeded. |
+| `UNCONFIRMED` | Retained and retried on the reconciliation cadence. Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
+| `NOT_FOUND`, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
+| HTTP 204 | `RoomExecutionStoppedError`: the intent is retained and retried later, uncharged. |
+
+`NOT_FOUND` is not a diagnosis: the platform returns the same 404 for a missing
+or soft-deleted message and for lost room access, so the SDK parks the intent
+instead of guessing. While an unconfirmed write remains, the room keeps its
+ordinary work deferred and retries on the reconciliation cadence; control
+discovery and other rooms keep running. A bad first write does not starve its
+siblings: one pass attempts every original of the attempt.
+
+Every recovery entrance (the reconciliation pass, the control probe, `/next`
+backlog and a live duplicate delivery) retries through one helper that reads the
+stored intent: `processed` writes `mark_processed_result`, `failed` writes
+`mark_failed_result` with the stored error. None of them reopens processing or
+reaches the handler.
+
+The registry belongs to the runtime, so a pending intent survives replacement of
+a room's execution; process exit loses it. Delivery stays at-least-once across
+restarts: an original left in `processing` by a crash runs again. In batch mode a
+durably `failed` original is not selected again (see
+[Consuming queued messages in one turn](consume-all-queued.md)).
 
 ## Cancellation ownership
 
