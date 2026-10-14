@@ -11,6 +11,7 @@ from tests.framework_conformance.batchprobes import (
     BatchProbe,
     agentloops,
     crewai,
+    opencode,
     parlant,
     toolloop,
 )
@@ -18,6 +19,7 @@ from tests.framework_conformance.batchprobes import (
 BATCH_PROBES: dict[str, BatchProbe] = {
     **agentloops.PROBES,
     **crewai.PROBES,
+    **opencode.PROBES,
     **parlant.PROBES,
     **toolloop.PROBES,
 }

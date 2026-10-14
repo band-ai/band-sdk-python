@@ -7,7 +7,7 @@ OpenCode blocks a session mid-turn when its permission rules resolve to
 configured auto-reply modes, the manual relay to the room (and the parsing of
 the user's ``approve``/``always``/``reject``/answer replies), and the expiry
 timeouts. The adapter reaches it only through the narrow ``ApprovalPorts``
-bundle, so the two mention sources — the open turn's sender for asks, the
+bundle, so the two mention sources — the open turn's senders for asks, the
 control message's own sender for reply confirmations — are explicit.
 """
 
@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeVar
+from typing import TypeAlias, TypeVar
 
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
@@ -87,6 +87,40 @@ class PermissionCommand:
     # None when the user named no request: resolved against the pending ask
     # when exactly one is outstanding.
     request_id: str | None
+
+
+@dataclass(frozen=True)
+class PermissionReply:
+    """A room reply that answers a permission ask."""
+
+    approval: PermissionCommand
+
+
+@dataclass(frozen=True)
+class QuestionRejection:
+    """A room reply that rejects ``question``."""
+
+    question: PendingQuestion
+
+
+@dataclass(frozen=True)
+class QuestionAnswer:
+    """A room reply that is free text for ``question``, mention already stripped."""
+
+    question: PendingQuestion
+    text: str
+
+
+@dataclass(frozen=True)
+class NamedQuestionGone:
+    """``reject <id>`` for a question that is no longer pending."""
+
+    request_id: str
+
+
+ReplyRoute: TypeAlias = (
+    PermissionReply | QuestionRejection | QuestionAnswer | NamedQuestionGone
+)
 
 
 class ApprovalReplyError(Exception):
@@ -391,120 +425,151 @@ class RoomApprovals:
         )
         self._ports.release_turn_wait()
 
+    def recognizes_reply(self, content: str) -> bool:
+        """Whether ``try_handle_reply`` would consume ``content``.
+
+        Reads pending state only: it never claims an ask, cancels a timer or
+        posts, and it shares ``_route`` with the handler, so the two cannot
+        disagree about the vocabulary.
+        """
+        return self._route(content) is not None
+
     async def try_handle_reply(self, content: str, sender_id: str | None) -> bool:
         """Consume a room message iff it answers the pending ask.
 
         Returns True when the message was a permission/question reply (the
-        adapter must then NOT forward it to OpenCode as a prompt).
+        adapter must then NOT forward it to OpenCode as a prompt). The reply
+        is routed against the pending state at this moment, so an ask that
+        resolved since ``recognizes_reply`` is no longer consumed.
         """
-        if not (raw := content.strip()):
-            return False
-
-        # A command/keyword never *is* an @mention, so skip the whole leading
-        # mention block to find it (robust to several leading mentions).
-        command = strip_leading_mentions(raw).strip()
         # Mention the sender of THIS control message, not the turn mentions --
         # those belong to whichever turn is currently open (_begin_turn), which
         # a manual approve/reject reply does not itself start.
         mentions = [{"id": sender_id}] if sender_id else []
-
-        approval = parse_permission_reply(command)
-        if approval and self._permission_command_applies(approval):
-            if (
-                approval.request_id is None
-                and approval.reply == "reject"
-                and self._permissions.has_unclaimed()
-                and self._questions.has_unclaimed()
-            ):
-                await self._notify_room(self._which_dual_reject_hint(), mentions)
-                return True
-            pending = self._resolve_permission(approval.request_id)
-            if pending is None and approval.request_id is None:
-                # Ambiguous rather than unknown: name the asks instead of
-                # forwarding the reply to the model as a fresh prompt.
-                if (
-                    self._questions.has_unclaimed()
-                    and not self._permissions.has_unclaimed()
-                ):
-                    await self._notify_room(
-                        self._which_question_command_hint(), mentions
-                    )
-                else:
-                    await self._notify_room(self._which_permission_hint(), mentions)
-                return True
-            if pending is not None:
-                if await self._reply_permission(pending, approval.reply):
-                    await self._notify_room(
-                        APPROVAL_HANDLED_TEMPLATE.format(
-                            request_id=pending.request_id, reply=approval.reply
-                        ),
-                        mentions,
-                    )
-                return True
-            # A named permission id that matches nothing currently pending
-            # (already resolved, or another permission is pending instead):
-            # feedback, not a fresh prompt for the model.
-            if (
-                approval.reply in ("once", "always")
-                and approval.request_id in self._questions
-                and approval.request_id not in self._permissions
-                and not self._permissions.has_unclaimed()
-            ):
-                await self._notify_room(self._which_question_command_hint(), mentions)
-            else:
-                await self._notify_room(
-                    APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
-                        request_id=approval.request_id
-                    ),
-                    mentions,
-                )
-            return True
-
-        if (question := self._resolve_question(command)) is not None:
-            if _is_question_rejection(command):
+        match self._route(content):
+            case None:
+                return False
+            case PermissionReply(approval):
+                await self._handle_permission_reply(approval, mentions)
+            case QuestionRejection(question):
                 if await self._reject_question(question):
                     await self._notify_room(
                         f"OpenCode question `{question.request_id}` rejected.",
                         mentions,
                     )
-                return True
-
-            # Free text: strip only the delivery mention so an answer that
-            # legitimately begins with an @handle (naming a person) survives.
-            answer = strip_leading_mentions(raw, only_first=True).strip()
-            if (answers := parse_question_answers(answer, question)) is None:
-                await self._notify_room(
-                    (
-                        "OpenCode is waiting for answers. Reply with one line per "
-                        "question, or `reject` to reject the question."
-                    ),
-                    mentions,
-                )
-                return True
-
-            if await self._reply_question(question, answers):
-                await self._notify_room(
-                    f"OpenCode question `{question.request_id}` answered.",
-                    mentions,
-                )
-            return True
-
-        if (
-            approval is not None
-            and approval.reply == "reject"
-            and approval.request_id is not None
-        ):
-            request_id = approval.request_id
-            if self._questions or request_id in self._known_question_ids:
-                # A named question id that matched no pending question above:
+            case QuestionAnswer(question, text):
+                await self._handle_question_answer(question, text, mentions)
+            case NamedQuestionGone(request_id):
+                # A named question id that matched no pending question:
                 # feedback, not a fresh prompt for the model.
                 await self._notify_room(
                     QUESTION_NO_LONGER_PENDING_TEMPLATE.format(request_id=request_id),
                     mentions,
                 )
-                return True
+        return True
 
-        return False
+    def _route(self, content: str) -> ReplyRoute | None:
+        """Where a room message goes, decided from the pending state alone.
+
+        The one parser behind recognition and handling; it must stay free of
+        side effects. ``None`` means the message is not a reply to any ask.
+        """
+        if not (raw := content.strip()):
+            return None
+        # A command/keyword never *is* an @mention, so skip the whole leading
+        # mention block to find it (robust to several leading mentions).
+        command = strip_leading_mentions(raw).strip()
+
+        approval = parse_permission_reply(command)
+        if approval and self._permission_command_applies(approval):
+            return PermissionReply(approval)
+
+        if (question := self._resolve_question(command)) is not None:
+            if _is_question_rejection(command):
+                return QuestionRejection(question)
+            # Free text: strip only the delivery mention so an answer that
+            # legitimately begins with an @handle (naming a person) survives.
+            return QuestionAnswer(
+                question, strip_leading_mentions(raw, only_first=True).strip()
+            )
+
+        if (
+            approval is not None
+            and approval.reply == "reject"
+            and approval.request_id is not None
+            and (self._questions or approval.request_id in self._known_question_ids)
+        ):
+            return NamedQuestionGone(approval.request_id)
+
+        return None
+
+    async def _handle_permission_reply(
+        self, approval: PermissionCommand, mentions: list[dict[str, str]]
+    ) -> None:
+        if (
+            approval.request_id is None
+            and approval.reply == "reject"
+            and self._permissions.has_unclaimed()
+            and self._questions.has_unclaimed()
+        ):
+            await self._notify_room(self._which_dual_reject_hint(), mentions)
+            return
+        pending = self._resolve_permission(approval.request_id)
+        if pending is None and approval.request_id is None:
+            # Ambiguous rather than unknown: name the asks instead of
+            # forwarding the reply to the model as a fresh prompt.
+            if (
+                self._questions.has_unclaimed()
+                and not self._permissions.has_unclaimed()
+            ):
+                await self._notify_room(self._which_question_command_hint(), mentions)
+            else:
+                await self._notify_room(self._which_permission_hint(), mentions)
+            return
+        if pending is not None:
+            if await self._reply_permission(pending, approval.reply):
+                await self._notify_room(
+                    APPROVAL_HANDLED_TEMPLATE.format(
+                        request_id=pending.request_id, reply=approval.reply
+                    ),
+                    mentions,
+                )
+            return
+        # A named permission id that matches nothing currently pending
+        # (already resolved, or another permission is pending instead):
+        # feedback, not a fresh prompt for the model.
+        if (
+            approval.reply in ("once", "always")
+            and approval.request_id in self._questions
+            and approval.request_id not in self._permissions
+            and not self._permissions.has_unclaimed()
+        ):
+            await self._notify_room(self._which_question_command_hint(), mentions)
+        else:
+            await self._notify_room(
+                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
+                    request_id=approval.request_id
+                ),
+                mentions,
+            )
+
+    async def _handle_question_answer(
+        self, question: PendingQuestion, text: str, mentions: list[dict[str, str]]
+    ) -> None:
+        if (answers := parse_question_answers(text, question)) is None:
+            await self._notify_room(
+                (
+                    "OpenCode is waiting for answers. Reply with one line per "
+                    "question, or `reject` to reject the question."
+                ),
+                mentions,
+            )
+            return
+        if await self._reply_question(question, answers):
+            await self._notify_room(
+                f"OpenCode question `{question.request_id}` answered.",
+                mentions,
+            )
 
     def _permission_command_applies(self, approval: PermissionCommand) -> bool:
         """Whether a parsed approve/always/reject targets a permission.
