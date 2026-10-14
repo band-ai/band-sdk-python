@@ -12,7 +12,11 @@ import pytest
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
-from band.adapters.pydantic_ai import PydanticAIAdapter, _log_native_progress, _native_turn
+from band.adapters.pydantic_ai import (
+    PydanticAIAdapter,
+    _log_native_progress,
+    _native_turn,
+)
 from band.core.types import Emit, PlatformMessage
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, failure_reports, reported_failures

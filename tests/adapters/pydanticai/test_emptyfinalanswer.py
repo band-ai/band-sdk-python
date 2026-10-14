@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -57,7 +58,10 @@ class TestEmptyFinalAnswer:
 
     @pytest.mark.asyncio
     async def test_empty_output_after_tool_is_benign(
-        self, sample_message, mock_pydantic_agent
+        self,
+        sample_message,
+        mock_pydantic_agent,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Output-retry exhaustion after the turn replied is swallowed."""
         adapter = PydanticAIAdapter(PydanticAIAdapterConfig(model="openai:gpt-5.4"))
@@ -71,6 +75,7 @@ class TestEmptyFinalAnswer:
                 work=lambda: tools.send_message("hi", ["@Alice"]),
             )
         )
+        caplog.set_level(logging.WARNING, logger="band.adapters.pydantic_ai")
 
         # Must not raise: the reply already went out via the tool this turn.
         await adapter.on_message(
@@ -95,6 +100,7 @@ class TestEmptyFinalAnswer:
             for part in preserved[-1].parts
         )
         assert reported_failures(tools) == []
+        assert "Exceeded maximum output retries (1)" in caplog.text
 
     @pytest.mark.asyncio
     async def test_empty_output_preserves_full_captured_turn(
