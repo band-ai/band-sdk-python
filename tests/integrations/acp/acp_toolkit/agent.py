@@ -22,6 +22,7 @@ from acp.helpers import (
 )
 from acp.schema import (
     AgentCapabilities,
+    AllowedOutcome,
     ConfigOptionUpdate,
     InitializeResponse,
     LoadSessionResponse,
@@ -42,6 +43,7 @@ from band.integrations.acp.model_selection import (
     MODEL_CATEGORY,
     THOUGHT_LEVEL_CATEGORY,
 )
+from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.session_config import SessionConfigOption, find_select
 from band.integrations.mcp import BandMCPTransport
 from tests.mcpclient import mcp_session
@@ -365,6 +367,7 @@ class FakeACPAgent:
         arguments: dict[str, Any],
         server: str = "band",
         title: str | None = None,
+        requires_approval: bool = False,
     ) -> FakeACPAgent:
         """Call an advertised MCP tool between ACP call and result updates.
 
@@ -387,6 +390,18 @@ class FakeACPAgent:
                 arguments=arguments,
             )
             await a.emit(sid, update_tool_call(tool_call_id, raw_output=result))
+
+        if requires_approval:
+            return self.will_execute_if_approved(_action)
+        self._script.append(_action)
+        return self
+
+    def will_execute_if_approved(self, action: PromptHandler) -> FakeACPAgent:
+        """Execute an action only when the preceding permission was granted."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            if a.approved is True:
+                await action(a, sid)
 
         self._script.append(_action)
         return self
@@ -453,22 +468,26 @@ class FakeACPAgent:
         *,
         tool_call_id: str = "tc-1",
         title: str | None = None,
-        allow_option_id: str = "allow-1",
+        options: list[PermissionOption] | None = None,
     ) -> FakeACPAgent:
+        offered = options if options is not None else allow_or_reject()
+
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
                 sid,
                 ToolCallUpdate(tool_call_id=tool_call_id, title=title),
-                [
-                    PermissionOption(
-                        kind="allow_once", name="Allow", optionId=allow_option_id
-                    ),
-                    PermissionOption(
-                        kind="reject_once", name="Reject", optionId="reject-1"
-                    ),
-                ],
+                offered,
             )
-            a.approved = allow_option_id in str(resp)
+            selected = (
+                resp.outcome.option_id
+                if isinstance(resp.outcome, AllowedOutcome)
+                else None
+            )
+            a.approved = any(
+                option.option_id == selected
+                and option.kind in (ALLOW_ONCE_KIND, ALLOW_ALWAYS_KIND)
+                for option in offered
+            )
 
         self._script.append(_action)
         return self
@@ -689,6 +708,14 @@ class FakeACPAgent:
             for action in self._script:
                 await action(self, session_id)
         return PromptResponse(stop_reason="end_turn")
+
+
+def allow_or_reject(allow_option_id: str = "allow-1") -> list[PermissionOption]:
+    """The usual permission menu: one-shot allow, one-shot reject."""
+    return [
+        PermissionOption(kind=ALLOW_ONCE_KIND, name="Allow", optionId=allow_option_id),
+        PermissionOption(kind="reject_once", name="Reject", optionId="reject-1"),
+    ]
 
 
 def select_option(

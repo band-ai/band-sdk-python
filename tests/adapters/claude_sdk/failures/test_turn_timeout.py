@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapterConfig, TurnResultAlreadyReported
+from band.client.streaming import ControlMode
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from tests.adapters.claude_sdk.fakecli import Hold, StreamFails
 from tests.adapters.claude_sdk.helpers import ClaudeRoom
@@ -53,6 +56,27 @@ async def test_a_turn_that_ignores_the_interrupt_is_closed_and_resumed(
     assert [session.alive for session in room.claude.sessions] == [False, True]
 
 
+async def test_stop_during_timeout_recovery_ends_the_turn_without_a_timeout(
+    claude_room: OpenRoom,
+) -> None:
+    """STOP takes over the wedged recovery instead of waiting out its drain
+    bound, reports no timeout, and leaves no interrupted client behind."""
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+    room.claude.ignore_interrupt = True
+    room.claude.script([Hold()], [room.model_reply("Fresh start.")])
+    sending = room.send_in_background("take forever")
+
+    await room.claude.interrupted.wait()
+    await room.adapter.on_interrupt(room.room_id, ControlMode.STOP)
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+    await room.send("and now?")
+
+    assert room.reported_failures == []
+    assert room.chat == ["Fresh start."]
+    assert [session.alive for session in room.claude.sessions] == [False, True]
+
+
 async def test_a_timeout_from_the_cli_stream_is_an_ordinary_failure(
     claude_room: OpenRoom,
 ) -> None:
@@ -71,3 +95,37 @@ async def test_a_timeout_from_the_cli_stream_is_an_ordinary_failure(
     assert room.failures == [GENERIC_PROVIDER_FAILURE_MESSAGE]
     assert room.chat == ["Back on a fresh process."]
     assert len(room.claude.sessions) == 2
+
+
+async def test_stop_retains_worker_until_session_cleanup_finishes(
+    claude_room: OpenRoom,
+) -> None:
+    room = await claude_room(ClaudeSDKAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S))
+    work, closing = Hold(), Hold()
+    room.claude.script([work])
+    room.claude.closing = closing
+    sending = asyncio.create_task(room.send("work"))
+    try:
+        async with work:
+            sending.cancel()
+            await closing.reached.wait()
+            await asyncio.gather(
+                room.adapter.on_interrupt(room.room_id, ControlMode.STOP),
+                room.adapter.on_interrupt(room.room_id, ControlMode.STOP),
+            )
+            with pytest.raises(CleanupIncompleteError):
+                await room.leave()
+            with pytest.raises(InputNotAccepted):
+                await room.send("overlap")
+            assert room.claude.sessions[0].alive
+            closing.released.set()
+        with pytest.raises(asyncio.CancelledError):
+            await sending
+        await room.settled()
+        await room.leave()
+        assert not room.claude.sessions[0].alive
+        assert room.reported_failures == []
+    finally:
+        closing.released.set()
+        work.released.set()
+        await asyncio.gather(sending, return_exceptions=True)

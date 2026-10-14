@@ -116,6 +116,7 @@ class FakeClaude:
         # A wedged CLI: interrupt requests are acknowledged but the turn
         # neither stops nor ends.
         self.ignore_interrupt = False
+        self.interrupted = asyncio.Event()
         self.errors: list[BaseException] = []
         self.closing: Hold | None = None
         self.refuse_close = False
@@ -236,6 +237,7 @@ class FakeCLISession(Transport):
 
     def _interrupt(self) -> None:
         """Stop the running turn; like the real CLI it still ends with a result."""
+        self.claude.interrupted.set()
         if self.claude.ignore_interrupt or self._turn is None or self._turn.done():
             return
         self._turn.cancel()

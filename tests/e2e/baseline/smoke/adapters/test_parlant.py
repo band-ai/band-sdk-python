@@ -22,12 +22,22 @@ Run with:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
+
 import pytest
+from pydantic import BaseModel
 
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.smoke.samples.sample_tools import (
+    ACCESS_CODES,
+    LOOKUP,
+    LOOKUP_TOOL,
+    lookup_code_instruction,
+)
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
@@ -42,27 +52,86 @@ pytest.importorskip("parlant.sdk")
 import parlant.sdk as p
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from band.runtime.custom_tools import get_custom_tool_name
 
 _SHORT = "You are a friendly assistant in a chat room. Reply in one short sentence."
 
+# The custom tool is reached only through a guideline that offers it.
+_LOOKUP_CONDITION = "The user asks for the access code of a key"
+LOOKUP_KEY = "alpha"
+_LOOKUP_ACTION = (
+    f"Call the {LOOKUP} tool with that key, then tell the user the code it returns"
+)
 
-# Parlant isn't in the adapter registry (NON_AGENT_ADAPTERS), so the lane selector
-# can't derive its home lane and would run it in every lane. Pin it to its own
-# parlant lane (dev-parlant extra — split from core since parlant's griffe/
-# griffelib transitive deps collide with pydantic-ai's, which core's dev extra
-# hosts) explicitly.
-@lane(Lane.PARLANT)
-@requires(
-    Dep.OPENAI
-)  # ParlantAdapter is configured with the OpenAI NLP service (OPENAI_API_KEY)
-@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
-# The barrier below waits up to ``e2e_timeout * 3`` (360s at the 120s default) for
-# Parlant's cold multi-call pipeline. The outer cap is ``e2e_timeout + extra``, so
-# ``extra`` must clear that 3x barrier *plus* in-process server boot, provisioning,
-# and teardown — otherwise the outer timeout hard-kills the test before the barrier
-# can surface its diagnostic TimeoutError. 480 -> 600s outer, leaving 240s overhead.
-@pytest.mark.timeout(extra=480)
-@pytest.mark.asyncio(loop_scope="session")
+
+class BatchCodeInput(BaseModel):
+    """Compute the secret batch code for several projects (cannot be guessed)."""
+
+    projects: list[Literal["alpha", "beta", "gamma"]]
+    batch: int
+
+
+def batch_code(args: BatchCodeInput) -> str:
+    """Only a typed list of projects and an int batch yield the right code."""
+    return (
+        f"BT{sum(int(ACCESS_CODES[name][2:]) for name in args.projects) * args.batch}"
+    )
+
+
+BATCH_CODE = get_custom_tool_name(BatchCodeInput)
+BATCH_REQUEST = BatchCodeInput(projects=["alpha", "beta"], batch=3)
+_BATCH_CONDITION = "The user asks for the batch code of some projects"
+_BATCH_ACTION = (
+    f"Call the {BATCH_CODE} tool with those projects and that batch number, "
+    "then tell the user the code it returns"
+)
+
+LiveTest = Callable[..., Awaitable[None]]
+
+
+def parlant_live_turn(test: LiveTest) -> LiveTest:
+    """The lane, dependencies and budget every live Parlant turn needs.
+
+    Parlant isn't in the adapter registry (NON_AGENT_ADAPTERS), so the lane
+    selector can't derive its home lane and would run it in every lane; it is
+    pinned to its own parlant lane (dev-parlant extra, split from core since
+    parlant's griffe/griffelib transitive deps collide with pydantic-ai's).
+    The adapter uses the OpenAI NLP service (OPENAI_API_KEY).
+
+    The reply barrier waits up to ``e2e_timeout * 3`` (360s at the 120s
+    default) for Parlant's cold multi-call pipeline. The outer cap is
+    ``e2e_timeout + extra``, so ``extra`` must clear that barrier *plus*
+    in-process server boot, provisioning, and teardown — otherwise the outer
+    timeout hard-kills the test before the barrier can surface its diagnostic
+    TimeoutError. 480 -> 600s outer, leaving 240s overhead.
+    """
+    for mark in (
+        pytest.mark.asyncio(loop_scope="session"),
+        pytest.mark.timeout(extra=480),
+        flaky_infra(
+            "retry a transient live-turn timeout; assertion failures fail loud"
+        ),
+        requires(Dep.OPENAI),
+        lane(Lane.PARLANT),
+    ):
+        test = mark(test)
+    return test
+
+
+def showcase_adapter(**kwargs: Any) -> ParlantAdapter:
+    """An adapter-owned Parlant server and agent, as a customer builds one."""
+    return ParlantAdapter(
+        ParlantAdapterConfig(
+            name="E2E Showcase Agent",
+            description="A test agent for baseline E2E validation. Keep replies short.",
+            custom_section=_SHORT,
+        ),
+        nlp_service=p.NLPServices.openai,
+        **kwargs,
+    )
+
+
+@parlant_live_turn
 async def test_parlant_replies(
     resource_manager: ResourceManager,
     user_ops: UserOps,
@@ -76,14 +145,7 @@ async def test_parlant_replies(
     shared toolkit provisions and runs it, and the delivery barrier proves the
     turn completed before we read the reply.
     """
-    adapter = ParlantAdapter(
-        ParlantAdapterConfig(
-            name="E2E Showcase Agent",
-            description="A test agent for baseline E2E validation. Keep replies short.",
-            custom_section=_SHORT,
-        ),
-        nlp_service=p.NLPServices.openai,
-    )
+    adapter = showcase_adapter()
     async with running_provisioned_agent(
         adapter, resource_manager, label="parlant"
     ) as agent:
@@ -104,3 +166,84 @@ async def test_parlant_replies(
             )
 
     replies.assert_present(what="a parlant reply")
+
+
+@parlant_live_turn
+async def test_parlant_executes_custom_tool(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """A custom tool from ``additional_tools`` runs through Parlant's guideline flow.
+
+    The reply carries an access code the model cannot guess, so it proves the
+    whole live path: guideline match, tool call, room resolution, and reply.
+    """
+    adapter = showcase_adapter(additional_tools=[LOOKUP_TOOL.as_custom_tool_def()])
+    adapter.add_guideline(condition=_LOOKUP_CONDITION, action=_LOOKUP_ACTION)
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="parlant-tool"
+    ) as agent:
+        room_id = await resource_manager.provision_room(
+            title="e2e-parlant-custom-tool", participants=[agent.id]
+        )
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                lookup_code_instruction(LOOKUP_KEY),
+                mention_id=agent.id,
+                mention_name=agent.name,
+            )
+            replies = await capture.wait_for_reply(
+                mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 3
+            )
+
+    replies.assert_contains_any([ACCESS_CODES[LOOKUP_KEY]])
+
+
+@parlant_live_turn
+async def test_parlant_delivers_typed_custom_tool_arguments(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """A real model's list, choice and int arguments reach the handler typed.
+
+    Parlant advertises the typed descriptors and delivers every value as text;
+    only a parsed list of known projects and an int batch produce the code the
+    reply must carry. The guideline offers the custom tool alone, picked from
+    ``adapter.tools`` in ``configure=``: with ``band_send_message`` on offer the
+    model may post an interim note, which settles the turn before the code.
+    """
+
+    async def offer_batch_code_alone(_: p.Server, parlant_agent: p.Agent) -> None:
+        [entry] = [tool for tool in adapter.tools if tool.tool.name == BATCH_CODE]
+        await parlant_agent.create_guideline(
+            condition=_BATCH_CONDITION, action=_BATCH_ACTION, tools=[entry]
+        )
+
+    adapter = showcase_adapter(
+        additional_tools=[(BatchCodeInput, batch_code)],
+        configure=offer_batch_code_alone,
+    )
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="parlant-typed-tool"
+    ) as agent:
+        room_id = await resource_manager.provision_room(
+            title="e2e-parlant-typed-tool", participants=[agent.id]
+        )
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                f"What is the batch code for projects "
+                f"{' and '.join(BATCH_REQUEST.projects)}, batch {BATCH_REQUEST.batch}?",
+                mention_id=agent.id,
+                mention_name=agent.name,
+            )
+            replies = await capture.wait_for_reply(
+                mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 3
+            )
+
+    replies.assert_contains_any([batch_code(BATCH_REQUEST)])

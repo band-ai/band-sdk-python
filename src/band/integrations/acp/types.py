@@ -88,11 +88,13 @@ class ToolStatus(StrEnum):
 
 @dataclass(frozen=True)
 class ACPToolCall:
-    """One ACP tool invocation, normalized for room persistence."""
+    """A normalized invocation with wire identity retained for permission policy."""
 
     tool_call_id: str
     name: str
     arguments: dict[str, JsonValue]
+    mcp_server: str | None = None
+    title: str | None = None
 
     @classmethod
     def from_acp(
@@ -107,21 +109,26 @@ class ACPToolCall:
         canonical name is the only one the object ever carries.
         """
         raw_input = getattr(tool_call, "raw_input", None)
-        name, arguments = _mcp_invocation(raw_input) or (
-            str(
-                getattr(tool_call, "title", None)
-                or getattr(tool_call, "name", "unknown")
-            ),
-            cast(dict[str, JsonValue], raw_input)
-            if isinstance(raw_input, dict)
-            else {},
-        )
+        invocation = _mcp_invocation(raw_input)
+        title = getattr(tool_call, "title", None)
+        if invocation is None:
+            name = str(title or getattr(tool_call, "name", "unknown"))
+            arguments = (
+                cast(dict[str, JsonValue], raw_input)
+                if isinstance(raw_input, dict)
+                else {}
+            )
+        else:
+            server, tool, arguments = invocation
+            name = mcp_tool_spelling(server, tool)
         if canonicalize is not None:
             name = canonicalize(name)
         return cls(
             tool_call_id=str(getattr(tool_call, "tool_call_id", "")),
             name=name,
             arguments=arguments,
+            mcp_server=invocation[0] if invocation is not None else None,
+            title=title if isinstance(title, str) else None,
         )
 
     def room_event(self) -> ToolCallRoomEvent:
@@ -143,8 +150,8 @@ _MCP_INVOCATION_KEYS: tuple[tuple[str, str, str], ...] = (
 
 def _mcp_invocation(
     raw_input: object,
-) -> tuple[str, dict[str, JsonValue]] | None:
-    """Name and arguments of an MCP call reported in ``rawInput`` (see
+) -> tuple[str, str, dict[str, JsonValue]] | None:
+    """Server, tool and arguments of an MCP call reported in ``rawInput`` (see
     ``_MCP_INVOCATION_KEYS``), whose title is only a display string."""
     if not isinstance(raw_input, dict):
         return None
@@ -158,7 +165,7 @@ def _mcp_invocation(
     if not isinstance(server, str) or not isinstance(tool, str):
         return None
     args = cast(dict[str, JsonValue], arguments) if isinstance(arguments, dict) else {}
-    return mcp_tool_spelling(server, tool), args
+    return server, tool, args
 
 
 @dataclass

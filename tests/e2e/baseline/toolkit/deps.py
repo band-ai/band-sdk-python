@@ -83,6 +83,7 @@ class Lane(StrEnum):
     BACKENDS = "backends"
     GOOGLE = "google"
     LETTA = "letta"
+    NOOA = "nooa"
     PARLANT = "parlant"
 
 
@@ -123,6 +124,8 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     # (same import path, two distributions), so it needs its own extra entirely —
     # `dev` can no longer install parlant at all (see pyproject [tool.uv] conflicts).
     Lane.PARLANT: Extra.DEV_PARLANT,
+    # NOOA rides the ``dev`` extra, which installs it only where NOOA runs.
+    Lane.NOOA: Extra.DEV,
 }
 
 
@@ -134,9 +137,12 @@ LANE_EXTRAS: dict[Lane, Extra] = {
 # windows-latest runner: the ``letta/letta`` image is Linux-only (the Windows
 # runner only runs Windows containers), and Letta's own install guide supports a
 # native install on macOS / Linux / WSL only, not raw Windows
-# (https://docs.letta.com/guides/server/source). Every other lane runs on every
-# OS the e2e matrix offers.
-LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA})
+# (https://docs.letta.com/guides/server/source).
+#
+# NOOA imports ``fcntl`` unconditionally, so it cannot be imported on Windows and
+# the ``dev`` extra does not install it there. Every other lane runs on every OS
+# the e2e matrix offers.
+LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA, Lane.NOOA})
 
 
 class Dep(Enum):
@@ -159,6 +165,7 @@ class Dep(Enum):
     OPENCODE_BASH_ASKS = "opencode_bash_asks"  # that serve gates `bash` to `ask`
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
+    NOOA = "nooa"  # the nooa package is importable (Python 3.12-3.13, not Windows)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
@@ -413,6 +420,12 @@ _DEPS: dict[Dep, DepSpec] = {
         lambda _s: importlib.util.find_spec("crewai") is not None,
         "crewai is not importable (install the dev-crewai lane)",
         lane=Lane.CREWAI,
+    ),
+    Dep.NOOA: DepSpec(
+        lambda _s: importlib.util.find_spec("nooa") is not None,
+        "nooa is not importable (the dev extra installs it on Python 3.12-3.13, "
+        "off Windows)",
+        lane=Lane.NOOA,
     ),
 }
 

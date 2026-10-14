@@ -154,6 +154,7 @@ class SlackTeeingTools(AgentTools):
         # it (e.g. lookup_peers) keep working, and share the turn so the
         # adapter judging ``wrap`` sees what the brain did through this tee.
         self._ctx = wrap._ctx
+        self._scope = wrap._scope
         self.turn = wrap.turn
         self._slack = slack
         self._binding = binding

@@ -25,6 +25,8 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from pydantic import Field
 from typing_extensions import Unpack
 
@@ -53,6 +55,11 @@ class CopilotACPAdapterConfig(ACPClientAdapterConfig):
         github_token: Sets ``GITHUB_TOKEN`` for the CLI unless ``env``
             already does.
     """
+
+    retention_unavailable_reason: ClassVar[str] = (
+        "Copilot ACP scheduled prompts can outlive end_turn and are lost on "
+        "process shutdown, even when the same session reloads successfully"
+    )
 
     command: tuple[str, ...] = DEFAULT_COPILOT_COMMAND
     github_token: str | None = Field(default=None, repr=False)

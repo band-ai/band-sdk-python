@@ -3,6 +3,9 @@
 `CodexAdapter` runs one Codex process per Band room over stdio, each in its own
 workspace. Runnable scripts: [examples/codex/](../../examples/codex/).
 
+Automatic idle release is unavailable pending native safety qualification;
+see [idle room resource retention](../idle-room-release.md).
+
 For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgrading-from-sdk-4x-to-5x).
 
 - **Where settings go.** Runtime settings live in `CodexAdapterConfig`, which

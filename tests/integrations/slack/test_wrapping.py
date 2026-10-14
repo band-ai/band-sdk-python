@@ -36,6 +36,7 @@ from httpx import ASGITransport
 from band.core.exceptions import BandToolError
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import bind_turn_task
 from band.core.types import (
     AdapterFeatures,
     AgentInput,
@@ -54,6 +55,7 @@ from band.integrations.slack.adapter import (
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
+from band.runtime.cycle import TurnScope
 from band.runtime.tools import AgentTools, ToolCallOutcome
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from band.testing.platform import platform_connection_stub
@@ -1837,3 +1839,22 @@ async def test_mirror_failure_does_not_break_reply():
     web_mocks[app.slug].chat_postMessage.assert_awaited_once_with(
         channel="C1", text="still works", thread_ts="100.0"
     )
+
+
+async def test_slack_wrapper_keeps_worker_and_late_posts_in_original_scope() -> None:
+    base = _make_band_tools()
+    base._scope = TurnScope(control_revision=0)
+    tools, rest, _ = _make_tee_tools(wrap=base)
+    started = asyncio.Event()
+
+    async def work() -> None:
+        started.set()
+        await asyncio.Future[None]()
+
+    owner = bind_turn_task(tools, asyncio.create_task(work()))
+    await started.wait()
+    owner.terminate()
+    assert await owner.drain()
+    with pytest.raises(asyncio.CancelledError):
+        await tools.send_event("late reply", "thought")
+    rest.agent_api_events.create_agent_chat_event.assert_not_awaited()

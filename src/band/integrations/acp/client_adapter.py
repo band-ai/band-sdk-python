@@ -33,7 +33,7 @@ from acp.schema import (
     SseMcpServer,
 )
 from band_sdk_core import AgentFailure
-from pydantic import PositiveFloat, field_validator, model_validator
+from pydantic import Field, PositiveFloat, field_validator, model_validator
 from typing_extensions import TypeVar, Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
@@ -47,6 +47,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -57,10 +58,18 @@ from band.core.types import (
     PlatformMessage,
 )
 from band.integrations.acp.client_profiles import ACPClientProfile
-from band.integrations.acp.client_runtime import (
-    ACPCollectingClient,
-    ACPConnectionProtocol,
-    ACPRuntime,
+from band.integrations.acp.client_runtime import ACPRuntime
+from band.integrations.acp.client_types import (
+    ACPClientSessionState,
+    BandACPClient,
+)
+from band.integrations.acp.collecting import ACPCollectingClient
+from band.integrations.acp.model_selection import (
+    ACPModelOptions,
+    apply_model_selection,
+    locate_model_options,
+)
+from band.integrations.acp.permissions import (
     ElicitationHandler,
     ElicitationNarrator,
     PermissionHandler,
@@ -69,15 +78,6 @@ from band.integrations.acp.client_runtime import (
     cancel_permission,
     permission_option_ids,
     select_allow_option_id,
-)
-from band.integrations.acp.client_types import (
-    ACPClientSessionState,
-    BandACPClient,
-)
-from band.integrations.acp.model_selection import (
-    ACPModelOptions,
-    apply_model_selection,
-    locate_model_options,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.session_config import (
@@ -91,6 +91,7 @@ from band.integrations.acp.session_config import (
     SessionConfigSetter,
     apply_session_config_selections,
 )
+from band.integrations.acp.transport import ACPConnectionProtocol
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp import (
     BandMCPBackend,
@@ -107,6 +108,7 @@ from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
     render_system_prompt,
+    system_updates,
 )
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
@@ -185,11 +187,11 @@ SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
 #
 # Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
 # (12+ adapters each hardcode their own copy); it has already drifted once
-# (parlant.py uses "[System Update]: " for the identical concept). Extracting
-# one real cross-adapter constant is out of scope here — it would touch every
-# other adapter's own file for no ACP-specific reason — but is worth a
-# follow-up so the convention has one source instead of N private copies.
-SYSTEM_UPDATE_PREFIX = "[System]: "
+# (the Parlant adapter uses "[System Update]: " for the identical concept).
+# Extracting one real cross-adapter constant is out of scope here — it would
+# touch every other adapter's own file for no ACP-specific reason — but is
+# worth a follow-up so the convention has one source instead of N private
+# copies.
 
 # Marks where the replayed transcript ends and the live message begins, so
 # the boundary is mechanical rather than inferred (transcript lines and the
@@ -307,7 +309,13 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         reasoning_effort: Reasoning effort selected the same way.
     """
 
+    retention_unavailable_reason: ClassVar[str] = (
+        "ACP end_turn and loadSession do not establish whole-session inactivity "
+        "or non-cancelling shutdown"
+    )
+
     command: tuple[str, ...]
+    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
     env: dict[str, str] | None = None
     cwd: str | None = None
     mcp_servers: tuple[SessionMcpServer, ...] = ()
@@ -318,6 +326,16 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
     turn_timeout_s: PositiveFloat = DEFAULT_TURN_TIMEOUT_SECONDS
     model: str | None = None
     reasoning_effort: str | None = None
+
+    @field_validator("retention")
+    @classmethod
+    def _require_safe_retention(
+        cls, retention: RoomRetentionConfig
+    ) -> RoomRetentionConfig:
+        return require_disabled_retention(
+            retention,
+            reason=f"Idle retention is unavailable: {cls.retention_unavailable_reason}.",
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -1430,11 +1448,7 @@ class ACPClientAdapter(
         They arrive only on change (the runtime marks them sent), so inject
         them on whichever turn carries them — mirrors codex and opencode.
         """
-        return [
-            f"{SYSTEM_UPDATE_PREFIX}{update}"
-            for update in (participants_msg, contacts_msg)
-            if update
-        ]
+        return system_updates(participants_msg, contacts_msg)
 
     @staticmethod
     def _framed_replay(replay: list[str], live_message: str) -> list[str]:

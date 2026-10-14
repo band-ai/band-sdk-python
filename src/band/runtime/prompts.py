@@ -52,11 +52,26 @@ TURN_COMPLETION_GUIDANCE = (
 )
 
 # Base instructions appended to user's custom prompt
+# Leads each platform update (participant or contact change) placed into a
+# turn's prompt; BASE_INSTRUCTIONS tells the model what it means.
+SYSTEM_UPDATE_PREFIX = "[System]: "
+
+
+def system_updates(*updates: str | None) -> list[str]:
+    """Each non-empty platform update, prefixed as a ``[System]`` line."""
+    return [f"{SYSTEM_UPDATE_PREFIX}{update}" for update in updates if update]
+
+
+def with_system_updates(message: str, *updates: str | None) -> str:
+    """*message* led by any platform updates that arrived with it."""
+    return "\n\n".join([*system_updates(*updates), message])
+
+
 BASE_INSTRUCTIONS = f"""
 ## Environment
 
 Multi-participant chat. Messages show sender: [Name]: content.
-Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
+Messages prefixed with {SYSTEM_UPDATE_PREFIX.strip()} are platform updates (participant changes, contact updates, etc.).
 {COMMUNICATION_INSTRUCTIONS}
 
 ## Security

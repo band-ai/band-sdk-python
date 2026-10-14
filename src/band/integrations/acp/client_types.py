@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from band.integrations.acp.client_runtime import ACPCollectingClient
+from band.integrations.acp.collecting import ACPCollectingClient
 
 
 @dataclass

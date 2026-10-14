@@ -260,6 +260,15 @@ class ToolCalls(list[ToolCall]):
         """True if any call matches ``name`` (case-insensitive)."""
         return any(call.name.lower() == name.lower() for call in self)
 
+    def assert_only(self, *names: str) -> None:
+        """Require calls, all with an exact, case-sensitive allowed name."""
+        assert self, f"expected calls to only {names}, but observed no tool calls"
+        allowed = set(names)
+        unexpected = [call.name for call in self if call.name not in allowed]
+        assert not unexpected, (
+            f"expected calls to only {names}, but observed unexpected tools: {unexpected}"
+        )
+
     def assert_fired(
         self, name: str, *, with_args: dict[str, Any] | None = None
     ) -> None:

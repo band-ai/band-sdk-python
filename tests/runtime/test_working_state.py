@@ -147,6 +147,20 @@ class TestCancellation:
         await _wait_for(lambda: rec.calls and rec.calls[-1] is False)
         assert rec.calls.count(False) == 1
 
+    def test_stop_sends_false_when_the_keepalive_loop_has_closed(self) -> None:
+        rec = Recorder()
+        reporter = WorkingStateReporter(rec, keep_alive_seconds=10.0)
+        with asyncio.Runner() as runner:
+            runner.run(reporter.start())
+
+        resumed = asyncio.new_event_loop()
+        try:
+            resumed.run_until_complete(reporter.stop())
+        finally:
+            resumed.close()
+
+        assert rec.calls == [True, False]
+
 
 class TestFailureSwallowed:
     @pytest.mark.asyncio

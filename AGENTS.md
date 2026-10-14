@@ -4,7 +4,7 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 ## Core Features
 
-1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents)
+1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents, NOOA)
 2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
 3. ACP integration: Editor-facing server and client adapters over stdio or TCP (Cursor, Codex, Claude Code, GitHub Copilot)
 4. Platform tools for chat, contacts, memory, files, and the room task board
@@ -170,6 +170,14 @@ outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
 non-package code is never collected by CI's bare `uv run pytest`; address the code
 under test through an anchor in `tests/paths.py` instead.
 
+**One test class per file, one concern per class.** Each `test_*.py` holds
+exactly one `class Test...` named for the behavior it covers — no
+module-level test functions and no helper classes beside it. When a suite
+outgrows one file, make it a package: `conftest.py` for its fixtures, a plain
+helper module (e.g. `kit.py`) for shared doubles and helpers, and one test file
+per concern. Apply this to every test file you add, and split a file you
+touch that breaks it.
+
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
 capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
@@ -256,7 +264,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `nooa` (NOOA, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -503,6 +511,16 @@ PR titles MUST use the same conventional commits format as commit messages
 - `feat: Add custom tools support to all adapters`
 - `fix: Handle validation errors in execute_tool_call`
 - `docs: Update README with new adapter examples`
+
+### Pull Request Descriptions
+
+Use only three sections: **Why**, **What**, and **Scope**. Explain why the
+change is needed, what the final implementation does, and its boundaries.
+Keep the description concise and write it for a reviewer without chat context.
+Do not append testing sections, checklists, progress updates, investigation
+history, or repeated addenda. Keep validation evidence and unresolved failures
+in the linked Linear issue or evidence attachments. The PR template follows
+this format.
 
 ### Pre-Commit Checklist
 

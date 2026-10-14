@@ -11,6 +11,7 @@ from band_rest.core.api_error import ApiError
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import ControlMode
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
+from band.core.exceptions import CleanupIncompleteError
 from band.core.types import PlatformConnection
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.platform.link import BandLink
@@ -70,8 +71,14 @@ class PlatformRuntime:
         self._on_participant_removed = on_participant_removed
 
         self._link: BandLink | None = None
+        # Held from creation until its stop() completes, so a restart can never
+        # replace a runtime whose rooms may still be serving or cleaning up.
         self._runtime: AgentRuntime | None = None
+        self._running = False
         self._instance_guard: SingleInstanceGuard | None = None
+        # Only a guard ``start()`` claimed itself is released by this runtime;
+        # a host that claimed it first releases it after its own cleanup.
+        self._owns_instance_guard = False
         self._agent_name: str = ""
         self._agent_description: str = ""
         self._feature_flags: dict[str, bool] | None = None
@@ -128,6 +135,12 @@ class PlatformRuntime:
         return self._runtime
 
     @property
+    def cleanup_pending(self) -> bool:
+        """Whether a runtime is held but not serving: its start is still in
+        progress, or a stop or failed start has not completed."""
+        return self._runtime is not None and not self._running
+
+    @property
     def contact_config(self) -> ContactEventConfig:
         """Get the contact event configuration."""
         return self._contact_config
@@ -137,7 +150,7 @@ class PlatformRuntime:
         """Check if subscribed to contact events channel."""
         return self._contacts_subscribed
 
-    async def initialize(self) -> None:
+    async def initialize(self) -> BandLink:
         """
         Initialize link and fetch agent metadata without starting message processing.
 
@@ -151,7 +164,7 @@ class PlatformRuntime:
         WebSocket connection happens later in start() when RoomPresence starts.
         """
         if self._link:
-            return  # Already initialized
+            return self._link
 
         self._link = BandLink(
             agent_id=self._agent_id,
@@ -163,6 +176,7 @@ class PlatformRuntime:
 
         await self._fetch_agent_metadata()
         logger.debug("Platform runtime initialized for agent: %s", self._agent_name)
+        return self._link
 
     async def start(
         self,
@@ -187,20 +201,25 @@ class PlatformRuntime:
         Raises:
             AgentAlreadyRunningError: When a duplicate start is refused, by the
                 host lock or by the platform (see ``AgentConfig``).
+            CleanupIncompleteError: A previous runtime's cleanup has not yet
+                succeeded; ``stop()`` retries it.
         """
+        if self.cleanup_pending:
+            raise CleanupIncompleteError(
+                "Platform runtime cleanup is incomplete; call stop() to retry it"
+            )
+        if self._runtime is not None:
+            raise RuntimeError("Platform runtime is already started")
         # Duplicates corrupt message claiming, so refuse before any
-        # processing starts. A failed start releases the lock: the guard
-        # must never block a retry within this same process.
-        self.claim_single_instance()
+        # processing starts. A failed start that cleaned up releases the
+        # lock: the guard must never block a retry within this same process.
+        if self._instance_guard is None:
+            self.claim_single_instance()
+            self._owns_instance_guard = True
         try:
-            # Auto-initialize if not already done
-            await self.initialize()
-
-            # Type narrowing: initialize() guarantees _link is set
-            assert self._link is not None
-
-            self._runtime = AgentRuntime(
-                link=self._link,
+            link = await self.initialize()
+            self._runtime = runtime = AgentRuntime(
+                link=link,
                 agent_id=self._agent_id,
                 on_execute=on_execute,
                 session_config=self._session_config,
@@ -214,25 +233,38 @@ class PlatformRuntime:
             # Route preemptive control signals (interrupt/stop/play) to the
             # runtime BEFORE starting (which connects the WebSocket), so the
             # hook is live as soon as the agent_control channel is joined.
-            self._link.on_control = self._runtime.handle_control
+            link.on_control = runtime.handle_control
 
-            await self._runtime.start()
+            await runtime.start()
 
             # Set up contact event handling after WebSocket is connected
-            await self._setup_contact_handling()
+            await self._setup_contact_handling(link, runtime)
         except BaseException:
-            self.release_single_instance()
+            await self._unwind_failed_start()
             raise
+        self._running = True
 
         logger.info("Platform runtime started for agent: %s", self._agent_name)
+
+    async def _unwind_failed_start(self) -> None:
+        """Stop a partially started runtime without replacing the start error;
+        keep the guard while that cleanup remains incomplete."""
+        if self._runtime is not None:
+            try:
+                await self._stop_runtime(self._runtime, timeout=None)
+            except Exception:
+                logger.exception("Failed to clean up a partially started runtime")
+        if self._owns_instance_guard and self._runtime is None:
+            self.release_single_instance()
 
     def claim_single_instance(self) -> None:
         """Take this agent id's host-wide run lock (idempotent).
 
         ``start()`` claims it anyway; ``Agent.start()`` claims it earlier —
         before the adapter boots subprocesses or touches on-disk session
-        state — so a duplicate is refused before any side effects.
-        No-op when ``AgentConfig.single_instance`` is off.
+        state — so a duplicate is refused before any side effects. A caller
+        that claims the guard before ``start()`` owns its release, after all
+        of its own cleanup succeeds. No-op when ``single_instance`` is off.
 
         Raises:
             AgentAlreadyRunningError: When another process already holds the lock.
@@ -244,6 +276,7 @@ class PlatformRuntime:
 
     def release_single_instance(self) -> None:
         """Release the run lock (idempotent; safe in ``finally`` blocks)."""
+        self._owns_instance_guard = False
         if self._instance_guard is not None:
             self._instance_guard.release()
             self._instance_guard = None
@@ -258,7 +291,15 @@ class PlatformRuntime:
 
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
+
+        Raises:
+            ExceptionGroup: Execution cleanup remains incomplete. The runtime and
+                its single-instance guard stay held; ``stop()`` retries.
+            Exception: The link failed to disconnect. An owned single-instance
+                guard stays held, since the socket may still be up, until a
+                retried ``stop()`` disconnects.
         """
+        self._running = False
         graceful = True
         try:
             # Unsubscribe while the socket is still up; AgentRuntime.stop
@@ -271,17 +312,25 @@ class PlatformRuntime:
                     logger.exception("Failed to unsubscribe contacts before disconnect")
                 finally:
                     self._contacts_subscribed = False
-            if self._runtime:
-                graceful = await self._runtime.stop(timeout=timeout)
+            if self._runtime is not None:
+                graceful = await self._stop_runtime(self._runtime, timeout=timeout)
         finally:
             # Idempotent if AgentRuntime.stop already disconnected — with
             # install_signal_handlers=False disconnect is what wakes run_forever.
-            try:
-                if self._link:
-                    await self._link.disconnect()
-            finally:
-                self.release_single_instance()
+            if self._link:
+                await self._link.disconnect()
+        if self._owns_instance_guard:
+            self.release_single_instance()
         logger.info("Platform runtime stopped")
+        return graceful
+
+    async def _stop_runtime(
+        self, runtime: AgentRuntime, *, timeout: float | None
+    ) -> bool:
+        """Release the runtime only after its whole stop succeeds; a failed or
+        cancelled stop keeps it for the next retry."""
+        graceful = await runtime.stop(timeout=timeout)
+        self._runtime = None
         return graceful
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
@@ -338,7 +387,9 @@ class PlatformRuntime:
     async def _noop_cleanup(room_id: str) -> None:
         pass
 
-    async def _setup_contact_handling(self) -> None:
+    async def _setup_contact_handling(
+        self, link: BandLink, runtime: AgentRuntime
+    ) -> None:
         """Set up contact event handling based on config."""
         if (
             self._contact_config.strategy == ContactEventStrategy.DISABLED
@@ -347,9 +398,6 @@ class PlatformRuntime:
             logger.debug("Contact handling disabled")
             return
         # Even if DISABLED, we may want broadcasts
-
-        assert self._link is not None
-        assert self._runtime is not None
 
         # Create handler with broadcast callback if enabled
         broadcast_fn = None
@@ -365,17 +413,17 @@ class PlatformRuntime:
 
         self._contact_handler = ContactEventHandler(
             config=self._contact_config,
-            link=self._link,
+            link=link,
             on_broadcast=broadcast_fn,
             on_hub_event=hub_event_fn,
             on_hub_init=hub_init_fn,
         )
 
         # Set up contact event callback on presence
-        self._runtime.presence.on_contact_event = self._on_contact_event
+        runtime.presence.on_contact_event = self._on_contact_event
 
         # Subscribe to contacts channel
-        await self._link.subscribe_agent_contacts(self._agent_id)
+        await link.subscribe_agent_contacts(self._agent_id)
         self._contacts_subscribed = True
 
         # For HUB_ROOM strategy, create hub room at startup
@@ -387,7 +435,7 @@ class PlatformRuntime:
             # Forward to AgentRuntime so the hub-room ExecutionContext gets it
             # at construction time, which lets AgentTools auto-enable contact
             # tools for that room.
-            self._runtime.set_hub_room_id(hub_room_id)
+            runtime.set_hub_room_id(hub_room_id)
             logger.info("Hub room initialized at startup: %s", hub_room_id)
 
         logger.info(

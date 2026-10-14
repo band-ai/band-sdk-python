@@ -53,7 +53,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    decode_image_block,
+    decode_image_blocks,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
@@ -70,15 +70,12 @@ def _image_function_response_parts(
     """Convert an MCP-content-shaped band_read_room_file result into Gemini
     FunctionResponsePart inline_data blocks, so the model receives real image
     content instead of a JSON-stringified blob."""
-    parts: list[types.FunctionResponsePart] = []
-    for block in result["content"]:
-        data, mime_type = decode_image_block(block)
-        parts.append(
-            types.FunctionResponsePart(
-                inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=data)
-            )
+    return [
+        types.FunctionResponsePart(
+            inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=data)
         )
-    return parts
+        for data, mime_type in decode_image_blocks(result)
+    ]
 
 
 def _to_agent_failure(e: Exception) -> AgentFailure:

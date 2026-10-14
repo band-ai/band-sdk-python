@@ -30,7 +30,7 @@ import pytest
 
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.mcp import BandMCPTransport
-from band.runtime.tools import TOOL_DEFINITIONS, BandTool, ToolCallOutcome
+from band.runtime.tools import TOOL_DEFINITIONS, TOOL_MODELS, BandTool, ToolCallOutcome
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
 )
@@ -49,6 +49,13 @@ try:
 except ImportError:
     _PYDANTIC_AI_AVAILABLE = False
 
+try:
+    import nooa  # noqa: F401
+
+    _NOOA_AVAILABLE = True
+except ImportError:
+    _NOOA_AVAILABLE = False
+
 # crewai and pydantic-ai aren't both installed in every lane's venv (a
 # three-way conflict group with parlant -- see `conflicts` in pyproject.toml):
 # dev-crewai lacks pydantic-ai, dev-parlant lacks both. These framework_ids
@@ -58,6 +65,8 @@ _SOMETIMES_MISSING: dict[str, bool] = {
     "crewai": _CREWAI_AVAILABLE,
     "crewai_flow": _CREWAI_AVAILABLE,
     "pydantic_ai": _PYDANTIC_AI_AVAILABLE,
+    # NOOA supports Python 3.12 and 3.13 on POSIX only.
+    "nooa": _NOOA_AVAILABLE,
 }
 
 _IMAGE_RESULT: dict[str, Any] = {
@@ -287,6 +296,28 @@ async def _probe_strands() -> bool:
     ]
 
 
+async def _probe_nooa() -> bool:
+    from band.adapters.nooa.tools import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
+        RoomToolSpec,
+        room_tools_class,
+    )
+
+    async def read(tools: Any, arguments: dict[str, Any]) -> object:
+        return _IMAGE_RESULT
+
+    spec = RoomToolSpec(
+        BandTool.READ_ROOM_FILE, TOOL_MODELS[BandTool.READ_ROOM_FILE], read
+    )
+    room = room_tools_class([spec])(emit_tool_calls=False)
+    async with room.bound_to(MagicMock()):
+        result = await getattr(room, BandTool.READ_ROOM_FILE)(file_id="f1")
+
+    [image] = result
+    return image.modality == "image" and _is_expected_image(
+        image._base64_data(), image.media_type
+    )
+
+
 async def _probe_copilot_sdk() -> bool:
 
     from copilot import (  # noqa: PLC0415 -- copilot_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
@@ -386,6 +417,7 @@ IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "langgraph": _probe_langgraph,
     "agno": _probe_agno,
     "strands": _probe_strands,
+    "nooa": _probe_nooa,
     "copilot_sdk": _probe_copilot_sdk,
     "codex": _probe_codex,
     "pydantic_ai": _probe_pydantic_ai,

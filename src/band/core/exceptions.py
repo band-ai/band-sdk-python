@@ -54,6 +54,12 @@ class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
 
 
+class InvalidToolArgumentsError(BandError, ValueError):
+    """A tool call's arguments failed its input model. Actionable by the LLM,
+    which reads the message and retries; a ``ValueError`` for callers that
+    already catch one."""
+
+
 class InputNotAccepted(BandError):
     """This attempt provably started no provider execution.
 
@@ -85,6 +91,11 @@ class RoomExecutionStoppedError(BandError):
     def __init__(self, room_id: str) -> None:
         super().__init__(f"Room {room_id}: platform execution was stopped")
         self.room_id = room_id
+
+
+class CleanupIncompleteError(BandError):
+    """Owned work or resources outlived a cleanup attempt. Actionable by the
+    host: the owner keeps them and retries settlement on the next stop."""
 
 
 def _levenshtein(a: str, b: str) -> int:

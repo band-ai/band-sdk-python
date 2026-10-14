@@ -35,7 +35,7 @@ async def test_registrar_advertises_only_scoped_tools(harness: LiveHarness) -> N
 async def test_human_profile_and_chats_round_trip(harness: LiveHarness) -> None:
     """Human read-only tools return well-formed payloads."""
     profile = await harness.call("band_get_my_profile")
-    # GetMyProfileResponse wraps UserDetails under "data" (engine._serialize
+    # GetMyProfileResponse wraps UserDetails under "data" (tool_result_text
     # model_dump()s the whole response, not just its payload).
     user = _unwrap(profile)
     assert isinstance(user, dict), profile

@@ -39,11 +39,14 @@ Example usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections import deque
+from collections import Counter, deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 from band_sdk_core import (
     ClaimRegistry,
@@ -57,10 +60,12 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import DeliveryStatus
 from band.core.exceptions import (
     BandConnectionError,
+    CleanupIncompleteError,
     InputNotAccepted,
     RoomExecutionStoppedError,
 )
 from band.core.protocols import FrameworkAdapter
+from band.core.retention.cleanup import spawn_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AgentInput,
@@ -77,7 +82,7 @@ from band.runtime.formatters import (
     replace_uuid_mentions,
 )
 from band.runtime.participants import participant_snapshot
-from band.runtime.startup import start_adapter
+from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
 from band.runtime.tools import AgentTools
 
 # BandLink.get_next_message returns this dataclass, not band.core.types'
@@ -85,6 +90,8 @@ from band.runtime.tools import AgentTools
 from band.runtime.types import PlatformMessage as RestPlatformMessage
 
 logger = logging.getLogger(__name__)
+
+LIFECYCLE_LABEL = "OneShotInvoker lifecycle operation"
 
 FAILURE_DETAIL_LIMIT = 500
 
@@ -171,6 +178,15 @@ class OneShotInvoker:
         self._agent_description: str = ""
         self._feature_flags: dict[str, bool] | None = None
         self._started = False
+        # Set from the adapter's start until its cleanup_all succeeds.
+        self._adapter_cleanup_pending = False
+        self._startup: asyncio.Task[None] | None = None
+        self._shutdown: asyncio.Task[None] | None = None
+        # Tasks inside an accepted handle_event; shutdown disposes only once
+        # every one has settled.
+        self._operations: Counter[asyncio.Task[Any] | None] = Counter()
+        self._operations_settled = asyncio.Event()
+        self._operations_settled.set()
 
     @property
     def agent_name(self) -> str:
@@ -191,16 +207,36 @@ class OneShotInvoker:
 
         Mirrors the bootstrap half of ``Agent.start()``: sets the adapter's
         runtime agent id and calls ``on_started(name, description)``. Skips
-        WebSocket connect and room subscriptions. Idempotent.
+        WebSocket connect and room subscriptions. Idempotent: concurrent
+        callers join one owned startup.
+
+        Raises:
+            CleanupIncompleteError: A shutdown is running or has not finished
+                adapter cleanup; call ``shutdown()`` to retry it first.
+            RuntimeError: ``shutdown()`` was requested during this startup.
         """
         if self._started:
             return
+        startup = self._startup
+        if not self._running(startup):
+            if self._running(self._shutdown) or self._adapter_cleanup_pending:
+                raise CleanupIncompleteError(
+                    "OneShotInvoker cleanup is incomplete; call shutdown() to retry it"
+                )
+            startup = self._startup = spawn_owned(
+                self._run_startup(), label=LIFECYCLE_LABEL
+            )
+        await asyncio.shield(startup)
 
+    async def _run_startup(self) -> None:
+        """Start the adapter unless shutdown was requested; a failed start
+        releases it here, so shutdown never overlaps that cleanup."""
         (
             self._agent_name,
             self._agent_description,
             self._feature_flags,
         ) = await self._fetch_agent_metadata()
+        self._refuse_if_shutting_down()
         # Parity with Agent.start(): adapters read their identity and platform
         # coordinates from the injected connection.
         setattr(  # noqa: B010
@@ -208,12 +244,19 @@ class OneShotInvoker:
             "platform",
             self._link.to_platform_connection(self._agent_id),
         )
-        await start_adapter(
-            self._adapter,
-            agent_name=self._agent_name,
-            agent_description=self._agent_description,
-            feature_flags=self._feature_flags,
-        )
+        self._adapter_cleanup_pending = True
+        try:
+            await start_adapter(
+                self._adapter,
+                agent_name=self._agent_name,
+                agent_description=self._agent_description,
+                feature_flags=self._feature_flags,
+            )
+        except BaseException:
+            if await release_adapter(self._adapter):
+                self._adapter_cleanup_pending = False
+            raise
+        self._refuse_if_shutting_down()
         self._started = True
         logger.info(
             "OneShotInvoker ready: agent_id=%s name=%s",
@@ -221,12 +264,71 @@ class OneShotInvoker:
             self._agent_name,
         )
 
+    def _refuse_if_shutting_down(self) -> None:
+        if self._running(self._shutdown):
+            raise RuntimeError("OneShotInvoker shut down during startup")
+
     async def shutdown(self) -> None:
-        """Disconnect the link (best-effort)."""
+        """Dispose the adapter, then disconnect the link (best-effort).
+
+        Shutdown refuses new events at once, stops an in-flight startup from
+        becoming ready, and waits for that startup and every accepted event
+        to settle, so cleanup never runs beneath them. Concurrent callers join
+        one owned shutdown, and a cancelled caller leaves it running. Only a
+        settled shutdown is retried.
+
+        The wait has no time bound, so a hung event holds it open. A host with
+        a deadline wraps the call in ``asyncio.timeout``; the shutdown keeps
+        running, and a later call joins it.
+
+        Raises:
+            CleanupIncompleteError: Called from an accepted event, which the
+                shutdown waits for; it continues once that event unwinds.
+            Exception: The adapter's ``cleanup_all`` failed. The link is still
+                disconnected, and the next ``shutdown()`` retries the cleanup.
+        """
+        self._started = False
+        shutdown = self._shutdown
+        if not self._running(shutdown):
+            shutdown = self._shutdown = spawn_owned(
+                self._run_shutdown(), label=LIFECYCLE_LABEL
+            )
+        if asyncio.current_task() in self._operations:
+            raise CleanupIncompleteError(
+                "OneShotInvoker shutdown waits for the calling event to finish"
+            )
+        await asyncio.shield(shutdown)
+
+    async def _run_shutdown(self) -> None:
+        if self._startup is not None:
+            await asyncio.wait({self._startup})
+        await self._operations_settled.wait()
         try:
-            await self._link.disconnect()
-        except Exception:
-            logger.warning("Error during link disconnect", exc_info=True)
+            if self._adapter_cleanup_pending:
+                await dispose_adapter(self._adapter)
+                self._adapter_cleanup_pending = False
+        finally:
+            try:
+                await self._link.disconnect()
+            except Exception:
+                logger.warning("Error during link disconnect", exc_info=True)
+
+    @contextmanager
+    def _accepted_operation(self) -> Iterator[None]:
+        """Hold one accepted event until it settles, cancellation included."""
+        task = asyncio.current_task()
+        self._operations[task] += 1
+        self._operations_settled.clear()
+        try:
+            yield
+        finally:
+            self._operations -= Counter({task: 1})
+            if not self._operations:
+                self._operations_settled.set()
+
+    @staticmethod
+    def _running(task: asyncio.Task[None] | None) -> TypeGuard[asyncio.Task[None]]:
+        return task is not None and not task.done()
 
     # --- Event entry point ---
 
@@ -243,11 +345,15 @@ class OneShotInvoker:
                 missing/empty ``room_id`` or ``payload.id`` for a
                 ``message_created`` or room-cleanup event, or a
                 ``message_created`` payload missing a required field.
-            RuntimeError: ``startup()`` was not called first.
+            RuntimeError: ``startup()`` was not called first, or
+                ``shutdown()`` has begun.
         """
         if not self._started:
-            raise RuntimeError("OneShotInvoker.startup() not called")
+            raise RuntimeError("OneShotInvoker.startup() not called, or shut down")
+        with self._accepted_operation():
+            return await self._handle_accepted_event(body)
 
+    async def _handle_accepted_event(self, body: dict[str, Any]) -> dict[str, Any]:
         event_type: str = body.get("event_type") or ""
         payload = body.get("payload") or {}
         try:
@@ -284,7 +390,7 @@ class OneShotInvoker:
                 # entries is ``adapter.on_cleanup``. Without this hookup the
                 # cache grows unbounded — and for adapters that spawn
                 # subprocesses per room, those subprocesses leak too. Mirrors
-                # ``AgentRuntime._destroy_execution``'s cleanup-callback hook
+                # ``RoomExecutions.destroy``'s cleanup-callback hook
                 # in the long-running path.
                 return await self._cleanup_room(event_type, cast(str, room_id))
             case {"decision": "skip_self", "message_id": message_id}:
@@ -300,12 +406,8 @@ class OneShotInvoker:
     # --- Internal: the lifecycle dance ---
 
     async def _cleanup_room(self, event_type: str, room_id: str) -> dict[str, Any]:
-        try:
-            await self._adapter.on_cleanup(room_id)
-        except Exception:
-            logger.warning(
-                "Adapter on_cleanup failed for room %s", room_id, exc_info=True
-            )
+        """A failed ``on_cleanup`` raises so the host retries the event."""
+        await self._adapter.on_cleanup(room_id)
         return {
             "status": OneShotStatus.CLEANED_UP,
             "event_type": event_type,

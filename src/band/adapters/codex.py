@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
@@ -41,7 +42,6 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -49,10 +49,11 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
     send_event_safe,
 )
+from band.core.retention import RoomRetentionConfig, require_disabled_retention
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import ApprovalInterruptMixin
+from band.core.turn_lifecycle import ApprovalInterruptMixin, TurnTask, bind_turn_task
 from band.core.types import (
     AgentInput,
     ApprovalMode,
@@ -456,6 +457,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
     )
 
     transport: TransportKind = "stdio"
+    retention: RoomRetentionConfig = Field(default_factory=RoomRetentionConfig)
     model: str | None = None
     # Not validated here: the supported efforts vary by model and Codex CLI
     # version (model/list reports them), and the backend rejects unknown ones.
@@ -550,6 +552,20 @@ class CodexAdapterConfig(EnvAdapterConfig):
     # --- Phase 4: Diffs & token usage ---
     emit_diff_events: bool = False
     emit_token_usage_events: bool = False
+
+    @field_validator("retention")
+    @classmethod
+    def _require_safe_retention(
+        cls, retention: RoomRetentionConfig
+    ) -> RoomRetentionConfig:
+        return require_disabled_retention(
+            retention,
+            reason=(
+                "Codex idle retention is unavailable: native idle and terminal state "
+                "do not account for asynchronous hooks and delegated work; shutdown "
+                "can cancel that work."
+            ),
+        )
 
     @field_validator("codex_command", mode="before")
     @classmethod
@@ -655,7 +671,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # on_message: Band dispatches one message per room at a time, so the
         # reply that resolves the approval arrives only after on_message returns.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
-        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
+        self._turn_tasks: dict[str, TurnTask] = {}
+        self._room_cleanup: dict[str, asyncio.Task[None]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -903,11 +920,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        self._admit_turn(room_id, "Codex")
         self._room_client(room_id)
         self._active_room.set(room_id)
-        running = self._turn_tasks.get(room_id)
-        if running is not None and not running.done():
-            raise InputNotAccepted("The room already has an active Codex turn")
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -924,7 +939,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 command=command,
             )
         )
-        self._turn_tasks[room_id] = turn
+        self._turn_tasks[room_id] = bind_turn_task(tools, turn)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
         try:
             await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
@@ -1162,12 +1177,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             release.set_result(None)
 
     def _forget_turn(self, room_id: str, task: asyncio.Task[None]) -> None:
-        if self._turn_tasks.get(room_id) is task:
+        owner = self._turn_tasks.get(room_id)
+        if owner is not None and owner.task is task:
             del self._turn_tasks[room_id]
-        # A turn that fails after release already reported to the room;
-        # retrieving the exception keeps asyncio from logging it as lost.
-        if not task.cancelled():
-            task.exception()
 
     async def _settle_turn(self, room_id: str) -> None:
         """Let the room's detached turn wind down, then force-cancel it.
@@ -1180,27 +1192,18 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         turn = self._turn_tasks.get(room_id)
         if turn is None:
             return
-        done, _pending = await asyncio.wait(
-            {turn}, timeout=self.config.turn_settle_timeout_s
-        )
-        if turn not in done:
-            logger.warning(
-                "Room %s: turn still running after %ss; cancelling it",
-                room_id,
-                self.config.turn_settle_timeout_s,
+        # An already terminated turn keeps its original grace instead.
+        if turn.deadline is None:
+            done, _pending = await asyncio.wait(
+                {turn.task}, timeout=self.config.turn_settle_timeout_s
             )
+            if not done:
+                logger.warning(
+                    "Room %s: turn still running after %ss; cancelling it",
+                    room_id,
+                    self.config.turn_settle_timeout_s,
+                )
         await self._cancel_turn(room_id)
-
-    async def _cancel_turn(self, room_id: str) -> None:
-        """Cancel and await the room's detached turn, if one is running."""
-        turn = self._turn_tasks.get(room_id)
-        if turn is None or turn.done():
-            return
-        turn.cancel()
-        try:
-            await turn
-        except asyncio.CancelledError:
-            pass
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1572,15 +1575,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         self._active_room.set(room_id)
-        self._closing_rooms.add(room_id)
-        try:
-            # A turn parked on a human holds _rpc_lock; declining its pending
-            # approvals (and any it raises from now on) lets it finish.
-            self._clear_pending_approvals_for_room(room_id)
-            await self._settle_turn(room_id)
-            await self._close_room(room, room_id)
-        finally:
-            self._closing_rooms.discard(room_id)
+        # Physical transport closing has its own configured bound.
+        await self._retire_room(
+            room_id,
+            settle=self._settle_turn,
+            close=partial(self._close_room, room, room_id),
+        )
 
     async def _close_room(self, room: RoomCodexClient, room_id: str) -> None:
         async with self._rpc_lock:

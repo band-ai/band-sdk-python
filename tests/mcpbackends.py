@@ -31,7 +31,7 @@ class FakeBandMCPBackend:
 
     Each fake gets its own port, so a replaced backend shows up as a changed
     URL. ``stop`` can be held open with ``stop_release`` to exercise a slow
-    shutdown.
+    shutdown, and ``fail_stops`` makes that many stops raise.
     """
 
     _ports = itertools.count(LOCAL_MCP_PORT_MIN)
@@ -46,6 +46,7 @@ class FakeBandMCPBackend:
         self.local_server = FakeLocalServer(port=next(self._ports))
         self.is_running = True
         self.stop_calls = 0
+        self.fail_stops = 0
         self._stop_started = stop_started
         self._stop_release = stop_release
 
@@ -60,6 +61,9 @@ class FakeBandMCPBackend:
             self._stop_started.set()
         if self._stop_release is not None:
             await self._stop_release.wait()
+        if self.fail_stops:
+            self.fail_stops -= 1
+            raise OSError("stop failed")
 
 
 class BackendStarts:

@@ -13,9 +13,10 @@ import json
 import logging
 import re
 import uuid
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
-from pydantic import PositiveInt, ValidationError
+import httpx
+from pydantic import Field, PositiveInt, ValidationError
 from typing_extensions import Unpack
 
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
@@ -50,10 +51,14 @@ from band.runtime.tools import (
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
     from google.adk.tools import ToolContext
+    from google.genai import Client
 
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "band"
+
+# Extra HTTP attempts per generation request (total attempts = max_retries + 1).
+GOOGLE_ADK_MAX_GENERATION_RETRIES: Final[int] = 10
 
 # Candidate method names that google-adk BaseTool may use to expose tool
 # declarations.  The bridge overrides every match found on the installed
@@ -105,7 +110,7 @@ def _sanitize_adk_agent_name(agent_name: str) -> str:
 
 
 @functools.lru_cache(maxsize=1)
-def _require_adk() -> tuple[type, type, type, Any]:
+def _require_adk() -> tuple[type, type, type, type, Any]:
     """Import Google ADK dependencies lazily.
 
     Cached after the first successful call so repeated access is free.
@@ -113,14 +118,20 @@ def _require_adk() -> tuple[type, type, type, Any]:
     module import time.
 
     Returns:
-        (ADKAgent, InMemoryRunner, BaseTool, types) tuple.
+        (ADKAgent, InMemoryRunner, BaseTool, Gemini, types) tuple.
 
     Raises:
         ImportError: If google-adk is not installed.
     """
     try:
+        from google import (  # noqa: PLC0415 -- optional google_adk extra
+            genai,
+        )
         from google.adk import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             Agent as ADKAgent,
+        )
+        from google.adk.models.google_llm import (  # noqa: PLC0415 -- optional google_adk extra
+            Gemini,
         )
         from google.adk.runners import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             InMemoryRunner,
@@ -128,15 +139,43 @@ def _require_adk() -> tuple[type, type, type, Any]:
         from google.adk.tools import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
             BaseTool,
         )
-        from google.genai import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
-            types,
-        )
     except ImportError as exc:
         raise ImportError(
             "google-adk is required for GoogleADKAdapter. "
             "Install with: uv add band-sdk[google_adk]"
         ) from exc
-    return ADKAgent, InMemoryRunner, BaseTool, types
+
+    class BoundedGemini(Gemini):
+        @functools.cached_property
+        def httpx_client(self) -> httpx.AsyncClient:
+            return httpx.AsyncClient()
+
+        @functools.cached_property
+        def api_client(self) -> Client:
+            # aiohttp reconnects outside genai's configured attempt budget.
+            return genai.Client(
+                http_options=genai.types.HttpOptions(
+                    headers=self._tracking_headers,
+                    retry_options=self.retry_options,
+                    httpx_async_client=self.httpx_client,
+                )
+            )
+
+        async def aclose(self) -> None:
+            client = self.__dict__.get("api_client")
+            httpx_client = self.__dict__.get("httpx_client")
+            try:
+                if client is not None:
+                    await client.aio.aclose()
+            finally:
+                try:
+                    if httpx_client is not None:
+                        await httpx_client.aclose()
+                finally:
+                    if client is not None:
+                        client.close()
+
+    return ADKAgent, InMemoryRunner, BaseTool, BoundedGemini, genai.types
 
 
 @functools.lru_cache(maxsize=1)
@@ -156,7 +195,7 @@ def _get_tool_bridge_class() -> type:
     the declaration mechanism works end-to-end (not just that the method
     exists), catching signature changes that ``hasattr`` alone would miss.
     """
-    _, _, BaseTool, types = _require_adk()
+    _, _, BaseTool, _, types = _require_adk()
 
     # Detect which declaration methods the installed BaseTool exposes.
     active_methods = [
@@ -170,7 +209,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool has no known declaration method "
             f"(tried: {', '.join(_DECLARATION_CANDIDATES)}). "
             "This adapter relies on overriding the declaration method "
-            "(pinned to google-adk >=1.0,<2). Your installed version "
+            "(pinned to google-adk >=1.10,<2). Your installed version "
             "may be incompatible."
         )
 
@@ -303,7 +342,7 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool declaration smoke-test failed. "
             f"Method '{active_methods[0]}' exists but did not return a valid "
             "FunctionDeclaration. The adapter is pinned to google-adk "
-            ">=1.0,<2 — your installed version may be incompatible."
+            ">=1.10,<2 — your installed version may be incompatible."
         ) from exc
 
     return _BandToolBridge
@@ -316,6 +355,9 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
         model: Gemini model name passed to the ADK agent.
         system_prompt: Replaces the rendered Band system prompt entirely.
         custom_section: Extra instructions appended to the rendered prompt.
+        max_retries: Extra HTTP attempts per provider generation request;
+            never retries a tool or turn. Zero disables recovery. Capped at
+            :data:`GOOGLE_ADK_MAX_GENERATION_RETRIES`.
         max_history_messages: Most recent room messages replayed as a
             transcript at the start of each turn.
         max_transcript_chars: Character cap on that transcript; older lines
@@ -325,6 +367,11 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     model: str = GEMINI_MODEL
     system_prompt: str | None = None
     custom_section: str | None = None
+    max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=GOOGLE_ADK_MAX_GENERATION_RETRIES,
+    )
     max_history_messages: PositiveInt = 50
     max_transcript_chars: PositiveInt = 100_000
 
@@ -457,12 +504,17 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
     def _create_runner(self, tools: AgentToolsProtocol) -> InMemoryRunner:
         """Create a fresh ADK InMemoryRunner with current tools."""
-        ADKAgent, InMemoryRunnerCls, _, _ = _require_adk()
+        ADKAgent, InMemoryRunnerCls, _, Gemini, types = _require_adk()
         adk_tools = self._build_adk_tools(tools)
 
         adk_agent = ADKAgent(
             name=_sanitize_adk_agent_name(self.agent_name),
-            model=self.config.model,
+            model=Gemini(
+                model=self.config.model,
+                retry_options=types.HttpRetryOptions(
+                    attempts=self.config.max_retries + 1
+                ),
+            ),
             instruction=self._system_prompt,
             tools=adk_tools,
         )
@@ -489,7 +541,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         Uses ADK's Runner for the full tool loop. The runner handles
         LLM calls, tool execution, and conversation management.
         """
-        _, _, _, types = _require_adk()
+        _, _, _, _, types = _require_adk()
 
         logger.debug("Handling message %s in room %s", msg.id, room_id)
 
@@ -636,7 +688,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 await self.emit_usage(tools, turn_usage)
             finally:
                 if runner is not None:
-                    await runner.close()
+                    try:
+                        await runner.close()
+                    finally:
+                        await cast(Any, runner.agent).model.aclose()
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(
