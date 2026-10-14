@@ -7,10 +7,8 @@ from typing import Annotated, Self
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Platform-side TTL (seconds) for the boolean working-state indicator. The
-# adapter must refresh well within this window; if refreshes stop (crash, hang,
-# disconnect) the platform clears the indicator. Mirrors the Ticket B contract
-# (TTL <= 10s). Used only to derive the keep-alive cadence guard below.
+# The platform clears working state after this TTL if refreshes stop.
+# Keep-alive validation leaves headroom for a missed or slow refresh.
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
 
@@ -59,15 +57,9 @@ class SessionConfig(BaseSettings):
     # cancel the reasoning. None = unbounded. NOT a hang-killer.
     max_working_state_seconds: float | None = None
 
-    # Upper bound on one reasoning cycle (the handler invoked by _run_cycle).
-    # Unlike max_working_state_seconds, exceeding this DOES cancel the cycle.
-    # This covers the handler cycle, not context hydration or message claim/ack
-    # calls. A handler stuck awaiting an external call (e.g. a wedged adapter
-    # subprocess) would otherwise leave its message in 'processing' forever.
-    # On expiry the cycle is cancelled and TimeoutError propagates through the
-    # normal handler-exception path (mark_failed + retry), the same as any
-    # other handler error. None = unbounded (default — matches prior behavior
-    # for callers that never opt in).
+    # Bound the handler so a stalled adapter cannot leave input processing forever.
+    # Expiry cancels reasoning and raises TimeoutError through normal failure/retry
+    # handling. Hydration and claim/ack calls are outside this bound; None is unbounded.
     max_cycle_seconds: float | None = None
 
     # Post an `error` event when a message fails its final attempt and the
