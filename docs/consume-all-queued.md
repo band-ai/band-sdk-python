@@ -79,7 +79,7 @@ Enabling it is refused when it cannot work, rather than falling back silently:
 
 | Situation | Error |
 | --- | --- |
-| `max_queued_messages` outside 1 to 100 or not an `int` | `ValueError` from `SessionConfig` |
+| `max_queued_messages` outside 1 to 100, a `bool`, or not a whole number | `ValueError` from `SessionConfig` |
 | `max_message_retries` other than 1 | `ValueError` from `SessionConfig` |
 | Adapter without `supports_batch_input`, or a custom preprocessor without `process_batch` | `BandConfigError` from `Agent.start()` |
 | A custom `execution_factory`, or an execution without a batch callback | `BandConfigError` at construction |
