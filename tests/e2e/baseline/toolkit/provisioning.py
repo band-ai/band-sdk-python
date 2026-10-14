@@ -526,11 +526,39 @@ async def running_agent(
 
 
 @asynccontextmanager
+async def running_observed_agent(
+    provisioned: ProvisionedAgent,
+    adapter: SimpleAdapter[Any],
+    settings: BaselineSettings,
+    *,
+    session_config: SessionConfig | None = None,
+    observer: InvocationObserver | None = None,
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """``running_agent`` that also has ``observer`` watch the adapter's turns.
+
+    The observer's parked turns are freed before the agent stops, so a failing
+    test never waits on its own barrier.
+    """
+    if observer is not None:
+        observer.watch(adapter)
+    async with running_agent(
+        provisioned, adapter, settings, session_config=session_config
+    ):
+        try:
+            yield provisioned
+        finally:
+            if observer is not None:
+                observer.release_all()
+
+
+@asynccontextmanager
 async def running_provisioned_agent(
     adapter: SimpleAdapter[Any],
     resources: ResourceManager,
     *,
     label: str = "aut",
+    session_config: SessionConfig | None = None,
+    observer: InvocationObserver | None = None,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """Provision an agent and run ``adapter`` as it for the duration of the block.
 
@@ -541,9 +569,18 @@ async def running_provisioned_agent(
     teardown (the agent is tracked at provision time), so this only manages the run
     lifecycle. (Matrix / group agents come from ``AdapterCell``, which stamps
     ``adapter_id`` itself; this bespoke primitive leaves it unset.)
+
+    ``session_config`` sets the agent's execution policy (e.g. batching) and an
+    ``observer`` watches its turns, as in :meth:`AdapterCell.run_as`.
     """
     provisioned = await resources.provision_agent(label)
-    async with running_agent(provisioned, adapter, resources.settings) as running:
+    async with running_observed_agent(
+        provisioned,
+        adapter,
+        resources.settings,
+        session_config=session_config,
+        observer=observer,
+    ) as running:
         yield running
 
 
@@ -654,17 +691,15 @@ class AdapterCell:
         before the agent stops, so a failing test never waits on its own barrier.
         """
         adapter = self.build(prompt=prompt, features=features, tools=tools)
-        if observer is not None:
-            observer.watch(adapter)
         with self.resources.track_running(identity.id):
-            async with running_agent(
-                identity, adapter, self.settings, session_config=session_config
+            async with running_observed_agent(
+                identity,
+                adapter,
+                self.settings,
+                session_config=session_config,
+                observer=observer,
             ):
-                try:
-                    yield identity
-                finally:
-                    if observer is not None:
-                        observer.release_all()
+                yield identity
 
     @asynccontextmanager
     async def run_as_with_handle(

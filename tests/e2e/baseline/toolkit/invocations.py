@@ -24,18 +24,24 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from band.core.exceptions import InputNotAccepted
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.types import PlatformMessage
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Invocation:
-    """One adapter turn: the room and the original message ids it was handed, oldest first."""
+    """One adapter turn: the room and the original message ids it was handed, oldest first.
+
+    ``refused`` marks an attempt the adapter turned away with ``InputNotAccepted``
+    (a busy room): no provider execution started, so it was not a turn.
+    """
 
     room_id: str
     message_ids: tuple[str, ...]
+    refused: bool = False
 
 
 class Hold:
@@ -89,13 +95,16 @@ class InvocationObserver:
         async def observed_on_turn(
             messages: Sequence[PlatformMessage], *args: Any, room_id: str, **kwargs: Any
         ) -> None:
-            await self._enter(
-                Invocation(
-                    room_id=room_id,
-                    message_ids=tuple(message.id for message in messages),
-                )
+            invocation = Invocation(
+                room_id=room_id,
+                message_ids=tuple(message.id for message in messages),
             )
-            await real_on_turn(messages, *args, room_id=room_id, **kwargs)
+            await self._enter(invocation)
+            try:
+                await real_on_turn(messages, *args, room_id=room_id, **kwargs)
+            except InputNotAccepted:
+                invocation.refused = True
+                raise
 
         setattr(adapter, "on_turn", observed_on_turn)  # noqa: B010 -- an instance-level wrap; the class is untouched
 
@@ -120,11 +129,26 @@ class InvocationObserver:
         return hold
 
     def partition(self, room_id: str) -> list[tuple[str, ...]]:
-        """The message ids of each invocation in ``room_id``, in the order they started."""
+        """The message ids of each turn in ``room_id``, in the order they started.
+
+        An attempt the adapter refused as busy is not a turn and is left out.
+        """
         return [
             invocation.message_ids
             for invocation in self._invocations
-            if invocation.room_id == room_id
+            if invocation.room_id == room_id and not invocation.refused
+        ]
+
+    def handed(self, room_id: str) -> list[str]:
+        """Every original the turns in ``room_id`` were handed, oldest turn first.
+
+        An original appears once per turn that ran it, so a repeat means the model
+        ran it again.
+        """
+        return [
+            message_id
+            for message_ids in self.partition(room_id)
+            for message_id in message_ids
         ]
 
     def release_all(self) -> None:

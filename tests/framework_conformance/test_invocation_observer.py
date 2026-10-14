@@ -11,9 +11,11 @@ import asyncio
 
 import pytest
 
+from band.core.exceptions import InputNotAccepted
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.framework_conformance.invocationkit import (
     ROOM_ID,
+    BusyAdapter,
     DecliningAdapter,
     original,
     turn_input,
@@ -25,6 +27,13 @@ DEADLINE_S = 5.0
 @pytest.fixture
 def watched() -> tuple[DecliningAdapter, InvocationObserver]:
     adapter, observer = DecliningAdapter(), InvocationObserver(deadline_s=DEADLINE_S)
+    observer.watch(adapter)
+    return adapter, observer
+
+
+@pytest.fixture
+def busy() -> tuple[BusyAdapter, InvocationObserver]:
+    adapter, observer = BusyAdapter(), InvocationObserver(deadline_s=DEADLINE_S)
     observer.watch(adapter)
     return adapter, observer
 
@@ -99,3 +108,26 @@ class TestInvocationObserver:
         await adapter.on_messages(turn_input(original("m2")))
 
         assert adapter.built == [("m1",), ("m2",)]
+
+    async def test_an_attempt_the_adapter_refuses_as_busy_is_not_a_turn(
+        self, busy: tuple[BusyAdapter, InvocationObserver]
+    ) -> None:
+        adapter, observer = busy
+
+        with pytest.raises(InputNotAccepted):
+            await adapter.on_messages(turn_input(original("m1"), original("m2")))
+        await adapter.on_messages(turn_input(original("m1"), original("m2")))
+
+        assert observer.partition(ROOM_ID) == [("m1", "m2")]
+        assert observer.handed(ROOM_ID) == ["m1", "m2"]
+
+    async def test_the_originals_handed_over_are_listed_oldest_turn_first(
+        self, watched: tuple[DecliningAdapter, InvocationObserver]
+    ) -> None:
+        adapter, observer = watched
+
+        await adapter.on_messages(turn_input(original("m1"), original("m2")))
+        await adapter.on_messages(turn_input(original("m3"), room_id="room-b"))
+        await adapter.on_messages(turn_input(original("m4")))
+
+        assert observer.handed(ROOM_ID) == ["m1", "m2", "m4"]

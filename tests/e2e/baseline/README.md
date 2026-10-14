@@ -192,6 +192,11 @@ async def test_queued_messages(
 
 `smoke/samples/queuedroom.py` wraps this flow for the queued-message smokes. Parked turns
 are freed when the cell's run block exits, so a failing test never waits on its own hold.
+An attempt the adapter turns away as busy (`InputNotAccepted`, e.g. while an approval is
+pending) started no execution, so `partition` leaves it out and
+`invocation_observer.handed(room_id)` lists every original the real turns ran, once per
+turn. A bespoke adapter (the approval smokes) takes the same `session_config=` and
+`observer=` through `running_provisioned_agent`.
 
 ## Rules (clean, lean, reuse — no reinvention)
 
