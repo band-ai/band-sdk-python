@@ -20,9 +20,9 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-from band.core.protocols import TURN_FAILURE_PROVIDER
-from band.core.simple_adapter import SimpleAdapter
+from band.core.protocols import TURN_FAILURE_PROVIDER, FrameworkAdapter
 from band.core.types import PlatformMessage
+from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
@@ -70,8 +70,8 @@ ROOM_ID = "room-123"
 
 
 def run_through(
-    adapter: SimpleAdapter[Any],
-    link: MagicMock,
+    adapter: FrameworkAdapter,
+    link: BandLink | MagicMock,
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:

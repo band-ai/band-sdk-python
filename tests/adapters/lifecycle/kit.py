@@ -8,6 +8,7 @@ these shared files.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -18,16 +19,18 @@ from typing import Protocol
 
 import pytest
 
+from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FrameworkAdapter
 from band.core.retention import Residency, RetainedRoom
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import AgentInput, HistoryProvider, MessageType, PlatformMessage
+from band.testing.fake_tools import events_of_type
 from tests.adapters.hold import Hold
 from tests.adapters.roompeer import (
     FAIL_STARTUP_ARG,
     HOLD_STARTUP_ARG,
     STARTING_MARKER,
 )
-from tests.adapters.waiting import until
+from tests.adapters.waiting import UNTIL_TIMEOUT_S, until
 from tests.framework_conformance.turnprobes import DispatchingFakeTools
 
 IN_FLIGHT = frozenset({Residency.ACQUIRING, Residency.SUSPENDING})
@@ -201,6 +204,24 @@ class RetentionHost:
 
     async def leave(self, room_id: str) -> None:
         await self.adapter.on_cleanup(room_id)
+
+    async def assert_refuses_input(
+        self,
+        room_id: str,
+        content: str,
+        *,
+        error: type[InputNotAccepted] = InputNotAccepted,
+    ) -> None:
+        """Refused input never posts a reply or a user-visible failure."""
+        tools = DispatchingFakeTools(room_id=room_id)
+        try:
+            async with asyncio.timeout(UNTIL_TIMEOUT_S):
+                with pytest.raises(error):
+                    await self.deliver(room_id, content, tools)
+        except TimeoutError:
+            pytest.fail("Closing room queued input instead of refusing it")
+        tools.assert_no_messages_sent()
+        assert events_of_type(tools, MessageType.ERROR) == []
 
     async def shutdown(self) -> None:
         await self.adapter.cleanup_all()

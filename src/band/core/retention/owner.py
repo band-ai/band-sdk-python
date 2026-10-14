@@ -51,14 +51,18 @@ class RoomRetention:
         release: Callable[[ReleaseCause], Awaitable[ReleaseOutcome]],
         dispose: Callable[[], Awaitable[None]],
     ) -> RetainedRoom:
-        if self.stopping:
-            raise RoomClosingError("Room retention is stopping")
+        self.require_admission()
         if room_id in self._rooms:
             raise ValueError(f"Room {room_id} already has a residency owner")
         room = RetainedRoom(self, room_id, acquire, release, dispose)
         self._rooms[room_id] = room
         self.reschedule()
         return room
+
+    def require_admission(self) -> None:
+        """Refuse new work before it claims provider resources."""
+        if self.stopping:
+            raise RoomClosingError("Room retention is stopping")
 
     def _forget(self, room: RetainedRoom) -> None:
         if self._rooms.get(room.room_id) is room:

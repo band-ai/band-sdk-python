@@ -31,8 +31,8 @@ class TestSessionApprovalValidation:
         )
 
         await room.send("run")
-        await room.send("/approve-session req-15")
-        await room.send("/decline req-15")
+        await room.send(f"/approve-session {room.approval_token}")
+        await room.send(f"/decline {room.approval_token}")
         await room.settled()
 
         assert room.client.responses == [(15, DECLINED)]

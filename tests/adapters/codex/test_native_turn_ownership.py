@@ -88,7 +88,7 @@ class TestNativeTurnOwnership:
         assert residency is not None
         assert (residency.snapshot.leases, residency.snapshot.accepted) == (1, 1)
 
-        await room.send(f"/{CodexCommand.APPROVE} req-10")
+        await room.send(f"/{CodexCommand.APPROVE} {room.approval_token}")
         await room.settled()
         assert (residency.snapshot.leases, residency.snapshot.accepted) == (0, 0)
 
@@ -145,7 +145,7 @@ class TestNativeTurnOwnership:
         )
         await room.send("delegate the cleanup")
 
-        await room.send(f"/{CodexCommand.APPROVE} req-77")
+        await room.send(f"/{CodexCommand.APPROVE} {room.approval_token}")
         await room.settled()
 
         assert await answer_to(room.client, 77) == ACCEPTED

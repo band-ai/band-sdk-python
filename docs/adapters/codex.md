@@ -100,3 +100,8 @@ outstanding. The runtime can deliver approval and status controls ahead of that
 pending work through Codex's existing authorization rules. The active turn keeps
 its original tools; an ordinary input rejected before provider invocation is
 retried by the shared room scheduler after that turn releases the session.
+
+Approval commands use the token displayed in the room prompt. Native Codex
+request and approval IDs stay internal; a fresh request gets a new chat token
+after completion or room cleanup, even when Codex reuses its native ID. A
+redelivery of a still-pending request keeps its displayed token.

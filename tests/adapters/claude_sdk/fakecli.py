@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
 
+import httpx
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError
 from claude_agent_sdk._internal.transport import Transport
 from mcp import ClientSession
@@ -35,6 +36,7 @@ MODEL = "claude-fake"
 # What the fake raises when its startup or its close fails.
 STARTUP_EXITED = "Claude CLI exited during startup"
 CLEANUP_FAILED = "Claude CLI cleanup failed"
+MCP_DISCONNECTED = "Band MCP endpoint disconnected"
 # acceptEdits auto-approves these file-writing tools.
 EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
 
@@ -44,6 +46,13 @@ class Raw:
     """A wire message the CLI emits verbatim, for shapes no decision produces."""
 
     message: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class UnavailableMcp:
+    """A tool call whose advertised HTTP server is gone; the CLI fails the turn."""
+
+    decision: ModelDecision
 
 
 @dataclass(frozen=True)
@@ -103,6 +112,7 @@ class StreamFails:
 
 Step = (
     ModelDecision
+    | UnavailableMcp
     | Thinking
     | Raw
     | Hold
@@ -326,6 +336,15 @@ class FakeCLISession(Transport):
                 match step:
                     case ModelDecision():
                         denials += await self._decide(step)
+                    case UnavailableMcp():
+                        unavailable = False
+                        try:
+                            await self._decide(step.decision)
+                        except* httpx.ConnectError:
+                            unavailable = True
+                        if not unavailable:
+                            raise AssertionError("the MCP endpoint was still reachable")
+                        ending = EndTurn(is_error=True, result=MCP_DISCONNECTED)
                     case Thinking(text=text):
                         self._assistant(
                             {"type": "thinking", "thinking": text, "signature": ""}

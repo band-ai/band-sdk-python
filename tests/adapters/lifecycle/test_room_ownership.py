@@ -16,6 +16,7 @@ from tests.adapters.lifecycle.kit import (
 )
 from tests.adapters.roompeer import (
     CLEANUP_FAILURE,
+    WORKSPACE_NOTE,
     PeerCommand,
     read_reply,
     write_instruction,
@@ -52,7 +53,7 @@ class TestRoomOwnership:
         with pytest.raises(RoomClosingError):
             await host.send("room-a", write_instruction("changed"))
         assert host.exited == [False]
-        assert (Path(host.workspace("room-a")) / "notes.txt").read_text() == "alpha"
+        assert (Path(host.workspace("room-a")) / WORKSPACE_NOTE).read_text() == "alpha"
         host.children[0].refuse_close = False
         await host.leave("room-a")
         assert host.exited == [True]

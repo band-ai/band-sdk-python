@@ -46,7 +46,8 @@ class TestApprovalFromASequentialRoom:
         control_tools = ToolSchemaFakeTools()
         assert await room.adapter.try_handle_control(
             make_platform_message(
-                room_id=ROOM_ID, content=f"/{CodexCommand.APPROVE} req-10"
+                room_id=ROOM_ID,
+                content=f"/{CodexCommand.APPROVE} {room.approval_token}",
             ),
             control_tools,
         )
@@ -95,7 +96,7 @@ class TestApprovalFromASequentialRoom:
         await room.adapter.on_interrupt(ROOM_ID, ControlMode.INTERRUPT)
 
         assert turn.done()
-        assert ROOM_ID not in room.adapter._pending_approvals
+        assert room.pending_approval_count == 0
 
     @pytest.mark.asyncio
     async def test_cleanup_declines_a_parked_turn_instead_of_waiting(
@@ -138,7 +139,7 @@ class TestApprovalFromASequentialRoom:
         )
 
         await room.send("run tests")
-        await room.send(f"/{CodexCommand.APPROVE} req-10")
+        await room.send(f"/{CodexCommand.APPROVE} {room.approval_token}")
         turn = room.turn
         await room.adapter.on_cleanup(ROOM_ID)
 
@@ -146,7 +147,7 @@ class TestApprovalFromASequentialRoom:
         assert room.client.closed
 
     @pytest.mark.asyncio
-    async def test_an_approval_codex_names_is_resolved_by_that_id(
+    async def test_an_approval_codex_names_is_resolved_by_its_displayed_token(
         self, codex_room: Callable[..., Awaitable[CodexRoom]]
     ) -> None:
         room = await codex_room(
@@ -160,9 +161,10 @@ class TestApprovalFromASequentialRoom:
         )
 
         await room.send("run protected command")
-        assert any("Approval id: `ap-1`" in message for message in room.chat)
-        await room.send(f"/{CodexCommand.APPROVE} ap-1")
+        token = room.approval_token
+        assert token != "ap-1"
+        await room.send(f"/{CodexCommand.APPROVE} {token}")
         await room.settled()
 
         assert room.client.responses == [(7, ACCEPTED)]
-        assert "Approval `ap-1` resolved as `accept`." in room.chat
+        assert f"Approval `{token}` resolved as `accept`." in room.chat

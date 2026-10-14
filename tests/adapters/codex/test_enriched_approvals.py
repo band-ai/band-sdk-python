@@ -35,7 +35,7 @@ class TestEnrichedApprovals:
         )
 
         await room.send("run tests")
-        await room.send("/approve-session req-10")
+        await room.send(f"/approve-session {room.approval_token}")
         await room.settled()
 
         assert room.client.responses == [(10, {"decision": "acceptForSession"})]

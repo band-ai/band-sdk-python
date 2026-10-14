@@ -107,7 +107,12 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.decisions import DecisionEntry, DecisionRegistry, Timeout
+from band.runtime.decisions import (
+    DecisionEntry,
+    DecisionRegistry,
+    Registration,
+    Timeout,
+)
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS, render_system_prompt
 from band.runtime.tools import (
@@ -428,6 +433,7 @@ class PendingApproval:
     created_at: datetime
     future: asyncio.Future[ApprovalDecision]
     session_key: str = ""
+    native_key: str = ""
 
 
 @dataclass
@@ -944,6 +950,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._prompt_injected_rooms: set[str] = set()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
+        # Keep each registry's minting state across room disposal and restart.
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
         # A turn runs as a detached task so a manual approval can release
         # on_message: Band dispatches one message per room at a time, so the
@@ -972,6 +979,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         room = self._room_clients.get(room_id)
         if room is not None:
             return room
+        self._retention.require_admission()
         with self._workspaces.claiming(room_id) as workspace:
             room = RoomCodexClient(room_id=room_id, workspace=workspace)
             room.retained = self._retention.register(
@@ -3139,7 +3147,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
-        token = self._approval_token(event.id, params)
         loop = asyncio.get_running_loop()
         pending = PendingApproval(
             request_id=event.id,
@@ -3148,20 +3155,22 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             created_at=datetime.now(UTC),
             future=loop.create_future(),
             session_key=self._session_approval_key(event.method, params),
+            native_key=self._native_approval_key(event.id, params),
         )
         registry = self._pending_approvals.setdefault(
             room_id,
             DecisionRegistry(max_pending=self.config.max_pending_approvals_per_room),
         )
-        if (registration := registry.register_keyed(pending, key=token)) is None:
+        if (registration := self._register_approval(registry, pending)) is None:
             logger.warning(
                 "Approval %s in room %s was redelivered after a reply claimed it; "
                 "declining the redelivery",
-                token,
+                pending.native_key,
                 room_id,
             )
             return "decline"
         entry = registration.entry
+        token = entry.token
         for removed in registration.removed:
             removed.payload.future.set_result("decline")
         if (evicted := registration.evicted) is not None:
@@ -4350,12 +4359,21 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         return CodexCommand(word), parts[1].strip() if len(parts) > 1 else ""
 
     @staticmethod
-    def _approval_token(request_id: int | str, params: dict[str, Any]) -> str:
+    def _native_approval_key(request_id: int | str, params: dict[str, Any]) -> str:
         for key in ("approvalId", "approval_id", "itemId", "callId"):
             value = params.get(key)
             if isinstance(value, str) and value:
                 return value
         return f"req-{request_id}"
+
+    @staticmethod
+    def _register_approval(
+        registry: DecisionRegistry[PendingApproval], pending: PendingApproval
+    ) -> Registration[PendingApproval] | None:
+        for token, existing in registry.items():
+            if existing.native_key == pending.native_key:
+                return registry.register_keyed(pending, key=token)
+        return registry.register_minted(pending)
 
     def _open_approval_count(self, room_id: str) -> int:
         registry = self._pending_approvals.get(room_id)
@@ -4368,11 +4386,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if registry is None:
             return
         registry.forget(entry)
-        if len(registry) == 0:
-            self._pending_approvals.pop(room_id, None)
 
     def _clear_pending_approvals_for_room(self, room_id: str) -> None:
-        registry = self._pending_approvals.pop(room_id, None)
+        registry = self._pending_approvals.get(room_id)
         if registry is None:
             return
         for entry in registry.cancel_all():

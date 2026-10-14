@@ -678,6 +678,7 @@ class ACPClientAdapter(
         room = self._rooms.get(room_id)
         if room is not None:
             return room
+        self._retention.require_admission()
         with self._workspaces.claiming(room_id) as workspace:
             room = ACPRoom(room_id=room_id, workspace=workspace)
             room.retained = self._retention.register(
@@ -746,6 +747,7 @@ class ACPClientAdapter(
             if self.config.inject_band_tools:
                 room.tools = tools
 
+        room.retained.require_admission()
         async with room.reservation, AsyncExitStack() as lease:
             try:
                 await lease.enter_async_context(room.retained.use(prepare=bind_tools))

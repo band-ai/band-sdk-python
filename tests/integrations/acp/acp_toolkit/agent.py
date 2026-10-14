@@ -109,6 +109,7 @@ class FakeACPAgent:
         self._config_options = list(config_options)
         self._config_option_handler: ConfigOptionHandler | None = None
         self._reply_gate: Gate | None = None
+        self._reply_option: str | None = None
         self._hangs_up_on_config = False
         # Closes this agent's end of the transport; the harness binds it.
         self.hang_up: Callable[[], None] = lambda: None
@@ -154,8 +155,9 @@ class FakeACPAgent:
         as a crashed agent process does."""
         self._hangs_up_on_config = True
 
-    def holds_config_replies(self) -> Gate:
-        """Apply each ``set_config_option`` at once but reply only on release."""
+    def holds_config_replies(self, option_id: str | None = None) -> Gate:
+        """Apply matching config selections at once but reply only on release."""
+        self._reply_option = option_id
         self._reply_gate = Gate()
         return self._reply_gate
 
@@ -727,7 +729,7 @@ class FakeACPAgent:
             self.hang_up()
             await asyncio.Event().wait()
         self._config_options = await self._select(session_id, config_id, value)
-        if self._reply_gate is not None:
+        if self._reply_gate is not None and self._reply_option in (None, config_id):
             await self._reply_gate.hold()
         return SetSessionConfigOptionResponse(config_options=self._config_options)
 

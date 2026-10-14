@@ -8,6 +8,7 @@ its start and hold or refuse its exit.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
@@ -21,7 +22,7 @@ from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.adapters.omp_acp import OmpACPAdapter, OmpACPAdapterConfig
 from band.core.retention import RetainedRoom
-from band.integrations.acp import client_adapter
+from band.integrations.acp import client_adapter, client_runtime
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.omp import OMP_ACP_SUBCOMMAND, OMP_CWD_FLAG
 from tests.adapters.hold import Hold
@@ -109,7 +110,19 @@ def install(
         host.spawned(child, _workspace(command, cwd))
         return child
 
+    kill_process = client_runtime._kill
+
+    async def kill(process: asyncio.subprocess.Process) -> None:
+        child = next(
+            child
+            for child in host.children
+            if isinstance(child, LifecycleChild) and child.process is process
+        )
+        await pause_at(child.closing)
+        await kill_process(process)
+
     monkeypatch.setattr(client_adapter, "spawn_agent_process", spawn)
+    monkeypatch.setattr(client_runtime, "_kill", kill)
     return LifecycleBridge(
         adapter=adapter,
         residency=partial(_residency, adapter),

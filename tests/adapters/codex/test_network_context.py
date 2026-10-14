@@ -31,7 +31,7 @@ class TestNetworkContext:
         )
 
         await room.send("install lodash")
-        await room.send("/approve req-10")
+        await room.send(f"/approve {room.approval_token}")
         await room.settled()
 
         [approval_event] = [

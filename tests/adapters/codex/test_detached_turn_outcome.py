@@ -33,7 +33,7 @@ class TestDetachedTurnOutcome:
         room = await codex_room(*parked_on_approval(turn_completed()))
 
         await room.send("run tests")
-        await room.send("/approve req-10")
+        await room.send(f"/approve {room.approval_token}")
         await room.settled()
 
         turn, approval = room.deliveries
@@ -51,7 +51,7 @@ class TestDetachedTurnOutcome:
         await room.send("run tests")
         with pytest.raises(InputNotAccepted):
             await room.send("and lint too")
-        await room.send("/approve req-10")
+        await room.send(f"/approve {room.approval_token}")
         await room.settled()
 
         turn, busy, approval = room.deliveries

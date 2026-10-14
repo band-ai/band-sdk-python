@@ -181,7 +181,7 @@ class RetainedRoom:
         the task actually finishes. A refused enrollment cancels the task.
         """
         try:
-            self._check_admission()
+            self.require_admission()
         except RoomClosingError:
             task.cancel()
             raise
@@ -243,13 +243,13 @@ class RetainedRoom:
         included. An operation that abandons its acquisition leaves it for
         recovery rather than for a successor to adopt.
         """
-        self._check_admission()
+        self.require_admission()
         holder = asyncio.current_task()
         self._holders[holder] += 1
         self._schedule()
         try:
             await self._settle()
-            self._check_admission()
+            self.require_admission()
             self._leases += 1
             try:
                 if prepare is not None:
@@ -263,14 +263,15 @@ class RetainedRoom:
             self._schedule()
             self._start_requested_recovery()
 
-    def _check_admission(self) -> None:
+    def require_admission(self) -> None:
+        """Refuse new work before waiting for provider serialization."""
         if self.closing:
             raise RoomClosingError(f"Room {self.room_id} is closing")
 
     async def _settle(self) -> None:
         """Finish earlier transitions and pending releases without a lease."""
         for _ in range(MAX_SETTLE_STEPS):
-            self._check_admission()
+            self.require_admission()
             match self._in_flight(), self._cause, self._leases:
                 case asyncio.Task() as transition, _, _:
                     await self._join(transition)
@@ -284,7 +285,7 @@ class RetainedRoom:
 
     async def _ensure_resident(self) -> None:
         for _ in range(MAX_RESIDENCY_STEPS):
-            self._check_admission()
+            self.require_admission()
             match self._in_flight(), self._state, self._cause:
                 case asyncio.Task() as transition, _, _:
                     await self._join(transition)
@@ -330,7 +331,7 @@ class RetainedRoom:
         if transition.cancelled():
             # Closed admission means disposal cancelled it; otherwise recovery
             # did, and the caller re-evaluates the room.
-            self._check_admission()
+            self.require_admission()
             return
         if (error := transition.exception()) is not None:
             raise error
@@ -375,7 +376,7 @@ class RetainedRoom:
         if self.closing:
             self._state = Residency.SUSPENDED
             self._schedule()
-            self._check_admission()
+            self.require_admission()
         try:
             await self._acquire(self._generation, self._resume)
         except BaseException as error:
@@ -423,7 +424,7 @@ class RetainedRoom:
         if cause == ReleaseCause.IDLE and not self._idle_release_allowed(automatic):
             self._refuse_idle_release(intact=previous == Residency.RESIDENT)
             if not automatic:
-                self._check_admission()
+                self.require_admission()
                 raise RuntimeError(
                     f"Room {self.room_id} cleanup pending: provider activity "
                     f"is {self._activity}; {self._reason or 'waiting for quiescence'}"

@@ -32,6 +32,7 @@ CLEANUP_FAILURE = "subprocess cleanup failed"
 NO_ROLLOUT = "no rollout found for thread id"
 # Where the Codex peer saves each thread's conversation, unless told otherwise.
 CODEX_HOME = "codex-home"
+WORKSPACE_NOTE = "notes.txt"
 # How often a held start checks whether its hold file is gone.
 HOLD_POLL_S = 0.01
 # Flags that fail or hold a peer's start while their file exists.
@@ -95,7 +96,7 @@ def file_request(content: str) -> dict[str, Any]:
         return json.loads(content)
     except json.JSONDecodeError:
         marker = re.search(rf"{re.escape(WRITE_PREFIX)}([a-zA-Z0-9-]+)", content)
-        arguments = {"file_path": "notes.txt"}
+        arguments = {"file_path": WORKSPACE_NOTE}
         if marker is not None:
             arguments["content"] = marker.group(1)
         return {

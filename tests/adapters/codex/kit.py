@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -299,6 +300,15 @@ class CodexRoom:
         ]
 
     @property
+    def approval_token(self) -> str:
+        """The most recently advertised approval token in this room."""
+        return approval_tokens_from_chat(self.chat)[-1]
+
+    @property
+    def pending_approval_count(self) -> int:
+        return self.adapter._open_approval_count(ROOM_ID)
+
+    @property
     def events_sent(self) -> list[dict[str, Any]]:
         return [event for tools in self.deliveries for event in tools.events_sent]
 
@@ -425,6 +435,13 @@ class CodexApprovalRoom:
     def pending(self) -> DecisionRegistry[PendingApproval]:
         return self.adapter._pending_approvals[ROOM_ID]
 
+    @property
+    def approval_tokens(self) -> list[str]:
+        """The answer tokens advertised by the room's approval prompts."""
+        return approval_tokens_from_chat(
+            [message["content"] for message in self.tools.messages_sent]
+        )
+
     def ask(
         self, approval_id: str, *, request_id: int
     ) -> asyncio.Task[ApprovalDecision]:
@@ -446,14 +463,20 @@ class CodexApprovalRoom:
         return ask
 
     @asynccontextmanager
-    async def prompted(self, *approval_ids: str) -> AsyncIterator[None]:
+    async def prompted(self, *, count: int = 1) -> AsyncIterator[None]:
         """Asks made inside the block have each been registered and their
         room prompt sent by the time it exits."""
-        prompts = [self.tools.hold_message(f"`{id_}`") for id_ in approval_ids]
+        prefix = "Approval requested"
+        before = sum(
+            message["content"].startswith(prefix)
+            for message in self.tools.messages_sent
+        )
+        prompts = [self.tools.hold_message(prefix) for _ in range(count)]
         yield
         for prompt in prompts:
             async with prompt:
                 pass
+        await self.tools.until_said(prefix, times=before + len(prompts))
 
     async def reply(self, command: CodexCommand, approval_id: str = "") -> str:
         """Send an approval command to the room; the room's answer."""
@@ -465,6 +488,23 @@ class CodexApprovalRoom:
             args=approval_id,
         )
         return self.tools.messages_sent[-1]["content"]
+
+
+def requested_approval_token(tools: FakeAgentTools) -> str:
+    """The token the room's approval prompt asks its user to answer."""
+    return approval_tokens_from_chat(
+        [message["content"] for message in tools.messages_sent]
+    )[-1]
+
+
+def approval_tokens_from_chat(chat: list[str]) -> list[str]:
+    """The tokens advertised by approval commands in the chat."""
+    command = re.compile(r"`/" + re.escape(CodexCommand.APPROVE) + r" ([^`]+)`")
+    return [
+        match.group(1)
+        for message in chat
+        if (match := command.search(message)) is not None
+    ]
 
 
 SKILL_ROOT = host_absolute_path("opt", "band", "skills")

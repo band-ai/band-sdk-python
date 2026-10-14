@@ -1376,7 +1376,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1385,7 +1385,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -1394,7 +1394,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
       "adapter": "copilot_acp",
       "lanes": [
         "backends"
@@ -1403,7 +1403,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1412,7 +1412,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::test_agent_replies_after_rejoining_a_room",
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
       "adapter": "omp_acp",
       "lanes": [
         "backends"

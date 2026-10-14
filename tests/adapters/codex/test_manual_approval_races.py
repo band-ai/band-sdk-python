@@ -11,11 +11,56 @@ from band.adapters.codex import (
     CodexCommand,
 )
 from band.testing import events_of_type
-from tests.adapters.codex.kit import CodexApprovalRoom
+from tests.adapters.codex.kit import (
+    ROOM_ID,
+    CodexApprovalRoom,
+    requested_approval_token,
+    start_room_process,
+)
 
 
 class TestManualApprovalRaces:
     """Races between a room reply and the approval wait's own timeout."""
+
+    async def test_an_old_claimed_ask_cannot_forget_a_new_ask_after_cleanup(
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
+    ) -> None:
+        room = await approval_room()
+        await start_room_process(room.adapter)
+        old_prompt = room.tools.hold_message("Approval requested")
+        old = room.ask("reused", request_id=1)
+
+        async with old_prompt:
+            await room.reply(CodexCommand.APPROVE)
+            await room.adapter.on_cleanup(ROOM_ID)
+            async with room.prompted():
+                new = room.ask("reused", request_id=1)
+            new_token = requested_approval_token(room.tools)
+
+        assert await old == "accept"
+        assert not new.done()
+        await room.reply(CodexCommand.DECLINE, new_token)
+        assert await new == "decline"
+
+    async def test_a_completed_native_request_gets_a_fresh_answer_token(
+        self, approval_room: Callable[..., Awaitable[CodexApprovalRoom]]
+    ) -> None:
+        room = await approval_room()
+        async with room.prompted():
+            old = room.ask("reused", request_id=1)
+        old_token = requested_approval_token(room.tools)
+        await room.reply(CodexCommand.APPROVE, old_token)
+        assert await old == "accept"
+        async with room.prompted():
+            new = room.ask("reused", request_id=1)
+        new_token = requested_approval_token(room.tools)
+
+        assert await room.reply(CodexCommand.APPROVE, old_token) == (
+            f"Unknown approval id `{old_token}`. Pending: {new_token}"
+        )
+        assert not new.done()
+        await room.reply(CodexCommand.DECLINE, new_token)
+        assert await new == "decline"
 
     @pytest.mark.asyncio
     async def test_a_reply_that_claims_while_the_prompt_send_fails_still_wins(
@@ -47,9 +92,9 @@ class TestManualApprovalRaces:
         decision = room.ask("approval-xyz", request_id=1)
 
         async with timeout_notice:
-            assert await room.reply(CodexCommand.APPROVE, "approval-xyz") == (
-                NO_APPROVALS_TO_RESOLVE_MESSAGE
-            )
+            assert await room.reply(
+                CodexCommand.APPROVE, requested_approval_token(room.tools)
+            ) == (NO_APPROVALS_TO_RESOLVE_MESSAGE)
 
         assert await decision == "decline"  # approval_timeout_decision
 
@@ -63,22 +108,23 @@ class TestManualApprovalRaces:
         supersedes it (declining its asker) without evicting anything; and
         both final answers stand."""
         room = await approval_room(max_pending_approvals_per_room=2)
-        async with room.prompted("approval-a", "approval-b"):
+        async with room.prompted(count=2):
             claimed_ask = room.ask("approval-a", request_id=1)
             superseded = room.ask("approval-b", request_id=2)
-        claimed = room.pending.try_claim("approval-a")
+        token_a, token_b = room.approval_tokens
+        claimed = room.pending.try_claim(token_a)
         assert claimed is not None
 
-        assert await room.reply(CodexCommand.APPROVE, "approval-a") == (
-            "Approval `approval-a` is no longer pending."
+        assert await room.reply(CodexCommand.APPROVE, token_a) == (
+            f"Approval `{token_a}` is no longer pending."
         )
         refused = room.ask("approval-a", request_id=3)
         redelivery = room.ask("approval-b", request_id=4)
 
         assert await refused == "decline"
         assert await superseded == "decline"
-        assert list(room.pending) == ["approval-a", "approval-b"]
-        await room.reply(CodexCommand.DECLINE, "approval-b")
+        assert list(room.pending) == [token_a, token_b]
+        await room.reply(CodexCommand.DECLINE, token_b)
         claimed.payload.future.set_result("accept")
         assert await redelivery == "decline"
         assert await claimed_ask == "accept"

@@ -568,7 +568,7 @@ class TestHistoryInjection:
 
         await adapter.on_cleanup(ROOM_ID)
 
-        assert ROOM_ID not in adapter._pending_approvals
+        assert adapter._open_approval_count(ROOM_ID) == 0
         # The future should have been resolved (declined)
         assert fut.done()
 

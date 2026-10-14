@@ -105,7 +105,7 @@ class TestApprovalNotificationFailures:
         response_id, payload = fake_client.responses[0]
         assert response_id == 7
         assert payload["decision"] == "decline"
-        assert ROOM_ID not in adapter._pending_approvals
+        assert adapter._open_approval_count(ROOM_ID) == 0
 
         # The Band-delivery hiccup that caused this auto-decline must itself
         # be reported -- otherwise it's indistinguishable from a genuine
