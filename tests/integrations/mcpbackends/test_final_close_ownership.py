@@ -19,7 +19,7 @@ class TestFinalCloseOwnership:
     """A final close owns its backend until the stop actually succeeds."""
 
     async def test_failed_final_stop_retries_the_same_backend_and_blocks_reopen(
-        self,
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         backend = FakeBandMCPBackend()
         backend.fail_stops = 1
@@ -28,6 +28,8 @@ class TestFinalCloseOwnership:
 
         with pytest.raises(OSError, match="stop failed"):
             await owner.close(final=True)
+        # The closing caller raised the failure, so nothing else logs it.
+        assert [record for record in caplog.records if record.exc_info] == []
         with pytest.raises(CleanupIncompleteError):
             await owner.reopen()
 

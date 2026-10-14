@@ -11,7 +11,12 @@ from enum import StrEnum
 from typing import Self
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.retention.cleanup import cleanup_deadline, finish_by, spawn_owned
+from band.core.retention.cleanup import (
+    cleanup_deadline,
+    finish_by,
+    report_owned,
+    spawn_owned,
+)
 from band.core.retention.config import RoomRetentionConfig
 from band.integrations.mcp.engine import (
     RoomToolResolver,
@@ -222,7 +227,7 @@ class SharedBandMCPBackend:
                 await backend.stop()
             return
         if (stopping := await self._final_stop()) is not None:
-            await asyncio.shield(stopping)
+            await report_owned(stopping, None)
 
     async def close_after(
         self, rooms_closed: Awaitable[None], *, retention: RoomRetentionConfig

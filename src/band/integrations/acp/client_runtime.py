@@ -13,7 +13,7 @@ from acp.schema import (
     ClientCapabilities,
 )
 
-from band.core.retention.cleanup import rejoin_owned
+from band.core.retention.cleanup import rejoin_owned, report_owned
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import (
     ALLOW_ALWAYS_KIND,
@@ -202,7 +202,7 @@ class ACPRuntime(ACPSessionOperations):
         self._closure = rejoin_owned(
             self._closure, self._close, label="ACP runtime closure"
         )
-        await asyncio.shield(self._closure)
+        await report_owned(self._closure, None)
 
     async def _close(self) -> None:
         try:
@@ -226,7 +226,8 @@ class ACPRuntime(ACPSessionOperations):
                 try:
                     await self._ctx.__aexit__(None, None, None)
                 except Exception:
-                    logger.exception(
+                    # The failure itself goes to whoever awaits the closure.
+                    logger.warning(
                         "ACP agent subprocess %s failed to exit", _pid(process)
                     )
                     raise
@@ -246,10 +247,17 @@ class ACPRuntime(ACPSessionOperations):
         self._agent_supports_session_close = False
 
     async def _close_failed_start(self) -> None:
-        """Close what a failed start opened; a failed close, already logged by
-        the closure, keeps it for ``stop``."""
-        with suppress(Exception):
+        """Close what a failed start opened; a failed close keeps it for
+        ``stop`` and is logged here, since the start raises its own error."""
+        try:
             await self._closed()
+        except Exception:
+            logger.warning(
+                "Closing ACP agent subprocess %s after a failed start failed; "
+                "stop retries it",
+                _pid(self._transport),
+                exc_info=True,
+            )
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> BandMCPTransport:
