@@ -501,13 +501,18 @@ class ACPClientAdapter(
         switch = room.retained.start_owned(partial(self._switch_room, room, selection))
         try:
             await switch
-        except (asyncio.CancelledError, RuntimeError):
+        except (asyncio.CancelledError, RuntimeError) as error:
             current = asyncio.current_task()
             if current is not None and current.cancelling():
                 raise
             if not room.retained.closing:
                 raise
-            raise _session_ended_mid_switch(room_id) from None
+            logger.warning(
+                "Room %s: model switch failed as the room closed: %r",
+                room_id,
+                error,
+            )
+            raise _session_ended_mid_switch(room_id) from error
 
     async def _switch_room(self, room: ACPRoom, selection: ModelSelection) -> None:
         async def require_live_session() -> None:
@@ -752,18 +757,21 @@ class ACPClientAdapter(
         async with room.reservation, AsyncExitStack() as lease:
             try:
                 await lease.enter_async_context(room.retained.use(prepare=bind_tools))
-            except TimeoutError:
-                await self._report_not_ready(room, tools)
+            except TimeoutError as error:
+                await self._report_not_ready(room, tools, error)
                 raise
             if room.runtime is None:
                 raise RuntimeError(f"Room {room.room_id} has no ACP process")
             yield room.runtime
 
     @staticmethod
-    async def _report_not_ready(room: ACPRoom, tools: AgentToolsProtocol) -> None:
+    async def _report_not_ready(
+        room: ACPRoom, tools: AgentToolsProtocol, error: TimeoutError
+    ) -> None:
         """Fail the turn by name: the room's process did not start or stop
-        within the owner's bound, and recovery owns what is left of it."""
-        logger.warning("Room %s: ACP agent process not ready", room.room_id)
+        within the owner's bound, and recovery owns what is left of it. The
+        turn's own error log carries the traceback."""
+        logger.warning("Room %s: ACP agent process not ready: %s", room.room_id, error)
         await tools.send_failure(AgentFailure(_PROVIDER, PROCESS_NOT_READY_ERROR))
 
     async def on_message(

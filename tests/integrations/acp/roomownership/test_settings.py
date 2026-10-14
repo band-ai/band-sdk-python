@@ -97,8 +97,10 @@ class TestSettings:
                 # The agent honours the cancel, ending its prompt.
                 queued.prompting.release.set()
                 await leaving
-                with pytest.raises(BandConfigError, match="ended mid-switch"):
+                with pytest.raises(BandConfigError, match="ended mid-switch") as ended:
                     await queued.switch
+                # The failure the closing room caused stays on the record.
+                assert isinstance(ended.value.__cause__, RoomClosingError)
                 await asyncio.gather(queued.held, return_exceptions=True)
 
         assert queued.agent.config_selections(queued.session_id) == []

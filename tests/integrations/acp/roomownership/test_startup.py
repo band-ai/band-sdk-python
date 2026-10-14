@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
 import pytest
 
 from band.core.retention import RoomRetentionConfig
+from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import PROCESS_NOT_READY_ERROR
 from tests.integrations.acp.acp_toolkit import (
+    DEFAULT_ROOM,
     AcpSession,
     FakeACPAgent,
     accepted_work_finished,
@@ -27,12 +30,20 @@ from tests.integrations.acp.roomownership.kit import (
 )
 
 
+def adapter_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == client_adapter.__name__ and record.levelno == logging.WARNING
+    ]
+
+
 class TestStartup:
     """A process starts within the room's bounded acquisition."""
 
     @pytest.mark.asyncio
     async def test_a_start_that_never_answers_fails_at_its_bound_and_recovers(
-        self,
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         agent.holds_next_initialize()
@@ -43,6 +54,12 @@ class TestStartup:
             with pytest.raises(TimeoutError):
                 await session.send("hello")
             assert session.last_reply.errors == [PROCESS_NOT_READY_ERROR]
+            assert adapter_warnings(caplog) == [
+                (
+                    f"Room {DEFAULT_ROOM}: ACP agent process not ready: "
+                    f"Room {DEFAULT_ROOM} start abandoned after {SHORT_TRANSITION_S}s"
+                )
+            ]
 
             served = await session.send("again")
 
