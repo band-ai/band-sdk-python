@@ -32,6 +32,7 @@ from typing import (
 from band_sdk_core import (
     AgentFailure,
     ClaimRegistry,
+    ParkedReason,
     ParticipantRoster,
     PendingAck,
     RetryTracker,
@@ -146,6 +147,12 @@ def _event_message_id(event: MessageEvent) -> str:
     if event.payload is None:
         raise ValueError("a message event without a payload has no delivery id")
     return event.payload.id
+
+
+PARKED_REASONS = {
+    SettlementResult.NOT_FOUND: ParkedReason.NotFound,
+    SettlementResult.REJECTED: ParkedReason.Rejected,
+}
 
 
 def _delivery_id(event: PlatformEvent) -> str | None:
@@ -604,7 +611,7 @@ class ExecutionContext:
                 self._retry_tracker.mark_success(message_id)
                 self.claims.remember_completed(self.room_id, message_id)
             case SettlementResult.NOT_FOUND | SettlementResult.REJECTED:
-                self.claims.park_ack(self.room_id, message_id, result)
+                self.claims.park_ack(self.room_id, message_id, PARKED_REASONS[result])
                 logger.warning(
                     "ExecutionContext %s: terminal write for message %s parked (%s); "
                     "it is not retried or replayed until the room is rejoined",
