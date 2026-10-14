@@ -6,6 +6,7 @@ import json
 
 import httpx
 
+from band.core.types import MessageType
 from tests.runtime.helpers import ALICE, LifecyclePlatform, page
 
 
@@ -26,7 +27,7 @@ class ReplyingPlatform(LifecyclePlatform):
                 result = {"id": "reply", "recipients": [], "success": True}
             else:
                 event = payload["event"]
-                if event["message_type"] == "error":
+                if event["message_type"] == MessageType.ERROR:
                     self.errors.append(event["content"])
                 result = {
                     "id": "event",
