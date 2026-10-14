@@ -8,7 +8,7 @@ excluded.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 import pytest
@@ -113,8 +113,57 @@ async def run_agno(inp: AgentInput, final_text: str) -> str:
     )
 
 
+async def run_strands(inp: AgentInput, final_text: str) -> str:
+    pytest.importorskip("strands")
+    from strands.types.content import (  # noqa: PLC0415 -- strands extra, absent from some lane venvs
+        Messages,
+    )
+    from strands.types.streaming import (  # noqa: PLC0415 -- strands extra, absent from some lane venvs
+        StreamEvent,
+    )
+    from strands.types.tools import (  # noqa: PLC0415 -- strands extra, absent from some lane venvs
+        ToolSpec,
+    )
+
+    from band.adapters.strands import (  # noqa: PLC0415 -- strands extra, absent from some lane venvs
+        StrandsAdapter,
+    )
+    from band.testing import (  # noqa: PLC0415 -- strands extra, absent from some lane venvs
+        ScriptedStrandsModel,
+        TextTurn,
+    )
+
+    class RecordingModel(ScriptedStrandsModel):
+        received: Messages
+
+        async def stream(
+            self,
+            messages: Messages,
+            tool_specs: list[ToolSpec] | None = None,
+            system_prompt: str | None = None,
+            **kwargs: Any,
+        ) -> AsyncGenerator[StreamEvent, None]:
+            self.received = list(messages)
+            async for event in super().stream(
+                messages, tool_specs, system_prompt, **kwargs
+            ):
+                yield event
+
+    model = RecordingModel([TextTurn(final_text)])
+    adapter = StrandsAdapter(llm=model)
+    await adapter.on_started("Agent", "A test agent")
+    await deliver(adapter, inp)
+    return "\n".join(
+        block["text"]
+        for message in model.received
+        for block in message["content"]
+        if "text" in block
+    )
+
+
 PROBES: dict[str, BatchProbe] = {
     "langgraph": BatchProbe(run=run_langgraph),
     "pydantic_ai": BatchProbe(run=run_pydantic_ai),
     "agno": BatchProbe(run=run_agno),
+    "strands": BatchProbe(run=run_strands),
 }

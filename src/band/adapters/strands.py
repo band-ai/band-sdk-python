@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, cast
 
 from band_sdk_core import AgentFailure
@@ -65,6 +65,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
     reject_conflicting_tool_names,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -495,6 +496,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -649,7 +651,29 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run one room turn through the Strands agent loop."""
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: StrandsMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Run one room turn over its original messages through the Strands loop."""
         room_history = self._history_for_turn(
             room_id, history, is_session_bootstrap=is_session_bootstrap
         )
@@ -657,7 +681,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         # as a separate message would leave two user turns in a row, which
         # Bedrock's Converse rejects.
         user_message = with_system_updates(
-            msg.format_for_llm(), participants_msg, contacts_msg
+            format_current_inputs(messages), participants_msg, contacts_msg
         )
         logger.debug(
             "Room %s: Running Strands agent (history: %s msgs, prompt: %s...)",
