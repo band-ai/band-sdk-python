@@ -7,7 +7,6 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -284,34 +283,6 @@ def _payload_id(event: Any) -> str:
     return event.payload.id
 
 
-class CapacityAction(StrEnum):
-    REGISTER = "register"
-    WITHDRAW = "withdraw"
-
-
-@dataclass
-class SharedCapacity:
-    """An adapter's capacity line as the scheduler drives it: calls, in order."""
-
-    calls: list[tuple[CapacityAction, str, int]] = field(default_factory=list)
-
-    def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
-        self.calls.append((CapacityAction.REGISTER, room_id, generation))
-
-    def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
-        self.calls.append((CapacityAction.WITHDRAW, room_id, generation))
-
-    def actions(self) -> list[CapacityAction]:
-        return [action for action, _, _ in self.calls]
-
-    def generations(self) -> set[int]:
-        return {generation for _, _, generation in self.calls}
-
-    @property
-    def registrations(self) -> int:
-        return self.actions().count(CapacityAction.REGISTER)
-
-
 @dataclass
 class Room:
     platform: FakeRoom
@@ -355,15 +326,6 @@ class Room:
         self.platform.refuse_processing.clear()
         await self.ctx.request_resync()
 
-    async def queue_for_capacity(
-        self, message_id: str, capacity: SharedCapacity
-    ) -> None:
-        """Deliver a message to a busy host and wait until the room asks for capacity."""
-        registered = capacity.registrations
-        self.turns.accepting = False
-        await self.deliver(self.platform.post(message_id))
-        await self.until(lambda: capacity.registrations > registered)
-
 
 @contextlib.asynccontextmanager
 async def started_room(
@@ -376,7 +338,6 @@ async def started_room(
     fail_on: frozenset[str] = frozenset(),
     arrived: tuple[MessageEvent, ...] = (),
     controls: ControlScript | None = None,
-    capacity: SharedCapacity | None = None,
 ) -> AsyncIterator[Room]:
     """A started room over a host that can run a batch; ``config`` replaces the
     one ``batching`` and ``max_queued`` describe."""
@@ -390,7 +351,6 @@ async def started_room(
         agent_id=AGENT_ID,
         on_execute_batch=turns.batch,
         on_message_control=controls.handle if controls else None,
-        capacity=capacity,
         is_message_control=controls.recognizes if controls else None,
     )
     platform.deliver = ctx.on_event

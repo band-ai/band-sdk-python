@@ -14,7 +14,6 @@ from band.core.simple_adapter import SimpleAdapter
 from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
 from band.testing.phoenix_server import FakePhoenixServer
-from tests.runtime.batching.kit import SharedCapacity
 from tests.scenarios.peer import API_PREFIX, BandPeer
 
 ROOM_ID = "room-1"
@@ -42,15 +41,14 @@ class Turn:
 
 
 class QueuedAdapter(SimpleAdapter[Any]):
-    """A batch adapter whose capacity is taken until the room queues for it."""
+    """A batch adapter that refuses its first offer and accepts every later one."""
 
     supports_batch_input = True
 
     def __init__(self) -> None:
         super().__init__()
-        self.capacity = SharedCapacity()
+        self.refused: list[tuple[str, ...]] = []
         self.turns: list[Turn] = []
-        self.busy = True
 
     async def on_message(
         self,
@@ -84,17 +82,11 @@ class QueuedAdapter(SimpleAdapter[Any]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        if self.busy:
-            raise InputNotAccepted("capacity is taken")
+        if not self.refused:
+            self.refused.append(tuple(m.id for m in messages))
+            raise InputNotAccepted("busy")
         self.turns.append(Turn(tuple(m.id for m in messages), is_session_bootstrap))
         await tools.no_reply("scripted")
-
-    def register_capacity_wait(self, *, room_id: str, generation: int) -> None:
-        self.capacity.register_capacity_wait(room_id=room_id, generation=generation)
-        self.busy = False
-
-    def withdraw_capacity_wait(self, *, room_id: str, generation: int) -> None:
-        self.capacity.withdraw_capacity_wait(room_id=room_id, generation=generation)
 
 
 class AgentPeer(BandPeer):

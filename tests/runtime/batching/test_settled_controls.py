@@ -4,13 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.runtime.batching.kit import (
-    CapacityAction,
-    ControlScript,
-    FakeRoom,
-    SharedCapacity,
-    started_room,
-)
+from tests.runtime.batching.kit import ControlScript, FakeRoom, started_room
 from tests.runtime.helpers import runtime_failures
 
 pytestmark = pytest.mark.looptime
@@ -22,12 +16,11 @@ class TestSettledControls:
         self, platform: FakeRoom, batching: bool
     ) -> None:
         controls = ControlScript()
-        capacity = SharedCapacity()
 
-        async with started_room(
-            platform, batching=batching, controls=controls, capacity=capacity
-        ) as room:
-            await room.queue_for_capacity("answer", capacity)
+        async with started_room(platform, batching=batching, controls=controls) as room:
+            room.turns.accepting = False
+            await room.deliver(platform.post("answer"))
+            await room.until(lambda: room.turns.refused)
             # A pending question turns the refused input into its answer.
             controls.recognized.add("answer")
             room.turns.accepting = True
@@ -35,25 +28,6 @@ class TestSettledControls:
             await room.quiesce()
 
         assert (controls.handled, room.turns.ids) == (["answer"], [("ping",)])
-
-    async def test_a_deferred_input_consumed_as_a_control_stops_competing_for_capacity(
-        self, platform: FakeRoom
-    ) -> None:
-        controls = ControlScript()
-        capacity = SharedCapacity()
-
-        async with started_room(platform, controls=controls, capacity=capacity) as room:
-            await room.queue_for_capacity("answer", capacity)
-            controls.recognized.update({"answer", "approve"})
-            await room.deliver(platform.post("approve"))
-            await room.settled("answer", "approve")
-            await room.quiesce()
-            last_request = capacity.actions()[-1]
-
-        assert (controls.handled, last_request) == (
-            ["answer", "approve"],
-            CapacityAction.WITHDRAW,
-        )
 
     async def test_a_control_interrupted_while_handled_does_not_hold_back_new_input(
         self, platform: FakeRoom

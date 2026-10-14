@@ -10,12 +10,11 @@ from tests.agent.batchstart.kit import (
     QueuedAdapter,
     Turn,
 )
-from tests.runtime.batching.kit import CapacityAction
 from tests.scenarios.peer import AGENT_ID
 
 
 class TestStartBatching:
-    async def test_the_started_agent_runs_one_turn_over_the_queue_through_its_capacity(
+    async def test_the_started_agent_retries_a_refused_queue_as_one_turn(
         self, platform: Platform
     ) -> None:
         peer, adapter = platform.peer, QueuedAdapter()
@@ -41,8 +40,5 @@ class TestStartBatching:
             Turn(("m1", "m2", "m3"), bootstrap=True),
             Turn(("m4",), bootstrap=False),
         ]
-        assert (adapter.capacity.registrations, adapter.capacity.actions()[-1]) == (
-            1,
-            CapacityAction.WITHDRAW,
-        )
+        assert adapter.refused == [("m1", "m2", "m3")]
         assert set(peer.room(ROOM_ID).status.values()) == {"processed"}

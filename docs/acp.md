@@ -251,10 +251,6 @@ cancelled and judged exactly like a single message:
   mentioned grants no authority to resolve a decision; `decision_authorized_senders`
   does.
 
-Rooms never share one provider slot, so Cursor registers no capacity wait with
-the host (`CapacityWaitingAdapter`): a refused input simply stays with its room's
-scheduler.
-
 ## Server prompt outcomes
 
 `ACPServer.prompt` settles on the first terminal outcome for its room:

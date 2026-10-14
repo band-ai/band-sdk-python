@@ -15,7 +15,6 @@ from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import ControlMode
 from band.core.exceptions import BandConfigError
-from band.core.protocols import CapacityWaitingAdapter
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.control import ControlDeduplicator, apply_control, control_targets
@@ -113,7 +112,6 @@ class AgentRuntime:
         on_execute_batch: BatchExecutionHandler | None = None,
         is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
         | None = None,
-        capacity: CapacityWaitingAdapter | None = None,
     ):
         """
         Initialize AgentRuntime.
@@ -136,7 +134,6 @@ class AgentRuntime:
                 originals; required for ``SessionConfig.consume_all_queued``
             is_message_control: Optional read-only recognition of a delivery
                 the adapter would handle as a control
-            capacity: Optional adapter arbitrating shared capacity among rooms
 
         Raises:
             BandConfigError: ``consume_all_queued`` with a custom execution
@@ -156,7 +153,6 @@ class AgentRuntime:
         self._on_control = on_control
         self._on_message_control = on_message_control
         self._is_message_control = is_message_control
-        self._capacity = capacity
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
@@ -383,7 +379,6 @@ class AgentRuntime:
             on_execute=self._on_execute,
             on_message_control=self._on_message_control,
             is_message_control=self._is_message_control,
-            capacity=self._capacity,
             on_execute_batch=self._on_execute_batch,
             config=self._session_config,
             agent_id=self.agent_id,

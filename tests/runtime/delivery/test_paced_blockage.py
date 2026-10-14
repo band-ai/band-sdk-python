@@ -1,4 +1,4 @@
-"""True claim, admission, capacity or write blockage retries on the periodic cadence."""
+"""True claim, admission, busy-host or write blockage retries on the periodic cadence."""
 
 from __future__ import annotations
 
