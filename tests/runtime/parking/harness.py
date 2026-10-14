@@ -152,7 +152,7 @@ class Cell:
     """One mode and the terminal write its turn owes.
 
     Only batching retains a failed intent: an off-mode singleton keeps its own
-    retry policy, so that cell does not exist.
+    retry policy.
     """
 
     mode: Mode
@@ -182,8 +182,14 @@ class Cell:
         )
 
 
+OFF_PROCESSED = Cell(Mode.OFF, DeliveryStatus.PROCESSED)
+
+# Not among CELLS: off mode retains no failed intent. Its failed turn is the
+# subject of a test of its own.
+OFF_FAILED = Cell(Mode.OFF, DeliveryStatus.FAILED)
+
 CELLS = (
-    Cell(Mode.OFF, DeliveryStatus.PROCESSED),
+    OFF_PROCESSED,
     Cell(Mode.SINGLETON, DeliveryStatus.PROCESSED),
     Cell(Mode.BATCH, DeliveryStatus.PROCESSED),
     Cell(Mode.SINGLETON, DeliveryStatus.FAILED),

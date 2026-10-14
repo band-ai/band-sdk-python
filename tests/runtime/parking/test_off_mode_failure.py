@@ -4,29 +4,23 @@ from __future__ import annotations
 
 import pytest
 
-from band.client.streaming import DeliveryStatus
 from tests.platform.settlement.kit import MISSING_ATTEMPT, Reply
 from tests.runtime.parking.harness import (
     NOT_FOUND,
+    OFF_FAILED,
     RECONCILE_SECONDS,
     REFUSED,
     SPARE_RETRIES,
-    Cell,
     Hangup,
     Harness,
-    Mode,
     RoomPeer,
 )
 
 QUEUED = "m1"
 
 
-@pytest.fixture
-def cell() -> Cell:
-    return Cell(Mode.OFF, DeliveryStatus.FAILED)
-
-
 @pytest.mark.looptime
+@pytest.mark.parametrize("cell", [OFF_FAILED], ids=[OFF_FAILED.id], indirect=True)
 class TestOffModeFailure:
     @pytest.mark.parametrize(
         "reply",
