@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from tests.runtime.batching.kit import ControlScript, FakeRoom, started_room
+from tests.runtime.batching.kit import (
+    ControlScript,
+    FakeRoom,
+    SharedCapacity,
+    started_room,
+)
 from tests.runtime.helpers import ROOM_ID
 
 pytestmark = pytest.mark.looptime
@@ -108,3 +113,27 @@ class TestDeferredControls:
             await room.quiesce()
 
         assert (controls.handled, room.turns.ids) == (["approve"], [])
+
+    async def test_a_deferred_input_that_a_handled_control_turned_into_a_control_is_consumed(
+        self, platform: FakeRoom
+    ) -> None:
+        controls = ControlScript(recognized={"approve"})
+        # Handling the approval opens the question the refused input answers.
+        controls.on_handled = lambda message_id: controls.recognized.add("answer")
+        capacity = SharedCapacity()
+
+        async with started_room(platform, controls=controls, capacity=capacity) as room:
+            room.turns.accepting = False
+            # The list omits it, as it does a thread reply, so only the room's
+            # retained original can be offered to control handling again.
+            await room.deliver(platform.post("answer", in_rest=False))
+            await room.until(lambda: capacity.registrations > 0)
+            room.turns.accepting = True
+            await room.deliver(platform.post("approve"))
+            await room.deliver(platform.post("ping"))
+            await room.quiesce()
+
+        assert (controls.handled, room.turns.ids) == (
+            ["approve", "answer"],
+            [("ping",)],
+        )
