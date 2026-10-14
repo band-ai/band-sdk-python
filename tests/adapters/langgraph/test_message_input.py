@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -12,8 +12,7 @@ from langgraph.prebuilt import ToolNode
 
 from band.adapters.langgraph import LangGraphAdapter, LangGraphAdapterConfig
 from band.core.types import Capability, Emit, PlatformMessage
-
-from .helpers import make_capture_graph
+from tests.adapters.langgraph.helpers import make_capture_graph
 
 
 class TestOnMessage:
@@ -277,6 +276,7 @@ class TestOnMessage:
             model=mock_llm,
             tools=[platform_tool, additional_tool],
             checkpointer=mock_checkpointer,
+            middleware=[ANY],
         )
 
     @pytest.mark.asyncio
