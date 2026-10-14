@@ -6,9 +6,7 @@ import logging
 
 import pytest
 
-from band.adapters.codex import (
-    CodexAdapterConfig,
-)
+from band.adapters.codex import TRANSPORT_LOST_ERROR, CodexAdapterConfig
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -23,6 +21,7 @@ from band.testing import (
     reported_failures,
 )
 from tests.adapters.codex.kit import (
+    PROCESS_EXIT_REASON,
     PROCESS_EXITED,
     ROOM_ID,
     CodexRoom,
@@ -46,13 +45,7 @@ class TestProcessLossRecovery:
     ) -> None:
         """A transport/closed event ends the turn with a failure the room sees
         and a WARNING the operator sees (the runtime logs it only at DEBUG)."""
-        events = [
-            event_notification(
-                TRANSPORT_CLOSED,
-                {"reason": "Codex process exited unexpectedly"},
-            )
-        ]
-        fake_client = FakeCodexClient(events=events)
+        fake_client = FakeCodexClient(events=[PROCESS_EXITED])
         adapter = make_codex_adapter(fake_client, config=CodexAdapterConfig())
         tools = ToolSchemaFakeTools()
 
@@ -60,11 +53,11 @@ class TestProcessLossRecovery:
         with pytest.raises(TurnResultAlreadyReported):
             await send_bootstrap(adapter, tools=tools)
 
-        # Adapter should report a failure mentioning the disconnect.
-        failures = reported_failures(tools)
-        assert any("transport closed" in f["message"].lower() for f in failures)
+        assert [f["message"] for f in reported_failures(tools)] == [
+            TRANSPORT_LOST_ERROR
+        ]
         (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert "Codex process exited unexpectedly" in warning.getMessage()
+        assert PROCESS_EXIT_REASON in warning.getMessage()
 
     @pytest.mark.asyncio
     async def test_a_lost_process_is_retired_and_its_thread_restored_exactly(
