@@ -147,15 +147,23 @@ single = AgentInput(
 assert single.messages == (single.msg,)  # a turn of one is the singleton case
 ```
 
-<!-- TO FINALIZE: adapter list. Update as adapters declare supports_batch_input. -->
-Built-in adapters that declare `supports_batch_input` today: **none**. Until one
-does, enabling `consume_all_queued` with any built-in adapter raises
-`BandConfigError` at `Agent.start()`.
+These built-in adapters declare `supports_batch_input`:
 
-| Adapter | `supports_batch_input` |
+| Family | Adapters |
 | --- | --- |
-| (none yet) | |
-<!-- END TO FINALIZE: adapter list -->
+| Model SDKs | Anthropic, Gemini, Google ADK, LangGraph, Pydantic AI, Agno, Strands, CrewAI, Parlant, NOOA, Letta |
+| Coding agents | Claude SDK, Codex, Copilot SDK, OpenCode |
+| ACP clients | the generic ACP client, Copilot ACP, OMP ACP, Cursor ACP |
+
+These do not, so enabling `consume_all_queued` with one raises `BandConfigError`
+at `Agent.start()`:
+
+| Adapter | Why |
+| --- | --- |
+| A2A and the A2A gateway | The remote agent or the pending A2A task owns the reply; there is no model turn to share. |
+| CrewAI Flow | The Flow's run id and its reply matching are keyed to one original. |
+| ACP server | Each editor prompt settles on its own peer message. |
+| Slack wrapper | It forwards to an inner adapter and does not yet delegate control recognition. |
 
 ## Replies and declines
 
@@ -206,8 +214,6 @@ that each input was answered.
   input to the room's scheduler instead of batching it into the running turn; see
   [Cursor provider slot](acp.md#cursor-provider-slot).
 
-<!-- TO FINALIZE: control messages and senders. Written from the contract; the
-code lands with the control-classification and adapter-rendering work. -->
 ## Approvals and controls
 
 Approval, status and question replies are recognised through a read-only
@@ -217,6 +223,12 @@ recognised as a control ends the batch before it. Recognition alone never
 consumes or acknowledges a message, and every approval request keeps its own
 identity.
 
+An adapter that overrides `try_handle_control` without `is_control_message`
+is treated conservatively: every message is a control, so nothing batches.
+Claude SDK recognises its approval commands while approvals are on, Codex
+recognises every local command, and Cursor recognises `/cursor` commands, valid
+or not.
+
 ## Senders and reply audience
 
 Each original keeps its own sender ID, name and type, and the model input
@@ -225,4 +237,3 @@ sends, not one the model addresses itself) mentions each distinct original
 sender once, in first-appearance order: a batch from A, B, A addresses A and B.
 Mentions the model chooses are never rewritten. Approval authorization comes
 from the adapter's configured rules, never from the union of message senders.
-<!-- END TO FINALIZE: control messages and senders -->

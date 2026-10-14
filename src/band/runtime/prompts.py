@@ -73,7 +73,8 @@ def with_system_updates(message: str, *updates: str | None) -> str:
 BASE_INSTRUCTIONS = f"""
 ## Environment
 
-Multi-participant chat. Messages show sender: [Name]: content.
+Multi-participant chat. This turn's messages arrive as current input messages,
+each with its own sender. Earlier messages show the sender as [Name]: content.
 Messages prefixed with {SYSTEM_UPDATE_PREFIX.strip()} are platform updates (participant changes, contact updates, etc.).
 {COMMUNICATION_INSTRUCTIONS}
 
