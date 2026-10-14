@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from band.platform.link import BandLink
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import RetentionHost
 from tests.adapters.lifecycle.runtime import ReplyingPlatform

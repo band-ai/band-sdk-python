@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     )
     from band.runtime.contact_tools import ContactTools
     from band.runtime.messages import PlatformMessage
-    from band.runtime.tools import AgentTools
+    from band.runtime.tools.agent import AgentTools
 
 
 MessageHandler = Callable[["PlatformMessage", "AgentTools"], Awaitable[None]]
