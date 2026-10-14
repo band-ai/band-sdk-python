@@ -444,12 +444,27 @@ jobs:
       run: /tmp/band-mcp-install/bin/band-mcp --version
 
 
+  wheel-extra-cases:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.cases.outputs.matrix }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: '3.12'
+    - name: Resolve wheel consumer cases
+      id: cases
+      run: echo "matrix=$(python3 .github/scripts/wheelchecks.py)" >> "$GITHUB_OUTPUT"
+
   wheel-extras:
+    needs: wheel-extra-cases
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        case: [pydantic-ai, crewai, strands, nooa, langgraph-strands, langgraph, parlant]
+      matrix: ${{ fromJSON(needs.wheel-extra-cases.outputs.matrix) }}
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

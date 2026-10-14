@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -38,3 +40,7 @@ CONSUMERS: dict[str, Consumer] = {
         Consumer((Framework.PARLANT,), 3),
     )
 }
+
+
+if __name__ == "__main__":
+    sys.stdout.write(json.dumps({"case": list(CONSUMERS)}) + "\n")

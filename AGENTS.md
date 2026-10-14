@@ -187,7 +187,7 @@ To wire a new framework adapter into the matrix, follow
 ## Commands
 
 ```bash
-# Install dependencies (modern frameworks; see Dependency Conflicts below — see Dependency Conflicts below)
+# Install dependencies (modern frameworks; see Dependency Conflicts below)
 uv sync --extra dev
 
 # Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
