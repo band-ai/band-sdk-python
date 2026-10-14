@@ -9,7 +9,7 @@ from band.core.timestamps import assume_utc
 
 class TestAssumeUtc:
     def test_a_naive_timestamp_compares_with_an_aware_one_as_utc(self) -> None:
-        naive = datetime(2026, 5, 21, 10, 0)  # noqa: DTZ001 -- naive on purpose
+        naive = datetime(2026, 5, 21, 10, 0)  # naive on purpose
         aware = datetime(2026, 5, 21, 10, 0, tzinfo=UTC)
 
         assert assume_utc(naive) == aware
