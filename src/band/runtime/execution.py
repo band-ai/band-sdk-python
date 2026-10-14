@@ -1671,8 +1671,8 @@ class ExecutionContext:
     async def _wait_until_resync_complete(self) -> ResyncOutcome:
         """Preserve recovery ordering while allowing stopped-room discovery."""
         candidate: PlatformMessage | None = None
-        revision = self._control_revision
         if self._stopped:
+            revision = self._control_revision
             try:
                 candidate = await self._get_next_message()
             except Exception:
@@ -1685,11 +1685,10 @@ class ExecutionContext:
             if self._is_nonrunnable(candidate):
                 return ResyncOutcome.STOPPED
             self._resume_room()
-            revision = self._control_revision
 
         if await self._retry_pending_terminal_acks():
-            if revision != self._control_revision:
-                return ResyncOutcome.BLOCKED
+            if self._stopped:
+                return ResyncOutcome.STOPPED
             outcome = await self._resync_pending_messages(candidate)
             if outcome is not ResyncOutcome.RETRY:
                 return outcome
@@ -1721,7 +1720,9 @@ class ExecutionContext:
                 revision = self._control_revision
                 next_msg = await self._get_next_message()
                 if revision != self._control_revision:
-                    return self._stopped
+                    if self._stopped:
+                        return True
+                    continue
                 if (
                     next_msg is not None
                     and next_msg.id == previous_id
@@ -1827,7 +1828,11 @@ class ExecutionContext:
                 if next_msg is None:
                     next_msg = await self._get_next_message()
                 if revision != self._control_revision:
-                    return ResyncOutcome.BLOCKED
+                    # A STOP ends the pass; an INTERRUPT leaves the room running,
+                    # so the read it overtook is repeated.
+                    if self._stopped:
+                        return ResyncOutcome.BLOCKED
+                    continue
                 if (retained := self._retained_before(next_msg)) is not None:
                     candidate = next_msg
                     match await self._process_event(retained):
@@ -1859,8 +1864,6 @@ class ExecutionContext:
                 )
                 if self._stopped:
                     return ResyncOutcome.STOPPED
-                if revision != self._control_revision:
-                    return ResyncOutcome.BLOCKED
                 match result:
                     case TurnOutcome.NOT_ACCEPTED:
                         return ResyncOutcome.BLOCKED

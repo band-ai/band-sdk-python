@@ -462,6 +462,17 @@ class Room:
         """Ask the room to read the platform again, as a periodic pass would."""
         await self.ctx.request_resync()
 
+    async def leave_write_unconfirmed(self) -> Hold:
+        """Run the case's original with its processed write lost, queue the next
+        original behind it and hold the retry a recovery pass will make."""
+        first, queued = QUEUED
+        self.platform.script(Call.processed(first), answer=Answer.LOST)
+        await self.arrive()
+        await self.quiesce()
+        self.platform.script(Call.processed(first), answer=Answer.ACCEPT)
+        self.platform.post(queued)
+        return self.platform.hold(Call.processed(first))
+
     async def settled(self) -> None:
         """Wait until the platform has every original processed."""
         await self.until(lambda: self.platform.statuses == all_processed(self.case.ids))
