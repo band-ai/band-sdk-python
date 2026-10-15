@@ -1044,9 +1044,24 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 acquire=partial(self._acquire, room),
                 release=partial(self._release, room),
                 dispose=partial(self._dispose, room),
+                before_cancel_acquire=partial(self._prepare_acquire_cancel, room),
             )
         self._room_clients[room_id] = room
         return room
+
+    def _prepare_acquire_cancel(
+        self, room: RoomCodexClient, task: asyncio.Task[None], reason: str
+    ) -> bool:
+        """Keep a live startup's cancellation with its owner, even after delivery."""
+        owner = room.startup_owner
+        if owner is None or owner.task is not task or task.done():
+            return False
+        owner.terminate(
+            deadline=asyncio.get_running_loop().time()
+            + self.config.turn_settle_timeout_s,
+            reason=reason,
+        )
+        return True
 
     def _active_client_state(self) -> RoomCodexClient | None:
         room_id = self._active_room.get()
@@ -1966,6 +1981,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 deadline=asyncio.get_running_loop().time()
                 + self.config.turn_settle_timeout_s,
                 cooperative=True,
+                reason=f"Room {room_id} acquisition was cancelled for cleanup",
             )
         try:
             await room.retained.dispose()
@@ -1992,6 +2008,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     deadline=asyncio.get_running_loop().time()
                     + self.config.turn_settle_timeout_s,
                     cooperative=True,
+                    reason=f"Room {room_id} acquisition was cancelled for cleanup",
                 )
             self._clear_pending_approvals_for_room(room_id)
         await self._retention.stop()

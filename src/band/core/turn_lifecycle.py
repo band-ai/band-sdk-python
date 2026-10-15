@@ -68,6 +68,7 @@ class TurnTask:
         self._cancel_baseline = task.cancelling()
         self.deadline: float | None = None
         self._cancel_delivered = False
+        self._cancel_reason: str | None = None
         self._grace_expired = False
         self._timer: asyncio.Timeout | None = None
         self._cleanup_timer = False
@@ -105,11 +106,20 @@ class TurnTask:
         self._expiry_timer = asyncio.get_running_loop().call_at(deadline, self._expire)
 
     def terminate(
-        self, *, deadline: float | None = None, cooperative: bool = False
+        self,
+        *,
+        deadline: float | None = None,
+        cooperative: bool = False,
+        reason: str | None = None,
     ) -> None:
-        """Start the cleanup grace once; later requests never renew it."""
+        """Start the cleanup grace once; later requests never renew it.
+
+        Keep the first supplied reason for delivery, including cooperative expiry.
+        """
         if self._closed:
             return
+        if self._cancel_reason is None:
+            self._cancel_reason = reason
         self._adopt_cancellation()
         if self.deadline is not None:
             return
@@ -167,7 +177,7 @@ class TurnTask:
     def _cancel(self) -> None:
         if not self._closed and not self._cancel_delivered and not self.task.done():
             self._cancel_delivered = True
-            self.task.cancel()
+            self.task.cancel(self._cancel_reason)
 
     async def drain(self) -> bool:
         """Wait within the original terminal grace without cancelling a waiter."""

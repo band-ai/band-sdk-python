@@ -157,10 +157,15 @@ Pass the keyword-only `resolve_mcp_servers` callback to `CodexAdapter`, not
   names, repeated cursors, negative statuses and consumed timeout cancellation
   fail startup.
 - Cancellation and retirement fence each stage and every discovery request.
-  A resolver may request its own room cleanup without self-waiting. Cleanup
-  disarms readiness deadlines and joins an already-cancelling acquisition
-  without a second cancellation. Settlement beyond the reporting bound retains
-  acquisition, child, workspace and diagnostic scope until cleanup succeeds.
+  A resolver may request its own room cleanup without self-waiting. Cleanup and
+  acquisition abandonment disarm readiness deadlines through the startup
+  cancellation owner, which records and delivers the first cancellation with
+  its abandonment or cleanup reason. Later cleanup joins that same cancellation
+  authority even when settlement consumes the task's cancellation count; it
+  never sends a fallback cancellation into owned settlement. Explicit cleanup
+  retries retain their separate cancellation semantics. Settlement beyond the
+  reporting bound retains acquisition, child, workspace and diagnostic scope
+  until cleanup succeeds.
   Failed registration unwinds the gated worker before resolution can start.
   Invocation-only cancellation timers end with their owner, never later work.
 - Thread start/resume errors with adopted servers trigger bounded readiness
