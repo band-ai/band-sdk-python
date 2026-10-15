@@ -443,12 +443,12 @@ async def time_passes(seconds: float) -> None:
 
 
 async def wait_for(predicate: Callable[[], bool], timeout_s: float = 1.0) -> None:
+    """Observe readiness before timing out when a delayed poll resumes."""
     deadline = asyncio.get_running_loop().time() + timeout_s
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate():
-            return
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            pytest.fail("Timed out waiting for condition")
         await asyncio.sleep(0.01)
-    pytest.fail("Timed out waiting for condition")
 
 
 async def run_single_turn(
