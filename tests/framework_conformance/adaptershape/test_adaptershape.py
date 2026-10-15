@@ -26,7 +26,9 @@ class TestAdapterShape:
             f"{config.label} must subclass BaseAdapterConfig or EnvAdapterConfig"
         )
 
-    def test_every_adapter_has_its_config_class(self) -> None:
+    def test_every_adapter_has_its_config_class(
+        self,
+    ) -> None:
         config_names = {c.node.name for c in ADAPTER_CONFIGS}
         missing = [
             adapter.label

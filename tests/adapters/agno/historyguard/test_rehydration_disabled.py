@@ -3,7 +3,7 @@ from __future__ import annotations
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 
-from band.runtime.formatters import format_history_for_llm
+from band.runtime.formatters import format_current_inputs, format_history_for_llm
 from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_input
 
 
@@ -41,7 +41,7 @@ class TestRehydrationDisabled:
         # Only the participants line and the current message — no rehydrated turns.
         assert [m.content for m in msgs] == [
             "[System]: Alice and Bob are here",
-            sample_platform_message.format_for_llm(),
+            format_current_inputs([sample_platform_message]),
         ]
 
     async def test_second_turn_does_not_carry_over_band_transcript(
@@ -72,4 +72,6 @@ class TestRehydrationDisabled:
         # The follow-up turn sends only the current message: Agno supplies prior
         # turns from its own database, so Band must not replay turn 1.
         msgs = run_input(agent)
-        assert [m.content for m in msgs] == [sample_platform_message.format_for_llm()]
+        assert [m.content for m in msgs] == [
+            format_current_inputs([sample_platform_message])
+        ]

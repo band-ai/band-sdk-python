@@ -6,6 +6,7 @@ from agno.run.agent import RunOutput
 from band.adapters.agno import (
     AgnoAdapter,
 )
+from band.runtime.formatters import format_current_inputs
 
 
 class TestPersistAndAccumulate:
@@ -38,7 +39,7 @@ class TestPersistAndAccumulate:
         seed = [Message(role="user", content="earlier")]
 
         run_input_msgs = adapter._build_run_input(
-            sample_platform_message,
+            [sample_platform_message],
             seed,
             None,
             None,
@@ -48,7 +49,7 @@ class TestPersistAndAccumulate:
 
         assert [m.content for m in run_input_msgs] == [
             "earlier",
-            sample_platform_message.format_for_llm(),
+            format_current_inputs([sample_platform_message]),
         ]
         # Committed transcript holds only the rehydrated seed.
         assert [m.content for m in adapter._message_history["room-1"]] == ["earlier"]
@@ -63,7 +64,7 @@ class TestPersistAndAccumulate:
         adapter._message_history["room-1"] = [Message(role="user", content="committed")]
 
         adapter._build_run_input(
-            sample_platform_message,
+            [sample_platform_message],
             [],
             "participants",
             "contacts",

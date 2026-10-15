@@ -33,4 +33,4 @@ class ControlPolicy:
         if message is None:
             return None
         inp = await self.default.process(ctx, event, agent_id)
-        return replace(inp, msg=message) if inp else None
+        return replace(inp, msg=message, messages=(message,)) if inp else None

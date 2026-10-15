@@ -12,7 +12,9 @@ from band.adapters.agno import (
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Emit
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.agno.adapter.kit import _msg
+from tests.adapters.agno.adapter.kit import (
+    _msg,
+)
 
 
 class TestRunFailureReporting:

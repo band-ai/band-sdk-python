@@ -11,7 +11,10 @@ from tests.integrations.acp.conftest import (
     failure_event,
     wait_for_pending_prompt,
 )
-from tests.integrations.acp.serverfailures.kit import prompt, running_server
+from tests.integrations.acp.serverfailures.kit import (
+    prompt,
+    running_server,
+)
 
 
 class TestFailureProjection:

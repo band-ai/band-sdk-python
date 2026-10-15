@@ -21,6 +21,7 @@ from tests.adapters.parlant.helpers import (
     BAND_DESCRIPTION,
     BAND_NAME,
     MESSAGE_KIND,
+    SENDER_ID,
     SENDER_NAME,
     SESSION_ID,
 )
@@ -38,7 +39,7 @@ def sample_message() -> PlatformMessage:
         id="msg-123",
         room_id="room-123",
         content="Hello, agent!",
-        sender_id="user-456",
+        sender_id=SENDER_ID,
         sender_type="User",
         sender_name=SENDER_NAME,
         message_type="text",

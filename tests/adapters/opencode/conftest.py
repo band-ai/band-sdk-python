@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import pytest
 from typing_extensions import Unpack
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import FeatureKwargs
+from band.core.types import FeatureKwargs, PlatformMessage
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
-from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls, FakeOpencodeClient
+from tests.adapters.opencode.helpers import (
+    AskFactory,
+    BandMCPCalls,
+    FakeOpencodeClient,
+    batch_input,
+    deliver_turn,
+    make_platform_message,
+)
 from tests.mcpbackends import BackendStarts, backends_created_by
 
 
@@ -59,3 +66,33 @@ def fake_band_mcp_backends() -> Iterator[BackendStarts]:
 def mcp_backend(fake_band_mcp_backends: BackendStarts) -> BandMCPCalls:
     """Band tool calls the model makes over the adapter's MCP backend."""
     return BandMCPCalls(fake_band_mcp_backends)
+
+
+ParkRoom = Callable[..., Awaitable[OpencodeAdapter]]
+
+
+@pytest.fixture
+async def park_room(
+    make_adapter: Callable[..., OpencodeAdapter], tools: FakeAgentTools
+) -> AsyncIterator[ParkRoom]:
+    """Start an adapter and deliver a first turn over ``messages`` (one plain
+    message by default) through the runtime's own entry points, returning once
+    the turn finishes or an ask in ``client``'s script releases it to wait on
+    the room."""
+    adapters: list[OpencodeAdapter] = []
+
+    async def park(
+        client: FakeOpencodeClient,
+        *messages: PlatformMessage,
+        config: OpencodeAdapterConfig | None = None,
+    ) -> OpencodeAdapter:
+        adapter = make_adapter(client, config=config)
+        adapters.append(adapter)
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        first_turn = messages or (make_platform_message(content="run it"),)
+        await deliver_turn(adapter, batch_input(first_turn, tools))
+        return adapter
+
+    yield park
+    for adapter in adapters:
+        await adapter.on_cleanup("room-1")

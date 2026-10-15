@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.adapters.crewai import (
+    CURRENT_INPUT_LABEL,
+)
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
@@ -196,7 +199,7 @@ class TestTurnVerdict:
         )
 
         second_prompt = crew.kickoff_async.call_args_list[1].args[0]
-        earlier, _, _ = second_prompt.partition("[New message -- act on this now:]")
+        earlier, _, _ = second_prompt.partition(CURRENT_INPUT_LABEL)
         assert f"(to @alice) {ANSWER}" in earlier
         assert earlier.count("assistant:") == (
             2 if isinstance(ending, str) and ending.strip() else 1

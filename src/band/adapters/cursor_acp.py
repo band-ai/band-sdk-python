@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import partial
@@ -23,7 +23,12 @@ from band.core.protocols import (
 )
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import start_releasable_turn
-from band.core.types import ApprovalMode, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    ApprovalMode,
+    FeatureKwargs,
+    PlatformMessage,
+    distinct_sender_ids,
+)
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
@@ -146,9 +151,12 @@ class CursorTurn:
 
     room: ACPRoom
     tools: AgentToolsProtocol
-    requester_id: str | None
+    # Who the turn's own notices address: the senders of the inputs it was
+    # admitted with. Later messages never change it.
+    audience: tuple[str, ...]
     release: asyncio.Future[None]
     task: asyncio.Task[None] | None = None
+    cancel_requested: bool = False
     generation: int | None = None
     session_id: str | None = None
     closed: bool = False
@@ -176,8 +184,11 @@ def _close_turn(turn: CursorTurn) -> None:
 
 
 def _cancel(turn: CursorTurn) -> None:
+    """Cancel the turn's task once, so a repeated STOP never re-enters the
+    task's own cancellation, which is what sends ``session/cancel``."""
     _close_turn(turn)
-    if turn.task is not None:
+    if turn.task is not None and not turn.cancel_requested:
+        turn.cancel_requested = True
         turn.task.cancel()
 
 
@@ -199,9 +210,6 @@ def _detach(turn: CursorTurn) -> None:
 
 class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     """Band adapter for Cursor's native ACP stdio server."""
-
-    def is_control_message(self, msg: PlatformMessage) -> bool:
-        return room_command_words(msg.content) is not None
 
     def __init__(
         self,
@@ -259,15 +267,38 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        # The runtime hands a command to ``try_handle_control`` first; this
+        # keeps one reaching a singleton entry point directly a command too.
         if await self.try_handle_control(msg, tools):
             return
+        await super().on_message(
+            msg,
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: ACPClientSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
         # A message never waits behind the room's turn: that turn may be parked
         # on a decision whose reply arrives after it, so the host keeps the
         # message and retries it once the room is free.
         if room_id in self._turns:
             raise InputNotAccepted("The room already has an active Cursor turn")
 
-        # The turn runs detached for the same reason: on_message returns the
+        # The turn runs detached for the same reason: on_turn returns the
         # moment a decision opens, while the task keeps the room's reservation
         # and lease through the turn's actual end.
         room = self._room(room_id)
@@ -276,7 +307,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         turn = CursorTurn(
             room=room,
             tools=tools,
-            requester_id=msg.sender_id,
+            audience=distinct_sender_ids(messages),
             release=release,
         )
         turn_task = turn.task = start_releasable_turn(
@@ -284,7 +315,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             partial(
                 self._run_turn,
                 turn,
-                msg,
+                messages,
                 history,
                 participants_msg,
                 contacts_msg,
@@ -319,6 +350,9 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         tools.turn.settle()
         return True
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return room_command_words(msg.content) is not None
+
     def _accept(self, turn: CursorTurn) -> None:
         """Make ``turn`` its room's one accepted turn."""
         self._turns[turn.room.room_id] = turn
@@ -344,7 +378,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _run_turn(
         self,
         turn: CursorTurn,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         history: ACPClientSessionState,
         participants_msg: str | None,
         contacts_msg: str | None,
@@ -360,7 +394,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
                 await self._prompt_room(
                     room,
                     runtime,
-                    msg,
+                    messages,
                     turn.tools,
                     history,
                     participants_msg,
@@ -631,7 +665,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         try:
             await turn.tools.send_notice(
                 prompt.replace("{token}", entry.token),
-                mentions=_requester_mentions(turn),
+                mentions=_audience_mentions(turn),
             )
         except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
             logger.warning("Could not deliver Cursor %s decision prompt", kind)
@@ -639,7 +673,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             if decisions.withdraw(entry):
                 return None
         finally:
-            # Release on_message here, not only in _run_turn's finally --
+            # Release on_turn here, not only in _run_turn's finally --
             # the room needs its queue back the instant a decision is
             # outstanding, whether or not the prompt itself landed.
             _detach(turn)
@@ -659,7 +693,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         try:
             await turn.tools.send_notice(
                 DECISION_TIMED_OUT_TEMPLATE.format(kind=kind, token=token),
-                mentions=_requester_mentions(turn),
+                mentions=_audience_mentions(turn),
             )
         except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
             logger.warning("Could not deliver Cursor %s timeout notice", kind)
@@ -838,8 +872,8 @@ def _cancel_decisions(
         entry.payload.future.set_result(None)
 
 
-def _requester_mentions(turn: CursorTurn) -> list[str] | None:
-    return [turn.requester_id] if turn.requester_id else None
+def _audience_mentions(turn: CursorTurn) -> list[str] | None:
+    return list(turn.audience) or None
 
 
 __all__ = [

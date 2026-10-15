@@ -9,9 +9,11 @@ from band.integrations.acp.client_adapter import (
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
+    live_line,
 )
 from tests.integrations.acp.clientbehavior.kit import (
     REPLAY_HEADER_LINE,
+    closes_the_prompt,
     rehydration_history,
     replay_boundary,
 )
@@ -19,7 +21,9 @@ from tests.integrations.acp.clientbehavior.kit import (
 
 class TestHistoryReplay:
     @pytest.mark.asyncio
-    async def test_replay_injected_when_remote_session_is_gone(self) -> None:
+    async def test_replay_injected_when_remote_session_is_gone(
+        self,
+    ) -> None:
         """session/load fails for the persisted id -> the transcript is replayed,
         framed as context, and the live message stays last and unduplicated."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
@@ -48,8 +52,8 @@ class TestHistoryReplay:
         assert prompt.count("What is my favorite color?") == 1, (
             "the live message must appear exactly once (replay must not duplicate it)"
         )
-        assert "[Peer]: What is my favorite color?" in prompt, (
-            "the live message must carry sender attribution like the transcript lines"
+        assert live_line("What is my favorite color?") in prompt, (
+            "the live message must carry its sender, as the transcript lines do"
         )
         assert (
             prompt.index("[System Context]")
@@ -57,12 +61,14 @@ class TestHistoryReplay:
             < prompt.index("[Marco]:")
             < replay_boundary(prompt)
         ), "prompt must read: system context, then replay, then the boundary marker"
-        assert prompt.rstrip().endswith("What is my favorite color?"), (
+        assert closes_the_prompt(prompt, live_line("What is my favorite color?")), (
             "the live message must come last so the model answers it, not the transcript"
         )
 
     @pytest.mark.asyncio
-    async def test_replay_injected_when_session_load_errors(self) -> None:
+    async def test_replay_injected_when_session_load_errors(
+        self,
+    ) -> None:
         """A remote that errors on session/load (a protocol error, not "not found")
         must not kill the turn: the failed load counts as a miss, the transcript
         replay still fires, and the room still gets its reply."""
@@ -91,7 +97,9 @@ class TestHistoryReplay:
         )
 
     @pytest.mark.asyncio
-    async def test_no_replay_when_remote_session_loads(self) -> None:
+    async def test_no_replay_when_remote_session_loads(
+        self,
+    ) -> None:
         """A restored session already holds the conversation remotely; replaying the
         transcript on top would double the history the agent sees."""
         agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
@@ -174,7 +182,9 @@ class TestHistoryReplay:
         ), "replay is seeded once per session; repeating it compounds duplication"
 
     @pytest.mark.asyncio
-    async def test_replay_after_midrun_respawn(self) -> None:
+    async def test_replay_after_midrun_respawn(
+        self,
+    ) -> None:
         """A prompt failure tears the runtime down and wipes the session mappings;
         the next turn's freshly created session must be re-seeded from the room
         transcript (re-fetched, since the runtime only hands history to bootstrap
@@ -226,6 +236,6 @@ class TestHistoryReplay:
             REPLAY_HEADER_LINE in prompt
             and "[Marco]: My favorite color is blue." in prompt
         ), "a session created after a respawn must be re-seeded from the transcript"
-        assert prompt.rstrip().endswith("What is my favorite color?"), (
+        assert closes_the_prompt(prompt, live_line("What is my favorite color?")), (
             "the live message must come last so the model answers it, not the transcript"
         )

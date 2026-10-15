@@ -12,7 +12,10 @@ from band.adapters.strands import (
 from band.testing import (
     ScriptedStrandsModel,
 )
-from tests.adapters.strands.kit import SEND_TURN, _turn_agent
+from tests.adapters.strands.kit import (
+    SEND_TURN,
+    _turn_agent,
+)
 
 
 class TestModelSource:

@@ -6,7 +6,11 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
 )
 from band.testing import failure_reports
-from tests.adapters.crewai.kit import REPLY, scripted_crew, started
+from tests.adapters.crewai.kit import (
+    REPLY,
+    scripted_crew,
+    started,
+)
 from tests.framework_conformance.turnprobes import turn_input, turn_tools
 
 

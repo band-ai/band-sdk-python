@@ -11,6 +11,7 @@ from tests.e2e.baseline.agents import (
     PerAdapter,
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
+from tests.framework_configs.adapters import ADAPTER_EXCLUDED_MODULES
 
 
 def _per_adapter_marker(fn: object) -> PerAdapter:
@@ -26,6 +27,17 @@ def _parametrized_adapter_ids(fn: object) -> list[str]:
         if mark.name == "parametrize":
             return [param.id for param in mark.args[1]]
     raise AssertionError("no parametrize marker on the decorated function")
+
+
+def lanes_without_an_installable_adapter() -> set[str]:
+    """Lanes whose adapters are all uninstallable here: selecting batch-input cells
+    imports the adapter class, so this environment collects none of theirs."""
+    return {
+        str(lane.id)
+        for lane in ci_lanes()
+        if lane.adapters
+        and all(str(adapter) in ADAPTER_EXCLUDED_MODULES for adapter in lane.adapters)
+    }
 
 
 class ScorecardItem:

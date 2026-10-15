@@ -6,12 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import BaseModel, Field
 
-from band.adapters.crewai import EMPTY_LLM_RESPONSE_MARKER
+from band.adapters.crewai import (
+    EMPTY_LLM_RESPONSE_MARKER,
+)
 from band.runtime.tools import BandTool
 
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
-
 
 EMPTY_LLM_RESPONSE_ERROR = f"{EMPTY_LLM_RESPONSE_MARKER} - None or empty."
 

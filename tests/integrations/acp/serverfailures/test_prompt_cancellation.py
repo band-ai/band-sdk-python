@@ -8,12 +8,16 @@ from acp.exceptions import RequestError
 from band_sdk_core import AgentFailure
 
 from band.agent import Agent
+from band.runtime.sessionconfig import SessionConfig
 from tests.integrations.acp.conftest import (
     deliver_server_message,
     failure_event,
     wait_for_pending_prompt,
 )
-from tests.integrations.acp.serverfailures.kit import prompt, running_server
+from tests.integrations.acp.serverfailures.kit import (
+    prompt,
+    running_server,
+)
 
 
 class TestPromptCancellation:
@@ -44,6 +48,7 @@ class TestPromptCancellation:
         runtime.agent_name = "TestBot"
         runtime.agent_description = "ACP test agent"
         runtime.feature_flags = None
+        runtime.session_config = SessionConfig()
         runtime.initialize = AsyncMock()
         runtime.start = AsyncMock()
         runtime.stop = AsyncMock(return_value=True)
