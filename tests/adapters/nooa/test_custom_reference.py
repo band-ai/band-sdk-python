@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from band.adapters.nooa.tools import (
@@ -12,6 +14,37 @@ from band.adapters.nooa.tools import (
 
 
 class TestCustomReference:
+    def test_wide_nested_model_keeps_every_required_field(self) -> None:
+        fields = {
+            f"field_{i}": (str, Field(description=f"Required external field {i}"))
+            for i in range(51)
+        }
+        details = create_model("WideDetails", **fields)
+        input_model = create_model(
+            "LookupInput", __doc__="Look up an order.", details=(details, ...)
+        )
+        room = room_tools_class([custom_tool_spec((input_model, BaseModel.model_dump))])
+
+        reference = room_tools_reference(room)
+
+        for name, (_, field) in fields.items():
+            assert f"{name}: str" in reference
+            assert field.description in reference
+
+    def test_wide_enum_keeps_every_valid_choice(self) -> None:
+        choices = Enum(
+            "ExternalCode", {f"CODE_{i}": f"external-{i}" for i in range(51)}
+        )
+        input_model = create_model(
+            "LookupInput", __doc__="Look up an order.", code=(choices, ...)
+        )
+        room = room_tools_class([custom_tool_spec((input_model, BaseModel.model_dump))])
+
+        reference = room_tools_reference(room)
+
+        for choice in choices:
+            assert f"{choice.name} = {choice.value!r}" in reference
+
     def test_nested_container_and_union_fields_reach_the_advertised_reference(
         self,
     ) -> None:

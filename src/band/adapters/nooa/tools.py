@@ -349,11 +349,13 @@ def room_tools_reference(tools_class: type[RoomTools]) -> str:
     NOOA's view of ``self`` shows only the first docstring line of a referenced
     type's methods, which would drop each tool's argument descriptions.
     """
-    references = [
+    references = dict.fromkeys(
         model for spec in tools_class._specs.values() for model in spec.reference_types
-    ]
-    # NOOA deduplicates cycles; unlimited expansion keeps every nested input discoverable.
-    return doc(tools_class, *references, inline_depth=sys.maxsize)
+    )
+    # NOOA's multi-object renderer truncates referenced types; render each root separately.
+    sections = [doc(tools_class)]
+    sections.extend(doc(model, inline_depth=sys.maxsize) for model in references)
+    return "\n\n".join(sections)
 
 
 def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
