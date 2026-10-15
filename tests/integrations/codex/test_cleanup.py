@@ -136,6 +136,24 @@ class TestSubprocessCleanup:
         assert process.returncode is not None
         await first
 
+    async def test_forced_close_waits_for_an_exit_reported_late(
+        self,
+        child: tuple[CodexStdioClient, asyncio.subprocess.Process],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A forced kill always ends the leader, but a loaded event loop (as on
+        Windows CI) can report its exit seconds later. Close must keep waiting
+        for that report instead of failing the cleanup it already forced."""
+        client, process = child
+
+        async def kill_reported_late(target: asyncio.subprocess.Process) -> None:
+            asyncio.get_running_loop().call_later(1.5, target.kill)
+
+        monkeypatch.setattr(stdio_client, "kill_process_tree", kill_reported_late)
+        await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
+
+        assert process.returncode is not None
+
     async def test_reconnect_reaps_the_previous_child_before_spawning(
         self, child: tuple[CodexStdioClient, asyncio.subprocess.Process]
     ) -> None:

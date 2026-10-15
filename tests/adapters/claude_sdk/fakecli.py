@@ -17,6 +17,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -158,6 +159,11 @@ class FakeClaude:
         # Parks the next close; the session that reaches it takes it.
         self.closing: Hold | None = None
         self.refuse_close = False
+        # Scripted status replies repeat the last answer, as the native CLI does.
+        self.mcp_statuses: deque[list[dict[str, Any]]] = deque()
+        self.status_requests = 0
+        self.status_hold: Hold | None = None
+        self.status_unsupported = False
 
     def script(self, *turns: Turn) -> None:
         self._turns.extend(turns)
@@ -251,6 +257,10 @@ class FakeCLISession(Transport):
         self.alive = False
         if self._turn is not None:
             self._turn.cancel()
+        for task in tuple(self._background):
+            task.cancel()
+        if self._background:
+            await asyncio.wait(self._background)
         self._outbox.put_nowait(None)
 
     def die(self) -> None:
@@ -283,6 +293,11 @@ class FakeCLISession(Transport):
         request = message["request"]
         if request["subtype"] == "initialize":
             self._hooks = request.get("hooks") or {}
+        if request["subtype"] == "mcp_status":
+            task = asyncio.create_task(self._answer_status(message["request_id"]))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+            return
         self._emit(
             type="control_response",
             response={
@@ -532,12 +547,66 @@ class FakeCLISession(Transport):
         content = [block.model_dump(exclude_none=True) for block in result.content]
         return content, result.isError
 
+    @property
+    def configured_servers(self) -> dict[str, Any]:
+        """The configured servers, read from the private file as the CLI reads it."""
+        servers = self.options.mcp_servers
+        if isinstance(servers, dict):
+            return servers
+        return json.loads(Path(str(servers)).read_text())["mcpServers"]
+
     def _mcp(self, server: str) -> AbstractAsyncContextManager[ClientSession]:
         """A session to the MCP server the options name, dialed by its URL."""
-        servers = self.options.mcp_servers
-        assert isinstance(servers, dict), servers
-        config = servers[server]
-        return mcp_session(config["url"], BandMCPTransport(config["type"]))
+        config = self.configured_servers[server]
+        return mcp_session(
+            config["url"], BandMCPTransport(config["type"]), config.get("headers")
+        )
+
+    async def _mcp_status(self) -> dict[str, Any]:
+        """Report real handshakes, or scripted status with native credential fields."""
+        self.claude.status_requests += 1
+        if self.claude.mcp_statuses:
+            statuses = self.claude.mcp_statuses
+            entries = statuses.popleft() if len(statuses) > 1 else statuses[0]
+            return {"mcpServers": entries}
+        entries = []
+        for name, config in self.configured_servers.items():
+            entry: dict[str, Any] = {"name": name, "config": config}
+            if config.get("type") in ("http", "sse"):
+                try:
+                    async with asyncio.timeout(5), self._mcp(name):
+                        pass
+                    entry["status"] = "connected"
+                except Exception as error:  # noqa: BLE001 -- the CLI reports any handshake failure
+                    entry["status"] = "failed"
+                    entry["error"] = f"{type(error).__name__}: {config}"
+            else:
+                entry["status"] = "pending"
+            entries.append(entry)
+        return {"mcpServers": entries}
+
+    async def _answer_status(self, request_id: str) -> None:
+        if (hold := self.claude.status_hold) is not None:
+            hold.reached.set()
+            await hold.released.wait()
+        if self.claude.status_unsupported:
+            self._emit(
+                type="control_response",
+                response={
+                    "subtype": "error",
+                    "request_id": request_id,
+                    "error": "Unsupported control request subtype: mcp_status",
+                },
+            )
+            return
+        self._emit(
+            type="control_response",
+            response={
+                "subtype": "success",
+                "request_id": request_id,
+                "response": await self._mcp_status(),
+            },
+        )
 
     def _tool_result(self, tool_use_id: str, content: Any, *, is_error: bool) -> None:
         self._emit(

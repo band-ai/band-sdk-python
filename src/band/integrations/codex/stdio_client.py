@@ -12,26 +12,64 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import Any
 
-from band.core.exceptions import BandConnectionError
+from band.core.exceptions import BandConnectionError, CleanupIncompleteError
+from band.integrations.codex.mcp import CodexMcpRedactor
 from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 
 logger = logging.getLogger(__name__)
 
 _PROCESS_EXIT_TIMEOUT_S = 1.0
+_PROCESS_GROUP_EXIT_TIMEOUT_S = 1.0
+_PROCESS_GROUP_POLL_S = 0.02
+
+
+async def _wait_for_process_group_exit(pgid: int) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _PROCESS_GROUP_EXIT_TIMEOUT_S
+    last_error: OSError | None = None
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError as error:
+            last_error = error
+        else:
+            last_error = None
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            if last_error is not None:
+                raise CleanupIncompleteError(
+                    "Codex owned process-group cleanup could not be confirmed"
+                ) from last_error
+            return False
+        await asyncio.sleep(min(_PROCESS_GROUP_POLL_S, remaining))
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Force-stop ``process`` and everything it spawned.
+    """Settle the original owned POSIX group; Windows tree kill is best effort.
 
-    The ``codex`` launcher is a shim (``codex.cmd`` on Windows, a node script
-    elsewhere) whose real CLI is its child; killing only the shim leaves that
-    child running, and on Windows its open workdir cannot be removed.
+    ``start_new_session`` makes the original process handle's PID its group ID.
+    Never rediscover a group from a current PID, which may already be recycled.
+    POSIX has no generation-bound group handle: reuse after the last member exits
+    and before the final probe remains a residual race.
     """
     if os.name != "nt":
-        # The child leads its own session, so its pid is the group id.
-        with suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-        return
+        pgid = process.pid
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pgid, signum)
+            except ProcessLookupError:
+                return
+            except OSError as error:
+                raise CleanupIncompleteError(
+                    "Codex owned process group could not be signalled"
+                ) from error
+            if await _wait_for_process_group_exit(pgid):
+                return
+        raise CleanupIncompleteError(
+            "Codex owned process group remained unsettled after TERM and KILL"
+        )
     taskkill = await asyncio.create_subprocess_exec(
         "taskkill",
         "/F",
@@ -57,8 +95,9 @@ class CodexStdioClient(BaseJsonRpcClient):
         env: Mapping[str, str] | None = None,
         retry_policy: OverloadRetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        redactor: CodexMcpRedactor | None = None,
     ) -> None:
-        super().__init__(retry_policy=retry_policy, sleep=sleep)
+        super().__init__(retry_policy=retry_policy, sleep=sleep, redactor=redactor)
         self._transport_label = "codex output line"
         self.command = tuple(command) if command else self._default_codex_command()
         self.cwd = cwd
@@ -131,10 +170,11 @@ class CodexStdioClient(BaseJsonRpcClient):
             self._close_task.add_done_callback(self._log_close_failure)
         await asyncio.shield(self._close_task)
 
-    @staticmethod
-    def _log_close_failure(task: asyncio.Task[None]) -> None:
+    def _log_close_failure(self, task: asyncio.Task[None]) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
-            logger.error("Codex subprocess cleanup failed", exc_info=error)
+            logger.error(
+                "Codex subprocess cleanup failed (type=%s)", type(error).__name__
+            )
 
     async def _close_process(self) -> None:
         readers = [
@@ -151,9 +191,18 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await asyncio.wait_for(process.wait(), timeout=_PROCESS_EXIT_TIMEOUT_S)
             except TimeoutError:
                 await kill_process_tree(process)
+                # The kill is forced, so the leader does exit; a loaded loop can
+                # report it late. Callers are bounded by the room owner's budget,
+                # which keeps this close owned for a retry to join.
                 await process.wait()
+            else:
+                if os.name != "nt":
+                    await kill_process_tree(process)
 
         self._fail_pending("Codex stdio client closed")
+        if self._redactor is not None:
+            self._redactor.clear()
+            self.env = None
 
     async def _send_json(self, payload: dict[str, Any]) -> None:
         if not self._proc or not self._proc.stdin:
@@ -190,9 +239,8 @@ class CodexStdioClient(BaseJsonRpcClient):
                 line = await self._proc.stderr.readline()
                 if not line:
                     return
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if text:
-                    logger.debug("codex stderr: %s", text)
+                if line.rstrip():
+                    logger.debug("codex stderr (type=bytes, length=%d)", len(line))
         except asyncio.CancelledError:
             raise
         except Exception:

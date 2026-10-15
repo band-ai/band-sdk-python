@@ -101,3 +101,10 @@ def launch_children(
 
     monkeypatch.setattr(transport, "SubprocessCLITransport", launch)
     return children
+
+
+class ForgetfulProcess(WorkspaceProcess):
+    """A native close that returns while its child still runs and forgets it."""
+
+    async def close(self) -> None:
+        self._process = None

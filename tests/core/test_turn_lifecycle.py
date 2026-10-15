@@ -232,3 +232,99 @@ class TestTurnTask:
         owner.retry(deadline=terminal_deadline())
         assert await owner.drain()
         assert cancels == 2
+
+    @pytest.mark.looptime
+    async def test_new_owner_terminates_task_with_historical_cancellation(self) -> None:
+        started, handled, release = (asyncio.Event() for _ in range(3))
+        cancellations = 0
+
+        async def work() -> None:
+            nonlocal cancellations
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellations += 1
+                handled.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancellations += 1
+                raise
+
+        task = asyncio.create_task(work())
+        owner = None
+        try:
+            await started.wait()
+            task.cancel()
+            await handled.wait()
+            assert task.cancelling() == 1
+            owner = TurnTask(task)
+            owner.terminate()
+            await owner.drain()
+            assert cancellations == 2
+            assert task.cancelled()
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.looptime
+    async def test_closed_owner_cannot_deliver_pending_or_new_expiry(self) -> None:
+        release = asyncio.Event()
+        task = asyncio.create_task(release.wait())
+        owner = TurnTask(task)
+        try:
+            owner.terminate(
+                deadline=asyncio.get_running_loop().time() + 0.02, cooperative=True
+            )
+            owner.close()
+            owner.close()
+            await asyncio.sleep(0.04)  # Cross the scheduled cleanup expiry.
+            assert task.cancelling() == 0
+            assert not task.done()
+            owner.terminate()
+            owner.retry(deadline=asyncio.get_running_loop().time() + 0.02)
+            await asyncio.sleep(0.04)
+            assert task.cancelling() == 0
+            release.set()
+            await task
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.looptime
+    async def test_external_cancel_during_cooperative_grace_is_adopted(self) -> None:
+        entered, settling, release = (asyncio.Event() for _ in range(3))
+        cancellations = 0
+
+        async def work() -> None:
+            nonlocal cancellations
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellations += 1
+                settling.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancellations += 1
+                    raise
+
+        task = asyncio.create_task(work())
+        owner = TurnTask(task)
+        try:
+            await entered.wait()
+            owner.terminate(
+                deadline=asyncio.get_running_loop().time() + 0.02, cooperative=True
+            )
+            task.cancel()
+            await settling.wait()
+            assert not await owner.drain()
+            assert cancellations == 1
+            assert not task.done()
+            release.set()
+            await task
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)

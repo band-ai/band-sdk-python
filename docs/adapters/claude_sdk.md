@@ -78,6 +78,65 @@ reuse the failed client or take another room's claimed directory.
   such as `settings`, `agents`, `bare` and `dangerously-skip-permissions` that
   would bypass Band's wiring, permission gating or host-config isolation. `env`
   reaches only the Claude CLI process; the host's `os.environ` is untouched.
+- **`resolve_mcp_servers=` adds per-connection MCP servers.** This keyword-only
+  constructor argument is an async callback `(workspace) -> {name: McpServerConfig}`
+  that returns the complete set of external servers (native stdio, `http` or `sse`
+  configs) for a new Claude connection in that room's workspace.
+  - It runs once per new connection, under the room's retained acquisition; reusing a
+    room's connection never calls it, so a rotated grant reaches only a later
+    connection. An empty result means no external servers. A failure to
+    resolve, read or validate the servers, or to see them connect, fails the
+    turn with `ClaudeMcpStartupError` and never resumes without the room's
+    history; only the CLI itself failing to start (a session that can't be
+    resumed, for one) is retried as a fresh session, which resolves again.
+  - Band's server is added separately; the name `band`, in-process `sdk`
+    servers, names that aren't plain strings and a `type` that isn't a string
+    are refused by name. The servers reach the CLI only as the path of a
+    private file, never on its command line. On POSIX, its directory is `0700`
+    and its file is `0600`. On Windows, privacy relies on the user-profile and
+    temp-directory ACLs, not POSIX mode bits. The file stays until the CLI's exit
+    is confirmed and the file is removed.
+  - The session is used only after every server, Band's included, reports
+    `connected` through the CLI's `mcp_status`; anything else within 30 seconds
+    (each status request included) fails the turn. Errors and logs name the
+    stage and server, and the exception type only when it is exactly one of a
+    few builtin classes (such as `LookupError` or `OSError`); they never read
+    an exception's own name or module, and never carry callback values,
+    credentials or native error text, even for a `ClaudeMcpStartupError` the
+    callback raised, or when the check of a held client's servers is what
+    fails, with or without a resolver. Such a failure never starts the room's
+    session again without its history.
+  - External tools stay under `permission_mode` and `approvals`; they are never
+    added to the tool allowlist.
+- **A starting connection is owned until it settles.** Accepted operations share
+  the room's retained acquisition, after any outdated CLI is closed. If the
+  initiating operation stops waiting, the acquisition is cancelled (even if the
+  callback swallows it), or the room is cleaned up, the startup is retired: it
+  publishes nothing, is cancelled at most once, and keeps its process, file and
+  workspace claim until it settles. A resolver may itself request cleanup:
+  adapter cleanup returns without waiting on that acquisition, while direct
+  manager cleanup reports `CleanupIncompleteError` to avoid waiting on itself.
+  The request fences admission immediately, and the retained room completes
+  disposal once the resolver and its accepted turn finish unwinding.
+  Admission is rechecked, without calling out, after every callback the startup
+  runs: a callback that closes admission or retires the room stops any later
+  reuse, client construction or publication. The reuse decision is settled to a
+  plain yes/no before that last check, so reading it again calls nothing.
+  The shared turn owner is bound before tool binding or asynchronous preparation,
+  so STOP and room retirement also end a turn held in resolution or readiness.
+  A still-settling turn keeps the room fenced; its provider timeout starts only
+  at the query, not during preparation.
+- **Teardown keeps what it can't release.** `cleanup_all()` refuses new turns
+  and session startups as soon as it is called, and keeps refusing them until a
+  successful `on_started`. A CLI whose exit can't be confirmed within 5 seconds of
+  being killed, or a private file that can't be removed (including one only
+  partly written), is kept with its workspace claim and the Band server it may
+  dial, and the cleanup raises a safe error; calling it again (or `on_started`)
+  retries. A failed room cleanup keeps new input unaccepted until `on_cleanup()`
+  succeeds on an explicit retry. A file or client left by a failed startup is
+  retried before a later turn starts a replacement connection.
+  Concurrent `cleanup_all()` calls share one teardown that a cancelled caller
+  can't abandon.
 
 ```python
 import pytest
@@ -156,8 +215,9 @@ so a slow CLI in one room never holds up another.
   discards that start.
 - **Shutdown shares one budget.** `cleanup_all` closes every room, then the
   shared Band MCP server, within one `retention.transition_timeout_s`. An
-  unfinished or failed step raises, stays owned, and a retry joins it; the
-  server stays up while any room's CLI may still dial it.
+  unfinished or failed step raises and stays owned; a retry joins it. The whole
+  shutdown continues after a cancelled caller or an expired reporting budget,
+  and the server stays up while any room's CLI may still dial it.
 
 ```python
 import pytest
