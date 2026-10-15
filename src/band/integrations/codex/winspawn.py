@@ -1,9 +1,8 @@
 """Run a command inside a Windows job and tear that job down.
 
-The parent creates the job and keeps a handle. The helper, started as
-``python -m band.integrations.codex.winmain``, puts the real command in that
-job before the command runs, then waits. Close terminates the job, so
-descendants die even after the launcher process itself has exited.
+The parent retains the job handle. The isolated helper creates the real
+command in that job before it can run, then waits. Close terminates the
+job so descendants die even after their launcher exits.
 """
 
 from __future__ import annotations
@@ -22,8 +21,6 @@ from ctypes import wintypes
 from typing import Any, NoReturn
 
 logger = logging.getLogger(__name__)
-
-MODULE_NAME = "band.integrations.codex.winmain"
 
 # CreateProcess failed because the executable path does not exist.
 MISSING_EXECUTABLE = frozenset({2, 3})
@@ -805,3 +802,7 @@ def main() -> int:
         return 2
     job_name, status_handle, command = _parse(sys.argv[1:])
     return _start_and_wait(job_name, status_handle, command)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

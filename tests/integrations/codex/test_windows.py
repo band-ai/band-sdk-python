@@ -14,6 +14,38 @@ from band.integrations.codex.stdio_client import CodexStdioClient
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows job objects")
 class TestWindowsJobCleanup:
+    async def test_isolated_helper_preserves_the_child_environment_and_cwd(
+        self, tmp_path: Path
+    ) -> None:
+        workdir = tmp_path / "room"
+        workdir.mkdir()
+        pythonpath = workdir / "child-packages"
+        pythonpath.mkdir()
+        client = CodexStdioClient(
+            command=[
+                sys.executable,
+                "-c",
+                (
+                    "import pathlib, sys; "
+                    "pathlib.Path('observed').write_text('\\n'.join(sys.path))"
+                ),
+            ],
+            cwd=str(workdir),
+            env={"PYTHONPATH": pythonpath.name},
+        )
+        try:
+            await client.connect()
+            assert client._proc is not None
+            await client._proc.wait()
+            observed = {
+                Path(path).resolve()
+                for path in (workdir / "observed").read_text().splitlines()
+                if path
+            }
+            assert pythonpath.resolve() in observed
+        finally:
+            await client.close()
+
     @pytest.mark.parametrize("stage", ["empty", "child"])
     async def test_rejected_spawn_releases_helper_and_tree_directory_handles(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str

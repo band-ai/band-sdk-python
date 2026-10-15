@@ -18,7 +18,6 @@ from band.core.exceptions import BandConnectionError
 from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 from band.integrations.codex.winspawn import (
     MISSING_EXECUTABLE,
-    MODULE_NAME,
     SpawnFailure,
     WindowsProcess,
     await_returncode,
@@ -31,11 +30,10 @@ logger = logging.getLogger(__name__)
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
 _STDOUT_LIMIT = 16 * 1024 * 1024
+HELPER_PATH = Path(__file__).resolve().with_name("winmain.py")
 
 
-def _absolute_command(
-    command: Sequence[str], env: Mapping[str, str] | None
-) -> tuple[str, ...]:
+def _absolute_command(command: Sequence[str]) -> tuple[str, ...]:
     """Resolve the executable in this process, not in the room directory.
 
     The helper's current directory is the room. ``CreateProcessW`` searches
@@ -45,8 +43,7 @@ def _absolute_command(
     head, *rest = command
     if Path(head).is_absolute():
         return (head, *rest)
-    path = None if env is None else env.get("PATH")
-    found = shutil.which(head, path=path)
+    found = shutil.which(head)
     if found is None and Path(head).exists():
         found = str(Path(head).resolve())
     if found is None:
@@ -200,13 +197,13 @@ class CodexStdioClient(BaseJsonRpcClient):
     def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
         return [
             sys.executable,
-            "-P",
-            "-m",
-            MODULE_NAME,
+            "-I",
+            "-S",
+            str(HELPER_PATH),
             job_name,
             str(status_handle),
             "--",
-            *_absolute_command(self.command, self.env),
+            *_absolute_command(self.command),
         ]
 
     def _spawn_connection_error(self, failure: SpawnFailure) -> BandConnectionError:
@@ -256,7 +253,6 @@ class CodexStdioClient(BaseJsonRpcClient):
             if self._windows_process is not None:
                 await self._windows_process.close(_EXIT_OBSERVE_S)
                 self._windows_process = None
-                self._proc = None
             elif (process := self._proc) is not None:
                 await kill_process_tree(process)
                 await close_stdin(process)

@@ -1,14 +1,9 @@
-"""Process entry for the Windows Codex job helper.
-
-``python -m band.integrations.codex.winmain`` is the command the parent
-starts. The package imports :mod:`band.integrations.codex.winspawn` while
-loading, so running that module itself makes Python warn that it is already
-in ``sys.modules`` and abort when warnings are errors.
-"""
+"""Trusted, stdlib-only entry for the Windows Codex job helper."""
 
 from __future__ import annotations
 
-from band.integrations.codex.winspawn import main
+from pathlib import Path
+from runpy import run_path
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    run_path(str(Path(__file__).with_name("winspawn.py")), run_name="__main__")

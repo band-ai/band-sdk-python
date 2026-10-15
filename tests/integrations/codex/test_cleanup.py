@@ -19,9 +19,8 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
-from band.integrations.codex.stdio_client import kill_process_tree
+from band.integrations.codex.stdio_client import HELPER_PATH, kill_process_tree
 from band.integrations.codex.winspawn import (
-    MODULE_NAME,
     Job,
     JobNotDrained,
     SpawnFailure,
@@ -359,7 +358,7 @@ class TestSubprocessCleanup:
 
     def test_windows_helper_is_not_already_imported(self) -> None:
         completed = subprocess.run(
-            [sys.executable, "-P", "-W", "error", "-m", MODULE_NAME],
+            [sys.executable, "-I", "-S", "-W", "error", str(HELPER_PATH)],
             capture_output=True,
             text=True,
             timeout=CLOSE_BOUND_S,
@@ -384,7 +383,6 @@ class TestSubprocessCleanup:
         resolved = CodexStdioClient(command=[named, "-c", "pass"])._windows_command(
             "job", 1
         )
-        assert resolved[1] == "-P"
         assert Path(resolved[resolved.index("--") + 1]).is_absolute()
 
     @pytest.mark.skipif(os.name == "nt", reason="session-group teardown is Unix")
