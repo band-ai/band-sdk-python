@@ -144,7 +144,9 @@ async def _probe_anthropic() -> bool:
 
     adapter = AnthropicAdapter(emit=())
     tools = MagicMock()
-    tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
+    tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
+    )
     response = MagicMock()
     response.content = [
         ToolUseBlock(
@@ -155,7 +157,7 @@ async def _probe_anthropic() -> bool:
         )
     ]
 
-    results = await adapter._process_tool_calls(response, tools)
+    results, _declined = await adapter._process_tool_calls(response, tools)
 
     content = results[0]["content"]
     if not isinstance(content, list) or len(content) != 1:
