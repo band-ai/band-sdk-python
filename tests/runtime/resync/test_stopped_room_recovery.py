@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
 from band.client.streaming import ControlMode
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ResyncOutcome
+from band.runtime.execution import ExecutionContext, ResyncOutcome
+from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (
     ROOM_ID,
@@ -38,6 +40,45 @@ class TestStoppedRoomRecovery:
         await asyncio.sleep(60)
         assert invoked == ["resumed"]
         assert peer.marked("processed") == ["resumed"]
+
+    @pytest.mark.looptime
+    async def test_deferred_local_event_recovers_missed_play_before_newer_delivery(
+        self, reconciled_room: ReconciledRoom
+    ) -> None:
+        ctx, peer, invoked = reconciled_room
+        entered = asyncio.Event()
+        first_attempt = True
+
+        async def handler(ctx: ExecutionContext, event: Any) -> None:
+            nonlocal first_attempt
+            if event.payload.id == "local-contact" and first_attempt:
+                first_attempt = False
+                entered.set()
+                await asyncio.Event().wait()
+            invoked.append(event.payload.id)
+
+        ctx._on_execute = handler
+        await ctx.start()
+        await wait_for_condition(lambda: ctx._sync_complete)
+        await ctx.on_event(
+            make_message_event(
+                room_id=ROOM_ID,
+                msg_id="local-contact",
+                sender_id="contact-events",
+                sender_type="System",
+            )
+        )
+        await entered.wait()
+        ctx.stop_room()
+        peer.stopped = True
+        peer.add_message("after-local")
+        await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="after-local"))
+        await asyncio.sleep(61)
+        assert invoked == []
+        peer.stopped = False
+        await asyncio.sleep(60)
+        assert invoked == ["local-contact", "after-local"]
+        assert peer.marked("processed") == ["after-local"]
 
     @pytest.mark.looptime
     @pytest.mark.parametrize("mode", list(ControlMode))

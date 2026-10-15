@@ -35,6 +35,7 @@ def mock_link():
     # Message lifecycle methods
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.get_actionable_messages = AsyncMock(return_value=[])
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()

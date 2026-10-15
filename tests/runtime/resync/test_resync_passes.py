@@ -167,6 +167,7 @@ class TestResyncPasses:
         ctx.claims.remember_completed(ROOM_ID, "stuck")
         peer.add_message("stuck")
         assert await ctx._resync_pending_messages() is ResyncOutcome.BLOCKED
-        assert len(peer.next_reads) == 2
+        assert len(peer.next_reads) == 1
+        assert peer.actionable_cursors == [None]
         assert peer.requested("processed") == []
         assert invoked == []

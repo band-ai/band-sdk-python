@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
+import pytest
+
 from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
@@ -187,6 +189,7 @@ class TestCycleWatchdog:
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
         mock_link.mark_failed.assert_not_awaited()
 
+    @pytest.mark.looptime
     async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
         self, mock_link
     ):
@@ -211,17 +214,19 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        with patch("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
-            result = await asyncio.wait_for(
-                ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
-                timeout=0.2,
-            )
+        try:
+            with patch("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
+                result = await asyncio.wait_for(
+                    ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
+                    timeout=0.2,
+                )
 
-        assert result is TurnOutcome.ADVANCED
-        assert cleanup_started.is_set()
-        mock_link.mark_processed.assert_not_awaited()
-        mock_link.mark_failed.assert_awaited_once()
-        assert "max_cycle_seconds" in mock_link.mark_failed.await_args.args[2]
-
-        release_cleanup.set()
-        await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
+            assert result is TurnOutcome.ADVANCED
+            assert cleanup_started.is_set()
+            assert not cleanup_finished.is_set()
+            mock_link.mark_processed.assert_not_awaited()
+            mock_link.mark_failed.assert_awaited_once()
+            assert "max_cycle_seconds" in mock_link.mark_failed.await_args.args[2]
+        finally:
+            release_cleanup.set()
+            await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)

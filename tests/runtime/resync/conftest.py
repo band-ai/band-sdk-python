@@ -19,7 +19,7 @@ from tests.runtime.helpers import (
     ROOM_ID,
     rest_client_over,
 )
-from tests.runtime.resync.kit import ReconciledRoom, ReconciliationPeer
+from tests.runtime.resync.kit import BacklogApi, ReconciledRoom, ReconciliationPeer
 
 
 @pytest.fixture
@@ -55,6 +55,8 @@ def mock_link():
     link.mark_failed = AsyncMock()
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.get_actionable_messages = AsyncMock(return_value=[])
+    link.report_activity = AsyncMock(return_value=True)
 
     async def empty_aiter():
         return
@@ -101,3 +103,12 @@ async def reconciled_room(
             yield ctx, peer, invoked
         finally:
             await ctx.stop()
+
+
+@pytest_asyncio.fixture
+async def backlog() -> AsyncIterator[tuple[BandLink, BacklogApi]]:
+    peer = BacklogApi()
+    async with rest_client_over(peer.respond) as rest:
+        link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+        link.rest = rest
+        yield link, peer

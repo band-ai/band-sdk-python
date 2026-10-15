@@ -82,6 +82,7 @@ def mock_link():
     link.mark_failed = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
     link.get_stale_processing_messages = AsyncMock(return_value=[])
+    link.get_actionable_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)
 
     return link
@@ -658,6 +659,7 @@ class TestCrashRecoverySync:
         link.mark_failed = AsyncMock()
         link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
         link.get_stale_processing_messages = AsyncMock(return_value=[])  # No stale msgs
+        link.get_actionable_messages = AsyncMock(return_value=[])
         link.report_activity = AsyncMock(return_value=True)
 
         return link
