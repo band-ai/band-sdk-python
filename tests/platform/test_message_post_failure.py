@@ -8,6 +8,7 @@ exception text name that kind and the recipient, not response headers.
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any
 
 import pytest
@@ -84,6 +85,8 @@ class TestMessagePostFailure:
         posted = _post_records(caplog)
         assert [record.levelno for record in posted] == [logging.ERROR]
         assert _HEADER_SECRET not in posted[0].getMessage()
+        rendered = "".join(traceback.format_exception(error))
+        assert _HEADER_SECRET not in rendered
         assert _post_logs(caplog) == [
             (
                 "message post in room room-1 failed: "
@@ -92,23 +95,27 @@ class TestMessagePostFailure:
             )
         ]
 
-    async def test_other_parse_errors_stay_unclassified(self, mock_rest_client) -> None:
+    async def test_other_parse_errors_stay_unclassified(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture
+    ) -> None:
         payload = {
             "data": {
-                "success": True,
-                "recipients": [{"id": "recip-1", "handle": "peer-a"}],
+                "id": "msg-1",
+                "recipients": [{"id": "recip-1", "name": "Peer", "handle": "peer-a"}],
             }
         }
         mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
             _parsing_error(payload)
         )
 
-        with pytest.raises(ParsingError):
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
             await post_message(
                 rest=mock_rest_client,
                 room_id="room-1",
                 request=ChatMessageRequest(content="hello", mentions=[]),
             )
+
+        assert _post_logs(caplog) == []
 
     async def test_mention_not_in_room_uses_the_platform_token(
         self, mock_rest_client, caplog: pytest.LogCaptureFixture
@@ -245,7 +252,7 @@ class TestMessagePostFailure:
         payload = {
             "data": {
                 "success": True,
-                "recipients": [{"name": "Unknown"}],
+                "recipients": [{"id": "recip-1", "name": "Unknown"}],
             }
         }
         mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (

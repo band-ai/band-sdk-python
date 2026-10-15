@@ -88,7 +88,9 @@ def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
 def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoReturn:
     error = MessagePostError.classified(kind, detail)
     logger.error("message post in room %s failed: %s", room_id, error)
-    raise error
+    # The Fern error's own text includes response headers. Suppressing it
+    # keeps those headers out of adapter tracebacks.
+    raise error from None
 
 
 class PostedRecipient(BaseModel):
