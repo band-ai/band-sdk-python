@@ -50,11 +50,19 @@ class RoomRetention:
         acquire: Callable[[int, bool], Awaitable[None]],
         release: Callable[[ReleaseCause], Awaitable[ReleaseOutcome]],
         dispose: Callable[[], Awaitable[None]],
+        before_cancel_acquire: Callable[[asyncio.Task[None], str], bool] | None = None,
     ) -> RetainedRoom:
         self.require_admission()
         if room_id in self._rooms:
             raise ValueError(f"Room {room_id} already has a residency owner")
-        room = RetainedRoom(self, room_id, acquire, release, dispose)
+        room = RetainedRoom(
+            self,
+            room_id,
+            acquire,
+            release,
+            dispose,
+            before_cancel_acquire=before_cancel_acquire,
+        )
         self._rooms[room_id] = room
         self.reschedule()
         return room

@@ -21,6 +21,7 @@ from band_sdk_core import AgentFailure
 from pydantic import (
     AliasChoices,
     BaseModel,
+    ConfigDict,
     Field,
     ValidationError,
     field_validator,
@@ -43,7 +44,7 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -68,7 +69,6 @@ from band.core.turn_lifecycle import (
     ApprovalInterruptMixin,
     TurnSettleTimeout,
     TurnTask,
-    bind_turn_task,
     start_releasable_turn,
 )
 from band.core.types import (
@@ -86,6 +86,13 @@ from band.integrations.codex import (
     CodexJsonRpcError,
     CodexStdioClient,
     RpcEvent,
+)
+from band.integrations.codex.mcp import (
+    CodexMcpLaunch,
+    CodexMcpResolver,
+    CodexMcpSnapshot,
+    CodexMcpStartupError,
+    freeze_mcp_servers,
 )
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
@@ -617,6 +624,35 @@ class ThreadSettings:
         ]
 
 
+class McpServerInfo(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    name: str
+    version: str
+
+
+class McpServerStatus(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    name: str = Field(min_length=1)
+    server_info: McpServerInfo | None = Field(default=None, alias="serverInfo")
+    server_capabilities: dict[str, Any] | None = Field(
+        default=None, alias="serverCapabilities"
+    )
+    tools_error: str | None = Field(default=None, alias="toolsError")
+    runtime_status: str | None = Field(default=None, alias="runtimeStatus")
+
+
+class McpStatusPage(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    data: list[McpServerStatus]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
+
+
+_MCP_READINESS_TIMEOUT_S = 30.0
+
+
 @dataclass
 class RoomCodexClient:
     """One Band room's Codex process and what its thread was started with.
@@ -633,6 +669,8 @@ class RoomCodexClient:
     client: CodexClientProtocol | None = None
     reader: asyncio.Task[None] | None = None
     turn: NativeTurn | None = None
+    mcp_snapshot: CodexMcpSnapshot | None = dataclass_field(default=None, repr=False)
+    startup_owner: TurnTask | None = dataclass_field(default=None, repr=False)
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
@@ -909,6 +947,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         *,
         additional_tools: list[CustomToolDef] | None = None,
         history_converter: CodexHistoryConverter | None = None,
+        resolve_mcp_servers: CodexMcpResolver | None = None,
         client_factory: Callable[[CodexAdapterConfig], CodexClientProtocol]
         | None = None,
         **features: Unpack[FeatureKwargs],
@@ -935,6 +974,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             raise ValueError(
                 "custom Codex clients cannot guarantee room process isolation"
             )
+        self._resolve_mcp_servers = resolve_mcp_servers
         self._room_clients: dict[str, RoomCodexClient] = {}
         # Final disposal gives a room's turn ``turn_settle_timeout_s`` to wind
         # down before cancelling it.
@@ -987,9 +1027,24 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 acquire=partial(self._acquire, room),
                 release=partial(self._release, room),
                 dispose=partial(self._dispose, room),
+                before_cancel_acquire=partial(self._prepare_acquire_cancel, room),
             )
         self._room_clients[room_id] = room
         return room
+
+    def _prepare_acquire_cancel(
+        self, room: RoomCodexClient, task: asyncio.Task[None], reason: str
+    ) -> bool:
+        """Keep a live startup's cancellation with its owner, even after delivery."""
+        owner = room.startup_owner
+        if owner is None or owner.task is not task or task.done():
+            return False
+        owner.terminate(
+            deadline=asyncio.get_running_loop().time()
+            + self.config.turn_settle_timeout_s,
+            reason=reason,
+        )
+        return True
 
     def _active_client_state(self) -> RoomCodexClient | None:
         room_id = self._active_room.get()
@@ -1180,16 +1235,23 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
         self._admit_turn(room_id, "Codex")
         room = self._room_client(room_id)
         self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
 
         release: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        owner_ready: asyncio.Future[TurnTask] = (
+            asyncio.get_running_loop().create_future()
+        )
         turn = start_releasable_turn(
             room.retained,
             partial(
                 self._run_turn,
+                owner_ready=owner_ready,
                 room=room,
                 msg=msg,
                 tools=tools,
@@ -1203,15 +1265,35 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             room_id=room_id,
         )
         self._turn_release[room_id] = release
-        self._turn_tasks[room_id] = bind_turn_task(tools, turn)
+        owner = self._turn_tasks[room_id] = TurnTask(turn)
         turn.add_done_callback(lambda task: self._forget_turn(room_id, task))
+        try:
+            register = getattr(tools, "register_turn_task", None)
+            if callable(register):
+                register(owner)
+            if owner.task.cancelling():
+                raise asyncio.CancelledError
+            owner_ready.set_result(owner)
+        except BaseException:
+            owner_ready.cancel()
+            owner.terminate()
+            try:
+                await owner.drain()
+            finally:
+                owner.close()
+                self._forget_turn(room_id, turn)
+            raise
         try:
             await asyncio.wait({release, turn}, return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
             await self._cancel_turn(room_id)
             raise
         finally:
-            if self._turn_release.get(room_id) is release:
+            if (
+                turn.done()
+                and room.startup_owner is None
+                and self._turn_release.get(room_id) is release
+            ):
                 del self._turn_release[room_id]
         if turn.done():
             # No human was asked: the turn's outcome is on_message's own.
@@ -1220,6 +1302,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     async def _run_turn(
         self,
         *,
+        owner_ready: asyncio.Future[TurnTask],
         room: RoomCodexClient,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
@@ -1230,6 +1313,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         command: tuple[CodexCommand, str] | None,
     ) -> None:
         """Run one turn to completion, leasing its room's process throughout."""
+        await owner_ready
         async with room.rpc_lock:
             try:
                 if command is not None and await self._run_local_command(
@@ -1252,12 +1336,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 # A lease refused by a closing room is no failed turn: the
                 # host keeps the message.
                 raise
-            except (CodexJsonRpcError, CodexContinuityError) as e:
-                # A structured RPC error from the app-server (e.g. "model not
-                # available") or a refused restore is safe, curated text --
-                # unlike an arbitrary caught exception, worth showing verbatim.
-                await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
+            except (CodexMcpStartupError, CodexContinuityError) as error:
+                await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(error)))
                 raise
+            except CodexJsonRpcError as error:
+                safe = self._safe_rpc_error(room, error)
+                await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(safe)))
+                raise safe from None
             except TimeoutError as timeout:
                 # Only waiting on the room's process start or stop raises
                 # this; an abandoned start stays owned until recovery closes it.
@@ -1479,6 +1564,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         owner = self._turn_tasks.get(room_id)
         if owner is not None and owner.task is task:
             del self._turn_tasks[room_id]
+            room = self._room_clients.get(room_id)
+            if room is None or room.startup_owner is None:
+                self._turn_release.pop(room_id, None)
 
     async def _emit_failed_turn_outcome(
         self,
@@ -1866,7 +1954,21 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if room is None:
             return
         self._clear_pending_approvals_for_room(room_id)
-        await room.retained.dispose()
+        if room.startup_owner is not None:
+            room.startup_owner.terminate(
+                deadline=asyncio.get_running_loop().time()
+                + self.config.turn_settle_timeout_s,
+                cooperative=True,
+                reason=f"Room {room_id} acquisition was cancelled for cleanup",
+            )
+        try:
+            await room.retained.dispose()
+        except CleanupIncompleteError:
+            if (
+                room.startup_owner is None
+                or room.startup_owner.task is not asyncio.current_task()
+            ):
+                raise
 
     async def cleanup_all(self) -> None:
         """Stop the residency owner: admission closes at once, every room's
@@ -1878,38 +1980,168 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         workspace. Success stays sealed until ``on_started``.
         """
         for room_id in list(self._room_clients):
+            room = self._room_clients[room_id]
+            if room.startup_owner is not None:
+                room.startup_owner.terminate(
+                    deadline=asyncio.get_running_loop().time()
+                    + self.config.turn_settle_timeout_s,
+                    cooperative=True,
+                    reason=f"Room {room_id} acquisition was cancelled for cleanup",
+                )
             self._clear_pending_approvals_for_room(room_id)
         await self._retention.stop()
+
+    @staticmethod
+    def _check_startup_current(room: RoomCodexClient, generation: int) -> None:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+        room.retained.require_admission()
+        if (
+            not room.retained.has_authority(generation)
+            or (room.startup_owner is not None and room.startup_owner.task.cancelling())
+            or (
+                room.startup_owner is not None
+                and room.startup_owner.deadline is not None
+            )
+        ):
+            raise asyncio.CancelledError
 
     async def _acquire(
         self, room: RoomCodexClient, generation: int, resume: bool
     ) -> None:
-        """Start the room's process and strictly restore the thread it retains.
-
-        A crash keeps the thread id and the room's model, so ``resume``
-        changes nothing: a retained thread is always restored on its model.
-        The reader runs before ``thread/resume``, which can start native work.
-        """
-        room.client = client = self._build_client(room.workspace)
-        await client.connect()
-        room.reader = spawn_owned(
-            self._read_native_events(room, client, generation),
-            label=f"Room {room.room_id} Codex event reader",
-        )
-        await client.initialize(
-            client_name=self.config.client_name,
-            client_title=self.config.client_title,
-            client_version=self.config.client_version,
-            experimental_api=self.config.experimental_api,
-        )
-        await self._register_skill_roots(client)
-        if room.selected_model is None:
-            room.selected_model = await self._select_model(client)
-            logger.info(
-                "Room %s: Codex model selected: %s", room.room_id, room.selected_model
+        """Resolve and ready one process under the retained acquisition owner."""
+        task = asyncio.current_task()
+        assert task is not None
+        owner = room.startup_owner = TurnTask(task)
+        stage = "resolution"
+        try:
+            self._check_startup_current(room, generation)
+            launch = None
+            if self._resolve_mcp_servers is not None:
+                resolved = await self._resolve_mcp_servers(room.workspace)
+                self._check_startup_current(room, generation)
+                stage = "snapshot"
+                room.mcp_snapshot = freeze_mcp_servers(resolved)
+                self._check_startup_current(room, generation)
+                stage = "launch"
+                launch = room.mcp_snapshot.launch(
+                    self.config.codex_command
+                    or CodexStdioClient._default_codex_command(),
+                    self.config.codex_env,
+                )
+                self._check_startup_current(room, generation)
+            room.client = client = self._build_client(room, launch)
+            stage = "connect"
+            await client.connect()
+            self._check_startup_current(room, generation)
+            room.reader = spawn_owned(
+                self._read_native_events(room, client, generation),
+                label=f"Room {room.room_id} Codex event reader",
             )
-        if (thread_id := self._room_threads.get(room.room_id)) is not None:
-            await self._restore_thread(room, client, thread_id)
+            stage = "initialize"
+            await client.initialize(
+                client_name=self.config.client_name,
+                client_title=self.config.client_title,
+                client_version=self.config.client_version,
+                experimental_api=self.config.experimental_api,
+            )
+            self._check_startup_current(room, generation)
+            stage = "skills"
+            await self._register_skill_roots(client)
+            self._check_startup_current(room, generation)
+            stage = "model"
+            selected_model = room.selected_model or await self._select_model(client)
+            self._check_startup_current(room, generation)
+            stage = "readiness"
+            await self._check_mcp_readiness(client, room, generation, owner)
+            self._check_startup_current(room, generation)
+            room.selected_model = selected_model
+            if (thread_id := self._room_threads.get(room.room_id)) is not None:
+                stage = "thread/resume"
+                await self._restore_thread(room, client, thread_id)
+                self._check_startup_current(room, generation)
+        except asyncio.CancelledError:
+            raise asyncio.CancelledError from None
+        except InputNotAccepted:
+            raise
+        except Exception as error:
+            if self._resolve_mcp_servers is None:
+                raise
+            if (
+                stage == "snapshot"
+                and type(error) is CodexMcpStartupError
+                and error.stage
+                in {
+                    "unsupported-transport",
+                    "unsupported-platform",
+                    "invalid-name",
+                    "duplicate-name",
+                    "reserved-name",
+                    "invalid-descriptor",
+                }
+            ):
+                stage = error.stage
+            raise CodexMcpStartupError(stage) from None
+        finally:
+            owner.close()
+            room.startup_owner = None
+            if not self._turn_running(room.room_id):
+                self._turn_release.pop(room.room_id, None)
+
+    @staticmethod
+    def _check_mcp_deadline(readiness: asyncio.Timeout) -> None:
+        deadline = readiness.when()
+        if readiness.expired() or (
+            deadline is not None and asyncio.get_running_loop().time() >= deadline
+        ):
+            raise CodexMcpStartupError("readiness")
+
+    async def _check_mcp_readiness(
+        self,
+        client: CodexClientProtocol,
+        room: RoomCodexClient,
+        generation: int,
+        owner: TurnTask,
+    ) -> None:
+        snapshot = room.mcp_snapshot
+        if snapshot is None or not snapshot.expected_names:
+            return
+        seen_names: set[str] = set()
+        cursors: set[str] = set()
+        cursor = None
+        async with owner.timed(_MCP_READINESS_TIMEOUT_S) as readiness:
+            while True:
+                self._check_startup_current(room, generation)
+                raw_page = await client.request(
+                    "mcpServerStatus/list",
+                    {"cursor": cursor, "limit": 100, "detail": "full"},
+                )
+                self._check_mcp_deadline(readiness)
+                self._check_startup_current(room, generation)
+                page = McpStatusPage.model_validate(raw_page)
+                for row in page.data:
+                    if row.name in seen_names:
+                        raise CodexMcpStartupError("readiness")
+                    seen_names.add(row.name)
+                    if row.name in snapshot.expected_names and (
+                        row.server_info is None
+                        or row.server_capabilities is None
+                        or "tools_error" not in row.model_fields_set
+                        or row.tools_error is not None
+                        or "runtime_status" not in row.model_fields_set
+                        or row.runtime_status not in (None, "connected")
+                    ):
+                        raise CodexMcpStartupError("readiness")
+                cursor = page.next_cursor
+                if cursor is None:
+                    break
+                if not cursor or cursor in cursors:
+                    raise CodexMcpStartupError("readiness")
+                cursors.add(cursor)
+        if not snapshot.expected_names <= seen_names:
+            raise CodexMcpStartupError("readiness")
+        self._check_mcp_deadline(readiness)
 
     def _resume_params(self, room: RoomCodexClient, thread_id: str) -> dict[str, Any]:
         """``thread/resume`` overrides pinning the thread to the room's workspace.
@@ -2115,7 +2347,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     f"Codex process for room {room.room_id} did not close "
                     f"within {timeout}s"
                 ) from error
+            except Exception:
+                if room.mcp_snapshot is not None:
+                    raise CodexMcpStartupError("retirement") from None
+                raise
         room.client = None
+        if room.mcp_snapshot is not None:
+            room.mcp_snapshot.redactor.clear()
+            room.mcp_snapshot = None
         room.restored = False
         return ReleaseOutcome.RELEASED
 
@@ -2153,11 +2392,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         except CodexJsonRpcError as exc:
             raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
 
-    def _build_client(self, workspace: str) -> CodexClientProtocol:
+    def _build_client(
+        self, room: RoomCodexClient, launch: CodexMcpLaunch | None
+    ) -> CodexClientProtocol:
         return CodexStdioClient(
-            command=self.config.codex_command,
-            cwd=workspace,
-            env=self.config.codex_env,
+            command=launch.command if launch is not None else self.config.codex_command,
+            cwd=room.workspace,
+            env=launch.env if launch is not None else self.config.codex_env,
+            redactor=room.mcp_snapshot.redactor
+            if room.mcp_snapshot is not None
+            else None,
         )
 
     async def _select_model(self, client: CodexClientProtocol) -> str:
@@ -2178,6 +2422,52 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return visible_model_ids[0]
         logger.warning("model/list has no visible models; using default Codex model")
         return OPENAI_MODEL
+
+    @staticmethod
+    def _safe_rpc_error(
+        room: RoomCodexClient, error: CodexJsonRpcError
+    ) -> CodexJsonRpcError:
+        if room.mcp_snapshot is None:
+            return error
+        redactor = room.mcp_snapshot.redactor
+        return CodexJsonRpcError(
+            code=error.code,
+            message=redactor.text(error.message),
+            data=redactor.value(error.data),
+        )
+
+    async def _verify_mcp_after_thread_error(
+        self, room: RoomCodexClient, stage: str
+    ) -> None:
+        if room.mcp_snapshot is None or not room.mcp_snapshot.expected_names:
+            return
+        task = asyncio.current_task()
+        assert task is not None
+        owner = self._turn_tasks.get(room.room_id)
+        temporary = owner is None
+        if owner is None:
+            owner = TurnTask(task)
+        try:
+            await self._check_mcp_readiness(
+                room.require_client(), room, room.generation, owner
+            )
+        except asyncio.CancelledError:
+            room.retained.recover(
+                generation=room.generation, reason="MCP readiness cancelled"
+            )
+            raise asyncio.CancelledError from None
+        except Exception as error:  # noqa: BLE001 -- discovery errors may carry credentials
+            logger.debug(
+                "Codex MCP readiness failed after a thread error (type=%s)",
+                type(error).__name__,
+            )
+            room.retained.recover(
+                generation=room.generation, reason="MCP readiness failed"
+            )
+            raise CodexMcpStartupError(stage) from None
+        finally:
+            if temporary:
+                owner.close()
 
     async def _ensure_thread(
         self,
@@ -2241,11 +2531,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 self._resume_params(room, named),
             )
         except CodexJsonRpcError as exc:
+            await self._verify_mcp_after_thread_error(room, "thread/resume")
             logger.warning(
                 "thread/resume failed for room %s thread %s: %s",
                 room_id,
                 named,
-                exc,
+                self._safe_rpc_error(room, exc),
             )
             if self.config.inject_history_on_resume_failure:
                 self._needs_history_injection.add(room_id)
@@ -2293,7 +2584,13 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         }
         self._apply_thread_sandbox(start_params, room_id=room_id)
 
-        started = await client.request(CodexRequestMethod.THREAD_START, start_params)
+        try:
+            started = await client.request(
+                CodexRequestMethod.THREAD_START, start_params
+            )
+        except CodexJsonRpcError as error:
+            await self._verify_mcp_after_thread_error(room, "thread/start")
+            raise self._safe_rpc_error(room, error) from None
         thread_id = _result_id(started, "thread")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")

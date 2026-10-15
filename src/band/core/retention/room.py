@@ -63,6 +63,10 @@ class RetainedRoom:
     release must be a qualified, non-cancelling boundary, and every retry must
     finish partially acquired or closed handles. ``dispose`` runs only after a
     confirmed ``FINAL`` release and erases continuation and workspace.
+
+    ``before_cancel_acquire`` receives the task and cancellation reason and returns
+    whether the provider owns its cancellation, even after delivery. Only ``False``
+    or no callback permits a fallback; generation and release ordering stay here.
     """
 
     def __init__(
@@ -72,12 +76,15 @@ class RetainedRoom:
         acquire: Callable[[int, bool], Awaitable[None]],
         release: Callable[[ReleaseCause], Awaitable[ReleaseOutcome]],
         dispose: Callable[[], Awaitable[None]],
+        *,
+        before_cancel_acquire: Callable[[asyncio.Task[None], str], bool] | None = None,
     ) -> None:
         self._owner = owner
         self.room_id = room_id
         self._acquire = acquire
         self._release = release
         self._dispose = dispose
+        self._before_cancel_acquire = before_cancel_acquire
         self._state = Residency.SUSPENDED
         self._generation = 0
         self._leases = 0
@@ -245,6 +252,8 @@ class RetainedRoom:
         """
         self.require_admission()
         holder = asyncio.current_task()
+        if holder is not None and holder.cancelling():
+            raise asyncio.CancelledError
         self._holders[holder] += 1
         self._schedule()
         try:
@@ -329,6 +338,8 @@ class RetainedRoom:
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
         if transition.cancelled():
+            if initiator:
+                raise asyncio.CancelledError from None
             # Closed admission means disposal cancelled it; otherwise recovery
             # did, and the caller re-evaluates the room.
             self.require_admission()
@@ -354,7 +365,18 @@ class RetainedRoom:
                 self.room_id,
                 self._generation,
             )
-            transition.cancel(f"Room {self.room_id} acquisition was abandoned")
+            self._cancel_acquire(
+                transition, reason=f"Room {self.room_id} acquisition was abandoned"
+            )
+
+    def _cancel_acquire(self, transition: asyncio.Task[None], *, reason: str) -> None:
+        """Delegate provider cancellation, or deliver an unowned fallback once."""
+        if self._before_cancel_acquire is not None and self._before_cancel_acquire(
+            transition, reason
+        ):
+            return
+        if not transition.cancelling():
+            transition.cancel(reason)
 
     def _request(self, cause: ReleaseCause) -> None:
         self._cause = stronger_cause(self._cause, cause)
@@ -531,7 +553,11 @@ class RetainedRoom:
 
     def enrolls(self, task: asyncio.Task[Any] | None) -> bool:
         """Whether ``task`` is accepted work this room's disposal would await."""
-        return task in self._owned or task in self._holders
+        return (
+            task in self._owned
+            or task in self._holders
+            or (task is self._transition and self._state == Residency.ACQUIRING)
+        )
 
     def _spare_requester(self) -> bool:
         """Exempt enrolled work requesting cleanup from cancellation; it is
@@ -603,7 +629,10 @@ class RetainedRoom:
             for task in self._uncancelled_work():
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
-                self._transition.cancel()
+                self._cancel_acquire(
+                    self._transition,
+                    reason=f"Room {self.room_id} acquisition was cancelled for cleanup",
+                )
         await self._drained.wait()
 
     def _uncancelled_work(self) -> set[asyncio.Task[Any]]:
