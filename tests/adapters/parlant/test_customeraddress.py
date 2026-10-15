@@ -148,8 +148,9 @@ class TestCustomerAddress:
         assert posted == f"[{SENDER_NAME}]: Live Prompt Name look up the code"
 
     async def test_rewrites_this_agent_in_bootstrap_history(
-        self, start_adapter, mock_app, sample_message
+        self, start_adapter, mock_app, mock_parlant_agent, sample_message
     ) -> None:
+        mock_parlant_agent.name = "Live Prompt Name"
         tools = FakeAgentTools(
             agent_id=AGENT_ID,
             room_id=sample_message.room_id,
@@ -175,7 +176,11 @@ class TestCustomerAddress:
                     "content": f"[{SENDER_NAME}]: @{HANDLE} what is the code",
                     "sender": SENDER_NAME,
                 },
-                {"role": "assistant", "content": "Noted.", "sender": BAND_NAME},
+                {
+                    "role": "assistant",
+                    "content": f"Noted. @{HANDLE} remains",
+                    "sender": BAND_NAME,
+                },
             ],
             participants_msg=None,
             contacts_msg=None,
@@ -188,9 +193,11 @@ class TestCustomerAddress:
             for call in mock_app.sessions.create_customer_message.await_args_list
         ]
         assert posted == [
-            f"[{SENDER_NAME}]: {PARLANT_NAME} what is the code",
+            f"[{SENDER_NAME}]: Live Prompt Name what is the code",
             f"[{SENDER_NAME}]: look this up",
         ]
+        replayed = mock_app.sessions.create_event.await_args.kwargs["data"]["message"]
+        assert replayed == f"Noted. @{HANDLE} remains"
 
     def test_leaves_another_participants_handle(self) -> None:
         participants = [
@@ -251,3 +258,42 @@ class TestCustomerAddress:
         )
 
         assert rewritten == "Acme\\South hi"
+
+    def test_leaves_a_shared_collapsed_name(self) -> None:
+        participants = [
+            {"id": AGENT_ID, "name": "tom"},
+            {"id": "user-1", "handle": "tom", "name": "Tom"},
+        ]
+
+        rewritten = name_this_agent(
+            "@tom ask @tom",
+            agent_id=AGENT_ID,
+            agent_name=PARLANT_NAME,
+            participants=participants,
+        )
+
+        assert rewritten == "@tom ask @tom"
+
+    def test_does_not_end_a_dotted_handle(self) -> None:
+        short = name_this_agent(
+            "@alexander.zaikman/tom please review",
+            agent_id=AGENT_ID,
+            agent_name=PARLANT_NAME,
+            participants=[{"id": AGENT_ID, "handle": "alexander"}],
+        )
+        whole = name_this_agent(
+            "@alexander.zaikman/tom please review",
+            agent_id=AGENT_ID,
+            agent_name=PARLANT_NAME,
+            participants=[{"id": AGENT_ID, "handle": "alexander.zaikman/tom"}],
+        )
+        suffix = name_this_agent(
+            "@alexander.zaikman/tom.extra please review",
+            agent_id=AGENT_ID,
+            agent_name=PARLANT_NAME,
+            participants=[{"id": AGENT_ID, "handle": "alexander.zaikman/tom"}],
+        )
+
+        assert short == "@alexander.zaikman/tom please review"
+        assert whole == f"{PARLANT_NAME} please review"
+        assert suffix == "@alexander.zaikman/tom.extra please review"

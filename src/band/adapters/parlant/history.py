@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from band.adapters.parlant.messages import name_this_agent
 from band.converters.parlant import ParlantMessage, ParlantMessages, ParlantRole
 
 if TYPE_CHECKING:
@@ -63,6 +64,32 @@ async def inject_history(
         else:
             count += 1
     return count
+
+
+def name_this_agent_in_history(
+    history: ParlantMessages,
+    *,
+    agent_id: str | None,
+    agent_name: str,
+    participants: list[Any],
+) -> ParlantMessages:
+    """Rewrite this agent's mention in customer lines the session will replay."""
+    renamed: ParlantMessages = []
+    for message in history:
+        content = message.get("content", "")
+        if _role(message) != ParlantRole.USER or not content:
+            renamed.append(message)
+            continue
+        updated = name_this_agent(
+            content,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            participants=participants,
+        )
+        renamed.append(
+            message if updated == content else {**message, "content": updated}
+        )
+    return renamed
 
 
 def _role(message: ParlantMessage) -> str:

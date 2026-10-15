@@ -16,13 +16,9 @@ from typing_extensions import Unpack
 
 from band.adapters.parlant.config import ConfigureCallback, ParlantAdapterConfig
 from band.adapters.parlant.guidelines import GuidelineLedger, GuidelineSpec
-from band.adapters.parlant.history import inject_history
+from band.adapters.parlant.history import inject_history, name_this_agent_in_history
 from band.adapters.parlant.lifecycle import ServerLifecycle
-from band.adapters.parlant.messages import (
-    compose_user_message,
-    name_this_agent_in_history,
-    post_user_message,
-)
+from band.adapters.parlant.messages import compose_user_message, post_user_message
 from band.adapters.parlant.responses import relay_agent_response
 from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
