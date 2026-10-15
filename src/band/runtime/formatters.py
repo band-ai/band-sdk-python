@@ -43,10 +43,9 @@ def format_tokens(tokens: Iterable[str]) -> str:
 
 
 def mention_label(*, handle: str | None, name: str | None) -> str | None:
-    """The whitespace-free token a participant is mentioned as.
+    """The whitespace-free label a participant is mentioned as, without ``@``.
 
-    A handle wins. With none on file, whitespace in the display name collapses
-    so the token stays one ``@\\S+`` word.
+    A handle wins. With none on file, whitespace in the display name collapses.
     """
     if handle:
         return handle

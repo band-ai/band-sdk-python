@@ -99,21 +99,40 @@ def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
 
 @posix_shell_only
 @pytest.mark.parametrize(
-    "diagnostics", [False, True], ids=["level-only", "with-diagnostics"]
+    ("extra", "present", "absent"),
+    [
+        (
+            {"BAND_E2E_LOG_LEVEL": "DEBUG"},
+            ("--log-level=DEBUG", "--log-cli-level=DEBUG"),
+            ("--log-cli-level=WARNING",),
+        ),
+        (
+            {
+                "BAND_E2E_LOG_LEVEL": "DEBUG",
+                "BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS": "true",
+            },
+            ("--log-level=DEBUG", "--log-cli-level=DEBUG"),
+            ("--log-cli-level=WARNING",),
+        ),
+        (
+            {"BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS": "true"},
+            ("--log-cli-level=WARNING",),
+            ("--log-level=",),
+        ),
+    ],
+    ids=["level-only", "level-and-diagnostics", "diagnostics-only"],
 )
 def test_baseline_runner_forwards_a_diagnostic_log_level(
-    tmp_path: Path, diagnostics: bool
+    tmp_path: Path,
+    extra: dict[str, str],
+    present: tuple[str, ...],
+    absent: tuple[str, ...],
 ) -> None:
-    extra = {"BAND_E2E_LOG_LEVEL": "DEBUG"}
-    if diagnostics:
-        extra["BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS"] = "true"
-
     result, command = _run_baseline(tmp_path, extra=extra)
 
     assert result.returncode == 0
-    assert "--log-level=DEBUG" in command
-    assert "--log-cli-level=DEBUG" in command
-    assert "--log-cli-level=WARNING" not in command
+    assert all(flag in command for flag in present)
+    assert all(flag not in command for flag in absent)
 
 
 def _emit_lane_matrix(lane: str, os_id: str) -> subprocess.CompletedProcess[str]:
