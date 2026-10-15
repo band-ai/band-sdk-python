@@ -48,15 +48,6 @@ def _tool_names(content: list) -> str:
     return ",".join(names) if names else "-"
 
 
-def _declined_this_response(response: Message, tools: AgentToolsProtocol) -> bool:
-    if tools.turn.replied is not True:
-        return False
-    return any(
-        isinstance(block, ToolUseBlock) and block.name == BandTool.NO_REPLY
-        for block in response.content
-    )
-
-
 def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
     """An image tool result as Anthropic ``ImageBlockParam`` dicts.
 
@@ -341,7 +332,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 )
 
                 # Process tool calls
-                tool_results = await self._process_tool_calls(response, tools)
+                tool_results, declined = await self._process_tool_calls(response, tools)
 
                 # Add tool results to history
                 self._message_history[room_id].append(
@@ -350,11 +341,12 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "content": tool_results,
                     }
                 )
-                # band_no_reply already ended the turn. Another model call
-                # would only wait for a non-tool stop, and a call that never
-                # returns leaves the message in processing until this handler
-                # returns.
-                if _declined_this_response(response, tools):
+                # A successful band_no_reply already ended the turn. Another
+                # model call would only wait for a non-tool stop, and a call
+                # that never returns leaves the message in processing until
+                # this handler returns. A failed band_no_reply stays in the
+                # loop so the model receives the error.
+                if declined:
                     logger.info(
                         "Room %s: %s settled the turn after request %s; "
                         "not sending a follow-up",
@@ -458,7 +450,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     # --- Copied from BandAnthropicAgent._process_tool_calls ---
     async def _process_tool_calls(
         self, response: Message, tools: AgentToolsProtocol
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], bool]:
         """
         Process tool_use blocks from response and execute tools.
 
@@ -467,9 +459,13 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             tools: AgentToolsProtocol instance for execution
 
         Returns:
-            List of tool_result content blocks for next API call
+            Tool-result blocks for the next API call, and whether this
+            response's ``band_no_reply`` succeeded. ``turn.replied`` is also
+            true after ``band_send_message``, so it cannot stand in for that
+            call's own outcome.
         """
         tool_results = []
+        declined = False
 
         for block in response.content:
             if not isinstance(block, ToolUseBlock):
@@ -511,7 +507,12 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         custom_tool, tool_input, turn=tools.turn
                     )
                 else:
-                    result = await tools.execute_tool_call(tool_name, tool_input)
+                    outcome = await tools.execute_tool_call_structured(
+                        tool_name, tool_input
+                    )
+                    result = outcome.value
+                    if outcome.ok is True and tool_name == BandTool.NO_REPLY:
+                        declined = True
                 if is_image_passthrough_result(tool_name, result):
                     content = _image_tool_result_content(result)
                     result_str = image_block_placeholder(len(content))
@@ -556,4 +557,4 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 }
             )
 
-        return tool_results
+        return tool_results, declined
