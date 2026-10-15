@@ -26,6 +26,17 @@ the workflow files cannot say for themselves.
 - **Recovery for a failed publish:** run `band-publish.yml` by `workflow_dispatch` with the
   existing tag. `skip-existing` makes re-runs idempotent; no retag or re-release is needed.
 
+## Release changelog
+
+- **`changelog.yml` needs server-side setup the workflow cannot show:** the release GitHub App
+  installed on `thenvoi/fern` (contents and pull-request write) and on
+  `band-ai/private-agent-skills` (contents read), and the
+  `CHANGELOG_ANTHROPIC_API_KEY` secret. `LINEAR_API_KEY` is optional; without it the skill
+  skips the Linear steps.
+- **Recovery, or a release published by dispatch:** run `changelog.yml` by `workflow_dispatch`
+  with the tag. A rerun repeats every step, announcements included, so read the failed run's
+  log for what already completed first.
+
 ## Validating workflow changes before merge
 
 - actionlint runs through pre-commit and the CI `lint` job. The one ignored false positive is
