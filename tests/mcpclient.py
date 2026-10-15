@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from typing import Any
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import Tool
 
 from band.integrations.mcp import (
@@ -94,19 +95,29 @@ async def crash_backend(owner: SharedBandMCPBackend) -> BandMCPBackend:
 
 @asynccontextmanager
 async def mcp_session(
-    url: str, transport: BandMCPTransport = BandMCPTransport.HTTP
+    url: str,
+    transport: BandMCPTransport = BandMCPTransport.HTTP,
+    headers: dict[str, str] | None = None,
 ) -> AsyncIterator[ClientSession]:
     """An initialized MCP client session to ``url``, closed on exit."""
     streams: AbstractAsyncContextManager[tuple[Any, ...]]
-    match transport:
-        case BandMCPTransport.HTTP:
-            streams = streamable_http_client(url)
-        case BandMCPTransport.SSE:
-            streams = sse_client(url)
-    async with (
-        streams as (read_stream, write_stream, *_),
-        ClientSession(read_stream, write_stream) as session,
-    ):
+    async with AsyncExitStack() as stack:
+        match transport:
+            case BandMCPTransport.HTTP:
+                http_client = (
+                    None
+                    if headers is None
+                    else await stack.enter_async_context(
+                        create_mcp_http_client(headers=headers)
+                    )
+                )
+                streams = streamable_http_client(url, http_client=http_client)
+            case BandMCPTransport.SSE:
+                streams = sse_client(url, headers=headers)
+        read_stream, write_stream, *_ = await stack.enter_async_context(streams)
+        session = await stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
         await session.initialize()
         yield session
 

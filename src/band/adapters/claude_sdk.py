@@ -84,6 +84,7 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
+from band.core.exceptions import CleanupIncompleteError
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -94,6 +95,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
+from band.core.retention.cleanup import finish_by, rejoin_owned, report_owned
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
@@ -117,6 +119,11 @@ from band.core.types import (
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
+)
+from band.integrations.claude_sdk.mcp_startup import (
+    ClaudeMcpStartupError,
+    McpServerResolver,
+    is_safe_startup_error,
 )
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.session_manager import (
@@ -612,6 +619,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         workspace_for_room: WorkspaceResolver | None = None,
+        resolve_mcp_servers: McpServerResolver | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         """
@@ -625,6 +633,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
+            resolve_mcp_servers: Async callback returning the complete external
+                MCP servers for each new connection, given its workspace. Never
+                called on reuse; Band's server is separate and reserved. Servers
+                reach the CLI through a private file, and every server must
+                report connected within 30 seconds before the first prompt.
+                External tools keep their normal permission mode and approvals.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
@@ -645,6 +659,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # Created in on_started.
         self._session_manager: ClaudeSessionManager | None = None
+        self._resolve_mcp_servers = resolve_mcp_servers
+        # One owned whole-adapter close continues after its caller leaves.
+        self._teardown: asyncio.Task[None] | None = None
 
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
 
@@ -709,10 +726,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             raise RuntimeError("chat-based approvals are disabled")
         return approvals
 
-    async def _stop_sessions(self) -> None:
-        if self._session_manager is not None:
-            await self._session_manager.stop()
-
     @property
     def _approval_label(self) -> str:
         approvals = self.config.approvals
@@ -726,6 +739,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             await self.cleanup_all()
         await super().on_started(agent_name, agent_description)
 
+        self._teardown = None
         await self._mcp.reopen()
         mcp_backend = await self._mcp.ensure()
 
@@ -795,6 +809,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             can_use_tool_factory=can_use_tool_factory,
             mcp_servers_factory=self._room_mcp_servers,
             workspaces=self._workspaces,
+            resolve_mcp_servers=self._resolve_mcp_servers,
             retention=self.config.retention,
             settle_grace_s=self.config.turn_settle_timeout_s,
             on_disposed=self._forget_room,
@@ -922,8 +937,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             tools=tools,
             room_id=room_id,
         )
+        try:
+            owner = bind_turn_task(tools, turn_task)
+        except BaseException:
+            # The eager worker is parked on this gate until registration succeeds.
+            owner_ready.cancel()
+            await asyncio.wait({turn_task})
+            raise
         self._turn_release[room_id] = release_future
-        self._turn_tasks[room_id] = owner = bind_turn_task(tools, turn_task)
+        self._turn_tasks[room_id] = owner
         owner_ready.set_result(owner)
         try:
             await asyncio.wait(
@@ -1004,6 +1026,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Run one turn under the room's lease; always releases ``release_future``."""
         owner = await owner_ready
         try:
+            if owner.deadline is not None:
+                raise asyncio.CancelledError
             async with (
                 self.backend_turns.running(session.room_id, session.room_id),
                 self._turn_lease(session, tools, resume_from) as client,
@@ -1040,15 +1064,26 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         try:
             # Before the lease: a replaced server retires the room's CLI, and
             # that recovery runs only while no operation leases the room.
+            if self._session_manager is not None:
+                self._session_manager.require_admission()
             await self._mcp.ensure()
             session.retire_outdated()
             prepare = partial(self._bind_turn, session, tools, resume_from)
             async with session.using(prepare) as client:
                 started = True
                 yield client
-        except Exception:
+        except Exception as error:
             if not started and not session.retained.closing:
-                logger.exception("Room %s: Session creation failed", session.room_id)
+                if isinstance(error, ClaudeMcpStartupError):
+                    logger.error(
+                        "Room %s: Session creation failed: %s",
+                        session.room_id,
+                        error if is_safe_startup_error(error) else "an untrusted error",
+                    )
+                else:
+                    logger.exception(
+                        "Room %s: Session creation failed", session.room_id
+                    )
                 await tools.send_failure(_TURN_FAILURE)
             raise
 
@@ -1642,7 +1677,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if manager is None or manager.session(room_id) is None:
             self._forget_room(room_id)
             return
-        await manager.cleanup_session(room_id)
+        try:
+            await manager.cleanup_session(room_id)
+        except CleanupIncompleteError:
+            if not manager.owns_task(asyncio.current_task()):
+                raise
 
     def _forget_room(self, room_id: str) -> None:
         self._room_tools.pop(room_id, None)
@@ -1655,18 +1694,43 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     async def cleanup_all(self) -> None:
-        """Stop the session manager, then the shared Band MCP server, within
-        one ``retention.transition_timeout_s`` budget.
+        """Own the complete session-then-MCP shutdown under one reporting budget.
 
-        Stopping closes admission for every room at once; rooms close first
-        because their CLIs dial the server until they do. An unfinished or
-        failed step stays owned for a retry.
+        A cancelled caller leaves the whole close running. The retained room
+        contract reports self-requested cleanup instead of waiting on its own
+        acquisition; that request still fences admission immediately.
         """
+        manager = self._session_manager
+        if manager is not None:
+            manager.close_admission()
+            if manager.owns_task(asyncio.current_task()):
+                try:
+                    await manager.stop()
+                except CleanupIncompleteError:
+                    pass  # the retained owner joins this work once it unwinds
+                self._teardown = rejoin_owned(
+                    self._teardown, self._tear_down, label="Claude adapter shutdown"
+                )
+                return
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        await self._mcp.close_after(
-            self._stop_sessions(), retention=self.config.retention
+        self._teardown = rejoin_owned(
+            self._teardown, self._tear_down, label="Claude adapter shutdown"
         )
+        deadline = (
+            asyncio.get_running_loop().time()
+            + self.config.retention.transition_timeout_s
+        )
+        await finish_by(
+            deadline,
+            report_owned(self._teardown, None),
+            what="Claude sessions and MCP shutdown",
+        )
+
+    async def _tear_down(self) -> None:
+        if self._session_manager is not None:
+            await self._session_manager.stop(report_timeout_s=None)
+        await self._mcp.close(final=True)
         await self.backend_turns.drain()
 
     # ------------------------------------------------------------------

@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from band.core.exceptions import RoomClosingError
 from band.core.retention import (
@@ -29,6 +29,15 @@ from band.core.retention import (
     RoomRetentionConfig,
 )
 from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.integrations.claude_sdk.mcp_startup import (
+    ClaudeMcpStartupError,
+    McpConfigFile,
+    McpServerResolver,
+    await_mcp_ready,
+    freeze_external_servers,
+    is_safe_startup_error,
+    startup_error,
+)
 from band.workspaces import RoomWorkspaces
 
 try:
@@ -123,6 +132,10 @@ def _start_failure(error: Exception) -> BaseException:
     return error
 
 
+class _StartupReplaced(Exception):
+    """The Band endpoint changed before this connection was ready."""
+
+
 class ClaudeRoomSession:
     """A room's Claude CLI session and everything it keeps until closure.
 
@@ -144,6 +157,9 @@ class ClaudeRoomSession:
         self._reader: asyncio.Task[None] | None = None
         self._turn: TurnStream | None = None
         self._forget_session = False
+        self._config_file: McpConfigFile | None = None
+        self._protected_servers: dict[str, McpServerConfig] | None = None
+        self._acquisition: asyncio.Task[None] | None = None
         self.retained: RetainedRoom = retention.register(
             room_id, acquire=self.acquire, release=self.release, dispose=self.dispose
         )
@@ -172,10 +188,27 @@ class ClaudeRoomSession:
 
         ``prepare`` binds the operation before a CLI is started for it.
         """
-        async with self.retained.use(prepare):
-            if self.client is None:
-                raise RuntimeError(f"Room {self.room_id} is resident without a client")
-            yield self.client
+        try:
+            async with self.retained.use(prepare):
+                if self.client is None:
+                    raise RuntimeError(
+                        f"Room {self.room_id} is resident without a client"
+                    )
+                yield self.client
+        except asyncio.CancelledError:
+            acquisition = self._acquisition
+            if (
+                self._manager._resolve_mcp_servers is not None
+                and acquisition is not None
+                and (
+                    acquisition.cancelling()
+                    or not self.retained.has_authority(self.generation)
+                )
+            ):
+                # The turn's runtime owner still answers for preparation until
+                # its cancelled callback and failed launch finish settling.
+                await asyncio.wait({acquisition})
+            raise
 
     @contextmanager
     def listening(self) -> Iterator[TurnStream]:
@@ -210,44 +243,111 @@ class ClaudeRoomSession:
         return True
 
     def retire_outdated(self) -> None:
-        """A CLI dialing MCP servers the room no longer has resumes on the
-        current ones."""
-        if self.client is None:
-            return
-        if self.client.options.mcp_servers != self._manager.mcp_servers(self.room_id):
+        """Compare only the protected servers: reuse never resolves external ones."""
+        changed = False
+        try:
+            if self.client is not None or self._config_file is not None:
+                held: object = self._protected_servers
+                if (
+                    self._manager._resolve_mcp_servers is None
+                    and self.client is not None
+                ):
+                    held = self.client.options.mcp_servers
+                current = (
+                    self._manager.protected_servers(self.room_id)
+                    if self._manager._resolve_mcp_servers is not None
+                    else self._manager.mcp_servers(self.room_id)
+                )
+                changed = bool(held != current)
+        except Exception as error:  # noqa: BLE001 -- comparisons can run callback code
+            raise startup_error(
+                "reservation", "the room's protected servers could not be read", error
+            ) from None
+        self._manager.require_admission()
+        if changed:
             logger.info("Room %s: MCP servers changed; replacing its CLI", self.room_id)
             self.recover("Band MCP servers changed")
 
     async def acquire(self, generation: int, resume: bool) -> None:
-        """Start the room's CLI. ``resume`` restores the retained session
-        strictly; otherwise an unresumable earlier session gives way to a new
-        one, the bootstrap and crash policy, unless the room began closing."""
+        """Resolve and ready each new connection under the retained acquisition."""
+        self._acquisition = asyncio.current_task()
         try:
-            await self._connect(generation, resume=self.session_id)
-        except Exception as error:
-            if not self._may_start_fresh(resume):
-                raise
-            logger.warning(
-                "Room %s: Session resume failed (session_id=%s): %s. "
-                "Creating new session",
-                self.room_id,
-                self.session_id,
-                error,
-            )
-            # The conversation is dropped only once a new one is running.
-            await self._connect(generation, resume=None)
-            self.session_id = None
+            while True:
+                try:
+                    await self._connect(generation, resume=self.session_id)
+                except _StartupReplaced:
+                    # Close the obsolete launch before resolving a fresh snapshot.
+                    await self._close()
+                    self._check_admitted(generation)
+                    continue
+                except Exception as error:
+                    if (
+                        isinstance(error, ClaudeMcpStartupError)
+                        and (
+                            not is_safe_startup_error(error)
+                            or not error.resume_eligible
+                        )
+                    ) or not self._may_start_fresh(resume):
+                        raise
+                    logger.warning(
+                        "Room %s: Session resume failed (session_id=%s): %s. "
+                        "Creating new session",
+                        self.room_id,
+                        self.session_id,
+                        error,
+                    )
+                    await self._connect(generation, resume=None)
+                    self.session_id = None
+                return
+        finally:
+            self._acquisition = None
 
     def _may_start_fresh(self, resume: bool) -> bool:
-        """Whether a failed resume may give way to a new session: never on a
-        strict resume or once closing, and not while the failed CLI, which
-        could not be closed, is still held for recovery."""
+        """Only a failed native start may discard history, after its child closes."""
         return (
             not resume
             and self.session_id is not None
             and not self.retained.closing
             and self.client is None
         )
+
+    def _check_admitted(self, generation: int) -> None:
+        """Callback-free fencing, including cancellation a callback swallowed."""
+        try:
+            self._manager.require_admission()
+        except ClaudeSessionManagerStoppedError:
+            raise asyncio.CancelledError from None
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
+            raise asyncio.CancelledError from None
+        if self.retained.closing:
+            if self._manager._resolve_mcp_servers is None:
+                self.retained.require_admission()
+            raise startup_error("retirement", "the room's startup was retired")
+        if (
+            self._manager._resolve_mcp_servers is not None
+            and not self.retained.has_authority(generation)
+        ):
+            raise asyncio.CancelledError from None
+
+    def _check_current(self, generation: int) -> None:
+        """Materialize comparisons before the final callback-free guard."""
+        changed = False
+        if self._manager._resolve_mcp_servers is not None:
+            try:
+                changed = bool(
+                    self._protected_servers
+                    != self._manager.protected_servers(self.room_id)
+                )
+            except Exception as error:  # noqa: BLE001 -- a protected-server factory
+                raise startup_error(
+                    "reservation",
+                    "the room's protected servers could not be read",
+                    error,
+                ) from None
+        self._check_admitted(generation)
+        if changed:
+            raise _StartupReplaced
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
         """Close the room's CLI for recovery or final cleanup."""
@@ -264,19 +364,87 @@ class ClaudeRoomSession:
         self._manager.discard(self)
 
     async def _connect(self, generation: int, *, resume: str | None) -> None:
-        options = self._manager.options_for(self, generation, resume=resume)
-        transport = create_transport(options)
-        client = ClaudeSDKClient(options=options, transport=transport)
-        # Retain both before connect: SDK disconnect cannot close a subprocess
-        # when startup fails before its Query is constructed.
-        self.client, self.transport = client, transport
+        # A failed removal can leave only a file. Retry that obligation before
+        # resolving or allocating anything for the next attempt.
+        if self._config_file is not None:
+            await self._close()
+        self._check_admitted(generation)
+        stage = "reservation"
+        native_start = False
+        resolving = self._manager._resolve_mcp_servers is not None
+        ready_servers: frozenset[str] = frozenset()
         try:
+            if resolving:
+                workspace = self._manager.workspace(self.room_id)
+                protected = self._manager.protected_servers(self.room_id)
+                self._protected_servers = protected
+                self._check_current(generation)
+                stage = "resolution"
+                resolver = self._manager._resolve_mcp_servers
+                assert resolver is not None
+                try:
+                    resolved = await resolver(workspace)
+                except Exception as error:  # noqa: BLE001 -- callback errors are never trusted
+                    raise startup_error(
+                        "resolution", "resolve_mcp_servers failed", error
+                    ) from None
+                external = freeze_external_servers(resolved, protected)
+                ready_servers = frozenset({*external, *protected})
+                self._check_current(generation)
+                stage = "launch"
+                self._config_file = McpConfigFile.allocate()
+                self._config_file.write({**external, **protected})
+                options = self._manager.options_for(
+                    self,
+                    generation,
+                    resume=resume,
+                    mcp_servers=str(self._config_file.path),
+                )
+            else:
+                options = self._manager.options_for(self, generation, resume=resume)
+            self._check_current(generation)
+            self.transport = transport = create_transport(options)
+            self.client = client = ClaudeSDKClient(options=options, transport=transport)
+            # Retain both before connect: SDK disconnect cannot close a child
+            # when startup fails before its Query is constructed.
+            native_start = True
             await client.connect()
+            native_start = False
+            self._check_current(generation)
+            if resolving:
+                stage = "status"
+                try:
+                    await await_mcp_ready(client.get_mcp_status, ready_servers)
+                except ClaudeMcpStartupError:
+                    self._check_current(generation)
+                    raise
+                self._check_current(generation)
+        except asyncio.CancelledError:
+            if resolving:
+                await self._close_failed_start()
+            raise asyncio.CancelledError from None
+        except _StartupReplaced:
+            raise
         except Exception as error:
             await self._close_failed_start()
-            if (failure := _start_failure(error)) is error:
+            self._check_admitted(generation)
+            failure = _start_failure(error)
+            if not resolving:
+                if failure is error:
+                    raise
+                raise failure
+            if isinstance(error, ClaudeMcpStartupError) and is_safe_startup_error(
+                error
+            ):
                 raise
-            raise failure
+            raise startup_error(
+                stage,
+                "the Claude CLI did not start"
+                if native_start
+                else "the Claude session could not be constructed",
+                failure,
+                resume_eligible=native_start,
+            ) from None
         self._reader = asyncio.create_task(self._read(client, generation))
         logger.info(
             "Room %s: Claude session started (resume=%s)", self.room_id, options.resume
@@ -291,20 +459,32 @@ class ClaudeRoomSession:
             logger.warning(
                 "Room %s: closing a failed Claude start failed; recovery retries it",
                 self.room_id,
-                exc_info=True,
+                exc_info=self._manager._resolve_mcp_servers is None,
             )
 
     async def _close(self) -> None:
-        """Close the retained CLI; a failure keeps every handle for a retry."""
-        if self.client is None or self.transport is None:
-            return
+        """Keep every unresolved child or private-file obligation for a retry."""
         try:
-            await self.client.disconnect()
-        finally:
-            await self.transport.close()
-        if self._reader is not None:
-            await self._reader
-        self.client = self.transport = self._reader = None
+            if self.client is not None or self.transport is not None:
+                try:
+                    if self.client is not None:
+                        await self.client.disconnect()
+                finally:
+                    if self.transport is not None:
+                        await self.transport.close()
+                if self._reader is not None:
+                    await self._reader
+                self.client = self.transport = self._reader = None
+        except Exception as error:
+            if self._manager._resolve_mcp_servers is None:
+                raise
+            raise startup_error(
+                "cleanup", "the Claude CLI could not be confirmed closed", error
+            ) from None
+        if self._config_file is not None:
+            self._config_file.release()
+            self._config_file = None
+        self._protected_servers = None
 
     async def _read(self, client: ClaudeSDKClient, generation: int) -> None:
         """The CLI's only reader, across turns, from connect to disconnect."""
@@ -373,6 +553,7 @@ class ClaudeSessionManager:
         retention: RoomRetentionConfig | None = None,
         settle_grace_s: float = TURN_SETTLE_GRACE_S,
         on_disposed: Callable[[str], None] | None = None,
+        resolve_mcp_servers: McpServerResolver | None = None,
     ) -> None:
         """
         Initialize session manager.
@@ -392,22 +573,36 @@ class ClaudeSessionManager:
                 down on its own before cancelling it.
             on_disposed: Called with a room's id once its final release is
                 confirmed, even if the leave that started it stopped waiting.
+            resolve_mcp_servers: Complete external servers for each new connection;
+                never called on reuse, and never allowed to replace Band's servers.
         """
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._mcp_servers_factory = mcp_servers_factory
         self._workspaces = workspaces
         self._on_disposed = on_disposed
+        self._resolve_mcp_servers = resolve_mcp_servers
         self._retention = RoomRetention(
             retention or default_claude_retention(),
             settle_grace_s=settle_grace_s,
         )
         self._rooms: dict[str, ClaudeRoomSession] = {}
 
-    def room(self, room_id: str) -> ClaudeRoomSession:
-        """The room's session record, registered on first use."""
+    def require_admission(self) -> None:
         if self._retention.stopping:
             raise ClaudeSessionManagerStoppedError()
+
+    def close_admission(self) -> None:
+        """Fence new work now; the retained owner settles it through ``stop``."""
+        self._retention.stopping = True
+        self._retention.reschedule()
+
+    def owns_task(self, task: asyncio.Task[Any] | None) -> bool:
+        return any(session.retained.enrolls(task) for session in self._rooms.values())
+
+    def room(self, room_id: str) -> ClaudeRoomSession:
+        """The room's session record, registered on first use."""
+        self.require_admission()
         if (session := self._rooms.get(room_id)) is None:
             session = self._rooms[room_id] = ClaudeRoomSession(
                 self, room_id, self._retention
@@ -423,14 +618,36 @@ class ClaudeSessionManager:
             return self.base_options.mcp_servers
         return self._mcp_servers_factory(room_id)
 
+    def protected_servers(self, room_id: str) -> dict[str, McpServerConfig]:
+        """Band's protected servers, separate from the resolver's complete result."""
+        return (
+            {}
+            if self._mcp_servers_factory is None
+            else self._mcp_servers_factory(room_id)
+        )
+
+    def workspace(self, room_id: str) -> str:
+        if self._workspaces is not None:
+            return self._workspaces.claim(room_id)
+        return str(self.base_options.cwd or Path.cwd())
+
     def options_for(
-        self, session: ClaudeRoomSession, generation: int, *, resume: str | None
+        self,
+        session: ClaudeRoomSession,
+        generation: int,
+        *,
+        resume: str | None,
+        mcp_servers: str | None = None,
     ) -> ClaudeAgentOptions:
         """``base_options`` with one room session's overrides applied.
 
         ``dataclasses.replace()`` shallow-copies every base field.
         """
-        overrides: dict[str, Any] = {"mcp_servers": self.mcp_servers(session.room_id)}
+        overrides: dict[str, Any] = {
+            "mcp_servers": self.mcp_servers(session.room_id)
+            if mcp_servers is None
+            else mcp_servers
+        }
         if self._workspaces is not None:
             overrides["cwd"] = self._workspaces.claim(session.room_id)
         if resume:
@@ -457,10 +674,12 @@ class ClaudeSessionManager:
         if (session := self._rooms.get(room_id)) is not None:
             await session.retained.dispose()
 
-    async def stop(self) -> None:
+    async def stop(
+        self, *, report_timeout_s: float | None | Literal["configured"] = "configured"
+    ) -> None:
         """Dispose every room; a failed or unfinished room stays owned for a
         retry, and the manager never serves again."""
-        await self._retention.stop()
+        await self._retention.stop(report_timeout_s=report_timeout_s)
 
     def has_session(self, room_id: str) -> bool:
         """Whether the room has a CLI process held."""
