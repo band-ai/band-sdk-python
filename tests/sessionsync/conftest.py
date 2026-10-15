@@ -4,6 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.conftest import (
+    mirror_settlement_results,
+)
+
 
 @pytest.fixture
 def mock_link():
@@ -23,4 +27,4 @@ def mock_link():
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
     link.get_stale_processing_messages = AsyncMock(return_value=[])
-    return link
+    return mirror_settlement_results(link)

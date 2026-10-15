@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.runtime import AgentRuntime
+from tests.conftest import mirror_settlement_results
 from tests.runtime.helpers import RoomCleanup, StartGate
 
 
@@ -38,6 +39,7 @@ def mock_link():
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    mirror_settlement_results(link)
 
     # Make link iterable for async for
     async def empty_aiter():

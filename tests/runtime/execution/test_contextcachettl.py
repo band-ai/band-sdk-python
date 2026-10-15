@@ -1,3 +1,5 @@
+"""ContextCacheTTL behavior."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -106,7 +108,7 @@ class TestContextCacheTTL:
         ctx._context_hydrated = True
 
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         event = make_message_event(room_id="room-123", msg_id="msg-ttl")
         await ctx.on_event(event)

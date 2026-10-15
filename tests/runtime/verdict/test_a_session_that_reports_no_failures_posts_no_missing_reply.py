@@ -1,3 +1,5 @@
+"""a session that reports no failures posts no missing reply behavior."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -8,7 +10,9 @@ from tests.runtime.helpers import (
     run_through,
     runtime_failures,
 )
-from tests.runtime.verdict.kit import ScriptedAdapter
+from tests.runtime.verdict.kit import (
+    ScriptedAdapter,
+)
 
 
 class TestASessionThatReportsNoFailuresPostsNoMissingReply:

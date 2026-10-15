@@ -31,7 +31,7 @@ class TestReconciliationCadence:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         peer.add_message("missed")
         for _ in range(3):
             await asyncio.sleep(20)
@@ -53,7 +53,7 @@ class TestReconciliationCadence:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(301)
         assert peer.next_reads == pytest.approx([0, 60, 180, 300])
         assert invoked == []
@@ -64,7 +64,7 @@ class TestReconciliationCadence:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(200)
         peer.add_message("live")
         work_at = asyncio.get_running_loop().time()
@@ -80,7 +80,7 @@ class TestReconciliationCadence:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(200)
         ctx.claims.remember_completed(ROOM_ID, "duplicate")
         await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="duplicate"))
@@ -94,7 +94,7 @@ class TestReconciliationCadence:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(200)
         stopped_at = asyncio.get_running_loop().time()
         ctx.stop_room()
@@ -177,7 +177,7 @@ class TestReconciliationCadence:
 
         ctx._on_execute = handler
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         peer.add_message("slow")
         await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="slow"))
         await started.wait()
@@ -208,7 +208,7 @@ class TestReconciliationCadence:
         ctx, peer, _ = reconciled_room
         monkeypatch.setattr(random, "uniform", lambda lower, upper: upper / 2)
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(271)
         assert peer.next_reads == pytest.approx([0, 30, 150, 270])
 
@@ -218,7 +218,7 @@ class TestReconciliationCadence:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         failure_pending = True
 
         def answer(request: httpx.Request) -> httpx.Response:

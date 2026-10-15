@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
+from collections.abc import Awaitable
 from enum import StrEnum
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
@@ -12,21 +13,29 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
-from band.core.protocols import FrameworkAdapter, Preprocessor
+from band.core.exceptions import (
+    CleanupIncompleteError,
+    InputNotAccepted,
+)
+from band.core.protocols import (
+    ControlRecognizer,
+    FrameworkAdapter,
+    MessageProjector,
+    Preprocessor,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.agentconfig import AgentConfig
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.contacts import ContactEventConfig
+from band.runtime.execution import ExecutionContext
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
 
 if TYPE_CHECKING:
     from band.core.types import AgentInput
-    from band.platform.event import PlatformEvent
-    from band.runtime.execution import ExecutionContext
+    from band.platform.event import MessageEvent, PlatformEvent
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +327,7 @@ class Agent:
                 self._cleanup_pending.add(CleanupPhase.RUNTIME)
                 await self._runtime.start(
                     on_execute=self._on_execute,
+                    is_message_control=self._is_control,
                     on_message_control=self._on_control,
                     on_cleanup=self._adapter.on_cleanup,
                     # A bare FrameworkAdapter predates on_interrupt and needn't
@@ -539,26 +549,56 @@ class Agent:
             agent_id=self._runtime.agent_id,
         )
 
-        if inp is None or await self._try_control(inp):
+        if inp is None or await self._try_control(ctx, inp):
             return
 
-        rejected = False
+        await self._commit_unless_refused(inp, self._adapter.on_event(inp))
+
+    @staticmethod
+    async def _commit_unless_refused(inp: AgentInput, turn: Awaitable[None]) -> None:
+        """Await ``turn``, then commit the input's context unless it was refused."""
+        refused = False
         try:
-            await self._adapter.on_event(inp)
+            await turn
         except InputNotAccepted:
-            rejected = True
+            refused = True
             raise
         finally:
-            if not rejected and inp.commit_context is not None:
+            if not refused and inp.commit_context is not None:
                 inp.commit_context()
+
+    def _is_control(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
+        """Whether the adapter would handle the delivery as a control; writes nothing.
+
+        Input projection and control recognition are shared with ordered input
+        construction. Hosts without both contracts keep ordinary queue order.
+        """
+        adapter = self._adapter
+        preprocessor = self._preprocessor
+        if not isinstance(adapter, ControlRecognizer) or not isinstance(
+            preprocessor, MessageProjector
+        ):
+            return False
+        msg = preprocessor.message(ctx, event, self._runtime.agent_id)
+        return msg is not None and adapter.is_control_message(msg)
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
         """Handle controls with their delivery tools, preserving active ownership."""
         inp = await self._preprocessor.process(
             ctx=ctx, event=event, agent_id=self._runtime.agent_id
         )
-        return await self._try_control(inp) if inp is not None else False
+        return await self._try_control(ctx, inp) if inp is not None else False
 
-    async def _try_control(self, inp: AgentInput) -> bool:
+    async def _try_control(self, ctx: ExecutionContext, inp: AgentInput) -> bool:
         handler = getattr(self._adapter, "try_handle_control", None)
-        return await handler(inp.msg, inp.tools) if handler is not None else False
+        if handler is None:
+            return False
+        scheduler = ctx.scheduler if isinstance(ctx, ExecutionContext) else None
+        if scheduler is not None and scheduler.declined(inp.msg.id):
+            return False
+        active = scheduler.current_pass if scheduler is not None else None
+        revision = ctx.control_revision if scheduler is not None else 0
+        handled = await handler(inp.msg, inp.tools)
+        if not handled and scheduler is not None:
+            scheduler.record_decline(active, revision, inp.msg.id)
+        return handled

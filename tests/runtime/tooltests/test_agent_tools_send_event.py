@@ -9,16 +9,14 @@ from band_rest.types import Error, ErrorError
 
 from band.core.exceptions import RoomExecutionStoppedError
 from band.runtime.execution import ExecutionContext
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 from tests.content import BLANK_CONTENT_CASES
 
 
 class TestAgentToolsSendEvent:
     """Test send_event tool."""
 
-    async def test_send_event_success(self, mock_rest_client):
+    async def test_send_event_success(self, mock_rest_client: MagicMock) -> None:
         """send_event() should send via REST and return the Fern model."""
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -28,7 +26,7 @@ class TestAgentToolsSendEvent:
         assert result.model_dump()["message_type"] == "thought"
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_called_once()
 
-    async def test_send_event_with_metadata(self, mock_rest_client):
+    async def test_send_event_with_metadata(self, mock_rest_client: MagicMock) -> None:
         """send_event() should pass metadata."""
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -38,7 +36,9 @@ class TestAgentToolsSendEvent:
         event = call_args.kwargs["event"]
         assert event.metadata == {"code": 500}
 
-    async def test_send_event_within_limit_untouched(self, mock_rest_client):
+    async def test_send_event_within_limit_untouched(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """send_event() should pass short content through unchanged."""
         tools = AgentTools("room-123", mock_rest_client)
         content = "x" * 16384
@@ -48,7 +48,9 @@ class TestAgentToolsSendEvent:
         call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
         assert call_args.kwargs["event"].content == content
 
-    async def test_send_event_truncates_oversized_content(self, mock_rest_client):
+    async def test_send_event_truncates_oversized_content(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """send_event() caps oversized content, keeping both its head and tail."""
         tools = AgentTools("room-123", mock_rest_client)
         content = "HEAD" * 10000 + "TAIL" * 10000
@@ -64,8 +66,8 @@ class TestAgentToolsSendEvent:
 
     @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     async def test_send_event_refuses_content_with_no_visible_characters(
-        self, mock_rest_client, content
-    ):
+        self, mock_rest_client: MagicMock, content: str
+    ) -> None:
         """send_event() should never call the API with blank content — the platform 422s on it."""
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -75,12 +77,12 @@ class TestAgentToolsSendEvent:
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
     async def test_stopped_scope_cancels_posts_without_latching_room(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         ctx = ExecutionContext(
             "room-123", MagicMock(rest=mock_rest_client), AsyncMock()
         )
-        await ctx._begin_scope()
+        await ctx.begin_delivery()
         tools = AgentTools.from_context(ctx)
         mock_rest_client.agent_api_events.create_agent_chat_event.side_effect = (
             ForbiddenError(
@@ -101,8 +103,8 @@ class TestAgentToolsSendEvent:
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_awaited_once()
 
     async def test_send_event_without_an_execution_still_raises_the_typed_error(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Tools built without an execution context have no room state to
         adopt: the typed error propagates so the caller sees the platform's
         rejection."""

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 from tests.identifiers import INVALID_IDS, UUID_ID
 from tests.runtime.helpers import memory_client
 

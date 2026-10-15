@@ -1,3 +1,5 @@
+"""ParticipantCallbacks behavior."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +40,7 @@ class TestParticipantCallbacks:
             on_participant_added=on_participant_added,
         )
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         event = make_participant_added_event(
             room_id="room-123",
@@ -70,7 +72,7 @@ class TestParticipantCallbacks:
             on_participant_removed=on_participant_removed,
         )
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         event = make_participant_removed_event(
             room_id="room-123",

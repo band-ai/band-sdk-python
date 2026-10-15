@@ -1,3 +1,5 @@
+"""codex native text does not change the runtime verdict behavior."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -19,7 +21,10 @@ from tests.runtime.helpers import (
     deliver,
     run_through,
 )
-from tests.runtime.verdict.kit import NATIVE_OUTCOMES, assert_runtime_outcome
+from tests.runtime.verdict.kit import (
+    NATIVE_OUTCOMES,
+    assert_runtime_outcome,
+)
 
 
 class TestCodexNativeTextDoesNotChangeTheRuntimeVerdict:

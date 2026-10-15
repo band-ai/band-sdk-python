@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from band.platform.event import ReconnectedEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.messages import PlatformMessage
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStopSurvivesReconnect:
@@ -50,7 +51,7 @@ class TestStopSurvivesReconnect:
         ctx._stopped = True
 
         # Drive the reconnect sync path directly.
-        await ctx._process_event(ReconnectedEvent())
+        await attempt_delivery(ctx, ReconnectedEvent())
 
         assert executed == []  # adapter never invoked while stopped
         link.mark_processing.assert_not_awaited()

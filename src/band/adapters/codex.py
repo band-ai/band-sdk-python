@@ -903,6 +903,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        """Whether ``msg`` is a local command, which always runs as its own turn.
+
+        ``try_handle_control`` consumes the approval commands and ``/status``;
+        ``on_turn`` answers the rest (``/model``, ``/sandbox``...) itself, so
+        none of them may ride inside a batch as text for Codex.
+        """
+        return self._extract_local_command(msg.content) is not None
+
     def __init__(
         self,
         config: CodexAdapterConfig | None = None,

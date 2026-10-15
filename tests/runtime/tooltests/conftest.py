@@ -4,7 +4,7 @@ import pytest
 
 
 @pytest.fixture
-def participants():
+def participants() -> list[dict[str, str]]:
     """Sample participants list."""
     return [
         {"id": "user-1", "name": "User One", "type": "User", "handle": "@user-one"},

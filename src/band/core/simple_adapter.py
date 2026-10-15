@@ -109,6 +109,17 @@ class SimpleAdapter(ABC, Generic[H]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        """Whether ``try_handle_control`` would treat ``msg`` as a control.
+
+        Read-only: it may read existing pending-request state but never
+        creates state, claims a request, posts or consumes context. A
+        recognized message is handled on its own even if it turns out invalid
+        or unauthorized. Override this to enable priority control discovery;
+        the default keeps custom handlers in ordinary queue order.
+        """
+        return False
+
     def __init__(
         self,
         *,
