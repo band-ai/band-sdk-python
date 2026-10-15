@@ -12,8 +12,8 @@ sandbox:
   image: band-python-kit:local
   # A self-contained argv, not just the launcher: `sbx run` execs this
   # directly, bypassing the image's own Dockerfile ENTRYPOINT, so the chain
-  # must still open with band-entrypoint.sh (proxy-CA install as root, then a
-  # setpriv drop to uid 1000) before it reaches the launcher.
+  # must still open with band-entrypoint.sh (writing the kit CA bundle as
+  # root, then a setpriv drop to uid 1000) before it reaches the launcher.
   #
   # This only runs once something attaches (`sbx run --name <name>`) — `sbx
   # create` alone leaves the sandbox idle. `sbx` v0.43.0 auto-stops an idle,

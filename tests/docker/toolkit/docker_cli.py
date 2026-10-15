@@ -27,6 +27,12 @@ BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "Dockerfile"
 BUILD_TIMEOUT_S = 600
 
 
+def certificate_count_command(path: str) -> str:
+    """A shell command printing how many certificates the PEM bundle at
+    ``path`` holds. ``path`` may be a ``$VAR`` the container's shell expands."""
+    return f'grep -c "BEGIN CERTIFICATE" "{path}"'
+
+
 @dataclass(frozen=True)
 class Image:
     """A built Docker image, identified by its unique tag.

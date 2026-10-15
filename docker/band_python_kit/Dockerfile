@@ -81,12 +81,9 @@ ARG BAND_SDK_HOME
 # Build-only: ARG (not ENV) so it doesn't leak into the final runtime image env.
 ARG DEBIAN_FRONTEND=noninteractive
 
-# ca-certificates provides the system trust store that the sandbox's
-# session-generated proxy CA is installed into at runtime. No proxy env vars
-# are set here. SSL_CERT_FILE/REQUESTS_CA_BUNDLE point at that same system
-# bundle (not a narrowed, kit-private CA file) so it's additive, not an
-# override: httpx and requests otherwise trust only their vendored certifi
-# bundle and never see certs update-ca-certificates adds at sandbox runtime.
+# ca-certificates provides the system roots; the entrypoint adds the sandbox's
+# session-generated proxy CA to a kit-owned copy of them (see BAND_CA_BUNDLE
+# below). No proxy env vars are set here.
 # git + openssh-client: band.docker.repo_init (always in the baked venv, part
 # of core band-sdk) shells out to git for clone/checkout/rev-parse and to
 # ssh-keygen for SSH host-key verification — both are needed in the base
@@ -106,8 +103,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+# BAND_CA_ROOTS is a build-time snapshot of the system roots under the SDK
+# home; the `chmod -R a-w` below makes it read-only to `agent` (root ignores
+# mode bits). BAND_CA_BUNDLE starts as a copy of it; the entrypoint rewrites
+# it to roots + proxy CA on each start and points every TLS client at it.
+# It is the full root set, never a narrowed CA file, so public TLS keeps
+# verifying alongside the proxy.
+ENV BAND_CA_ROOTS=${BAND_SDK_HOME}/ca/system-roots.pem \
+    BAND_CA_BUNDLE=/etc/band-python-kit/ca-bundle.pem
+RUN install -D -m 644 /etc/ssl/certs/ca-certificates.crt "${BAND_CA_ROOTS}" \
+    && install -D -m 644 "${BAND_CA_ROOTS}" "${BAND_CA_BUNDLE}"
 
 # Static OCI labels. GHCR uses org.opencontainers.image.source to link a
 # package to its repository (and, from there, to its build provenance). The
@@ -154,8 +159,8 @@ RUN useradd -m -u 1000 -s /bin/bash agent
 ENV HOME=/home/agent
 WORKDIR /home/agent
 
-# Container starts as root: the entrypoint decodes the sandbox's per-session
-# proxy CA (only root can update the system trust store), then drops to the
-# non-root "agent" user via setpriv before handing off to CMD.
+# Container starts as root: the entrypoint writes the root-owned
+# BAND_CA_BUNDLE (system roots + the sandbox's per-session proxy CA), then
+# drops to the non-root "agent" user via setpriv before handing off to CMD.
 ENTRYPOINT ["/usr/local/bin/band-entrypoint.sh"]
 CMD ["bash"]
