@@ -6,11 +6,16 @@ import asyncio
 import copy
 import itertools
 import json
-from collections.abc import Awaitable, Callable
+import shutil
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import pytest
+from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import Message
 
 from band.adapters.claude_sdk import (
@@ -59,6 +64,35 @@ WRITE_PROMPT = APPROVAL_REQUESTED_TEMPLATE.format(
 REPORTING_BUDGET = RoomRetentionConfig(transition_timeout_s=1.0)
 # A turn still running when its room closes is cancelled at once.
 NO_SETTLE_GRACE = ClaudeSDKAdapterConfig(turn_settle_timeout_s=0)
+
+
+@contextmanager
+def refuse_mcp_removal(path: Path) -> Iterator[None]:
+    """Refuse deletion before any private file is removed."""
+    remove = shutil.rmtree
+
+    def refuse(directory: str | Path, *args: Any, **kwargs: Any) -> None:
+        if Path(directory) == path.parent:
+            raise PermissionError("private MCP removal refused")
+        remove(directory, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(shutil, "rmtree", refuse)
+        yield
+
+
+async def lease_client(
+    manager: ClaudeSessionManager,
+    room_id: str,
+    *,
+    resume_session_id: str | None = None,
+) -> ClaudeSDKClient:
+    """Acquire a resident client through the current retained-room contract."""
+    session = manager.room(room_id)
+    session.retire_outdated()
+    session.adopt(resume_session_id)
+    async with session.using() as client:
+        return client
 
 
 async def exchange(session: ClaudeRoomSession, prompt: str) -> list[Message]:

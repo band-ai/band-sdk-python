@@ -565,7 +565,7 @@ class RetainedRoom:
         current = asyncio.current_task()
         if not self.enrolls(current):
             return False
-        if current is not None and current in self._owned:
+        if current is not None:
             self._unwinding.add(current)
         return True
 
@@ -628,7 +628,11 @@ class RetainedRoom:
             self._work_cancelled = True
             for task in self._uncancelled_work():
                 task.cancel()
-            if self._state == Residency.ACQUIRING and self._transition is not None:
+            if (
+                self._state == Residency.ACQUIRING
+                and self._transition is not None
+                and self._transition not in self._unwinding
+            ):
                 self._cancel_acquire(
                     self._transition,
                     reason=f"Room {self.room_id} acquisition was cancelled for cleanup",

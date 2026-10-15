@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from functools import partial
+from typing import Literal
 
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention.cleanup import (
@@ -101,11 +102,16 @@ class RoomRetention:
                 room._start_idle_release()
         self.reschedule()
 
-    async def stop(self) -> None:
+    async def stop(
+        self, *, report_timeout_s: float | None | Literal["configured"] = "configured"
+    ) -> None:
         """Dispose every room under one reporting deadline; retain failures.
 
         Work enrolled in a room cannot await this shutdown; it is told cleanup
         is pending, is not cancelled by it, and is joined once it unwinds.
+        By default the caller uses ``transition_timeout_s``. An enclosing
+        owner may pass ``None`` to await settlement without a second reporting
+        deadline, while its own callers still receive bounded reports.
         """
         requested_from_inside = [
             room._spare_requester() for room in tuple(self._rooms.values())
@@ -119,7 +125,12 @@ class RoomRetention:
             raise CleanupIncompleteError(
                 "Room retention shutdown waits for the calling work to finish"
             )
-        await report_owned(shutdown, self.config.transition_timeout_s)
+        timeout = (
+            self.config.transition_timeout_s
+            if isinstance(report_timeout_s, str)
+            else report_timeout_s
+        )
+        await report_owned(shutdown, timeout)
 
     def renewed(self) -> RoomRetention:
         """The owner to serve with after a restart.
