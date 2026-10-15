@@ -31,6 +31,7 @@ from band.adapters.nooa.tools import (
 )
 from band.converters.nooa import NooaHistoryConverter, NooaTranscript
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.handoff import context_handoff
 from band.core.protocols import (
     AgentToolsProtocol,
     generic_provider_failure,
@@ -62,6 +63,8 @@ ROOM_TOOLS_SECTION = f"""\
 Every Band tool named in these instructions is an async method on `self.room`,
 called from `execute_python` with keyword arguments, for example
 `await self.room.{BandTool.SEND_MESSAGE}(content="...", mentions=["..."])`.
+Custom tools instead accept their original Pydantic payload as `arguments={{...}}`;
+use the validation aliases and payload structure in their reference.
 A failed call raises `BandToolError` with the reason. An image file read with
 `{BandTool.READ_ROOM_FILE}` comes back as a list of `Image` objects; `show(image)`
 lets you see one. After you reply or decline, finish with `return_result(None)`."""
@@ -320,7 +323,9 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
         is_hub_room: bool,
     ) -> NooaRoomAgent:
         """The room's agent, recreated from platform history at session start."""
-        if is_session_bootstrap or room_id not in self._agents:
+        if is_session_bootstrap:
+            self._agents.pop(room_id, None)
+        if room_id not in self._agents:
             self._agents[room_id] = self._new_room_agent(
                 transcript, is_hub_room=is_hub_room
             )
@@ -342,36 +347,40 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
         room_id: str,
     ) -> None:
         """Run one room message through the agent's ``respond`` method."""
-        agent = self._room_agent(
-            room_id,
-            history,
-            is_session_bootstrap=is_session_bootstrap,
-            is_hub_room=tools.is_hub_room,
-        )
-        message = with_system_updates(
-            msg.format_for_llm(), participants_msg, contacts_msg
-        )
-        with observing_turn(agent) as observer:
-            try:
-                async with agent.room.bound_to(tools):
-                    await agent.respond(message)
-            except Exception as error:
-                if tools.turn.complete:
-                    # The reply or decline already reached the room; failing the
-                    # turn now would post an error after it and invite a redelivery.
-                    logger.warning(
-                        "Room %s: NOOA failed after the turn was settled: %s",
-                        room_id,
-                        error,
-                    )
-                    return
-                logger.exception("Room %s: NOOA turn failed", room_id)
-                await tools.send_failure(generic_provider_failure(_PROVIDER, error))
-                raise
-            finally:
-                if Emit.THOUGHTS in self.features.emit:
-                    await report_thoughts(tools, observer.reasoning)
-                await self.emit_usage(tools, observer.usage)
+        with context_handoff() as handoff:
+            agent = self._room_agent(
+                room_id,
+                history,
+                is_session_bootstrap=is_session_bootstrap,
+                is_hub_room=tools.is_hub_room,
+            )
+            message = with_system_updates(
+                msg.format_for_llm(), participants_msg, contacts_msg
+            )
+            with observing_turn(agent) as observer:
+                try:
+                    async with agent.room.bound_to(tools):
+                        handoff.consume()
+                        await agent.respond(message)
+                except Exception as error:
+                    if not handoff.consumed:
+                        raise
+                    if tools.turn.complete:
+                        # A settled turn must not invite a duplicate delivery.
+                        logger.warning(
+                            "Room %s: NOOA failed after the turn was settled: %s",
+                            room_id,
+                            error,
+                        )
+                        return
+                    logger.exception("Room %s: NOOA turn failed", room_id)
+                    await tools.send_failure(generic_provider_failure(_PROVIDER, error))
+                    raise
+                finally:
+                    if handoff.consumed:
+                        if Emit.THOUGHTS in self.features.emit:
+                            await report_thoughts(tools, observer.reasoning)
+                        await self.emit_usage(tools, observer.usage)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's agent when Band removes the adapter from a room."""
