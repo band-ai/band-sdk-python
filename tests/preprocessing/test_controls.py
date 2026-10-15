@@ -10,8 +10,8 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.preprocessing.kit import ControlPolicy
-from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
 from tests.runtime.deferral.kit import ApprovalAdapter
+from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
 
 
 class TestControls:
