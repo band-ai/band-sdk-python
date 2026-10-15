@@ -394,24 +394,25 @@ class ResourceManager:
         if room_id in self._provisioned_room_ids:
             self._provisioned_room_ids.remove(room_id)
 
-    async def reap_all(self) -> None:
-        """Best-effort teardown of everything provisioned this run.
-
-        Logs ids before deleting so they stay recoverable from logs, and keeps
-        going past individual failures (rooms first, then agents).
-        """
-        for room_id in list(self._provisioned_room_ids):
-            logger.info("Reaping room %s", room_id)
-            try:
-                await self.reap_room(room_id)
-            except Exception:
-                logger.warning("Failed to reap room %s", room_id, exc_info=True)
-        for agent_id in list(self._provisioned_agent_ids):
-            logger.info("Reaping agent %s", agent_id)
-            try:
-                await self.reap_agent(agent_id)
-            except Exception:
-                logger.warning("Failed to reap agent %s", agent_id, exc_info=True)
+    async def reap_all(self, *, strict: bool = False) -> None:
+        """Attempt every owned deletion; strict acceptance reports all failures."""
+        failures: list[Exception] = []
+        for kind, ids, reap in (
+            ("room", list(self._provisioned_room_ids), self.reap_room),
+            ("agent", list(self._provisioned_agent_ids), self.reap_agent),
+        ):
+            for resource_id in ids:
+                logger.info("Reaping %s %s", kind, resource_id)
+                try:
+                    await reap(resource_id)
+                except Exception as error:
+                    error.add_note(f"Cleanup incomplete for {kind} {resource_id}")
+                    failures.append(error)
+                    logger.warning(
+                        "Failed to reap %s %s", kind, resource_id, exc_info=True
+                    )
+        if strict and failures:
+            raise ExceptionGroup("Platform resource cleanup incomplete", failures)
 
     async def sweep_orphans(self) -> int:
         """Force-delete stale test agents left by crashed prior runs.

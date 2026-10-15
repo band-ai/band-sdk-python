@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shlex
 import sys
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from typing import Final
 
 import yaml
 from band_rest import AsyncRestClient
+from band_rest.core.api_error import ApiError
 from band_rest.types import (
     AgentRegisterRequest,
     BulkDeletionItemStatus,
@@ -49,6 +51,7 @@ AGENT_IDS = DEMO_DIR / "agent_ids.txt"
 ROOM_IDS = DEMO_DIR / "room_ids.txt"
 ROOM_DELETION_POLL_S = 1.0
 ROOM_DELETION_TIMEOUT_S = 60.0
+PRIVATE_FILE_MODE = 0o600
 # The generated client declares these statuses as Literal aliases, with no enum
 # to import; tests pin every value here to those aliases.
 FINISHED_JOB_STATUSES: Final[frozenset[BulkDeletionJobStatus]] = frozenset(
@@ -101,35 +104,61 @@ def make_client(settings: ProvisionSettings) -> AsyncRestClient:
     )
 
 
-async def sweep_stale(client: AsyncRestClient, spec: AgentSpec) -> None:
-    """Delete a prior demo agent of this name when listing is available.
+def deployment_path() -> Path:
+    return DEMO_DIR / "deployment"
 
-    Scoped to demo-owned agents via DEMO_MARKER so a user's real agent that
-    happens to share the display name is never touched.
-    """
-    try:
-        existing = await client.human_api_agents.list_my_agents(name=spec.name)
-    except ValidationError:
-        logger.exception("Invalid agent listing; continuing without stale-agent sweep")
+
+def deployment_binding(rest_url: str) -> str:
+    return rest_url.rstrip("/")
+
+
+def replace_record(path: Path, content: str) -> None:
+    """Publish new contents only after they are fully written."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def require_same_deployment() -> None:
+    """Refuse cleanup when this process points at another deployment."""
+    path = deployment_path()
+    if not path.exists():
         return
-    except Exception:
-        logger.exception("Could not list agents; continuing without stale-agent sweep")
-        return
-    for old in existing.data:
-        if old.name == spec.name and (old.description or "").startswith(DEMO_MARKER):
-            await client.human_api_agents.delete_my_agent(old.id, force=True)
-            logger.info("Removed stale demo agent %s (%s)", spec.name, old.id)
+    origin = deployment_binding(path.read_text(encoding="utf-8").strip())
+    current = deployment_binding(ProvisionSettings().band_rest_url)
+    if origin != current:
+        raise RuntimeError(
+            f"These resources were provisioned on {origin}; cleanup is pointed at "
+            f"{current}. Ledgers retained in {DEMO_DIR}."
+        )
 
 
-async def create(client: AsyncRestClient) -> None:
+def require_fresh_run() -> None:
+    for artifact in (CONFIG_PATH, AGENTS_ENV, AGENT_IDS, ROOM_IDS, deployment_path()):
+        if artifact.exists() or artifact.is_symlink():
+            raise ValueError(
+                f"{artifact} already exists; run launch.sh down before provisioning"
+            )
+
+
+def write_private_file(path: Path, content: str) -> None:
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, PRIVATE_FILE_MODE)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as credentials:
+        credentials.write(content)
+
+
+async def create(client: AsyncRestClient, *, deployment_url: str | None = None) -> None:
+    require_fresh_run()
     DEMO_DIR.mkdir(exist_ok=True)
+    origin = deployment_binding(
+        ProvisionSettings().band_rest_url if deployment_url is None else deployment_url
+    )
+    replace_record(deployment_path(), f"{origin}\n")
     keyed_config: dict[str, dict[str, str]] = {}
     env_lines: list[str] = []
-    ids: list[str] = []
 
     try:
         for spec in SPECS:
-            await sweep_stale(client, spec)
             resp = await client.human_api_agents.register_my_agent(
                 agent=AgentRegisterRequest(
                     name=spec.name, description=f"{DEMO_MARKER} {spec.description}"
@@ -141,10 +170,10 @@ async def create(client: AsyncRestClient) -> None:
                 "Registered %s (%s) id=%s", spec.name, spec.config_key, agent.id
             )
 
-            ids.append(agent.id)
             # Persist the id as each agent is created so a mid-loop failure still
             # leaves a record for teardown (no leaked agents).
-            AGENT_IDS.write_text("\n".join(ids) + "\n", encoding="utf-8")
+            with AGENT_IDS.open("a", encoding="utf-8") as ledger:
+                ledger.write(f"{agent.id}\n")
 
             keyed_config[spec.config_key] = {"agent_id": agent.id, "api_key": api_key}
             # shlex.quote so a display name with spaces/parens ("Maya (PM)")
@@ -155,17 +184,13 @@ async def create(client: AsyncRestClient) -> None:
                 f"{spec.env_prefix}_NAME={shlex.quote(agent.name)}",
             ]
     except Exception:
-        # Roll back everything created so far so a partial failure leaks nothing.
-        for agent_id in ids:
-            await client.human_api_agents.delete_my_agent(agent_id, force=True)
-        AGENT_IDS.unlink(missing_ok=True)
-        logger.error("Provisioning failed; rolled back %d created agent(s)", len(ids))
+        logger.exception(
+            "Provisioning failed; created ids remain in %s for cleanup", AGENT_IDS
+        )
         raise
 
-    CONFIG_PATH.write_text(
-        yaml.dump(keyed_config, default_flow_style=False), encoding="utf-8"
-    )
-    AGENTS_ENV.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
+    write_private_file(CONFIG_PATH, yaml.dump(keyed_config, default_flow_style=False))
+    write_private_file(AGENTS_ENV, "\n".join(env_lines) + "\n")
     logger.info("Wrote %s, %s, %s", CONFIG_PATH.name, AGENTS_ENV, AGENT_IDS)
 
 
@@ -180,6 +205,7 @@ async def delete_rooms(client: AsyncRestClient) -> None:
     """Delete every recorded room; one already gone counts as deleted."""
     if not ROOM_IDS.exists():
         return
+    require_same_deployment()
     room_ids = ROOM_IDS.read_text(encoding="utf-8").split()
     deletions = client.human_api_bulk_deletions
     job = (await deletions.bulk_delete_my_chats(ids=room_ids)).data
@@ -187,8 +213,12 @@ async def delete_rooms(client: AsyncRestClient) -> None:
         while job.status not in FINISHED_JOB_STATUSES:
             await asyncio.sleep(ROOM_DELETION_POLL_S)
             job = (await deletions.show_my_bulk_deletion(job.id)).data
-    left = [item.id for item in job.results if item.status != DELETED_ITEM_STATUS]
+    results = {item.id: item.status for item in job.results}
+    left = [
+        room_id for room_id in room_ids if results.get(room_id) != DELETED_ITEM_STATUS
+    ]
     if left:
+        replace_record(ROOM_IDS, "\n".join(left) + "\n")
         raise RuntimeError(f"Could not delete rooms {left}; rerun to retry")
     logger.info("Deleted rooms %s", ", ".join(room_ids))
     ROOM_IDS.unlink()
@@ -197,16 +227,40 @@ async def delete_rooms(client: AsyncRestClient) -> None:
 async def delete(client: AsyncRestClient) -> None:
     if not AGENT_IDS.exists():
         logger.info("No %s — nothing to delete", AGENT_IDS)
+        if not ROOM_IDS.exists():
+            deployment_path().unlink(missing_ok=True)
         return
+    require_same_deployment()
+    unresolved: list[str] = []
     for agent_id in AGENT_IDS.read_text(encoding="utf-8").split():
-        await client.human_api_agents.delete_my_agent(agent_id, force=True)
-        logger.info("Deleted agent %s", agent_id)
+        try:
+            await client.human_api_agents.delete_my_agent(agent_id, force=True)
+        except ApiError as error:
+            if error.status_code != 404:
+                logger.exception("Could not delete agent %s", agent_id)
+                unresolved.append(agent_id)
+        except ValidationError:
+            logger.exception("Invalid deletion response for agent %s", agent_id)
+            unresolved.append(agent_id)
+        except Exception:
+            logger.exception("Could not delete agent %s", agent_id)
+            unresolved.append(agent_id)
+        else:
+            logger.info("Deleted agent %s", agent_id)
+    if unresolved:
+        replace_record(AGENT_IDS, "\n".join(unresolved) + "\n")
+        raise RuntimeError(f"Cleanup incomplete; retry ids in {AGENT_IDS}")
     for artifact in (AGENT_IDS, AGENTS_ENV, CONFIG_PATH):
         artifact.unlink(missing_ok=True)
+    if not ROOM_IDS.exists():
+        deployment_path().unlink(missing_ok=True)
 
 
 async def main() -> None:
     LogSettings().for_application().configure()
+    if len(sys.argv) > 1 and sys.argv[1] == "check":
+        require_fresh_run()
+        return
     settings = ProvisionSettings()
     client = make_client(settings)
     if len(sys.argv) > 1 and sys.argv[1] == "delete":
@@ -215,7 +269,7 @@ async def main() -> None:
         finally:
             await delete(client)
     else:
-        await create(client)
+        await create(client, deployment_url=settings.band_rest_url)
 
 
 if __name__ == "__main__":

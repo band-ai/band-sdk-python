@@ -4,7 +4,7 @@
 paths, credentials) and returns a fully validated `ResolvedLaunch`.
 `execute` then does the side-effect work — the locked dependency sync — and
 finally replaces this process with the customer entrypoint via `os.execve`,
-so signals (e.g. SIGTERM from `sbx stop`) reach customer code directly.
+so signals delivered to the process reach customer code directly.
 """
 
 from __future__ import annotations
@@ -41,13 +41,12 @@ def current_uid() -> int:
 
 
 def require_agent_uid() -> None:
-    """The launcher must run after the base entrypoint's privilege drop."""
+    """Require the workload's non-root agent identity."""
     uid = current_uid()
     if uid != AGENT_UID:
         raise LaunchError(
             "identity",
-            f"launcher must run as uid {AGENT_UID} (after the base entrypoint's "
-            f"privilege drop), got uid {uid}",
+            f"launcher must run as uid {AGENT_UID}, got uid {uid}",
         )
 
 
@@ -121,7 +120,7 @@ def build_child_environment(launch: ResolvedLaunch) -> dict[str, str]:
     child["BAND_AGENT_ID"] = launch.agent_id
     child["BAND_REST_URL"] = launch.rest_url
     child["BAND_WS_URL"] = launch.ws_url
-    # The startup chain inherits root's HOME across the setpriv drop.
+    # Keep library callers aligned with the workload's agent home.
     child["HOME"] = AGENT_HOME
     return child
 
@@ -170,12 +169,7 @@ def configure_logging(*, log_file: Path | None = None) -> None:
 
 def main() -> None:
     configure_logging()
-    # Correct the process-wide HOME once, at the boundary: the startup chain
-    # inherits root's HOME across the setpriv drop, and everything below —
-    # git subprocesses (credentials check, repo_init clone), uv, the customer
-    # process — must see the agent user's home. The explicit HOME entries in
-    # the sync/child environments stay as the contract for library callers
-    # that bypass main().
+    # Git, uv and customer processes share the declared agent home.
     os.environ["HOME"] = AGENT_HOME
     try:
         launch = resolve_launch()

@@ -7,9 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 from band_rest.core.api_error import ApiError
 
+from tests.docker import conftest as docker_fixtures
+from tests.e2e.baseline.settings import BandEndpoints
 from tests.loaders import load_script_module
 
 docker_demo = load_script_module(
@@ -43,24 +46,236 @@ async def test_docker_demo_registers_when_agent_listing_is_unavailable(
         await docker_demo.create(client)
 
     assert (tmp_path / "agent_ids.txt").read_text() == "agent-1\n"
-    assert "Could not list agents; continuing without stale-agent sweep" in caplog.text
+    client.human_api_agents.list_my_agents.assert_not_called()
 
 
 async def test_self_registration_cleans_sandbox_when_agent_listing_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     client = AsyncMock()
     client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
-    teardown = Mock()
+    teardown = Mock(return_value=True)
     monkeypatch.setattr(self_registration, "_require_settings", Mock())
     monkeypatch.setattr(
         self_registration, "user_rest_client", Mock(return_value=client)
     )
-    monkeypatch.setattr(self_registration, "ResourceManager", Mock())
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
     monkeypatch.setattr(self_registration, "_teardown_sbx", teardown)
 
-    with caplog.at_level(logging.ERROR):
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(RuntimeError, match="Cleanup incomplete"),
+    ):
         await self_registration.cleanup_by_name("band-selfreg-demo-test")
 
     teardown.assert_called_once_with("band-selfreg-demo-test")
     assert "Could not list agents; continuing sandbox cleanup" in caplog.text
+
+
+async def test_self_registration_cleanup_attempts_every_resource_and_keeps_unresolved_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "band-selfreg-demo-recovery"
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(self_registration, "_require_settings", Mock())
+    monkeypatch.setattr(self_registration, "user_rest_client", Mock())
+    manager = SimpleNamespace(
+        reap_room=AsyncMock(side_effect=RuntimeError("room blocked")),
+        reap_agent=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        self_registration, "ResourceManager", Mock(return_value=manager)
+    )
+    monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=False))
+    self_registration.record_resource(name, "rooms", "room-1")
+    self_registration.record_resource(name, "agents", "agent-1")
+
+    with pytest.raises(RuntimeError, match="Cleanup incomplete"):
+        await self_registration.cleanup_by_name(name)
+
+    manager.reap_room.assert_awaited_once_with("room-1")
+    manager.reap_agent.assert_awaited_once_with("agent-1")
+    assert self_registration.recorded_resources(name, "rooms") == ["room-1"]
+    assert self_registration.recorded_resources(name, "agents") == []
+    assert (tmp_path / name / "sandbox").exists()
+
+
+def test_self_registration_ignores_inherited_endpoint_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text(
+        "BAND_REST_URL=https://canonical.band.test\n"
+        "BAND_WS_URL=wss://canonical.band.test/socket\n"
+        "BAND_API_KEY_USER=canonical-user\n"
+    )
+    monkeypatch.setenv("BAND_BASE_URL", "https://stale.band.test")
+    monkeypatch.setenv("BAND_REST_URL", "https://stale.band.test")
+    monkeypatch.setenv("BAND_WS_URL", "wss://stale.band.test/socket")
+    monkeypatch.setenv("BAND_API_KEY_USER", "stale-user")
+    monkeypatch.setattr(self_registration, "ENV_TEST_FILE", env_file)
+    settings = self_registration._require_settings()
+    assert settings.endpoints.rest_url == "https://canonical.band.test"
+    assert settings.endpoints.ws_url == "wss://canonical.band.test/socket"
+    assert settings.credentials.api_key_user == "canonical-user"
+
+
+@pytest.mark.parametrize("key", ["canonical-user", "", None])
+def test_docker_live_settings_are_exclusively_file_sourced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str | None,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    contents = "BAND_REST_URL=https://canonical.band.test\n"
+    if key is not None:
+        contents += f"BAND_API_KEY_USER={key}\n"
+    env_file.write_text(contents)
+    for variable, value in {
+        "BAND_BASE_URL": "https://stale.band.test",
+        "BAND_REST_URL": "https://stale.band.test",
+        "BAND_WS_URL": "wss://stale.band.test/socket",
+        "BAND_API_KEY": "stale-agent-key",
+        "BAND_API_KEY_USER": "stale-user-key",
+        "BAND_API_KEY_USER_2": "stale-second-user-key",
+        "E2E_TIMEOUT": "321",
+    }.items():
+        monkeypatch.setenv(variable, value)
+    monkeypatch.setattr(docker_fixtures, "ENV_TEST_FILE", env_file)
+    settings = docker_fixtures.baseline_settings.__wrapped__()
+    assert settings.endpoints.rest_url == "https://canonical.band.test"
+    assert settings.endpoints.ws_url == BandEndpoints.model_fields["ws_url"].default
+    assert settings.credentials.model_dump() == {
+        "api_key": "",
+        "api_key_user": key or "",
+        "api_key_user_2": "",
+    }
+    assert settings.e2e_timeout == 321
+
+
+def test_docker_live_settings_accept_endpoint_alias_from_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text("BAND_BASE_URL=https://canonical.band.test\n")
+    monkeypatch.setenv("BAND_BASE_URL", "https://stale.band.test")
+    monkeypatch.setattr(docker_fixtures, "ENV_TEST_FILE", env_file)
+    assert (
+        docker_fixtures.baseline_settings.__wrapped__().endpoints.rest_url
+        == "https://canonical.band.test"
+    )
+
+
+@pytest.mark.parametrize(
+    "kind,error",
+    [
+        ("agents", ApiError(status_code=404)),
+        (
+            "rooms",
+            httpx.HTTPStatusError(
+                "already gone",
+                request=httpx.Request("DELETE", "https://band.test/room"),
+                response=httpx.Response(404),
+            ),
+        ),
+    ],
+)
+async def test_self_registration_recovery_accepts_confirmed_absence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    error: Exception,
+) -> None:
+    name = "band-selfreg-demo-absence"
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(self_registration, "_require_settings", Mock())
+    client = AsyncMock()
+    client.human_api_agents.list_my_agents.return_value = SimpleNamespace(data=[])
+    monkeypatch.setattr(
+        self_registration, "user_rest_client", Mock(return_value=client)
+    )
+    manager = SimpleNamespace(reap_room=AsyncMock(), reap_agent=AsyncMock())
+    getattr(
+        manager, "reap_agent" if kind == "agents" else "reap_room"
+    ).side_effect = error
+    monkeypatch.setattr(
+        self_registration, "ResourceManager", Mock(return_value=manager)
+    )
+    monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    self_registration.record_resource(name, kind, "already-gone")
+
+    await self_registration.cleanup_by_name(name)
+
+    assert not (tmp_path / name).exists()
+
+
+async def test_self_registration_retries_only_unresolved_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = "band-selfreg-demo-retry"
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(self_registration, "_require_settings", Mock())
+    client = AsyncMock()
+    client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
+    monkeypatch.setattr(
+        self_registration, "user_rest_client", Mock(return_value=client)
+    )
+    manager = SimpleNamespace(
+        reap_room=AsyncMock(side_effect=[RuntimeError("room blocked"), None]),
+        reap_agent=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        self_registration, "ResourceManager", Mock(return_value=manager)
+    )
+    monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    self_registration.record_resource(name, "rooms", "room-1")
+    self_registration.record_resource(name, "agents", "agent-1")
+
+    with pytest.raises(RuntimeError, match="Cleanup incomplete"):
+        await self_registration.cleanup_by_name(name)
+    await self_registration.cleanup_by_name(name)
+
+    manager.reap_agent.assert_awaited_once_with("agent-1")
+    assert manager.reap_room.await_count == 2
+    client.human_api_agents.list_my_agents.assert_not_awaited()
+    assert not self_registration.ledger_path(name).exists()
+
+
+async def test_failed_discovery_remains_unknown_on_cleanup_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = "band-selfreg-demo-unknown"
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    monkeypatch.setattr(self_registration, "_require_settings", Mock())
+    client = AsyncMock()
+    client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
+    monkeypatch.setattr(
+        self_registration, "user_rest_client", Mock(return_value=client)
+    )
+    monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="Cleanup incomplete"):
+            await self_registration.cleanup_by_name(name)
+    assert client.human_api_agents.list_my_agents.await_count == 2
+    assert not (self_registration.ledger_path(name) / "agents").exists()
+
+
+@pytest.mark.parametrize("prefix", [None, "band-recovery-demo"])
+def test_generated_run_name_can_record_cleanup_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prefix: str | None
+) -> None:
+    monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+    prefix = prefix or self_registration.RUN_NAME_PREFIX
+    monkeypatch.setattr(self_registration, "RUN_NAME_PREFIX", prefix)
+    name = self_registration.sandbox_name(prefix=prefix)
+    self_registration.record_resource(name, "sandbox", name)
+    assert self_registration.recorded_resources(name, "sandbox") == [name]
+
+
+@pytest.mark.parametrize("suffix", ["../outside", "a/b", ""])
+def test_cleanup_ledger_refuses_names_outside_its_run_namespace(suffix: str) -> None:
+    with pytest.raises(ValueError, match="printed"):
+        self_registration.ledger_path(f"{self_registration.RUN_NAME_PREFIX}-{suffix}")
