@@ -11,6 +11,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
@@ -20,6 +21,8 @@ from band.integrations.codex.winspawn import (
     MODULE_NAME,
     SpawnFailure,
     await_returncode,
+    close_stdin,
+    release_job,
     request_job_termination,
     spawn,
 )
@@ -29,8 +32,54 @@ logger = logging.getLogger(__name__)
 # Long enough for the child watcher to record an exit, short enough that a
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
-_EXIT_POLL_S = 0.05
 _STDOUT_LIMIT = 16 * 1024 * 1024
+
+
+def _absolute_command(
+    command: Sequence[str], env: Mapping[str, str] | None
+) -> tuple[str, ...]:
+    """Resolve the executable in this process, not in the room directory.
+
+    The helper's current directory is the room. ``CreateProcessW`` searches
+    that directory when the application name is relative, so a room-local
+    binary would run in place of the one this process would have started.
+    """
+    head, *rest = command
+    if Path(head).is_absolute():
+        return (head, *rest)
+    path = None if env is None else env.get("PATH")
+    found = shutil.which(head, path=path)
+    if found is None and Path(head).exists():
+        found = str(Path(head).resolve())
+    if found is None:
+        raise FileNotFoundError(head)
+    return (str(Path(found).resolve()), *rest)
+
+
+def _session_pid_reused(process: asyncio.subprocess.Process) -> bool:
+    """True when ``process.pid`` now names some other live process.
+
+    After the leader is reaped, its session id stays reserved only while a
+    member of that session still exists. Once the id is free it can be given
+    to a new session, and ``killpg`` would signal that session.
+    """
+    if process.returncode is None:
+        return False
+    try:
+        os.kill(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        logger.warning(
+            "Codex process %s pid is not signalable; leaving its session",
+            process.pid,
+        )
+        return True
+    logger.warning(
+        "Codex process %s pid was reused; not signaling that session",
+        process.pid,
+    )
+    return True
 
 
 def _missing_cli_message(binary: str) -> str:
@@ -41,30 +90,13 @@ def _missing_cli_message(binary: str) -> str:
     )
 
 
-async def _close_stdin(process: asyncio.subprocess.Process) -> None:
-    """Drop the write end so a synchronous read in the child can finish.
-
-    ``wait_closed`` does not return while that read is still in progress, and
-    cancelling the wait on Windows never finishes. Closing the transport is
-    enough: the loop drops the OS handle on its next turn.
-    """
-    stdin = process.stdin
-    if stdin is None or stdin.is_closing():
-        return
-    stdin.close()
-    await asyncio.sleep(0)
-
-
 async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
     """Let cancelled reads finish without awaiting a pipe that may never close."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + _EXIT_OBSERVE_S
-    while any(not task.done() for task in readers):
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            logger.warning("Codex stdio readers still pending after tree kill")
-            return
-        await asyncio.sleep(min(_EXIT_POLL_S, remaining))
+    if not readers:
+        return
+    _done, pending = await asyncio.wait(readers, timeout=_EXIT_OBSERVE_S)
+    if pending:
+        logger.warning("Codex stdio readers still pending after tree kill")
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
@@ -76,14 +108,16 @@ async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
     the child ran, so termination does not need the launcher pid to be alive.
     """
     if os.name != "nt":
-        with suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        if not _session_pid_reused(process):
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
         return
     # A member blocked in ReadFile(stdin) stays inside that call until this
     # write end closes, so the job cannot drain first.
     if (job := request_job_termination(process.pid)) is not None:
-        await _close_stdin(process)
+        await close_stdin(process)
         await job.wait_until_idle(_EXIT_OBSERVE_S)
+        release_job(process.pid)
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -168,12 +202,13 @@ class CodexStdioClient(BaseJsonRpcClient):
     def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
         return [
             sys.executable,
+            "-P",
             "-m",
             MODULE_NAME,
             job_name,
             str(status_handle),
             "--",
-            *self.command,
+            *_absolute_command(self.command, self.env),
         ]
 
     def _spawn_connection_error(self, failure: SpawnFailure) -> BandConnectionError:
@@ -219,10 +254,8 @@ class CodexStdioClient(BaseJsonRpcClient):
             # blocked in a synchronous stdin read, and awaiting that read never
             # times out. Terminate the tree and close our write end first.
             if (process := self._proc) is not None:
-                # A launcher that has already exited still leaves descendants.
-                # Unix signals the session group; Windows terminates the job.
                 await kill_process_tree(process)
-                await _close_stdin(process)
+                await close_stdin(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
                     logger.warning(
                         "Codex process %s still alive after tree kill", process.pid

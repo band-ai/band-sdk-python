@@ -5,16 +5,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
+import subprocess
 import sys
 import textwrap
+import time
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
+from band.integrations.codex.stdio_client import kill_process_tree
+from band.integrations.codex.winspawn import (
+    MODULE_NAME,
+    Job,
+    JobNotDrained,
+    SpawnFailure,
+    _await_status,
+    _start_and_wait,
+)
 from tests.integrations.codex.cleanup import cleanup_snapshot
 from tests.paths import ROOM_PEER
 
@@ -239,7 +252,7 @@ class TestSubprocessCleanup:
         await client.connect()
         try:
             heartbeat = workdir / HEARTBEAT_FILE
-            await wait_for_heartbeat(heartbeat)
+            await asyncio.wait_for(wait_for_heartbeat(heartbeat), timeout=CLOSE_BOUND_S)
             process = client._proc
             assert process is not None
             await asyncio.wait_for(wait_until_exited(process), timeout=CLOSE_BOUND_S)
@@ -250,5 +263,150 @@ class TestSubprocessCleanup:
             await assert_heartbeat_stopped(heartbeat)
             shutil.rmtree(workdir)
         finally:
-            await client.close()
+            await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
         assert not workdir.exists()
+
+    async def test_missing_status_fails_before_the_ack_timeout(self) -> None:
+        """A helper that exits without a status line is end-of-file, not a 30s wait."""
+        read_fd, write_fd = os.pipe()
+        try:
+            started = time.monotonic()
+            with pytest.raises(SpawnFailure):
+                await _await_status(read_fd, write_fd, CLOSE_BOUND_S)
+            elapsed = time.monotonic() - started
+        finally:
+            with suppress(OSError):
+                os.close(read_fd)
+        assert elapsed < 1
+
+    def test_job_open_failure_reports_its_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A job the helper cannot open is a status line, not a silent exit."""
+        written: list[int | None] = []
+
+        def deny(_name: str) -> object:
+            error = OSError(5, "denied")
+            error.winerror = 5  # type: ignore[attr-defined]
+            raise error
+
+        monkeypatch.setattr("band.integrations.codex.winspawn._open_job", deny)
+        monkeypatch.setattr(
+            "band.integrations.codex.winspawn._write_status",
+            lambda _handle, code: written.append(code),
+        )
+        assert _start_and_wait("missing", 1, ("codex",)) == 1
+        assert written == [5]
+
+    @pytest.mark.parametrize(
+        ("active", "drained"),
+        [(0, True), (1, False), (None, False)],
+    )
+    async def test_idle_wait_closes_the_job_only_when_it_has_no_members(
+        self, active: int | None, drained: bool
+    ) -> None:
+        job = Job.__new__(Job)
+        job._handle = object()  # type: ignore[assignment]
+        job.name = "test"
+        closed = False
+
+        def active_processes() -> int | None:
+            return active
+
+        def close() -> None:
+            nonlocal closed
+            closed = True
+            job._handle = None
+
+        job.active_processes = active_processes  # type: ignore[method-assign]
+        job.close = close  # type: ignore[method-assign]
+        if drained:
+            await job.wait_until_idle(0)
+        else:
+            with pytest.raises(JobNotDrained):
+                await job.wait_until_idle(0)
+        assert closed is drained
+
+    def test_windows_helper_does_not_import_a_room_package(
+        self, tmp_path: Path
+    ) -> None:
+        workdir = tmp_path / "room"
+        workdir.mkdir()
+        (workdir / "band.py").write_text("raise SystemExit('shadowed')\n")
+        client = CodexStdioClient(
+            command=[sys.executable, "-c", "pass"],
+            cwd=str(workdir),
+        )
+        argv = client._windows_command("job", 1)
+        completed = subprocess.run(
+            argv[:4],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=CLOSE_BOUND_S,
+            check=False,
+        )
+        assert "shadowed" not in completed.stderr
+        assert "shadowed" not in completed.stdout
+        assert completed.returncode == 2
+
+    def test_windows_helper_is_not_already_imported(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-P", "-W", "error", "-m", MODULE_NAME],
+            capture_output=True,
+            text=True,
+            timeout=CLOSE_BOUND_S,
+            check=False,
+        )
+        assert "RuntimeWarning" not in completed.stderr
+        assert completed.returncode == 2
+
+    def test_windows_command_does_not_resolve_a_binary_in_the_room(
+        self, tmp_path: Path
+    ) -> None:
+        workdir = tmp_path / "room"
+        workdir.mkdir()
+        (workdir / "definitely-missing-codex").write_text("")
+        client = CodexStdioClient(
+            command=["definitely-missing-codex", "app-server"],
+            cwd=str(workdir),
+        )
+        with pytest.raises(FileNotFoundError):
+            client._windows_command("job", 1)
+        named = Path(sys.executable).name
+        resolved = CodexStdioClient(command=[named, "-c", "pass"])._windows_command(
+            "job", 1
+        )
+        assert resolved[1] == "-P"
+        assert Path(resolved[resolved.index("--") + 1]).is_absolute()
+
+    @pytest.mark.skipif(os.name == "nt", reason="session-group teardown is Unix")
+    @pytest.mark.parametrize(
+        ("pid_alive", "signals_group"),
+        [(False, True), (True, False)],
+    )
+    async def test_close_signals_a_session_only_while_its_leader_pid_is_free(
+        self, monkeypatch: pytest.MonkeyPatch, pid_alive: bool, signals_group: bool
+    ) -> None:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "raise SystemExit(0)",
+            start_new_session=True,
+        )
+        await process.wait()
+        signaled: list[int] = []
+
+        def record_killpg(pid: int, _sig: int) -> None:
+            signaled.append(pid)
+
+        def probe(pid: int, sig: int) -> None:
+            if sig != 0:
+                raise AssertionError(sig)
+            if not pid_alive:
+                raise ProcessLookupError(pid)
+
+        monkeypatch.setattr(stdio_client.os, "killpg", record_killpg)
+        monkeypatch.setattr(stdio_client.os, "kill", probe)
+        await kill_process_tree(process)
+        assert signaled == ([process.pid] if signals_group else [])
