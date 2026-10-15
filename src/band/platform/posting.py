@@ -65,9 +65,6 @@ def _truncate_event_content(content: str) -> str:
 # error code is the generic "forbidden", so only the message text identifies
 # this rejection among other permission failures.
 _EXECUTION_STOPPED_MESSAGE = "execution is stopped"
-_RECIPIENTS = "recipients"
-_HANDLE = "handle"
-_MISSING_RECIPIENT_HANDLE = "recipient handle missing"
 
 
 def _error_message(body: object) -> str | None:
@@ -92,6 +89,11 @@ def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoRet
     error = MessagePostError.classified(kind, detail)
     logger.error("message post in room %s failed: %s", room_id, error)
     raise error
+
+
+_RECIPIENTS = "recipients"
+_HANDLE = "handle"
+_MISSING_RECIPIENT_HANDLE = "recipient handle missing"
 
 
 def _unconfirmed_recipient(error: ParsingError) -> str | None:

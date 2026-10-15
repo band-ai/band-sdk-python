@@ -187,7 +187,7 @@ class TestMessagePostFailure:
 
         assert _post_logs(caplog) == []
 
-    async def test_mixed_recipients_name_only_the_handle_less_one(
+    async def test_mixed_recipients_name_only_the_omitted_handles(
         self, mock_rest_client
     ) -> None:
         payload = {
@@ -197,6 +197,7 @@ class TestMessagePostFailure:
                 "recipients": [
                     {"id": "recip-1", "name": "Unknown"},
                     {"id": "recip-2", "name": "Peer", "handle": "peer-a"},
+                    {"id": "recip-3", "name": "Also"},
                     "not-a-recipient",
                 ],
             }
@@ -213,7 +214,7 @@ class TestMessagePostFailure:
             )
 
         assert caught.value.detail == (
-            "message msg-1 was created; id=recip-1 name=Unknown"
+            "message msg-1 was created; id=recip-1 name=Unknown, id=recip-3 name=Also"
         )
 
     @pytest.mark.parametrize("present_handle", ["", None, 0])

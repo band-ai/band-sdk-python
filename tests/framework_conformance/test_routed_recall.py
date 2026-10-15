@@ -41,12 +41,14 @@ class TestRoutedRecallFailure:
         routed = Replies(
             [
                 _reply("status only", "peer-a"),
-                _reply("VALUE1", "peer-a"),
+                _reply("the recalled value is VALUE1", "peer-a"),
                 _reply("VALUE1", "user-1"),
             ]
         ).assert_routed_value("peer-a", "VALUE1")
 
-        assert [message.content for message in routed] == ["VALUE1"]
+        assert [message.content for message in routed] == [
+            "the recalled value is VALUE1"
+        ]
         assert routed[0].metadata is not None
         assert [mention.id for mention in routed[0].metadata.mentions] == ["peer-a"]
 
