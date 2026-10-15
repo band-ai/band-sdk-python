@@ -181,7 +181,7 @@ class DeliveryLifecycle:
             "durably_processed": DeliveryStatus.PROCESSED in (status, cached),
             "durably_failed": status == DeliveryStatus.FAILED
             or (status is None and cached == DeliveryStatus.FAILED),
-            "allow_failed_retry": True,
+            "allow_failed_retry": not self.config.consume_all_queued,
         }
 
     def eligibility(
@@ -469,7 +469,7 @@ class DeliveryLifecycle:
                         event.payload.id,
                         error,
                         self.retry_tracker,
-                        True,
+                        not self.config.consume_all_queued,
                     )
 
     async def settle(self, scope: TurnScope) -> bool:

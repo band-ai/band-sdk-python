@@ -9,9 +9,10 @@ from tests.runtime.delivery.kit import RestPeer, started_session
 
 @pytest.mark.looptime
 class TestOrderPolicy:
-    async def test_live_order_and_request_roles(self) -> None:
+    @pytest.mark.parametrize("batching", [False, True])
+    async def test_live_order_and_request_roles(self, batching: bool) -> None:
         peer = RestPeer()
-        async with started_session(peer, batching=False) as session:
+        async with started_session(peer, batching=batching) as session:
             await session.quiesce()
             session.turns.gate = True
             await session.deliver(peer.post("warmup"))
@@ -22,5 +23,10 @@ class TestOrderPolicy:
             session.turns.release.set()
             await session.settled("z-first", "a-last")
 
-        assert session.turns.ids == [("warmup",), ("z-first",), ("a-last",)]
-        assert peer.polls == reads_before_arrivals
+        assert session.turns.ids == (
+            [("warmup",), ("a-last", "z-first")]
+            if batching
+            else [("warmup",), ("z-first",), ("a-last",)]
+        )
+        if not batching:
+            assert peer.polls == reads_before_arrivals

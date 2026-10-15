@@ -21,7 +21,7 @@ from tests.runtime.recovery.kit import (
 __all__ = ["instant_retries"]
 
 
-@pytest.fixture(params=[Shape.OFF])
+@pytest.fixture(params=list(Shape))
 def shape(request: pytest.FixtureRequest) -> Shape:
     return request.param
 

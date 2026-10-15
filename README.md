@@ -889,6 +889,7 @@ Today's versions happen to overlap on `pydantic`, but crewai's ceilings move wit
 | API introduction | [docs.band.ai/api/introduction](https://docs.band.ai/api/introduction) |
 | Contacts | [docs.band.ai/core-concepts/contacts](https://docs.band.ai/core-concepts/contacts) |
 | SDK changelog | [docs.band.ai/changelog/changelog/sdks](https://docs.band.ai/changelog/changelog/sdks) |
+| Consuming queued messages in one turn | [docs/consume-all-queued.md](docs/consume-all-queued.md) |
 | Examples | [examples/](examples/) |
 
 ---

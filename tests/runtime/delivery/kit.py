@@ -472,7 +472,7 @@ class RuntimeRoom(Observer):
 async def started_session(
     peer: RestPeer,
     *,
-    batching: bool = False,
+    batching: bool = True,
     retries: int = 1,
     gate: bool = False,
     accepting: bool = True,
@@ -517,7 +517,7 @@ async def runtime_room(
             link_over(rest),
             AGENT_ID,
             turns.single,
-            session_config=session_config(batching=False),
+            session_config=session_config(batching=True),
             on_execute_batch=turns.batch,
         )
         runtime.rooms.accepting = True
