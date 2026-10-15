@@ -94,8 +94,9 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
         if not value:
             raise ValueError("expected content value cannot be empty")
         routed = self.mentioning(peer_id)
-        if any(value in message.content for message in routed):
-            return routed
+        matched = Replies(message for message in routed if value in message.content)
+        if matched:
+            return matched
         kind = _routed_recall_failure(self, routed)
         raise AssertionError(
             f"{kind}: no message mentioning {peer_id} contained exact value {value!r}\n"

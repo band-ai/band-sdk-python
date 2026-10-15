@@ -65,6 +65,7 @@ def _truncate_event_content(content: str) -> str:
 # error code is the generic "forbidden", so only the message text identifies
 # this rejection among other permission failures.
 _EXECUTION_STOPPED_MESSAGE = "execution is stopped"
+_MISSING_RECIPIENT_HANDLE = "recipient handle missing"
 
 
 def _error_message(body: object) -> str | None:
@@ -87,7 +88,7 @@ def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
 
 
 def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoReturn:
-    error = MessagePostError(kind, detail)
+    error = MessagePostError.classified(kind, detail)
     logger.error("message post in room %s failed: %s", room_id, error)
     raise error
 
@@ -105,19 +106,21 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
     if not isinstance(error.cause, ValidationError):
         return None
     if not any(
-        "recipients" in err["loc"] and "handle" in err["loc"]
+        err.get("type") == "missing"
+        and "recipients" in err["loc"]
+        and "handle" in err["loc"]
         for err in error.cause.errors()
     ):
         return None
     data = error.body.get("data") if isinstance(error.body, dict) else None
     if not isinstance(data, dict):
-        return "recipient handle missing"
+        return _MISSING_RECIPIENT_HANDLE
     missing = [
         f"id={item.get('id')} name={item.get('name')}"
         for item in data.get("recipients") or []
         if isinstance(item, dict) and not item.get("handle")
     ]
-    who = ", ".join(missing) if missing else "recipient handle missing"
+    who = ", ".join(missing) if missing else _MISSING_RECIPIENT_HANDLE
     return f"message {data.get('id')} was created; {who}"
 
 

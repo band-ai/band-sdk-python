@@ -13,15 +13,20 @@ from band.client.streaming import Mention, MessageCreatedPayload, MessageMetadat
 from tests.e2e.baseline.toolkit.observations.replies import Replies, RoutedRecallFailure
 
 
-def _reply(content: str, *mention_ids: str) -> MessageCreatedPayload:
+def _reply(
+    content: str, *mention_ids: str, omit_metadata: bool = False
+) -> MessageCreatedPayload:
     now = "2026-01-01T00:00:00Z"
+    metadata = None
+    if not omit_metadata:
+        metadata = MessageMetadata(
+            mentions=[Mention(id=mention_id) for mention_id in mention_ids]
+        )
     return MessageCreatedPayload(
         id="m",
         content=content,
         message_type="text",
-        metadata=MessageMetadata(
-            mentions=[Mention(id=mention_id) for mention_id in mention_ids]
-        ),
+        metadata=metadata,
         sender_id="sender",
         sender_type="Agent",
         inserted_at=now,
@@ -34,7 +39,11 @@ class TestRoutedRecallFailure:
         self,
     ) -> None:
         routed = Replies(
-            [_reply("VALUE1", "peer-a"), _reply("VALUE1", "user-1")]
+            [
+                _reply("status only", "peer-a"),
+                _reply("VALUE1", "peer-a"),
+                _reply("VALUE1", "user-1"),
+            ]
         ).assert_routed_value("peer-a", "VALUE1")
 
         assert [message.content for message in routed] == ["VALUE1"]
@@ -51,9 +60,29 @@ class TestRoutedRecallFailure:
                 "mentions=user-1 | VALUE1",
             ),
             (
+                Replies([_reply("hello", "user-1", "user-2")]),
+                RoutedRecallFailure.NO_MENTION_OF_PEER,
+                "mentions=user-1,user-2 | hello",
+            ),
+            (
+                Replies([_reply("VALUE1")]),
+                RoutedRecallFailure.NO_MENTION_OF_PEER,
+                "mentions=none | VALUE1",
+            ),
+            (
+                Replies([_reply("VALUE1", omit_metadata=True)]),
+                RoutedRecallFailure.NO_MENTION_OF_PEER,
+                "mentions=none | VALUE1",
+            ),
+            (
                 Replies([_reply("hello", "peer-a")]),
                 RoutedRecallFailure.MENTION_OMITTED_VALUE,
                 "mentions=peer-a | hello",
+            ),
+            (
+                Replies([_reply("VALUE1", "user-1"), _reply("hello", "peer-a")]),
+                RoutedRecallFailure.MENTION_OMITTED_VALUE,
+                "mentions=user-1 | VALUE1\nmentions=peer-a | hello",
             ),
         ],
     )

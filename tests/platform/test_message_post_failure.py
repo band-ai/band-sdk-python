@@ -31,18 +31,32 @@ _HANDLE_LESS = {
 }
 
 
-def _post_logs(caplog: pytest.LogCaptureFixture) -> list[str]:
+_HEADER_SECRET = "req-secret"
+
+
+def _post_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "band.platform.posting"
+        record for record in caplog.records if record.name == "band.platform.posting"
     ]
 
 
-def _parsing_error(payload: Any) -> ParsingError:
-    with pytest.raises(ValidationError) as caught:
-        CreateAgentChatMessageResponse.model_validate(payload)
-    return ParsingError(status_code=201, body=payload, cause=caught.value)
+def _post_logs(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in _post_records(caplog)]
+
+
+def _parsing_error(
+    payload: Any, *, status_code: int = 201, cause: BaseException | None = None
+) -> ParsingError:
+    if cause is None:
+        with pytest.raises(ValidationError) as caught:
+            CreateAgentChatMessageResponse.model_validate(payload)
+        cause = caught.value
+    return ParsingError(
+        status_code=status_code,
+        headers={"x-request-id": _HEADER_SECRET},
+        body=payload,
+        cause=cause,
+    )
 
 
 class TestMessagePostFailure:
@@ -66,7 +80,10 @@ class TestMessagePostFailure:
         error = caught.value
         assert error.kind is MessagePostKind.UNCONFIRMED_RECIPIENT
         assert error.detail == ("message msg-1 was created; id=recip-1 name=Unknown")
-        assert "headers" not in str(error)
+        assert _HEADER_SECRET not in error.detail
+        posted = _post_records(caplog)
+        assert [record.levelno for record in posted] == [logging.ERROR]
+        assert _HEADER_SECRET not in posted[0].getMessage()
         assert _post_logs(caplog) == [
             (
                 "message post in room room-1 failed: "
@@ -118,6 +135,8 @@ class TestMessagePostFailure:
             )
 
         assert caught.value.kind is MessagePostKind.MENTION_NOT_IN_ROOM
+        posted = _post_records(caplog)
+        assert [record.levelno for record in posted] == [logging.ERROR]
         assert _post_logs(caplog) == [
             (
                 "message post in room room-1 failed: "
@@ -144,3 +163,124 @@ class TestMessagePostFailure:
                 room_id="room-1",
                 request=ChatMessageRequest(content="hello", mentions=[]),
             )
+
+    async def test_a_present_non_string_handle_stays_a_parse_error(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        payload = {
+            "data": {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [{"id": "recip-1", "name": "Unknown", "handle": 1}],
+            }
+        }
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(payload)
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
+
+    async def test_mixed_recipients_name_only_the_handle_less_one(
+        self, mock_rest_client
+    ) -> None:
+        payload = {
+            "data": {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [
+                    {"id": "recip-1", "name": "Unknown"},
+                    {"id": "recip-2", "name": "Peer", "handle": "peer-a"},
+                    "not-a-recipient",
+                ],
+            }
+        }
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(payload)
+        )
+
+        with pytest.raises(MessagePostError) as caught:
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert caught.value.detail == (
+            "message msg-1 was created; id=recip-1 name=Unknown"
+        )
+
+    async def test_a_non_2xx_parse_error_stays_unclassified(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(_HANDLE_LESS, status_code=422)
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
+
+    async def test_a_non_validation_cause_stays_unclassified(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(_HANDLE_LESS, cause=ValueError("unparsed"))
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
+
+    async def test_a_longer_422_message_stays_unprocessable(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            UnprocessableEntityError(
+                body={
+                    "error": {
+                        "code": "validation_error",
+                        "message": "mentioned_participant_not_in_room: extra",
+                    }
+                }
+            )
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(UnprocessableEntityError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
+
+    def test_rebuilt_from_its_message_keeps_the_classified_text(self) -> None:
+        error = MessagePostError.classified(
+            MessagePostKind.UNCONFIRMED_RECIPIENT,
+            "message msg-1 was created; id=recip-1 name=Unknown",
+        )
+
+        rebuilt = type(error)(f"{error}; mentions=@peer")
+
+        assert isinstance(rebuilt, MessagePostError)
+        assert str(rebuilt) == (
+            "unconfirmed_recipient: message msg-1 was created; "
+            "id=recip-1 name=Unknown; mentions=@peer"
+        )

@@ -72,14 +72,24 @@ class MessagePostError(BandToolError):
     """A classified chat-message post failure.
 
     ``kind`` is the stable token logs and tool results carry. ``detail`` is
-    the short origin (message id, recipient id and name) without response
-    headers.
+    the short header-free origin. A caller that rebuilds the error from its
+    message string, the way mention-handle enrichment does, leaves both unset.
     """
 
-    def __init__(self, kind: MessagePostKind, detail: str) -> None:
-        super().__init__(f"{kind}: {detail}")
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: MessagePostKind | None = None,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(message)
         self.kind = kind
         self.detail = detail
+
+    @classmethod
+    def classified(cls, kind: MessagePostKind, detail: str) -> MessagePostError:
+        return cls(f"{kind}: {detail}", kind=kind, detail=detail)
 
 
 class InvalidToolArgumentsError(BandError, ValueError):
