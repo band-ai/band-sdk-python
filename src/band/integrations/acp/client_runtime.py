@@ -114,6 +114,8 @@ class ACPRuntime(ACPSessionOperations):
         self._exit_attempted = False
         self._closure: asyncio.Task[None] | None = None
         self._stderr = ACPStderrDrain(logger)
+        self._agent_mcp_http = False
+        self._agent_mcp_sse = False
 
     async def start(self) -> None:
         """Spawn the ACP agent subprocess and initialize its connection."""
@@ -167,6 +169,8 @@ class ACPRuntime(ACPSessionOperations):
             init_kwargs["client_capabilities"] = self._client_capabilities
         init_response = await cast(Any, conn).initialize(**init_kwargs)
         self._agent_mcp_transport = self._select_mcp_transport(init_response)
+        self._agent_mcp_http = self._advertised_mcp(init_response, "http")
+        self._agent_mcp_sse = self._advertised_mcp(init_response, "sse")
         self._agent_supports_session_load = self._select_session_load(init_response)
         self._agent_supports_session_close = self._select_session_close(init_response)
         if self._auth_method:
@@ -174,7 +178,7 @@ class ACPRuntime(ACPSessionOperations):
             logger.info("Authenticated with method: %s", self._auth_method)
 
     async def ensure_connection(self) -> ACPConnectionProtocol:
-        if self._conn is None:
+        if self._conn is None or self._closure is not None:
             raise RuntimeError("ACP client connection is not open")
         return self._conn
 
@@ -231,7 +235,9 @@ class ACPRuntime(ACPSessionOperations):
                         "ACP agent subprocess %s failed to exit", _pid(process)
                     )
                     raise
-            elif isinstance(process, asyncio.subprocess.Process):
+            # Even a context that returned successfully can leave a child
+            # running; its process handle, not that return, confirms exit.
+            if isinstance(process, asyncio.subprocess.Process):
                 await _kill(process)
             if isinstance(process, asyncio.subprocess.Process) and process.stdout:
                 await _read_to_eof(process.stdout)
@@ -245,6 +251,8 @@ class ACPRuntime(ACPSessionOperations):
         self._closure = None
         self._agent_supports_session_load = False
         self._agent_supports_session_close = False
+        self._agent_mcp_http = False
+        self._agent_mcp_sse = False
 
     async def _close_failed_start(self) -> None:
         """Close what a failed start opened; a failed close keeps it for
@@ -270,6 +278,22 @@ class ACPRuntime(ACPSessionOperations):
             return BandMCPTransport.SSE
 
         return BandMCPTransport.HTTP
+
+    @property
+    def agent_mcp_http(self) -> bool:
+        """The connected agent explicitly advertised HTTP MCP servers."""
+        return self._agent_mcp_http
+
+    @property
+    def agent_mcp_sse(self) -> bool:
+        """The connected agent explicitly advertised SSE MCP servers."""
+        return self._agent_mcp_sse
+
+    @staticmethod
+    def _advertised_mcp(init_response: object, transport: str) -> bool:
+        capabilities = getattr(init_response, "agent_capabilities", None)
+        mcp_capabilities = getattr(capabilities, "mcp_capabilities", None)
+        return getattr(mcp_capabilities, transport, None) is True
 
     @staticmethod
     def _select_session_load(init_response: object) -> bool:
