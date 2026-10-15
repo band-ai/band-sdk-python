@@ -65,7 +65,8 @@ called from `execute_python` with keyword arguments, for example
 `await self.room.{BandTool.SEND_MESSAGE}(content="...", mentions=["..."])`.
 Custom tools instead accept their original Pydantic payload as `arguments={{...}}`;
 use the validation aliases and payload structure in their reference.
-A failed call raises `BandToolError` with the reason. An image file read with
+Tool validation or execution failures raise `BandToolError` with the reason.
+An image file read with
 `{BandTool.READ_ROOM_FILE}` comes back as a list of `Image` objects; `show(image)`
 lets you see one. After you reply or decline, finish with `return_result(None)`."""
 

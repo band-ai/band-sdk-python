@@ -13,6 +13,7 @@ import inspect
 import json
 import keyword
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -22,6 +23,7 @@ from uuid import uuid4
 
 from nooa import Image, hidden
 from nooa.agentdoc import doc
+from nooa.agentdoc.ext import format_type
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
@@ -49,6 +51,14 @@ logger = logging.getLogger(__name__)
 
 ToolRunner = Callable[[AgentToolsProtocol, dict[str, Any]], Awaitable[object]]
 
+INPUT_CONFIG_KEYS = (
+    "populate_by_name",
+    "validate_by_alias",
+    "validate_by_name",
+    "strict",
+    "extra",
+)
+
 
 @dataclass(frozen=True)
 class RoomToolSpec:
@@ -57,6 +67,7 @@ class RoomToolSpec:
     name: str
     run: ToolRunner
     method: Callable[..., Awaitable[Any]]
+    reference_types: tuple[type[BaseModel], ...] = ()
 
 
 @dataclass
@@ -284,7 +295,7 @@ def custom_field_doc(name: str, model_field: FieldInfo) -> str:
         else f"default={documented_default(model_field)!r}"
     )
     return (
-        f"{name}: {model_field.annotation!r}; "
+        f"{name}: {format_type(model_field.annotation)}; "
         f"validation_alias={model_field.validation_alias!r}; {requirement}. "
         f"{model_field.description or ''}"
     )
@@ -302,6 +313,12 @@ def custom_tool_method(
         custom_field_doc(field_name, model_field)
         for field_name, model_field in input_model.model_fields.items()
     )
+    # Generated aliases are resolved on each field; callable config adds no input keys.
+    input_config = {
+        key: input_model.model_config.get(key)
+        for key in INPUT_CONFIG_KEYS
+        if key in input_model.model_config
+    }
     describe_method(
         method,
         name,
@@ -309,7 +326,7 @@ def custom_tool_method(
         "Pass arguments as the original Pydantic validation payload, unchanged.\n"
         f"Model fields (attributes, not method keyword arguments):\n{fields}\n"
         "AliasChoices are ordered; AliasPath describes a nested payload.\n"
-        f"Model configuration: {input_model.model_config!r}\n"
+        f"Input configuration: {input_config!r}\n"
         "By default use the validation alias when present, otherwise the attribute name.\n"
         "Model configuration and validators may impose different payload rules.",
     )
@@ -332,7 +349,11 @@ def room_tools_reference(tools_class: type[RoomTools]) -> str:
     NOOA's view of ``self`` shows only the first docstring line of a referenced
     type's methods, which would drop each tool's argument descriptions.
     """
-    return doc(tools_class)
+    references = [
+        model for spec in tools_class._specs.values() for model in spec.reference_types
+    ]
+    # NOOA deduplicates cycles; unlimited expansion keeps every nested input discoverable.
+    return doc(tools_class, *references, inline_depth=sys.maxsize)
 
 
 def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
@@ -361,7 +382,9 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
         return await execute_custom_tool(tool_def, arguments, turn=tools.turn)
 
     name = get_custom_tool_name(input_model)
-    return RoomToolSpec(name, run, custom_tool_method(name, input_model))
+    return RoomToolSpec(
+        name, run, custom_tool_method(name, input_model), (input_model,)
+    )
 
 
 def validate_custom_tool_names(custom_tools: list[CustomToolDef]) -> None:

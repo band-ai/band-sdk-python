@@ -103,6 +103,9 @@ before entering `respond`; errors or cancellation after that point conservativel
 commit context because execution may have consumed it. Setup failures preserve
 their original exception and ordinary retry accounting. Session replacement drops
 the old room agent before constructing the new one, including an empty bootstrap.
+A persistent setup or conversion error continues to fail deliveries under the
+normal retry budget. Correcting that error lets a later delivery consume the
+retained context; the SDK does not discard history automatically.
 
 ## Isolation
 
