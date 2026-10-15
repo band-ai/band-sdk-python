@@ -55,7 +55,7 @@ from band.integrations.slack.block_kit import (
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.platform.posting import post_event
-from band.runtime.tools import AgentTools, TurnEffect
+from band.runtime.tools import AgentTools, ToolCallOutcome, TurnEffect
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -251,7 +251,9 @@ class SlackTeeingTools(AgentTools):
 
     # ── Dispatch ────────────────────────────────────────────────────
 
-    async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
         """Route ``slack_send_message`` to our handler; render plan blocks
         in Slack as a side effect of every other tool call.
 
@@ -265,17 +267,24 @@ class SlackTeeingTools(AgentTools):
         - ``SlackAdapter.show_tool_progress`` → controls Slack-side
           plan-block rendering. Lives on this object as
           ``_show_tool_progress``.
+
+        Adapters that need the ``ok`` flag call this method directly.
+        ``execute_tool_call`` unwraps ``value``.
         """
         # Our own Slack-only tool — not a "progress task" because it IS
         # the user-facing reply, not work-in-progress.
         if tool_name == SLACK_SEND_MESSAGE_TOOL_NAME:
             content = arguments.get("content")
             if not isinstance(content, str) or not content:
-                return (
+                message = (
                     f"Error: {SLACK_SEND_MESSAGE_TOOL_NAME} requires a "
                     "non-empty 'content' string."
                 )
-            return await self.slack_send_message(content)
+                return ToolCallOutcome(value=message, ok=False, error_message=message)
+            # The dict's ok is whether Slack accepted the post. The tool call
+            # itself finished; the model reads that dict.
+            posted = await self.slack_send_message(content)
+            return ToolCallOutcome(value=posted, ok=True)
 
         # Mark in_progress before executing, mark completed/error after.
         task: PlanTask | None = None
@@ -290,11 +299,11 @@ class SlackTeeingTools(AgentTools):
             self._plan.tasks_by_id[task.id] = task
             await self._upsert_plan_message()
 
-        # Use the structured variant so success/failure comes from the
-        # ``ok`` flag rather than sniffing the returned string — the base
-        # tools have no single ``Error:`` prefix (failures surface as
-        # "Invalid arguments for …", "Error executing …", "Unknown tool: …"),
-        # so prefix matching would silently mark failed calls ✅.
+        # Success/failure comes from the ``ok`` flag rather than sniffing the
+        # returned string — the base tools have no single ``Error:`` prefix
+        # (failures surface as "Invalid arguments for …", "Error executing …",
+        # "Unknown tool: …"), so prefix matching would silently mark failed
+        # calls ✅.
         try:
             outcome = await super().execute_tool_call_structured(tool_name, arguments)
         except Exception as exc:
@@ -311,7 +320,7 @@ class SlackTeeingTools(AgentTools):
                 task.state = TaskState.ERROR
                 task.error_message = outcome.error_message
             await self._upsert_plan_message()
-        return outcome.value
+        return outcome
 
 
 class SlackAdapterConfig(BaseAdapterConfig):

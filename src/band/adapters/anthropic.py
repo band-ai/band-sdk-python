@@ -341,9 +341,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "content": tool_results,
                     }
                 )
-                # A follow-up that never returns leaves the message in
-                # processing until on_message returns. declined stays false
-                # when band_no_reply fails.
+                # Skipped only after a successful decline whose siblings also
+                # succeeded. A follow-up that never returns leaves the message
+                # in processing until on_message returns.
                 if declined:
                     logger.info(
                         "Room %s: %s settled the turn after request %s; "
@@ -457,13 +457,15 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             tools: AgentToolsProtocol instance for execution
 
         Returns:
-            Tool-result blocks for the next API call, and whether this
-            response's ``band_no_reply`` succeeded. ``turn.replied`` is also
-            true after ``band_send_message``, so it cannot stand in for that
-            call's own outcome.
+            Tool-result blocks for the next API call, and whether a
+            successful ``band_no_reply`` settled this response. That is true
+            only when the decline itself succeeded and every sibling did too.
+            ``turn.replied`` is also true after ``band_send_message``, so it
+            cannot stand in for this call's own outcome.
         """
         tool_results = []
         declined = False
+        failed = False
 
         for block in response.content:
             if not isinstance(block, ToolUseBlock):
@@ -504,13 +506,17 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(
                         custom_tool, tool_input, turn=tools.turn
                     )
+                    succeeded = True
                 else:
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, tool_input
                     )
                     result = outcome.value
-                    if outcome.ok is True and tool_name == BandTool.NO_REPLY:
-                        declined = True
+                    succeeded = outcome.ok
+                if succeeded and tool_name == BandTool.NO_REPLY:
+                    declined = True
+                if not succeeded:
+                    failed = True
                 if is_image_passthrough_result(tool_name, result):
                     content = _image_tool_result_content(result)
                     result_str = image_block_placeholder(len(content))
@@ -522,6 +528,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     )
                 is_error = False
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                failed = True
                 content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
@@ -555,4 +562,4 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 }
             )
 
-        return tool_results, declined
+        return tool_results, declined and not failed

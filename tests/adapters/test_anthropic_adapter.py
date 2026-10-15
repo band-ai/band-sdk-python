@@ -464,6 +464,88 @@ class TestToolExecution:
         assert error in json.dumps(later[2], default=str)
 
     @pytest.mark.asyncio
+    async def test_failed_sibling_is_sent_back_after_a_successful_no_reply(
+        self, sample_message
+    ):
+        """A successful decline still returns a failed sibling to the model."""
+
+        async def follow_up(
+            content: list[ToolUseBlock], *, adapter: AnthropicAdapter
+        ) -> str:
+            await adapter.on_started("TestBot", "Test bot")
+            calls: list[list[dict[str, Any]]] = []
+            end_turn = SimpleNamespace(
+                stop_reason="end_turn",
+                content=[TextBlock(type="text", text="done")],
+                usage=make_usage(1, 1),
+            )
+
+            async def call_anthropic(
+                *, messages: list[dict[str, Any]], tools: list[Any]
+            ) -> SimpleNamespace:
+                del tools
+                calls.append(messages)
+                if len(calls) == 1:
+                    return SimpleNamespace(
+                        stop_reason="tool_use",
+                        content=content,
+                        usage=make_usage(3, 2),
+                    )
+                return end_turn
+
+            with patch.object(adapter, "_call_anthropic", side_effect=call_anthropic):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=AgentTools("room-123", MagicMock(), participants=[]),
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+            assert len(calls) == 2
+            return json.dumps(calls[1], default=str)
+
+        invalid = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-1",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="add-1",
+                    name=BandTool.ADD_PARTICIPANT,
+                    input={},
+                ),
+            ],
+            adapter=AnthropicAdapter(),
+        )
+        assert "Invalid arguments for band_add_participant" in invalid
+        assert "no_reply" in invalid
+
+        raised = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-2",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="echo-1",
+                    name="echo",
+                    input={"message": "x"},
+                ),
+            ],
+            adapter=AnthropicAdapter(additional_tools=[(EchoInput, failing_tool)]),
+        )
+        assert "Service unavailable" in raised
+
+    @pytest.mark.asyncio
     async def test_reports_tool_calls_when_enabled(self, mock_tools):
         """Should send events when execution reporting is enabled."""
 

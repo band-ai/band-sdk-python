@@ -11,6 +11,8 @@ The fixture re-exports are listed in ``__all__`` so they read as intentional.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -77,15 +79,29 @@ __all__ = [
 ]
 
 
-def pytest_configure(config: pytest.Config) -> None:
+def _live_logging(config: pytest.Config) -> bool:
     # `--log-cli-level` enables live logging; `log_cli` is ini-only and is not
     # an attribute of config.option.
-    live_logging = config.getoption("--log-cli-level") is not None or config.getini(
-        "log_cli"
-    )
-    if live_logging:
-        for name in _HTTP_CLIENT_LOGGERS:
-            logging.getLogger(name).setLevel(logging.WARNING)
+    return config.getoption("--log-cli-level") is not None or config.getini("log_cli")
+
+
+@contextmanager
+def quiet_http_client_loggers(config: pytest.Config) -> Iterator[None]:
+    """Hold HTTP client loggers at WARNING for one baseline test, then restore."""
+    if not _live_logging(config):
+        yield
+        return
+    previous = {name: logging.getLogger(name).level for name in _HTTP_CLIENT_LOGGERS}
+    for name in _HTTP_CLIENT_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        for name, level in previous.items():
+            logging.getLogger(name).setLevel(level)
+
+
+def pytest_configure(config: pytest.Config) -> None:
     # Register the scorecard plugin only when a path is set (empty = don't emit, the
     # local default), so its hooks own their state instead of module globals.
     scorecard_json = BaselineSettings().run.scorecard_json
@@ -113,6 +129,17 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{LANE_MARKER}(lane): set by @lane(Lane.X) to assign a cross-lane test to one "
         "explicit CI lane, overriding derived home-lane scheduling. See lane_selection.",
     )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> object:
+    # Logger levels are process-global, and this conftest is collected before
+    # the E2E skip. Quiet only while a baseline test actually runs.
+    del nextitem
+    if not BaselineSettings().e2e_tests_enabled:
+        return (yield)
+    with quiet_http_client_loggers(item.config):
+        return (yield)
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
