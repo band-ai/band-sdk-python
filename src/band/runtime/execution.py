@@ -1470,7 +1470,14 @@ class ExecutionContext:
 
     @property
     def _has_pending_work(self) -> bool:
-        return self._deferred_message_id is not None or self._has_synthetic
+        return self._ordinary_work_deferred or self._has_synthetic
+
+    @property
+    def _ordinary_work_deferred(self) -> bool:
+        return self._deferred_message_id is not None or any(
+            not self._has_parked_write(message_id)
+            for message_id in self.claims.pending_ack_ids(self.room_id)
+        )
 
     def _set_deferred_head(self, message_id: str | None) -> None:
         if message_id != self._deferred_message_id:
@@ -2008,9 +2015,9 @@ class ExecutionContext:
         """React to one arrival: controls only while ordinary work is deferred."""
         if self._stopped:
             return
-        if self._deferred_message_id is not None:
+        if self._ordinary_work_deferred:
             await self._scan_controls()
-        if self._deferred_message_id is None:
+        if not self._ordinary_work_deferred:
             await self._drain_pending()
 
     async def _drain_pending(self) -> ResyncOutcome:
@@ -2862,7 +2869,9 @@ class ExecutionContext:
         safe for agent senders too.
         """
         try:
-            if not await self.link.mark_failed(
+            if self.claims.is_ack_pending(self.room_id, msg_id):
+                await self._retry_terminal_ack(msg_id)
+            elif not await self.link.mark_failed(
                 self.room_id, msg_id, _error_label(error)
             ):
                 logger.warning(
