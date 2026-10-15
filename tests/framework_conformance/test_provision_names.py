@@ -14,18 +14,23 @@ from band_rest import AgentRegisterRequest
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
+    AGENT_NAME_MAX,
     MENTION_HANDLE_CAP,
     NAME_PREFIX,
+    NAME_TOKEN_HEX,
     ResourceManager,
+    name_budget,
     name_token,
     run_id_len,
 )
+
+REGISTERED_AGENT_ID = "registered-agent"
 
 
 def recording_manager() -> tuple[ResourceManager, AsyncMock]:
     def respond(*, agent: AgentRegisterRequest) -> MagicMock:
         response = MagicMock()
-        response.data.agent.id = agent.name
+        response.data.agent.id = REGISTERED_AGENT_ID
         response.data.credentials.api_key = "test-key"
         return response
 
@@ -65,6 +70,8 @@ class TestProvisionNames:
 
         names = registered_names(register)
         assert names == [first.name, second.name]
+        assert first.id == REGISTERED_AGENT_ID
+        assert first.name != first.id
         assert len(set(names)) == 2
         for name in names:
             token, label = name_parts(name)
@@ -90,13 +97,28 @@ class TestProvisionNames:
 
         names = registered_names(register)
         assert names == [first.name, second.name]
+        assert first.id == REGISTERED_AGENT_ID
+        assert first.name != first.id
         assert len(set(names)) == 2
         for name in names:
             token, label = name_parts(name)
             assert label == "copilot-sdk"
             assert is_hex(token)
             assert len(token) == 32
-            assert len(name) <= 100
+            assert len(name) <= AGENT_NAME_MAX
+
+    async def test_long_label_clamps_the_token_to_the_name_limit(self) -> None:
+        manager, register = recording_manager()
+        # One shorter than a full uuid, so the token has to shrink to fit.
+        label = "x" * (name_budget(AGENT_NAME_MAX, 0) - (NAME_TOKEN_HEX - 1))
+
+        await manager.provision_agent(label)
+
+        token, parsed = name_parts(registered_names(register)[0])
+        assert parsed == label
+        assert len(token) < NAME_TOKEN_HEX
+        assert len(token) >= run_id_len()
+        assert len(registered_names(register)[0]) == AGENT_NAME_MAX
 
     def test_label_too_long_for_a_unique_name_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="unique name token"):

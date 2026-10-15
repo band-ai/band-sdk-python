@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 # All provisioned agent names start with this; the orphan sweep matches on it.
 NAME_PREFIX = "e2e-band-"
 
+# Between the token and the label. Both name budgets subtract this same separator.
+TOKEN_LABEL_SEPARATOR = "-"
+
 # The platform truncates @mention handles beyond this many characters. A peer that a
 # scenario provisions and later asserts by @mention (a roster reply names it as
 # ``@handle``) only surfaces its full name if that name fits the cap; beyond it the
@@ -78,10 +81,15 @@ AGENT_NAME_MAX = 100
 NAME_TOKEN_HEX = 32
 
 
+def name_budget(limit: int, label_len: int) -> int:
+    """Characters left for the token once the prefix, separator, and label are counted."""
+    return limit - len(NAME_PREFIX) - len(TOKEN_LABEL_SEPARATOR) - label_len
+
+
 def run_id_len() -> int:
     """Hex length for a run id that keeps the longest @mentioned peer name within
-    the handle cap: ``CAP - len(prefix) - len("-") - longest mentioned label``."""
-    return MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - MAX_MENTIONED_LABEL_LEN
+    the handle cap."""
+    return name_budget(MENTION_HANDLE_CAP, MAX_MENTIONED_LABEL_LEN)
 
 
 def normalized_label(label: str) -> str:
@@ -94,7 +102,7 @@ def agent_name(*, token: str, label: str) -> str:
     Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
     repeating a name, so an adapter-id label must already be in the form they echo.
     """
-    return f"{NAME_PREFIX}{token}-{normalized_label(label)}"
+    return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
 
 
 def name_token(label: str) -> str:
@@ -109,10 +117,7 @@ def name_token(label: str) -> str:
     normalized = normalized_label(label)
     if len(normalized) <= MAX_MENTIONED_LABEL_LEN:
         return uuid.uuid4().hex[: run_id_len()]
-    width = min(
-        NAME_TOKEN_HEX,
-        AGENT_NAME_MAX - len(NAME_PREFIX) - 1 - len(normalized),
-    )
+    width = min(NAME_TOKEN_HEX, name_budget(AGENT_NAME_MAX, len(normalized)))
     if width < run_id_len():
         raise ValueError(
             f"label {normalized!r} leaves {width} characters for a unique name "
@@ -467,14 +472,16 @@ class ResourceManager:
             if enabled:
                 await self.reap_all()
 
-    async def sweep_orphans(self) -> int:
+    async def sweep_orphans(self, *, keep_ids: Sequence[str] = ()) -> int:
         """Force-delete stale test agents left by crashed prior runs.
 
         Only touches agents whose name carries ``NAME_PREFIX`` and that are
         older than ``orphan_max_age_minutes``. Names that still embed this
-        session's run id are skipped. Per-provision names do not embed it; a
-        concurrent run's fresh agents stay because they are younger than the
-        age gate. Returns the number of agents reaped.
+        session's run id are skipped, and so are ``keep_ids``: a per-provision
+        name does not embed that id, so a caller that still owns an agent (the
+        staging probe's recorded one, across a resume longer than the age gate)
+        passes its id here. A concurrent run's fresh agents stay because they
+        are younger than the age gate. Returns the number of agents reaped.
         """
         max_age = timedelta(minutes=self._settings.run.orphan_max_age_minutes)
         cutoff = datetime.now(UTC) - max_age
@@ -484,6 +491,7 @@ class ResourceManager:
         # Cursor pagination (the SDK's preferred path; offset `page`/`page_size`
         # is deprecated): advance via metadata.next_cursor until has_more is
         # false. The iteration cap bounds a best-effort sweep.
+        owned = set(keep_ids)
         orphans: list[str] = []
         cursor: str | None = None
         for _ in range(20):
@@ -493,7 +501,11 @@ class ResourceManager:
             for agent in response.data or []:
                 if not agent.name.startswith(NAME_PREFIX):
                     continue  # name filter is a contains-match; re-check the prefix
-                if f"-{self._run_id}-" in agent.name:
+                if (
+                    agent.id in owned
+                    or f"{TOKEN_LABEL_SEPARATOR}{self._run_id}{TOKEN_LABEL_SEPARATOR}"
+                    in agent.name
+                ):
                     continue
                 # inserted_at may be tz-naive depending on serialization; treat
                 # naive as UTC so the comparison never raises (see the codebase's
