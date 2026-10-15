@@ -121,7 +121,7 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
 )
-from band.runtime.formatters import format_current_inputs, messages_before
+from band.runtime.formatters import InputField, format_current_inputs, messages_before
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -201,8 +201,9 @@ NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 # Who is asking is read off each current input, never off a per-turn requester
 # line: a turn can carry inputs from several senders.
 SENDER_METADATA_INSTRUCTION = (
-    "Each current input message carries its own sender_id, sender_name and "
-    "sender_type; use them to know who is asking and whom to mention in your reply."
+    f"Each current input message carries its own {InputField.SENDER_ID}, "
+    f"{InputField.SENDER_NAME} and {InputField.SENDER_TYPE}; use them to know "
+    "who is asking and whom to mention in your reply."
 )
 
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0

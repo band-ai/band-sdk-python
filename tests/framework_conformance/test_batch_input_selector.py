@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
-from tests.e2e.baseline.toolkit.adapters import registered_ids, specs
-from tests.framework_configs.adapters import ADAPTER_CONFIGS
+import pytest
+
+from band.adapters.google_adk import GoogleADKAdapter
+from tests.e2e.baseline.toolkit.adapters import Adapter, registered_ids, specs
 
 
 class TestBatchInputSelector:
-    def test_it_selects_exactly_the_adapters_whose_instance_declares_batch_input(
-        self,
+    @pytest.mark.parametrize("declares_support", [False, True])
+    @pytest.mark.parametrize("batch_input", [False, True])
+    def test_it_selects_by_the_adapter_class_declaration(
+        self, monkeypatch: pytest.MonkeyPatch, declares_support: bool, batch_input: bool
     ) -> None:
-        constructible = {
-            cfg.framework_id: cfg.adapter_factory().supports_batch_input
-            for cfg in ADAPTER_CONFIGS
-            if cfg.framework_id in registered_ids()
+        monkeypatch.setattr(GoogleADKAdapter, "supports_batch_input", declares_support)
+        selected = {
+            spec.id
+            for spec in specs(include={Adapter.GOOGLE_ADK}, batch_input=batch_input)
         }
-        selected = {str(spec.id) for spec in specs(batch_input=True)}
-        declaring = {adapter for adapter, declares in constructible.items() if declares}
 
-        assert selected & constructible.keys() == declaring
+        expected = {Adapter.GOOGLE_ADK} if declares_support == batch_input else set()
+        assert selected == expected
 
     def test_the_two_sides_of_the_selector_partition_the_registry(self) -> None:
         batching = {spec.id for spec in specs(batch_input=True, include_pending=True)}
