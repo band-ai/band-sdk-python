@@ -20,7 +20,6 @@ from acp.schema import (
 )
 from pydantic import BaseModel
 
-from band.integrations.omp import OMP_CWD_FLAG
 from band.runtime.tools import BandTool
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import (
@@ -184,12 +183,8 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(FAIL_STARTUP_ARG, type=Path)
     parser.add_argument(HOLD_STARTUP_ARG, type=Path)
-    # OMP passes its room's workspace as a flag instead of the launch cwd.
-    parser.add_argument(OMP_CWD_FLAG)
-    # Each profile adds its own launch flags and subcommand.
+    # Each profile adds its own launch flags.
     options, _ = parser.parse_known_args()
-    if options.cwd is not None:
-        os.chdir(options.cwd)
     await run_agent(WorkspacePeer(options.fail_startup, options.hold_startup))
 
 

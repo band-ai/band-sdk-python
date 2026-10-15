@@ -27,7 +27,6 @@ import pytest
 from pydantic import BaseModel
 
 from band.client.streaming import MessageCreatedPayload
-from band.integrations.omp import DEFAULT_OMP_ACP_COMMAND
 from band.runtime.custom_tools import declared_effect, declares_turn_effect
 from band.runtime.tools import TurnEffect
 from tests.e2e.baseline.settings import Backends, BaselineSettings
@@ -130,25 +129,8 @@ def _settings_with_omp_command(omp_command: str) -> BaselineSettings:
     return BaselineSettings(backends=Backends(omp_command=omp_command))
 
 
-def test_omp_cli_responds_probes_the_command_the_tests_launch() -> None:
-    with (
-        mock.patch(
-            "tests.e2e.baseline.toolkit.deps.shutil.which", return_value="/bin/omp"
-        ),
-        mock.patch(
-            "tests.e2e.baseline.toolkit.deps.subprocess.run",
-            return_value=MagicMock(returncode=0),
-        ) as run,
-    ):
-        assert _omp_cli_responds(_settings_with_omp_command("")) is True
-
-    run.assert_called_once()
-    assert run.call_args.args[0] == [*DEFAULT_OMP_ACP_COMMAND, "--help"]
-
-
 def test_omp_cli_responds_treats_override_as_full_base_command() -> None:
-    # A custom OMP_COMMAND already carries its own subcommand; the probe must not
-    # append "acp" a second time (that produced "omp acp acp --help" before the fix).
+    # OMP_COMMAND is already the full command, including its native mode.
     with (
         mock.patch(
             "tests.e2e.baseline.toolkit.deps.shutil.which", return_value="/bin/omp"
@@ -158,10 +140,10 @@ def test_omp_cli_responds_treats_override_as_full_base_command() -> None:
             return_value=MagicMock(returncode=0),
         ) as run,
     ):
-        assert _omp_cli_responds(_settings_with_omp_command("omp acp")) is True
+        assert _omp_cli_responds(_settings_with_omp_command("omp --mode rpc")) is True
 
     run.assert_called_once()
-    assert run.call_args.args[0] == ["omp", "acp", "--help"]
+    assert run.call_args.args[0] == ["omp", "--mode", "rpc", "--help"]
 
 
 # --- omp_provider_api_key (a bad OMP_MODEL must not crash Dep.OMP evaluation) --
@@ -288,11 +270,6 @@ async def test_adopt_room_is_reaped_once_on_teardown() -> None:
     rm.adopt_room("room-abc")  # idempotent — not tracked (or reaped) twice
     await rm.reap_all()
     rm._user_ops.delete_room.assert_awaited_once_with("room-abc")
-
-
-def test_adapter_id_labels_become_names_models_echo_verbatim() -> None:
-    """A model repeating ``omp_acp`` writes ``omp-acp``; the name must already match."""
-    assert agent_name(run_id="ab12c", label="omp_acp") == "e2e-band-ab12c-omp-acp"
 
 
 def test_mentioned_peer_names_fit_handle_cap() -> None:

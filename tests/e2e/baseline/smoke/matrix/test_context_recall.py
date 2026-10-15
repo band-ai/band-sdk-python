@@ -111,8 +111,8 @@ async def test_recalls_within_session(
             "/context — a pass would not validate this rehydration",
         ),
         ExcludedAdapter(
-            Adapter.OMP_ACP,
-            "recovers context by resuming its own ACP session, not via platform "
+            Adapter.OMP,
+            "recovers context by resuming its own native RPC session, not via platform "
             "/context — a pass would not validate this rehydration",
         ),
         ExcludedAdapter(

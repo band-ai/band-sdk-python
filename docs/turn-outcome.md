@@ -244,15 +244,20 @@ toward: the base prompt still says plain text is never delivered, because
 without that line models more often send their closing narration as a second
 `band_send_message` (measured live on gemini-2.5-flash).
 
-### ACP and Codex native text
+### Native OMP, ACP and Codex text
 
-ACP clients (including OMP, Copilot and Cursor) and Codex use Band tools for
+Native OMP, ACP clients (including Copilot and Cursor), and Codex use Band tools for
 room replies and deliberate declines. Native assistant text is optional thought
 telemetry without mentions, gated by `Emit.THOUGHTS`. It never settles a turn:
 native-only output and failed tools followed by narration reach the existing
 missing-reply verdict even with thoughts disabled. Successful reply/decline
 suppresses redundant closing text; qualifying successful work still completes.
 Other relaying adapters retain their native-text fallback.
+
+OMP's native RPC lifecycle must settle before this verdict is computed. An initial
+prompt outcome or `agent_end` while async work remains does not finish the Band turn:
+the reader continues through background resumes, including their errors. Settlement
+does not relax the tool-only reply rule or add a native-text fallback.
 
 Remove the retired `assistant_text_mode` config key from ACP and Codex and
 `fallback_send_agent_text` from Codex. Explicit configs reject these as unknown

@@ -199,7 +199,7 @@ async def cursor(agent: FakeACPAgent, **settings: Any) -> AsyncIterator[AcpSessi
 
 @asynccontextmanager
 async def inline(agent: FakeACPAgent, **settings: Any) -> AsyncIterator[AcpSession]:
-    """An adapter whose turns run inside their message handler (OMP, Copilot)."""
+    """An adapter whose turns run inside their message handler (Copilot)."""
     async with acp_adapter(agent, fake_agent_config(**settings)) as session:
         yield session
 

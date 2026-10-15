@@ -1,4 +1,4 @@
-"""Registers the OMP, Cursor and Copilot ACP adapters with the common Room
+"""Registers the Cursor and Copilot ACP adapters with the common Room
 lifecycle suite."""
 
 from __future__ import annotations

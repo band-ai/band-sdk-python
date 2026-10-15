@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from band.integrations.omp import (
-    DEFAULT_OMP_ACP_COMMAND,
+    DEFAULT_OMP_COMMAND,
     DEFAULT_OMP_MODEL,
     omp_model_provider,
     omp_provider_api_key_env,
@@ -19,7 +19,7 @@ def omp_model(settings: BaselineSettings) -> str:
 def omp_command(settings: BaselineSettings) -> tuple[str, ...]:
     """The executable and arguments used by every baseline OMP probe."""
     override = settings.backends.omp_command.strip()
-    return tuple(override.split()) if override else DEFAULT_OMP_ACP_COMMAND
+    return tuple(override.split()) if override else DEFAULT_OMP_COMMAND
 
 
 def omp_provider_api_key(settings: BaselineSettings) -> str:
