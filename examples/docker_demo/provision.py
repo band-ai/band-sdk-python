@@ -104,8 +104,37 @@ def make_client(settings: ProvisionSettings) -> AsyncRestClient:
     )
 
 
+def deployment_path() -> Path:
+    return DEMO_DIR / "deployment"
+
+
+def deployment_binding(rest_url: str) -> str:
+    return rest_url.rstrip("/")
+
+
+def replace_record(path: Path, content: str) -> None:
+    """Publish new contents only after they are fully written."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def require_same_deployment() -> None:
+    """Refuse cleanup when this process points at another deployment."""
+    path = deployment_path()
+    if not path.exists():
+        return
+    origin = deployment_binding(path.read_text(encoding="utf-8").strip())
+    current = deployment_binding(ProvisionSettings().band_rest_url)
+    if origin != current:
+        raise RuntimeError(
+            f"These resources were provisioned on {origin}; cleanup is pointed at "
+            f"{current}. Ledgers retained in {DEMO_DIR}."
+        )
+
+
 def require_fresh_run() -> None:
-    for artifact in (CONFIG_PATH, AGENTS_ENV, AGENT_IDS, ROOM_IDS):
+    for artifact in (CONFIG_PATH, AGENTS_ENV, AGENT_IDS, ROOM_IDS, deployment_path()):
         if artifact.exists() or artifact.is_symlink():
             raise ValueError(
                 f"{artifact} already exists; run launch.sh down before provisioning"
@@ -118,9 +147,13 @@ def write_private_file(path: Path, content: str) -> None:
         credentials.write(content)
 
 
-async def create(client: AsyncRestClient) -> None:
+async def create(client: AsyncRestClient, *, deployment_url: str | None = None) -> None:
     require_fresh_run()
     DEMO_DIR.mkdir(exist_ok=True)
+    origin = deployment_binding(
+        ProvisionSettings().band_rest_url if deployment_url is None else deployment_url
+    )
+    replace_record(deployment_path(), f"{origin}\n")
     keyed_config: dict[str, dict[str, str]] = {}
     env_lines: list[str] = []
 
@@ -172,6 +205,7 @@ async def delete_rooms(client: AsyncRestClient) -> None:
     """Delete every recorded room; one already gone counts as deleted."""
     if not ROOM_IDS.exists():
         return
+    require_same_deployment()
     room_ids = ROOM_IDS.read_text(encoding="utf-8").split()
     deletions = client.human_api_bulk_deletions
     job = (await deletions.bulk_delete_my_chats(ids=room_ids)).data
@@ -184,7 +218,7 @@ async def delete_rooms(client: AsyncRestClient) -> None:
         room_id for room_id in room_ids if results.get(room_id) != DELETED_ITEM_STATUS
     ]
     if left:
-        ROOM_IDS.write_text("\n".join(left) + "\n", encoding="utf-8")
+        replace_record(ROOM_IDS, "\n".join(left) + "\n")
         raise RuntimeError(f"Could not delete rooms {left}; rerun to retry")
     logger.info("Deleted rooms %s", ", ".join(room_ids))
     ROOM_IDS.unlink()
@@ -193,7 +227,10 @@ async def delete_rooms(client: AsyncRestClient) -> None:
 async def delete(client: AsyncRestClient) -> None:
     if not AGENT_IDS.exists():
         logger.info("No %s — nothing to delete", AGENT_IDS)
+        if not ROOM_IDS.exists():
+            deployment_path().unlink(missing_ok=True)
         return
+    require_same_deployment()
     unresolved: list[str] = []
     for agent_id in AGENT_IDS.read_text(encoding="utf-8").split():
         try:
@@ -211,10 +248,12 @@ async def delete(client: AsyncRestClient) -> None:
         else:
             logger.info("Deleted agent %s", agent_id)
     if unresolved:
-        AGENT_IDS.write_text("\n".join(unresolved) + "\n", encoding="utf-8")
+        replace_record(AGENT_IDS, "\n".join(unresolved) + "\n")
         raise RuntimeError(f"Cleanup incomplete; retry ids in {AGENT_IDS}")
     for artifact in (AGENT_IDS, AGENTS_ENV, CONFIG_PATH):
         artifact.unlink(missing_ok=True)
+    if not ROOM_IDS.exists():
+        deployment_path().unlink(missing_ok=True)
 
 
 async def main() -> None:
@@ -230,7 +269,7 @@ async def main() -> None:
         finally:
             await delete(client)
     else:
-        await create(client)
+        await create(client, deployment_url=settings.band_rest_url)
 
 
 if __name__ == "__main__":

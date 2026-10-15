@@ -59,6 +59,7 @@ BAND_HOST_PATTERN = DEFAULT_BAND_HOST
 LEDGER_DIR = EXAMPLES_ROOT / "sandbox" / "self-registration" / ".runs"
 DEFAULT_WORKLOAD = "band-python-kit:local"
 RUN_NAME_PREFIX = "band-selfreg-demo"
+DEPLOYMENT_RECORD = "deployment"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,6 +95,7 @@ def _band_kit_provision(
     *,
     name: str,
     workspace: Path,
+    settings: BaselineSettings,
     agent_name: str | None = None,
     kit: str | None = None,
     create: bool,
@@ -113,7 +115,7 @@ def _band_kit_provision(
         "--workspace",
         str(workspace),
         "--rest-url",
-        _require_settings().endpoints.rest_url,
+        settings.endpoints.rest_url,
     ]
     if agent_name:
         argv += ["--agent-name", agent_name]
@@ -176,6 +178,37 @@ def recorded_resources(name: str, kind: str) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
 
+def deployment_binding(rest_url: str) -> str:
+    return rest_url.rstrip("/")
+
+
+def replace_record(path: Path, content: str) -> None:
+    """Publish new contents only after they are fully written."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def record_deployment(name: str, rest_url: str) -> None:
+    ledger = ledger_path(name)
+    ledger.mkdir(parents=True, exist_ok=True)
+    replace_record(ledger / DEPLOYMENT_RECORD, f"{deployment_binding(rest_url)}\n")
+
+
+def require_origin_deployment(name: str, rest_url: str) -> None:
+    """Refuse platform cleanup when this process points at another deployment."""
+    path = ledger_path(name) / DEPLOYMENT_RECORD
+    if not path.exists():
+        return
+    origin = deployment_binding(path.read_text(encoding="utf-8").strip())
+    current = deployment_binding(rest_url)
+    if origin != current:
+        raise RuntimeError(
+            f"This run was provisioned on {origin}; cleanup is pointed at {current}. "
+            f"Ledger retained at {ledger_path(name)}."
+        )
+
+
 def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
     failed = False
     probes = (
@@ -229,19 +262,23 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> bool:
     return not failed
 
 
-async def cleanup_by_name(name: str) -> None:
+async def cleanup_by_name(
+    name: str, *, settings: BaselineSettings | None = None
+) -> None:
     record_resource(name, "sandbox", name)
     try:
         failed = not _teardown_sbx(name)
     except (OSError, subprocess.SubprocessError):
         logger.exception("Sandbox cleanup unavailable; continuing platform cleanup")
         failed = True
-    try:
-        settings = _require_settings()
-    except ValueError as error:
-        raise RuntimeError(
-            f"Platform cleanup blocked; ledger retained at {ledger_path(name)}. Retry --cleanup {name} after restoring .env.test"
-        ) from error
+    if settings is None:
+        try:
+            settings = _require_settings()
+        except ValueError as error:
+            raise RuntimeError(
+                f"Platform cleanup blocked; ledger retained at {ledger_path(name)}. Retry --cleanup {name} after restoring .env.test"
+            ) from error
+    require_origin_deployment(name, settings.endpoints.rest_url)
     client = user_rest_client(settings)
     resource_manager = ResourceManager(
         user_client=client, settings=settings, run_id=name
@@ -294,10 +331,10 @@ async def cleanup_by_name(name: str) -> None:
         if kind == "agents" and not registration_known:
             continue
         if unresolved:
-            path.write_text("\n".join(unresolved) + "\n", encoding="utf-8")
+            replace_record(path, "\n".join(unresolved) + "\n")
             failed = True
         else:
-            path.write_text("", encoding="utf-8")
+            replace_record(path, "")
     if failed:
         raise RuntimeError(
             f"Cleanup incomplete; ledger retained at {ledger_path(name)}. Retry: uv run examples/sandbox/self-registration/demo.py --cleanup {name}"
@@ -318,6 +355,7 @@ async def run(kit: str) -> None:
 
     name = sandbox_name(prefix=RUN_NAME_PREFIX)
     record_resource(name, "sandbox", name)
+    record_deployment(name, settings.endpoints.rest_url)
     resource_manager = ResourceManager(
         user_client=client, settings=settings, run_id=name
     )
@@ -347,6 +385,7 @@ async def run(kit: str) -> None:
                 agent_id = _band_kit_provision(
                     name=name,
                     workspace=workspace,
+                    settings=settings,
                     agent_name=agent_name,
                     kit=str(workload),
                     create=True,
@@ -382,7 +421,10 @@ async def run(kit: str) -> None:
 
                     logger.info("Step 5/5: re-running provision to prove idempotency")
                     rerun_id = _band_kit_provision(
-                        name=name, workspace=workspace, create=False
+                        name=name,
+                        workspace=workspace,
+                        settings=settings,
+                        create=False,
                     )
                     if rerun_id != agent_id:
                         raise RuntimeError(
@@ -393,7 +435,7 @@ async def run(kit: str) -> None:
         logger.info("Success: agent %s self-registered and round-tripped.", agent_id)
     finally:
         logger.info("Cleaning up...")
-        await cleanup_by_name(name)
+        await cleanup_by_name(name, settings=settings)
 
 
 def main() -> None:
