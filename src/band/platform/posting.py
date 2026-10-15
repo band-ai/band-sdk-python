@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from band_rest.core.parse_error import ParsingError
 from band_rest.errors import ForbiddenError, UnprocessableEntityError
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.content import has_visible_content
@@ -91,18 +91,53 @@ def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoRet
     raise error
 
 
-_RECIPIENTS = "recipients"
-_HANDLE = "handle"
-_MISSING_RECIPIENT_HANDLE = "recipient handle missing"
+class PostedRecipient(BaseModel):
+    """A recipient on a 2xx body, with the handle optional.
+
+    A missing handle is an unconfirmed mention. A present handle that is not a
+    string is a different parse failure, so the whole body stays unclassified.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1)
+    name: str | None = None
+    handle: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def present_handle_is_a_string(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and "handle" in value
+            and not isinstance(value["handle"], str)
+        ):
+            raise ValueError("a present recipient handle must be a string")
+        return value
 
 
-def _omitted_recipient(item: object) -> str | None:
-    if not isinstance(item, dict) or _HANDLE in item:
+class PostedMessage(BaseModel):
+    """The 2xx body shape that can name the created message and its recipients."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1)
+    recipients: list[PostedRecipient]
+
+
+def _posted_message(body: object) -> PostedMessage | None:
+    data = body.get("data") if isinstance(body, dict) else None
+    try:
+        return PostedMessage.model_validate(data)
+    except ValidationError:
         return None
-    recipient_id = item.get("id")
-    if not isinstance(recipient_id, str) or not recipient_id:
-        return None
-    return f"id={recipient_id} name={item.get('name')}"
+
+
+def _recipient_phrase(recipient: PostedRecipient) -> str:
+    identity = f"id={recipient.id}"
+    if recipient.name is None:
+        return identity
+    return f"{identity} name={recipient.name}"
 
 
 def _unconfirmed_recipient(error: ParsingError) -> str | None:
@@ -110,30 +145,23 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
 
     A handle-less recipient is not a confirmed mention. The message id in the
     body means the row may already exist, so the failure names that instead of
-    dumping response headers.
+    dumping response headers. Any other body shape stays a parse error.
     """
     status = error.status_code
     if status is None or not 200 <= status < 300:
         return None
     if not isinstance(error.cause, ValidationError):
         return None
-    if not any(
-        err.get("type") == "missing"
-        and _RECIPIENTS in err["loc"]
-        and _HANDLE in err["loc"]
-        for err in error.cause.errors()
-    ):
+    message = _posted_message(error.body)
+    if message is None:
         return None
-    data = error.body.get("data") if isinstance(error.body, dict) else None
-    if not isinstance(data, dict):
+    omitted = [
+        recipient for recipient in message.recipients if recipient.handle is None
+    ]
+    if not omitted:
         return None
-    message_id = data.get("id")
-    if not isinstance(message_id, str) or not message_id:
-        return None
-    named = [_omitted_recipient(item) for item in data.get(_RECIPIENTS) or []]
-    missing = [item for item in named if item is not None]
-    who = ", ".join(missing) if missing else _MISSING_RECIPIENT_HANDLE
-    return f"message {message_id} was created; {who}"
+    who = ", ".join(_recipient_phrase(recipient) for recipient in omitted)
+    return f"message {message.id} was created; {who}"
 
 
 async def post_message(

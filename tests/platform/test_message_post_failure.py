@@ -198,7 +198,6 @@ class TestMessagePostFailure:
                     {"id": "recip-1", "name": "Unknown"},
                     {"id": "recip-2", "name": "Peer", "handle": "peer-a"},
                     {"id": "recip-3", "name": "Also"},
-                    "not-a-recipient",
                 ],
             }
         }
@@ -216,6 +215,29 @@ class TestMessagePostFailure:
         assert caught.value.detail == (
             "message msg-1 was created; id=recip-1 name=Unknown, id=recip-3 name=Also"
         )
+
+    async def test_an_omitted_name_is_left_out_of_the_detail(
+        self, mock_rest_client
+    ) -> None:
+        payload = {
+            "data": {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [{"id": "recip-1"}],
+            }
+        }
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(payload)
+        )
+
+        with pytest.raises(MessagePostError) as caught:
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert caught.value.detail == "message msg-1 was created; id=recip-1"
 
     async def test_a_body_without_a_message_id_stays_a_parse_error(
         self, mock_rest_client, caplog: pytest.LogCaptureFixture
@@ -239,16 +261,45 @@ class TestMessagePostFailure:
 
         assert _post_logs(caplog) == []
 
-    @pytest.mark.parametrize("present_handle", ["", None, 0])
-    async def test_a_present_falsy_handle_is_not_named(
-        self, mock_rest_client, present_handle: str | None | int
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"id": "", "success": True, "recipients": [{"id": "recip-1"}]},
+            {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [{"name": "Unknown"}, {"id": "gone"}],
+            },
+            {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [{"id": "recip-1"}, "not-a-recipient"],
+            },
+        ],
+    )
+    async def test_a_body_outside_the_created_message_shape_stays_a_parse_error(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture, data: dict[str, Any]
     ) -> None:
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error({"data": data})
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
+
+    async def test_an_empty_handle_is_not_named(self, mock_rest_client) -> None:
         payload = {
             "data": {
                 "id": "msg-1",
                 "success": True,
                 "recipients": [
-                    {"id": "blank", "name": "Blank", "handle": present_handle},
+                    {"id": "blank", "name": "Blank", "handle": ""},
                     {"id": "gone", "name": "Gone"},
                 ],
             }
@@ -265,6 +316,36 @@ class TestMessagePostFailure:
             )
 
         assert caught.value.detail == "message msg-1 was created; id=gone name=Gone"
+
+    @pytest.mark.parametrize("present_handle", [None, 0])
+    async def test_a_present_non_string_handle_keeps_an_omitted_sibling_unclassified(
+        self,
+        mock_rest_client,
+        caplog: pytest.LogCaptureFixture,
+        present_handle: int | None,
+    ) -> None:
+        payload = {
+            "data": {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [
+                    {"id": "blank", "name": "Blank", "handle": present_handle},
+                    {"id": "gone", "name": "Gone"},
+                ],
+            }
+        }
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(payload)
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
 
     async def test_a_non_2xx_parse_error_stays_unclassified(
         self, mock_rest_client, caplog: pytest.LogCaptureFixture
