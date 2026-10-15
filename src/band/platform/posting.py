@@ -146,8 +146,8 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
     """Origin text when a 2xx body omits a recipient handle, else None.
 
     A handle-less recipient is not a confirmed mention. The message id in the
-    body means the row may already exist, so the failure names that instead of
-    dumping response headers. Any other body shape stays a parse error.
+    body means the row may already exist, so the failure names that. Any other
+    body shape stays a parse error.
     """
     status = error.status_code
     if status is None or not 200 <= status < 300:

@@ -73,7 +73,7 @@ class MessagePostError(BandToolError):
 
     ``kind`` is the stable token logs and tool results carry. ``detail`` is
     the short header-free origin. A caller that rebuilds the error from its
-    message string, the way mention-handle enrichment does, leaves both unset.
+    message string leaves both unset.
     """
 
     def __init__(
