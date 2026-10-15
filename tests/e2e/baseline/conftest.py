@@ -80,8 +80,8 @@ __all__ = [
 def pytest_configure(config: pytest.Config) -> None:
     # `--log-cli-level` enables live logging; `log_cli` is ini-only and is not
     # an attribute of config.option.
-    live_logging = (
-        config.getoption("--log-cli-level") is not None or config.getini("log_cli")
+    live_logging = config.getoption("--log-cli-level") is not None or config.getini(
+        "log_cli"
     )
     if live_logging:
         for name in _HTTP_CLIENT_LOGGERS:

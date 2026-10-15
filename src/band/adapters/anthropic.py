@@ -49,7 +49,6 @@ def _tool_names(content: list) -> str:
 
 
 def _declined_this_response(response: Message, tools: AgentToolsProtocol) -> bool:
-    """This response's successful ``band_no_reply`` ended the turn."""
     if tools.turn.replied is not True:
         return False
     return any(
