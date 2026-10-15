@@ -181,7 +181,10 @@ class QueuedRoom:
         for the agent to finish every one of them, answered or not."""
         opener, opener_hold = await self._park_opener()
         queued = [await self.say(self.owner, text) for text in texts]
+        queued_hold = self.hold_next()
         after_opener = await self._release_opener(opener, opener_hold)
+        await queued_hold.entered(deadline_s=self.budget.deadline_s)
+        queued_hold.release()
         await self.capture.wait_for_delivery(
             queued[-1],
             self.agent.id,
