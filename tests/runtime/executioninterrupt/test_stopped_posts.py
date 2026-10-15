@@ -12,7 +12,8 @@ import pytest
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, bind_turn_task
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
 from tests.runtime.executioninterrupt.kit import (
@@ -175,7 +176,7 @@ class TestStoppedPosts:
             ctx = ExecutionContext(
                 "room-123", mock_link, AsyncMock(), agent_id="agent-123"
             )
-            await ctx._begin_scope()
+            await ctx.begin_delivery()
             tools = AgentTools.from_context(ctx)
             refused = asyncio.Event()
             refused_at: list[float] = []
@@ -194,7 +195,7 @@ class TestStoppedPosts:
                 await asyncio.Future[None]()
 
             worker = bind_turn_task(tools, asyncio.create_task(released_worker()))
-            await ctx._begin_scope()
+            await ctx.begin_delivery()
             await refused.wait()
             await asyncio.wait({worker.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS)
 

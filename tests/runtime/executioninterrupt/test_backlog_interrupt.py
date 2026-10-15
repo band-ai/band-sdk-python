@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import ExecutionContext, ResyncOutcome, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext, ResyncOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler
 from tests.runtime.executioninterrupt.kit import (

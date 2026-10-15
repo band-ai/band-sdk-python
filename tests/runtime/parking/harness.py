@@ -180,8 +180,8 @@ class Outcome:
 class Cell:
     """One mode and the terminal write its turn owes.
 
-    Only batching retains a failed intent: an off-mode singleton keeps its own
-    retry policy.
+    All modes retain terminal intents; only off mode resumes configured model
+    retries after a failed write is confirmed.
     """
 
     mode: Mode
@@ -227,8 +227,7 @@ class Cell:
 
 OFF_PROCESSED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.PROCESSED)
 
-# Not among CELLS: off mode retains no failed intent. Its failed turn is the
-# subject of a test of its own.
+# Off-mode failure has retry continuations and a separate acceptance contract.
 OFF_FAILED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.FAILED)
 
 CELLS = (

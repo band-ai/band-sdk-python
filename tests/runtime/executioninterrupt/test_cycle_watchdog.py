@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
@@ -25,7 +27,7 @@ class TestCycleWatchdog:
     a handler never returns, unlike interrupt/stop which are external signals."""
 
     async def test_cycle_exceeding_max_cycle_seconds_is_cancelled_and_marked_failed(
-        self, mock_link
+        self, mock_link, caplog
     ):
         handler = BlockingHandler(block_seconds=_NEVER_RETURNS_SECONDS)
         ctx = ExecutionContext(
@@ -45,9 +47,8 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "watchdog-1")
-        assert (
-            "max_cycle_seconds" in label
-        )  # a diagnosable reason, not just "TimeoutError"
+        assert label == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "max_cycle_seconds" in caplog.text
 
         # Loop stays alive: a fresh message still processes normally afterward.
         handler2 = BlockingHandler(block=False)
@@ -71,7 +72,7 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_not_awaited()
 
     async def test_handlers_own_timeout_error_is_not_mistaken_for_the_watchdog(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """A handler's own bare TimeoutError, raised well inside the budget, must
         propagate as a normal handler failure -- not the watchdog's warning."""
@@ -93,11 +94,12 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "own-timeout")
-        assert label == "downstream call timed out"  # the handler's own message,
-        # not the watchdog's -- nothing here actually exceeded the 5s budget.
+        assert label == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "downstream call timed out" in caplog.text
+        assert "cycle exceeded max_cycle_seconds" not in caplog.text
 
     async def test_watchdog_cancellation_is_not_defeated_by_a_swallowed_cancel(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """A handler that catches CancelledError and returns normally must still
         be reported as a watchdog failure, not a silent success."""
@@ -124,7 +126,8 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_awaited_once()
         room_id, msg_id, label = mock_link.mark_failed.await_args.args
         assert (room_id, msg_id) == ("room-123", "swallowed")
-        assert "max_cycle_seconds" in label
+        assert label == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "max_cycle_seconds" in caplog.text
 
     async def test_watchdog_expiry_honors_a_racing_interrupt_and_does_not_leak_it(
         self, mock_link
@@ -188,7 +191,7 @@ class TestCycleWatchdog:
         mock_link.mark_failed.assert_not_awaited()
 
     async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """A cycle whose cancellation cleanup wedges must not block the room."""
         cleanup_started = asyncio.Event()
@@ -221,7 +224,10 @@ class TestCycleWatchdog:
         assert cleanup_started.is_set()
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
-        assert "max_cycle_seconds" in mock_link.mark_failed.await_args.args[2]
+        assert (
+            mock_link.mark_failed.await_args.args[2] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        )
+        assert "max_cycle_seconds" in caplog.text
 
         release_cleanup.set()
         await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)

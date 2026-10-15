@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from enum import Enum
 
 from band.client.streaming import ControlMode, DeliveryStatus
 from band.core.turn_lifecycle import TurnTask, terminal_deadline
 from band.platform.event import MessageEvent
+
+
+class AttemptPhase(Enum):
+    PREPARING = "preparing"
+    ADMITTED = "admitted"
+    ABANDONED = "abandoned"
+    SETTLED = "settled"
 
 
 @dataclass(eq=False)
@@ -27,14 +35,36 @@ class TurnScope:
     stop_revision: int | None = None
     observer_task: asyncio.Task[None] | None = None
     handler: TurnTask | None = None
-    admitted: bool = False
-    settled: bool = False
+    phase: AttemptPhase = AttemptPhase.PREPARING
     kind: ControlMode | None = None
     deadline: float | None = None
     cooperative: bool = False
     shutdown: bool = False
     terminated: asyncio.Event = field(default_factory=asyncio.Event)
     workers: set[TurnTask] = field(default_factory=set)
+
+    @property
+    def admitted(self) -> bool:
+        return self.phase in {AttemptPhase.ADMITTED, AttemptPhase.SETTLED}
+
+    @property
+    def settled(self) -> bool:
+        return self.phase in {AttemptPhase.ABANDONED, AttemptPhase.SETTLED}
+
+    def admit(self) -> None:
+        if self.phase is not AttemptPhase.PREPARING:
+            raise RuntimeError("only a preparing attempt can be admitted")
+        self.phase = AttemptPhase.ADMITTED
+
+    def settle(self, intent: DeliveryStatus | None = None) -> bool:
+        """Freeze the first disposition before cleanup or transport can suspend."""
+        if self.settled:
+            return False
+        if intent is not None and self.phase is not AttemptPhase.ADMITTED:
+            raise RuntimeError("an unadmitted attempt cannot consume its inputs")
+        self.intent = intent
+        self.phase = AttemptPhase.SETTLED if self.admitted else AttemptPhase.ABANDONED
+        return True
 
     @property
     def stop_observed(self) -> bool:

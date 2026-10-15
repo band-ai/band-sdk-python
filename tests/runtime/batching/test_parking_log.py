@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import DeliveryLifecycle, TurnOutcome
 from tests.runtime.batching.kit import FakeRoom, started_room
 from tests.runtime.helpers import ROOM_ID
 
@@ -41,9 +41,7 @@ class TestParkingLog:
         platform.post("m1")
         advanced_without_effect = AsyncMock(return_value=TurnOutcome.ADVANCED)
 
-        with patch.object(
-            ExecutionContext, "_run_message_attempt", advanced_without_effect
-        ):
+        with patch.object(DeliveryLifecycle, "run", advanced_without_effect):
             async with started_room(platform) as room:
                 await room.quiesce()
 

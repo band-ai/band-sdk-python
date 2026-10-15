@@ -383,19 +383,22 @@ refusal instead of returning `DONE`; a drain records only accepted messages.
 
 ## Admission
 
-Singleton and batched attempts share one admission order, in `ExecutionContext`:
+`ExecutionContext` selects and schedules originals. Its `DeliveryLifecycle`
+coordinates ordinary and control attempts through the same admission order:
 
 1. Claim every original's ID locally. A conflict releases this attempt's claims
    and defers it.
-2. Charge one execution attempt per original (one past its retry limit is
-   skipped) and hydrate context if the room has none yet. An original the
-   platform already reports processed is completed and dropped.
+2. Prepare context and recheck delivery eligibility. Core's `ClaimRegistry`
+   owns duplicate, pending-write, ownership and retry decisions; an original
+   already reported processed is skipped. Ordinary work provisionally charges
+   one execution attempt per original.
 3. Mark each original processing, in order, under one control revision, and
    recheck ownership after every await. Any refusal, error, cancellation or newer
-   revision defers the whole selection and refunds the charge: no model call, no
-   terminal write, no attempt left charged.
-4. Only after the last acceptance, synchronously mark the scope admitted, refresh
-   context if it expired and invoke the handler once.
+   revision defers the whole selection and refunds its provisional charges:
+   no model call, terminal write or execution attempt is consumed.
+4. Only after the last acceptance, synchronously admit the scope, refresh
+   context if needed and invoke the handler once. A control
+   is handled individually without charging ordinary model work.
 
 INTERRUPT before step 4 consumes nothing, even if the platform already accepted
 a delayed mark; a late response cannot revive that scope. After step 4 an
@@ -415,19 +418,27 @@ storing another for the same original changes nothing.
 | Handler returned, including a detached early release | `processed` |
 | Accepted INTERRUPT after admission | `processed` |
 | STOP, shutdown, `InputNotAccepted`, or a stopped handler | none; the originals stay recoverable |
-| Handler raised, or `max_cycle_seconds` expired | `failed` with the generic provider-failure message (never exception text), only with `consume_all_queued`; otherwise none and the message's own retry policy applies |
+| Handler raised, or `max_cycle_seconds` expired | `failed` with the generic provider-failure message (never exception text), plus its post-confirmation continuation |
 
 A failed batch is reported to the room once, when `report_turn_failures_to_room`
 is on and the adapter has not already reported it. Once an intent is
 stored, a later STOP or refusal only defers its write: it never turns `processed`
 into `failed` and never reruns the model.
 
+For a singleton with execution retries left, a FAILED attempt retains its charged
+count and a retry continuation alongside the write. The SDK retries only that
+write while its result is unknown. Confirmation restores the charge into the
+current execution's tracker and permits the next configured attempt; it does not
+mark the input completed. Exhaustion or a failed batch instead finishes the
+input. Context replacement preserves this continuation, including when ordinary
+retry history was evicted while the write was pending.
+
 The write goes through `mark_processed_result` or `mark_failed_result` and is
 classified by [`SettlementResult`](rest-client.md#terminal-write-results):
 
 | Result | Effect on the stored intent |
 | --- | --- |
-| `ACCEPTED` | The original completes locally. This means the delivery is settled, not that the model succeeded. |
+| `ACCEPTED` | Apply the stored continuation once: finish the input, or permit its next configured singleton attempt with prior failures still charged. |
 | `UNCONFIRMED` | Retained and retried on the reconciliation cadence, at most once per interval (see below). Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
 | `NOT_FOUND`, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
 | HTTP 204 | `RoomExecutionStoppedError`: the intent is retained and retried later, uncharged. |
@@ -444,6 +455,11 @@ backlog and a live duplicate delivery) retries through one helper that reads the
 stored intent: `processed` writes `mark_processed_result`, `failed` writes
 `mark_failed_result` with the stored error. None of them reopens processing or
 reaches the handler.
+
+Each settlement request carries a local obligation token. A stale response cannot
+clear a newer obligation, and a retired execution cannot restore retry state into
+its obsolete tracker. These are in-process ownership checks; the platform does
+not provide an exclusive processing lease or conditional terminal writes.
 
 The helper paces an unconfirmed write: it is attempted at most once per
 `idle_resync_seconds` (the reconciliation interval), however many inputs arrive,

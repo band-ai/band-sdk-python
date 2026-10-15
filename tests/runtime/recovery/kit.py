@@ -111,10 +111,11 @@ class Ending(StrEnum):
         return DeliveryStatus.FAILED if self in failing else DeliveryStatus.PROCESSED
 
 
-# The (shape, ending) pairs that leave a terminal intent to retain. Aggregation
-# off keeps no failed intent: a failed singleton follows its own retry policy.
+# Default-budget failures finish the input; configured retries are covered by
+# the continuation suite.
 TURNS = [
     (Shape.OFF, Ending.DECLINES),
+    (Shape.OFF, Ending.RAISES),
     (Shape.SINGLETON, Ending.DECLINES),
     (Shape.SINGLETON, Ending.RAISES),
     (Shape.BATCH, Ending.DECLINES),
@@ -186,10 +187,9 @@ class RoomPeer(SettlementPeer):
 
     Lifecycle writes follow the documented platform contract: ``processing``
     is idempotent while processing and reopens a terminal message; a terminal
-    write needs an active attempt, repeats of the same terminal are accepted
-    and the opposite terminal is answered with the no-active-attempt 422 and
-    listed in ``rejected``. ``fail_terminals`` makes terminal writes fail until
-    ``heal``.
+    write needs an existing attempt and can overwrite its terminal status.
+    The SDK, not the platform, must preserve the first terminal intent.
+    ``fail_terminals`` makes terminal writes fail until ``heal``.
     """
 
     def __init__(self) -> None:
@@ -295,9 +295,7 @@ class RoomPeer(SettlementPeer):
         if action is DeliveryStatus.FAILED:
             error = (await request.json())["error"]
             self.errors.setdefault(message_id, []).append(error)
-        if row.status not in LIFECYCLE or (
-            row.status in TERMINAL and row.status is not action
-        ):
+        if row.status not in LIFECYCLE:
             self.rejected.append(f"{message_id}/{action}")
             return self.reply_with(MISSING_ATTEMPT)
         match self.faults.get(message_id, self.outage):
@@ -623,7 +621,12 @@ class Harness:
 
 
 def wired_harness(
-    peer: RoomPeer, adapter: ScriptedAdapter, rest: AsyncRestClient, shape: Shape
+    peer: RoomPeer,
+    adapter: ScriptedAdapter,
+    rest: AsyncRestClient,
+    shape: Shape,
+    *,
+    config: SessionConfig | None = None,
 ) -> Harness:
     """The real runtime for ``shape`` over ``peer``'s REST surface."""
     agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
@@ -631,7 +634,8 @@ def wired_harness(
         link=link_over(rest),
         agent_id=AGENT_ID,
         on_execute=agent._on_execute,
-        session_config=SessionConfig(
+        session_config=config
+        or SessionConfig(
             consume_all_queued=shape.batching,
             enable_context_hydration=False,
             enable_working_state=False,

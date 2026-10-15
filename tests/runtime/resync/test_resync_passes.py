@@ -6,7 +6,6 @@ import asyncio
 from typing import Any
 
 import pytest
-from band_sdk_core import RetryTracker
 
 from band.client.streaming import ParticipantRemovedPayload
 from band.platform.event import ParticipantRemovedEvent, ReconnectedEvent
@@ -137,13 +136,16 @@ class TestResyncPasses:
 
     @pytest.mark.looptime
     @pytest.mark.parametrize("path", ["startup", "resync"])
+    @pytest.mark.parametrize(
+        "reconciled_room",
+        [{"max_message_retries": 3, "report_turn_failures_to_room": False}],
+        indirect=True,
+    )
     async def test_retryable_handler_failure_is_retried_in_the_same_drain(
         self, reconciled_room: ReconciledRoom, path: str
     ) -> None:
         ctx, peer, invoked = reconciled_room
         peer.add_message("retryable")
-        ctx._retry_tracker = RetryTracker(max_retries=3)
-        ctx.config.report_turn_failures_to_room = False
 
         async def transient_handler(context: ExecutionContext, event: Any) -> None:
             invoked.append(event.payload.id)
@@ -159,14 +161,20 @@ class TestResyncPasses:
         assert peer.marked("processed") == ["retryable"]
 
     @pytest.mark.looptime
-    async def test_unchanged_completed_head_defers_without_spinning(
+    async def test_completed_head_is_excluded_without_blocking_later_work(
         self,
         reconciled_room: ReconciledRoom,
     ) -> None:
         ctx, peer, invoked = reconciled_room
         ctx.claims.remember_completed(ROOM_ID, "stuck")
         peer.add_message("stuck")
-        assert await ctx._resync_pending_messages() is ResyncOutcome.BLOCKED
-        assert len(peer.next_reads) == 2
+        assert await ctx._resync_pending_messages() is ResyncOutcome.EMPTY
+        assert len(peer.next_reads) == 1
         assert peer.requested("processed") == []
         assert invoked == []
+
+        peer.add_message("follower")
+        assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+        assert invoked == ["follower"]
+        assert peer.marked("processed") == ["follower"]
+        assert peer.requested("processing") == ["follower"]

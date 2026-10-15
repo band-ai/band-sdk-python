@@ -94,8 +94,9 @@ That synchronous projection returns a `PlatformMessage` or `None` without I/O,
 context consumption or delivery writes. Control recognition reads the same
 projection, so transformations apply equally to ordinary inputs and controls.
 `DefaultPreprocessor` subclasses inherit this contract and override `message`
-when transforming input. Legacy custom preprocessors keep conservative control
-probing when batching is off.
+when transforming input. The same projection governs priority controls when
+batching is off. A legacy custom preprocessor without this contract keeps
+ordinary ordered handling but cannot probe controls ahead of blocked work.
 
 ## Supported adapters
 
@@ -246,7 +247,11 @@ at once. Only one that could not be attempted yet stays the deferred head, and
 input behind it waits for the scheduler.
 
 An adapter that overrides `try_handle_control` without `is_control_message`
-is treated conservatively: every message is a control, so nothing batches.
+handles inputs in ordinary order; it cannot probe ahead of blocked work.
+Priority controls require both a read-only message projection and recognizer.
+Recognition is rechecked after processing acceptance. A candidate reclassified
+or declined as a control stays in its ordinary position without committing
+prepared model context or immediately repeating the probe in that pass.
 Claude SDK recognises its approval commands while approvals are on, Codex
 recognises every local command, and Cursor recognises `/cursor` commands, valid
 or not.

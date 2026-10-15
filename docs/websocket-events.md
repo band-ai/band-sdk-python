@@ -15,10 +15,13 @@ and `src/band/platform/event.py`. What the code cannot say for itself:
   input returns before the terminal acknowledgement evaluator.
 - **`ExecutionContext` owns room scheduling.** It reuses core's claims, retry
   tracking, participant roster and self-echo rules, with delivery metadata for
-  deduplication.
+  deduplication. Its `DeliveryLifecycle` coordinates eligibility, admission and
+  settlement for SDK-selected WebSocket, backlog and control deliveries. Host
+  auxiliary claims and custom execution implementations retain their documented
+  ownership contracts.
 - **Core owns the claim and settlement state.** `ClaimRegistry` holds in-flight
   IDs, the completed-ID cache and each original's pending terminal intent
-  (`processed`, or `failed` with its error, plus a parked flag); see
+  (`processed`, or `failed` with its error, parking and retry continuation); see
   [turn outcome](turn-outcome.md#terminal-intents-and-settlement). Python owns
   which originals form a turn and in what order. The no-reply tool text is core's
   too. The Python `SettlementResult` classification of a terminal write is SDK

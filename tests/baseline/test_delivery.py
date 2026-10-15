@@ -20,17 +20,22 @@ def delivery_link() -> MagicMock:
     return mirror_settlement_results(link)
 
 
-@pytest.mark.asyncio
-async def test_replayed_message_is_not_delivered_to_an_adapter_twice() -> None:
-    """A processed replay must not duplicate an adapter's side effects."""
-    link = delivery_link()
-    handler = AsyncMock()
-    context = ExecutionContext("room-baseline", link, handler, agent_id=link.agent_id)
-    context._ensure_fresh_context = AsyncMock()  # type: ignore[method-assign]
-    event = make_message_event(room_id="room-baseline", msg_id="message-replayed")
+class TestAdapterDelivery:
+    @pytest.mark.asyncio
+    async def test_replayed_message_is_not_delivered_to_an_adapter_twice(self) -> None:
+        """A processed replay must not duplicate an adapter's side effects."""
+        link = delivery_link()
+        handler = AsyncMock()
+        context = ExecutionContext(
+            "room-baseline", link, handler, agent_id=link.agent_id
+        )
+        context.prepare_delivery_context = AsyncMock()  # type: ignore[method-assign]
+        event = make_message_event(room_id="room-baseline", msg_id="message-replayed")
 
-    await context._process_event(event)
-    await context._process_event(event)
+        await context._process_event(event)
+        await context._process_event(event)
 
-    handler.assert_awaited_once_with(context, event)
-    link.mark_processed.assert_awaited_once_with("room-baseline", "message-replayed")
+        handler.assert_awaited_once_with(context, event)
+        link.mark_processed.assert_awaited_once_with(
+            "room-baseline", "message-replayed"
+        )

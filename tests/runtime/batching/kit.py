@@ -15,7 +15,7 @@ from band.client.streaming import DeliveryStatus
 from band.core.exceptions import InputNotAccepted
 from band.core.settlement import SettlementResult
 from band.core.simple_adapter import SimpleAdapter
-from band.platform.event import MessageEvent
+from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.message_lifecycle import ActionablePage
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
@@ -403,7 +403,14 @@ class BatchOnlyPreprocessor(LegacyPreprocessor):
 
 
 class RewritingPreprocessor(DefaultPreprocessor):
-    """A subclass may transform content, so its projection is not trusted."""
+    """Recognize controls from the same transformed input ordinary handling sees."""
+
+    @staticmethod
+    def message(
+        ctx: ExecutionContext, event: PlatformEvent, agent_id: str
+    ) -> PlatformMessage | None:
+        message = DefaultPreprocessor.message(ctx, event, agent_id)
+        return replace(message, content="approve") if message is not None else None
 
 
 def stored_message(message_id: str) -> dict[str, Any]:

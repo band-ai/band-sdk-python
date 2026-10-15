@@ -9,7 +9,8 @@ import pytest
 
 from band.core.exceptions import RoomExecutionStoppedError
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
@@ -58,7 +59,7 @@ class TestStoppedClaims:
         ctx = ExecutionContext(
             "room-123", mock_link, AsyncMock(), on_platform_stop=observer
         )
-        await ctx._begin_scope()
+        await ctx.begin_delivery()
         ctx.observe_platform_stop(ctx.current_scope)
         await entered.wait()
         monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)

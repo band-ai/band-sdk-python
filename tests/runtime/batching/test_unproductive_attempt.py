@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import DeliveryLifecycle, TurnOutcome
 from tests.runtime.batching.kit import FakeRoom, started_room
 
 
@@ -16,9 +16,7 @@ class TestUnproductiveAttempt:
         platform.post("m1")
         advanced_without_effect = AsyncMock(return_value=TurnOutcome.ADVANCED)
 
-        with patch.object(
-            ExecutionContext, "_run_message_attempt", advanced_without_effect
-        ):
+        with patch.object(DeliveryLifecycle, "run", advanced_without_effect):
             async with started_room(platform) as room:
                 await room.until(lambda: advanced_without_effect.await_count >= 1)
                 await asyncio.sleep(0.05)

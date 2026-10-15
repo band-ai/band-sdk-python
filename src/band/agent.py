@@ -607,22 +607,15 @@ class Agent:
     def _is_control(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
         """Whether the adapter would handle the delivery as a control; writes nothing.
 
-        Batch preprocessors share their projection with input construction.
-        Legacy custom singleton preprocessors remain conservatively probed.
+        Input projection and control recognition are shared with ordered input
+        construction. Hosts without both contracts keep ordinary queue order.
         """
         adapter = self._adapter
-        if getattr(adapter, "try_handle_control", None) is None:
-            return False
         preprocessor = self._preprocessor
-        if (
-            not isinstance(adapter, ControlRecognizer)
-            or not isinstance(preprocessor, MessageProjector)
-            or (
-                not self._runtime.session_config.consume_all_queued
-                and type(preprocessor) is not DefaultPreprocessor
-            )
+        if not isinstance(adapter, ControlRecognizer) or not isinstance(
+            preprocessor, MessageProjector
         ):
-            return True
+            return False
         msg = preprocessor.message(ctx, event, self._runtime.agent_id)
         return msg is not None and adapter.is_control_message(msg)
 

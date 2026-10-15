@@ -1,9 +1,11 @@
-"""An off-mode failed turn keeps no terminal intent; its retry policy decides replays."""
+"""A singleton failure cannot replay until its terminal write is confirmed."""
 
 from __future__ import annotations
 
 import pytest
+from band_sdk_core import ParkedReason
 
+from band.platform.event import ReconnectedEvent
 from tests.platform.settlement.kit import MISSING_ATTEMPT, Reply
 from tests.runtime.parking.harness import (
     NOT_FOUND,
@@ -23,20 +25,41 @@ QUEUED = "m1"
 @pytest.mark.parametrize("scenario", [OFF_FAILED], ids=[OFF_FAILED.id], indirect=True)
 class TestOffModeFailure:
     @pytest.mark.parametrize(
-        "reply",
-        [NOT_FOUND, MISSING_ATTEMPT, REFUSED, Hangup()],
-        ids=["not-found", "rejected", "forbidden", "dropped-connection"],
+        ("reply", "parked"),
+        [
+            pytest.param(NOT_FOUND, ParkedReason.NotFound.wire_name, id="not-found"),
+            pytest.param(
+                MISSING_ATTEMPT, ParkedReason.Rejected.wire_name, id="rejected"
+            ),
+            pytest.param(REFUSED, None, id="forbidden"),
+            pytest.param(Hangup(), None, id="dropped-connection"),
+        ],
     )
-    async def test_no_intent_is_retained_and_the_retry_budget_alone_bounds_replays(
-        self, room_peer: RoomPeer, room: Harness, reply: Reply | Hangup
+    async def test_confirmation_releases_the_stored_continuation_without_resetting_its_budget(
+        self,
+        room_peer: RoomPeer,
+        room: Harness,
+        reply: Reply | Hangup,
+        parked: str | None,
     ) -> None:
         room_peer.script(reply, QUEUED)
 
         await room.join()
-        await room.until(lambda: len(room.turns.ids) == SPARE_RETRIES)
+        await room.attempted_terminal_writes(1)
         await room.elapse(2 * RECONCILE_SECONDS + 1)
 
-        assert (room.turns.ids, room.retained()) == (
+        assert room.outcome().once_each() == OFF_FAILED.after_first_attempt(
+            parked=parked
+        )
+
+        room_peer.relent()
+        await room.deliver(ReconnectedEvent())
+        await room.elapse(SPARE_RETRIES * RECONCILE_SECONDS)
+        await room.until(lambda: room.completed() == [QUEUED])
+        await room.elapse(2 * RECONCILE_SECONDS + 1)
+
+        assert (room.turns.ids, room.retained(), room_peer.completed()) == (
             [(QUEUED,)] * SPARE_RETRIES,
             {},
+            {QUEUED: OFF_FAILED.terminal},
         )

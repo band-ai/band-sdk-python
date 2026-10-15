@@ -1,4 +1,4 @@
-"""Control recognition is read-only and conservative where it cannot be exact."""
+"""Priority controls require shared read-only projection and recognition."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ class TestControlRecognition:
     ) -> None:
         assert await classify(LegacyAdapter(), ctx, "approve") is False
 
-    async def test_a_handler_without_a_recognizer_is_probed_for_every_message(
+    async def test_a_handler_without_a_recognizer_keeps_ordinary_order(
         self, ctx: MagicMock
     ) -> None:
-        assert await classify(ControlHandlingAdapter(), ctx, "hello") is True
+        assert await classify(ControlHandlingAdapter(), ctx, "hello") is False
 
     async def test_a_recognizer_decides_from_the_message_it_is_given(
         self, ctx: MagicMock
@@ -36,7 +36,7 @@ class TestControlRecognition:
             False,
         ]
 
-    async def test_a_custom_preprocessor_is_probed_rather_than_misclassified(
+    async def test_a_custom_projection_classifies_the_transformed_message(
         self, ctx: MagicMock
     ) -> None:
         verdict = await classify(
