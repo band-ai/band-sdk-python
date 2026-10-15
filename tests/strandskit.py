@@ -1,7 +1,7 @@
 """Shared builders for Strands Converse-format test fixtures.
 
 Used by both the converter tests (tests/converters/test_strands.py) and the
-adapter tests (tests/adapters/test_strands_adapter.py) so the two suites pin
+adapter tests (tests/adapters/strands/) so the two suites pin
 the same message shape rather than each hand-rolling their own history dicts.
 Pure dict-building — no dependency on the strands package itself.
 """

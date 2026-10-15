@@ -40,7 +40,7 @@ vars may set it) from `src/band/core/adapterconfig.py`. It is frozen, rejects
 unknown fields, and holds plain data only, so it loads from YAML/JSON. Clients,
 graphs, LLM objects, factories and callbacks stay keyword-only constructor
 arguments. Validate settings in the config, not the constructor.
-`tests/framework_conformance/test_adapter_shape.py` enforces the shape.
+`tests/framework_conformance/adaptershape/test_adaptershape.py` enforces the shape.
 
 ## Adapter Feature Flags & Capability Negotiation
 
