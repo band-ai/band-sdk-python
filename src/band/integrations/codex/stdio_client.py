@@ -17,8 +17,6 @@ from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPol
 
 logger = logging.getLogger(__name__)
 
-_PROCESS_EXIT_TIMEOUT_S = 1.0
-
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
     """Force-stop ``process`` and everything it spawned.
@@ -145,13 +143,13 @@ class CodexStdioClient(BaseJsonRpcClient):
         await asyncio.gather(*readers, return_exceptions=True)
 
         if (process := self._proc) is not None:
+            # Kill while this pid is alive. Closing stdin first lets a launcher
+            # exit, and its children can no longer be reaped from a pid that is gone.
+            if process.returncode is None:
+                await kill_process_tree(process)
             if process.stdin is not None:
                 process.stdin.close()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_PROCESS_EXIT_TIMEOUT_S)
-            except TimeoutError:
-                await kill_process_tree(process)
-                await process.wait()
+            await process.wait()
 
         self._fail_pending("Codex stdio client closed")
 

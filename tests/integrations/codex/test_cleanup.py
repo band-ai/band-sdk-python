@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import sys
 import textwrap
 from collections.abc import AsyncIterator
@@ -44,6 +45,14 @@ SHIM = textwrap.dedent(
     time.sleep({LEAKED_LIFETIME_S})
     """
 )
+# Exits when stdin closes and does not stop the worker it spawned.
+EXITING_SHIM = textwrap.dedent(
+    f"""
+    import subprocess, sys
+    subprocess.Popen([sys.executable, "-c", {WORKER!r}])
+    sys.stdin.read()
+    """
+)
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -78,7 +87,7 @@ async def wait_for_heartbeat(path: Path) -> None:
 
 
 class TestSubprocessCleanup:
-    @pytest.mark.parametrize("cancel_caller", [False, True], ids=["timeout", "cancel"])
+    @pytest.mark.parametrize("cancel_caller", [False, True], ids=["returns", "cancel"])
     async def test_interrupted_close_still_reaps_the_child(
         self,
         child: tuple[CodexStdioClient, asyncio.subprocess.Process],
@@ -94,8 +103,7 @@ class TestSubprocessCleanup:
             with pytest.raises(asyncio.CancelledError):
                 await closing
         else:
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(client.close(), timeout=0.05)
+            await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
         try:
             await asyncio.wait_for(process.wait(), timeout=3)
         except TimeoutError:
@@ -170,3 +178,27 @@ class TestSubprocessCleanup:
         stopped_at = heartbeat.stat().st_size
         await asyncio.sleep(QUIET_S)
         assert heartbeat.stat().st_size == stopped_at
+
+    async def test_close_reaps_a_worker_when_its_launcher_exits_on_stdin_eof(
+        self, tmp_path: Path
+    ) -> None:
+        """A launcher that exits on stdin EOF would otherwise leave its child
+        holding the workdir."""
+        workdir = tmp_path / "room"
+        workdir.mkdir()
+        client = CodexStdioClient(
+            command=[sys.executable, "-c", EXITING_SHIM],
+            cwd=str(workdir),
+        )
+        await client.connect()
+        try:
+            heartbeat = workdir / HEARTBEAT_FILE
+            await wait_for_heartbeat(heartbeat)
+            await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
+            stopped_at = heartbeat.stat().st_size
+            await asyncio.sleep(QUIET_S)
+            assert heartbeat.stat().st_size == stopped_at
+            shutil.rmtree(workdir)
+        finally:
+            await client.close()
+        assert not workdir.exists()
