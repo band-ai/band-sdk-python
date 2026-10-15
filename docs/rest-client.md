@@ -63,3 +63,42 @@ The generated client's empty-body shortcut runs before status classification in
 pinned `band-client-rest` 0.0.41 and remains in released 0.0.46. Public raw response
 status preserves the distinction without accessing generated private fields or
 adding another HTTP client. Real-client HTTP transport tests pin this boundary.
+
+## Retained failed messages and recovery
+
+The platform's `/next` endpoint selects the oldest delivery that is not processed,
+including failed and processing deliveries. Exhausting the SDK's local retry budget
+does not remove that message from the platform. The SDK preserves its failed status
+and diagnostics rather than acknowledging unsuccessful work as processed.
+
+When a locally completed, exhausted, self-authored or server-processed head prevents
+`/next` from advancing, startup and idle recovery use
+`BandLink.get_actionable_messages(room_id)` to collect one oldest-first snapshot.
+Pagination finishes before any delivery status changes. Message IDs are deduplicated
+without reordering the server's stream, including messages without timestamps.
+The listing is unfiltered: separate pending and processing scans could miss an older
+delivery whose status changes between requests. Cursor continuation takes precedence
+over legacy page counts; legacy page metadata is used only before cursor mode starts.
+An incomplete listing, transport failure or unusable cursor is a recovery failure,
+not proof that the room is drained.
+
+Recovery retains the current `/next` selection boundary. A 204 response never falls
+back to a processing-status listing, which cannot establish whether the room is
+stopped. Normal `/next` recovery already includes stale processing work in platform
+order. Snapshot recovery likewise includes pending, retryable failed and processing
+deliveries together, without a preliminary filtered sweep.
+
+An eligible delivery that is in flight, refused by the platform, awaiting its
+processed acknowledgement or still retryable retains its FIFO position and blocks
+newer work. `InputNotAccepted` also retains that position without consuming the
+failure budget. A successful local execution whose acknowledgement needs retrying
+is never executed again.
+
+Startup hands control back to the WebSocket queue at its synchronization marker only
+once that delivery is terminal. A newer STOP, PLAY or INTERRUPT invalidates a snapshot
+read across the control boundary, including an empty snapshot; no stale row is claimed
+or executed. Claims and context hydration keep the runtime's existing control-revision
+fences. Completing startup does not disable later reconnect synchronization.
+
+An idle snapshot with no new work behind a retained head reports a blocked pass, not
+a confirmed empty room, so it cannot grow the empty-room polling backoff.
