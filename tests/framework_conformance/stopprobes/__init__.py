@@ -45,6 +45,21 @@ class StopCase:
     expected: list[str]
 
 
+def waiting_on_stop(task: asyncio.Task[None]) -> bool:
+    """The task is blocked in ``BackendTurns.settled``.
+
+    ``Task.get_stack`` stops at the outermost coroutine, so ``settled`` is
+    reached through the chain of awaited coroutines.
+    """
+    coro = task.get_coro()
+    while coro is not None:
+        code = getattr(coro, "cr_code", None)
+        if code is not None and code.co_name == "settled":
+            return True
+        coro = getattr(coro, "cr_await", None)
+    return False
+
+
 async def wait_until(condition: Callable[[], bool]) -> None:
     """Let the turn run until ``condition`` holds."""
     async with asyncio.timeout(STARTUP_TIMEOUT_SECONDS):

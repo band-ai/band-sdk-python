@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 
 from band.client.streaming import ControlMode
+from band.core.types import AgentInput, HistoryProvider
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
@@ -13,12 +15,14 @@ from tests.framework_conformance.stopprobes import (
     end_turn,
     stop_room,
     wait_until,
+    waiting_on_stop,
 )
-from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.framework_conformance.turnprobes import ROOM_ID, turn_input, user_message
 
 TASK_ID = "task-1"
 CANCEL_TASK = f"tasks/cancel {TASK_ID}"
 NO_TASK = ""
+RESTORED_CANCELLED_TASK = "bootstrap restored the cancelled task"
 
 
 def continues(task_id: str) -> str:
@@ -78,6 +82,60 @@ async def stop_continued_task_before_it_answers(mode: ControlMode) -> list[str]:
     return [*client.cancelled, await next_message(adapter, client)]
 
 
+def input_required_history() -> list[dict[str, object]]:
+    return [
+        {
+            "message_type": "task",
+            "content": "A2A task TASK_STATE_INPUT_REQUIRED",
+            "metadata": {
+                "a2a_context_id": "ctx-1",
+                "a2a_task_id": TASK_ID,
+                "a2a_task_state": "TASK_STATE_INPUT_REQUIRED",
+            },
+        }
+    ]
+
+
+async def bootstrap_during_cancel() -> list[str]:
+    """A bootstrap that starts while tasks/cancel is held does not resume that task."""
+    adapter, client = started()
+    release = client.hold_cancel()
+    client.script(task_in("TASK_STATE_INPUT_REQUIRED"))
+    await adapter.on_event(turn_input(FakeAgentTools()))
+    client.script(hold=True)
+    turn = asyncio.create_task(adapter.on_event(turn_input(FakeAgentTools())))
+    await wait_until(lambda: len(client.continued) == 2)
+    turn.cancel()
+    with suppress(asyncio.CancelledError):
+        await turn
+    await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+    await wait_until(lambda: client.cancel_started.is_set())
+    client.script(task_in("TASK_STATE_COMPLETED"))
+    msg = user_message()
+    bootstrap = asyncio.create_task(
+        adapter.on_event(
+            AgentInput(
+                msg=msg,
+                tools=FakeAgentTools(),
+                history=HistoryProvider(raw=input_required_history()),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id=msg.room_id,
+            )
+        )
+    )
+    await wait_until(lambda: waiting_on_stop(bootstrap))
+    restored = adapter._tasks.get(ROOM_ID) == TASK_ID
+    release.set()
+    await bootstrap
+    return [
+        *client.cancelled,
+        *([RESTORED_CANCELLED_TASK] if restored else []),
+        continues(client.continued[-1]),
+    ]
+
+
 async def input_required_is_not_cancelled() -> list[str]:
     """A task paused for input ends its turn normally and stays continuable."""
     adapter, client = started()
@@ -110,6 +168,10 @@ CASES: dict[str, StopCase] = {
     },
     "input-required-is-not-cancelled": StopCase(
         run=input_required_is_not_cancelled, expected=[continues(TASK_ID)]
+    ),
+    "bootstrap-during-cancel": StopCase(
+        run=bootstrap_during_cancel,
+        expected=[CANCEL_TASK, continues(NO_TASK)],
     ),
     "idle-room": StopCase(run=idle, expected=[]),
 }

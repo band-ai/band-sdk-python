@@ -667,6 +667,11 @@ class ACPClientAdapter(
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        # The previous turn's session/cancel must finish before this turn
+        # resets the session buffer or installs its emitter. Updates that
+        # arrive while that cancel is still in flight would otherwise land
+        # in the fresh buffer and flush as this turn's output.
+        await self.backend_turns.settled(room_id)
         runtime = await self._runtime_for(room_id)
         await self._ensure_connection(runtime)
 

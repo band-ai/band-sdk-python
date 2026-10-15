@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
-from band.adapters.parlant.messages import process_session_tag
+from band.adapters.parlant.messages import live_preamble_tasks, process_session_tag
 from band.client.streaming import ControlMode
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.stopprobes import (
@@ -23,6 +23,7 @@ from tests.framework_conformance.stopprobes import (
     StopCase,
     end_turn,
     stop_room,
+    wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
@@ -31,6 +32,7 @@ LOOPBACK = "127.0.0.1"
 # under the suite's 30s test timeout so a turn that never stops fails here.
 ENGINE_WAIT_SECONDS = 15.0
 ENGINE_STOPPED = "engine stopped processing the session"
+PREAMBLE_STOPPED = "preamble generation stopped"
 TAG_IS_LIVE = "process_session_tag names the engine's running task"
 
 
@@ -80,10 +82,13 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
         tools = FakeAgentTools()
         turn, session_id = await processing_turn(adapter, nlp, tools)
         engine = background_tasks(adapter)._tasks[process_session_tag(session_id)]
+        await wait_until(lambda: bool(live_preamble_tasks(session_id)))
         await end_turn(adapter, turn, ROOM_ID, mode)
         stopped, _ = await asyncio.wait({engine}, timeout=ENGINE_WAIT_SECONDS)
+        preamble_stopped = not live_preamble_tasks(session_id)
         return [
             *([ENGINE_STOPPED] if stopped else []),
+            *([PREAMBLE_STOPPED] if preamble_stopped else []),
             *(f"posted {sent}" for sent in tools.messages_sent),
         ]
 
@@ -121,7 +126,7 @@ CASES: dict[str, StopCase] = {
     **{
         f"{mode}-mid-turn": StopCase(
             run=lambda mode=mode: end_running_turn(mode),
-            expected=[ENGINE_STOPPED],
+            expected=[ENGINE_STOPPED, PREAMBLE_STOPPED],
         )
         for mode in ENDING_CONTROLS
     },

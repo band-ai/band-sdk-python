@@ -20,7 +20,9 @@ from band.adapters.parlant.guidelines import GuidelineLedger, GuidelineSpec
 from band.adapters.parlant.history import inject_history
 from band.adapters.parlant.lifecycle import ServerLifecycle
 from band.adapters.parlant.messages import (
+    await_stopped_task,
     compose_user_message,
+    live_preamble_tasks,
     post_user_message,
     process_session_tag,
 )
@@ -444,9 +446,22 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     @staticmethod
     async def _cancel_processing(turn: ParlantSessionTurn) -> None:
-        await turn.background_tasks.cancel(
-            tag=process_session_tag(turn.session_id), reason=STOP_REASON
-        )
+        """Cancel the session's process-session task and its preamble child.
+
+        Parlant 3.3.2's cancel marks the parent and returns without waiting,
+        and the parent does not cancel the preamble task it already created.
+        Waiting for the parent first is what makes that child visible.
+        """
+        tag = process_session_tag(turn.session_id)
+        parent = turn.background_tasks._tasks.get(tag)
+        await turn.background_tasks.cancel(tag=tag, reason=STOP_REASON)
+        if parent is not None:
+            await await_stopped_task(parent)
+        children = live_preamble_tasks(str(turn.session_id))
+        for child in children:
+            child.cancel()
+        for child in children:
+            await await_stopped_task(child)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Forget the room's Parlant session when the agent leaves it."""

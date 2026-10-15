@@ -47,7 +47,15 @@ class RecordingA2AClient:
         self.continued: list[str] = []
         self.cancelled: list[str] = []
         self.closed = False
+        self.cancel_started = asyncio.Event()
+        self._cancel_release: asyncio.Event | None = None
+        self._cancelled_ids: set[str] = set()
         self._streams: deque[ScriptedStream] = deque()
+
+    def hold_cancel(self) -> asyncio.Event:
+        """``cancel_task`` waits for the returned event after it has started."""
+        self._cancel_release = asyncio.Event()
+        return self._cancel_release
 
     def script(self, *events: StreamResponse, hold: bool = False) -> None:
         self._streams.append(ScriptedStream(events, hold))
@@ -65,10 +73,25 @@ class RecordingA2AClient:
     async def cancel_task(
         self, request: CancelTaskRequest, *, context: Any = None
     ) -> Task:
+        self.cancel_started.set()
+        if self._cancel_release is not None:
+            await self._cancel_release.wait()
+        self._cancelled_ids.add(request.id)
         self.cancelled.append(f"{CANCELLED} {request.id}")
         return Task(
             id=request.id, status=TaskStatus(state=TaskState.TASK_STATE_CANCELED)
         )
+
+    async def subscribe(
+        self, request: Any, *, context: Any = None
+    ) -> AsyncIterator[StreamResponse]:
+        """The task stays non-terminal until its cancel has finished."""
+        state = (
+            "TASK_STATE_CANCELED"
+            if request.id in self._cancelled_ids
+            else "TASK_STATE_WORKING"
+        )
+        yield task_update(request.id, state)
 
     async def close(self) -> None:
         self.closed = True

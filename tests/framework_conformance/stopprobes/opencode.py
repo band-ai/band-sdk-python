@@ -23,6 +23,7 @@ from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     STARTUP_TIMEOUT_SECONDS,
     StopCase,
+    cancel_turn,
     end_turn,
     stop_room,
 )
@@ -32,6 +33,9 @@ ROOM_ID = "room-1"
 SESSION_ID = "sess-1"
 ABORT_FIRST_SESSION = f"abort {SESSION_ID}"
 CLIENT_CLOSED = "client closed"
+TIMEOUT_REPORTED = "timeout reported"
+# Short enough that the timeout case ends at once.
+PROBE_TURN_TIMEOUT_S = 0.05
 # What the server streams once an aborted turn winds down; a watcher still
 # running would post it as the turn's fallback reply.
 LATE_TEXT = "text from the stopped turn"
@@ -51,6 +55,22 @@ class JournalingOpencodeClient(FakeOpencodeClient):
     async def close(self) -> None:
         self.journal.append(CLIENT_CLOSED)
         await super().close()
+
+
+class HoldingAbortClient(JournalingOpencodeClient):
+    """An abort that waits until released, and records only one that finished."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.completed: list[str] = []
+
+    async def abort_session(self, session_id: str) -> None:
+        self.entered.set()
+        await self.release.wait()
+        self.completed.append(session_id)
+        await super().abort_session(session_id)
 
 
 async def started(
@@ -143,6 +163,46 @@ async def cleanup_after_stop() -> list[str]:
     return client.journal
 
 
+def reported_timeout(tools: FakeAgentTools) -> list[str]:
+    return [
+        TIMEOUT_REPORTED
+        for event in tools.events_sent
+        if event["message_type"] == "error"
+        and event["content"] == "OpenCode timed out before completing the turn."
+    ]
+
+
+async def timeout_reports() -> list[str]:
+    """A timed-out turn aborts the session and still posts the timeout."""
+    client = JournalingOpencodeClient(prompt_event_sequences=[[]])
+    adapter = await started(
+        client, OpencodeAdapterConfig(turn_timeout_s=PROBE_TURN_TIMEOUT_S)
+    )
+    tools = FakeAgentTools()
+    await deliver(adapter, tools)
+    recorded = client.journal + reported_timeout(tools)
+    await adapter.on_cleanup(ROOM_ID)
+    return recorded
+
+
+async def stop_during_timeout_abort(mode: ControlMode) -> list[str]:
+    """A STOP while the timeout abort is in flight still finishes that abort."""
+    client = HoldingAbortClient(prompt_event_sequences=[[]])
+    adapter = await started(
+        client, OpencodeAdapterConfig(turn_timeout_s=PROBE_TURN_TIMEOUT_S)
+    )
+    turn = deliver(adapter, FakeAgentTools())
+    await asyncio.wait_for(client.entered.wait(), STARTUP_TIMEOUT_SECONDS)
+    await cancel_turn(turn)
+    await adapter.on_interrupt(ROOM_ID, mode)
+    client.release.set()
+    assert adapter.backend_turns is not None
+    await adapter.backend_turns.drain()
+    recorded = list(client.completed)
+    await adapter.on_cleanup(ROOM_ID)
+    return recorded
+
+
 async def idle() -> list[str]:
     client = JournalingOpencodeClient()
     adapter = await started(client)
@@ -166,5 +226,15 @@ CASES: dict[str, StopCase] = {
     "cleanup-after-stop": StopCase(
         run=cleanup_after_stop, expected=[ABORT_FIRST_SESSION, CLIENT_CLOSED]
     ),
+    "timeout": StopCase(
+        run=timeout_reports, expected=[ABORT_FIRST_SESSION, TIMEOUT_REPORTED]
+    ),
+    **{
+        f"{mode}-during-timeout-abort": StopCase(
+            run=lambda mode=mode: stop_during_timeout_abort(mode),
+            expected=[SESSION_ID],
+        )
+        for mode in ENDING_CONTROLS
+    },
     "idle-room": StopCase(run=idle, expected=[]),
 }

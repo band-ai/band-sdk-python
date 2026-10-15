@@ -193,11 +193,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             history,
         )
 
-        # Rehydrate session state on bootstrap
+        # A pending tasks/cancel deletes the local continuation, then waits
+        # on the remote. Rehydration and the outgoing message must run after
+        # that wait, or a still-nonterminal resubscribe restores the task
+        # the cancel is about to finish.
+        await self.backend_turns.settled(room_id)
         if is_session_bootstrap and history:
             await self._rehydrate_from_history(room_id, history)
 
-        # Convert Band message to A2A format
         a2a_message = self._to_a2a_message(msg, room_id)
         # A continued task is known before the remote answers; a new one only
         # once its first task event arrives.
