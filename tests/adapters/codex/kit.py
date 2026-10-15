@@ -176,7 +176,7 @@ def patch_codex_clients_by_room(
 ) -> None:
     """Give each room its own fake app-server, as the real adapter does."""
 
-    def _build(_workspace: str) -> FakeCodexClient:
+    def _build(_room: object, _launch: object) -> FakeCodexClient:
         room_id = adapter._active_room.get()
         assert room_id is not None
         return clients[room_id]

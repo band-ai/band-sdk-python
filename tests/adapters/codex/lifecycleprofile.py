@@ -12,6 +12,7 @@ import pytest
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.codex import CodexJsonRpcError, CodexStdioClient
+from band.integrations.codex.mcp import CodexMcpRedactor
 from tests.adapters.codex.kit import residency_of, thread_of
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import (
@@ -75,8 +76,9 @@ def install(
         command: Sequence[str] | None,
         cwd: str | None,
         env: Mapping[str, str] | None,
+        redactor: CodexMcpRedactor | None,
     ) -> CodexPeer:
-        peer = CodexPeer(command=command, cwd=cwd, env=env)
+        peer = CodexPeer(command=command, cwd=cwd, env=env, redactor=redactor)
         host.spawned(peer, cwd)
         return peer
 

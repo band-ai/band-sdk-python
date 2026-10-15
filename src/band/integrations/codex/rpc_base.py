@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from band.integrations.codex.mcp import CodexMcpRedactor
 from band.integrations.codex.types import CodexRequestMethod
 
 logger = logging.getLogger(__name__)
@@ -82,15 +83,20 @@ class BaseJsonRpcClient:
         *,
         retry_policy: OverloadRetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        redactor: CodexMcpRedactor | None = None,
     ) -> None:
         self.retry_policy = retry_policy or OverloadRetryPolicy()
         self._sleep = sleep
+        self._redactor = redactor
 
         self._pending: dict[JsonRpcId, asyncio.Future[dict[str, Any]]] = {}
         self._events: asyncio.Queue[RpcEvent] = asyncio.Queue(maxsize=10_000)
         self._request_id = 0
         self._connected = False
         self._transport_label = "payload"  # overridden by subclasses for diagnostics
+
+    def _redact_value(self, value: Any) -> Any:
+        return self._redactor.value(value) if self._redactor is not None else value
 
     # ------------------------------------------------------------------
     # Transport methods
@@ -263,11 +269,21 @@ class BaseJsonRpcClient:
         try:
             message = json.loads(text)
         except json.JSONDecodeError:
-            logger.warning("Skipping non-JSON %s: %s", self._transport_label, text)
+            logger.warning(
+                "Skipping non-JSON %s (type=%s, length=%d)",
+                self._transport_label,
+                type(text).__name__,
+                len(text),
+            )
             return
 
         if not isinstance(message, dict):
-            logger.warning("Skipping non-object JSON-RPC payload: %s", message)
+            logger.warning(
+                "Skipping non-object JSON-RPC %s (type=%s, length=%d)",
+                self._transport_label,
+                type(message).__name__,
+                len(text),
+            )
             return
 
         msg_id = message.get("id")
@@ -285,7 +301,7 @@ class BaseJsonRpcClient:
                     )
                 )
             except asyncio.QueueFull:
-                logger.warning("Event queue full; dropping server request %s", method)
+                logger.warning("Event queue full; dropping server request")
             return
 
         if method:
@@ -300,16 +316,24 @@ class BaseJsonRpcClient:
                     )
                 )
             except asyncio.QueueFull:
-                logger.warning("Event queue full; dropping notification %s", method)
+                logger.warning("Event queue full; dropping notification")
             return
 
         if msg_id is not None:
             future = self._pending.get(msg_id)
             if future is not None and not future.done():
+                if "error" in message:
+                    # Freeze diagnostics before teardown releases the secret scope.
+                    message["error"] = self._redact_value(message["error"])
                 future.set_result(message)
             return
 
-        logger.debug("Ignoring unknown JSON-RPC payload: %s", message)
+        logger.debug(
+            "Ignoring unknown JSON-RPC %s (type=%s, length=%d)",
+            self._transport_label,
+            type(message).__name__,
+            len(text),
+        )
 
     def _next_request_id(self) -> int:
         self._request_id += 1

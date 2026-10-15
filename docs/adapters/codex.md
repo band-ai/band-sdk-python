@@ -41,6 +41,13 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   exited before terminating and draining the job; an empty job alone does not
   establish helper exit.
   Failed cleanup retains that same owner and job for retry.
+- **POSIX cleanup settles the original owned process group.** Close allows the
+  leader one second to exit on stdin EOF, then sends TERM to its original group,
+  waits up to one second, and escalates to KILL with one more second to confirm
+  `ESRCH`. Unconfirmed cleanup retains the client and workspace for retry.
+  A reused leader PID is never signaled. POSIX groups lack generation-bound
+  handles: reuse between a probe and signal remains a residual race.
+  Descendants that leave the group are outside this guarantee.
 - **Leaving is final.** Leaving a room stops it admitting work at once. A
   leave that fails or runs over keeps the process, thread and workspace claim,
   and the room refuses work until a retried leave succeeds; a later rejoin
@@ -111,3 +118,61 @@ Approval commands use the token displayed in the room prompt. Native Codex
 request and approval IDs stay internal; a fresh request gets a new chat token
 after completion or room cleanup, even when Codex reuses its native ID. A
 redelivery of a still-pending request keeps its displayed token.
+
+## Runtime MCP servers
+
+Pass the keyword-only `resolve_mcp_servers` callback to `CodexAdapter`, not
+`CodexAdapterConfig`. It receives the room's absolute workspace and returns a
+`Mapping[str, CodexMcpServer]`. Import the descriptors and startup error from
+`band.integrations.codex.mcp`.
+
+- `CodexMcpStdioServer(command, args=(), env={}, cwd=None)` freezes arguments
+  and child-only environment values. Relative commands and arguments use the
+  server's `cwd`. On POSIX, nonempty `env` uses the SDK's interpreter to restore
+  generated aliases before replacing itself with the server process; native
+  protected environment names are refused. On Windows, nonempty stdio `env`
+  fails before client construction with stage `unsupported-platform`:
+  `secret-bearing stdio MCP servers require POSIX exec`. Env-free Windows stdio
+  and all HTTP servers remain supported; no Windows supervisor is included.
+- `CodexMcpHttpServer(url, bearer_token=None, headers={})` describes streamable
+  HTTP. Other descriptor types, including SSE, are refused. Names must match
+  `[A-Za-z0-9_-]+`, be unique, and not be the reserved native name `codex_apps`.
+- Resolution runs inside the retained room's acquisition, once per new process
+  after any predecessor is confirmed closed. Reusing a process does not resolve
+  again. To rotate a running grant, clean up the room first. An empty result
+  adds no servers or readiness requests; callback failures never fall back.
+- The snapshot is frozen before launch without changing configuration or
+  `codex_env`. Validated TOML overrides are appended after existing arguments,
+  including a relay's `--` boundary. Supplied servers are enabled, required and
+  use connection readiness; other native servers are unchanged.
+- Bearer tokens, headers and stdio environment values use generated child-env
+  names, never secret values in generated TOML or argv. Names reserve inherited
+  env names too. Secret fields are excluded from repr, equality and supported
+  Pydantic serialization; these objects are runtime-only, not persistence data.
+- Before the process becomes resident or restores a thread, readiness pages
+  `mcpServerStatus/list` under one 30-second deadline. Every supplied server must
+  report information and capabilities, no discovery error, and null pre-thread
+  or `connected` runtime status. Tool-less servers are supported. Auth settings
+  or an empty catalog alone are not readiness proof. Malformed pages, duplicate
+  names, repeated cursors, negative statuses and consumed timeout cancellation
+  fail startup.
+- Cancellation and retirement fence each stage and every discovery request.
+  A resolver may request its own room cleanup without self-waiting. Cleanup
+  disarms readiness deadlines and joins an already-cancelling acquisition
+  without a second cancellation. Settlement beyond the reporting bound retains
+  acquisition, child, workspace and diagnostic scope until cleanup succeeds.
+  Failed registration unwinds the gated worker before resolution can start.
+  Invocation-only cancellation timers end with their owner, never later work.
+- Thread start/resume errors with adopted servers trigger bounded readiness
+  rather than error-text classification. Failed readiness refuses history
+  fallback and retires the process; the next acquisition resolves a fresh grant.
+  Positive readiness preserves genuine missing-history fallback and unrelated
+  errors. Recovery still strictly restores retained threads as described above.
+
+`CodexMcpStartupError.stage` is a secret-free startup or validation category.
+Transport diagnostics omit RPC methods, wire contents and process-stderr text.
+Unknown frames report transport, type and character length; stderr reports byte
+length; full queues report only the dropped event kind; cleanup reports only
+exception type. Forwarded RPC errors remain scoped-redacted and are frozen
+before teardown clears the secret scope.
+

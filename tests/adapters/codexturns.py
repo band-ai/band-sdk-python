@@ -267,7 +267,7 @@ def patch_codex_client(
     to the next process started after a loss; the last one keeps serving."""
     processes = deque([client, *replacements])
 
-    def _build(_workspace: str) -> FakeCodexClient:
+    def _build(_room: object, _launch: object) -> FakeCodexClient:
         return processes.popleft() if len(processes) > 1 else processes[0]
 
     adapter._build_client = _build  # type: ignore[method-assign]
