@@ -52,6 +52,7 @@ class TestSettledControls:
 
         async with started_room(platform, controls=controls) as room:
             await room.deliver(platform.post("approve"))
+            await room.admission_attempted("approve")
             await room.resync()
             await room.settled("approve")
             await room.deliver(platform.post("ping"))

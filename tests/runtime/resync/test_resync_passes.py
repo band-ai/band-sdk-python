@@ -9,7 +9,8 @@ import pytest
 
 from band.client.streaming import ParticipantRemovedPayload
 from band.platform.event import ParticipantRemovedEvent, ReconnectedEvent
-from band.runtime.execution import ExecutionContext, ResyncOutcome
+from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncOutcome
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (
     ROOM_ID,
@@ -29,7 +30,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(200)
         peer.add_message("explicit")
         match signal:
@@ -50,7 +51,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         ctx.stop_room()
         peer.add_message("played")
         if signal == "request":
@@ -67,7 +68,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, _ = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         gate = ResponseGate(peer, "/next")
         async with rest_client_over(gate.answer) as rest:
             ctx.link.rest = rest
@@ -99,7 +100,7 @@ class TestResyncPasses:
 
         ctx._on_execute = handler
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         participant = ParticipantRemovedEvent(
             room_id=ROOM_ID,
             payload=ParticipantRemovedPayload(id="other", name="Other", type="User"),
@@ -122,7 +123,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         gate = ResponseGate(peer, "/next")
         async with rest_client_over(gate.answer) as rest:
             ctx.link.rest = rest
@@ -154,9 +155,9 @@ class TestResyncPasses:
 
         ctx._on_execute = transient_handler
         if path == "startup":
-            assert await ctx._synchronize_with_next()
+            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
         else:
-            assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
         assert invoked == ["retryable", "retryable"]
         assert peer.marked("processed") == ["retryable"]
 
@@ -168,13 +169,13 @@ class TestResyncPasses:
         ctx, peer, invoked = reconciled_room
         ctx.claims.remember_completed(ROOM_ID, "stuck")
         peer.add_message("stuck")
-        assert await ctx._resync_pending_messages() is ResyncOutcome.EMPTY
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.EMPTY
         assert len(peer.next_reads) == 1
         assert peer.requested("processed") == []
         assert invoked == []
 
         peer.add_message("follower")
-        assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
         assert invoked == ["follower"]
         assert peer.marked("processed") == ["follower"]
         assert peer.requested("processing") == ["follower"]

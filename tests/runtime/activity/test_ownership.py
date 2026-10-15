@@ -15,6 +15,7 @@ from tests.runtime.activity.kit import ActivityPeer, activity_context
 from tests.runtime.helpers import (
     ROOM_ID,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityOwnership:
@@ -78,7 +79,7 @@ class TestActivityOwnership:
             asyncio.TaskGroup() as tasks,
         ):
             turn = tasks.create_task(
-                ctx._process_event(make_message_event(msg_id="trigger"))
+                attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             )
             await handler.started.wait()
             await ctx.resume_room()

@@ -19,6 +19,7 @@ from tests.runtime.helpers import (
     LifecyclePlatform,
     rest_client_over,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestAuxiliaryClaimRefusal:
@@ -60,16 +61,16 @@ class TestAuxiliaryClaimRefusal:
 
             ctx = auxiliary_context(rest, handler)
             if path == "live":
-                await ctx._process_event(make_message_event(msg_id="trigger"))
+                await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             else:
-                await ctx._process_backlog_message(backlog_message("trigger"))
+                await attempt_delivery(ctx, backlog_message("trigger"))
             assert downstream == []
             assert peer.requested("processed") == []
             assert peer.requested("failed") == []
             assert released == [True]
             peer.stopped = False
             await ctx.resume_room()
-            await ctx._process_backlog_message(backlog_message("trigger"))
+            await attempt_delivery(ctx, backlog_message("trigger"))
             assert downstream == ["trigger"]
             assert invoked == ["trigger", "trigger"]
             assert peer.marked("processed") == ["trigger"]
@@ -87,7 +88,7 @@ class TestAuxiliaryClaimRefusal:
                     await ctx.claim_message("never-requested")
 
             ctx = auxiliary_context(rest, handler)
-            await ctx._process_event(make_message_event(msg_id="trigger"))
+            await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             assert peer.requested_marks == [
                 ("trigger", "processing"),
                 ("refused", "processing"),
@@ -113,7 +114,7 @@ class TestAuxiliaryClaimRefusal:
 
         async with rest_client_over(answer) as rest:
             ctx = auxiliary_context(rest, control.on_execute)
-            await ctx._process_event(make_message_event(msg_id="trigger"))
+            await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             assert control.cancelled.is_set()
             assert not control.owned_ids
             assert not control.downstream_started.is_set()
@@ -122,9 +123,9 @@ class TestAuxiliaryClaimRefusal:
             refuse = False
             peer.stopped = False
             await ctx.resume_room()
-            await ctx._process_backlog_message(backlog_message(replay_head))
+            await attempt_delivery(ctx, backlog_message(replay_head))
             for mid in ("trigger", "aux-1", "aux-2"):
-                await ctx._process_backlog_message(backlog_message(mid))
+                await attempt_delivery(ctx, backlog_message(mid))
             assert control.downstream_started.is_set()
             assert control.completed_message_ids == (
                 ["trigger"] if replay_head == "trigger" else [replay_head, "trigger"]

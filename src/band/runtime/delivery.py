@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from enum import Enum
 from time import monotonic
 from typing import Protocol
@@ -31,6 +32,7 @@ from band.platform.event import MessageEvent
 from band.platform.link import BandLink
 from band.runtime.cycle import TurnScope
 from band.runtime.messages import PlatformMessage
+from band.runtime.selection import Candidate
 from band.runtime.sessionconfig import SessionConfig
 
 logger = logging.getLogger(__name__)
@@ -87,15 +89,6 @@ class TurnOutcome(Enum):
     DECLINED = "declined"
 
 
-DEFERRED_OUTCOMES = frozenset({TurnOutcome.RETRY_LATER, TurnOutcome.NOT_ACCEPTED})
-
-
-class ControlOutcome(Enum):
-    CONSUMED = "consumed"
-    DECLINED = "declined"
-    DEFERRED = "deferred"
-
-
 class DeliveryHost(Protocol):
     """Room effects whose ownership outlives an individual delivery operation."""
 
@@ -110,6 +103,9 @@ class DeliveryHost(Protocol):
 
     @property
     def context_hydrated(self) -> bool: ...
+
+    @property
+    def delivery_context_token(self) -> object: ...
 
     def recognizes_delivery_control(self, event: MessageEvent) -> bool: ...
 
@@ -155,12 +151,23 @@ class DeliveryLifecycle:
         self.retry_not_before: dict[str, float] = {}
 
     def _facts(
-        self, message: MessageCreatedPayload | PlatformMessage
+        self, source: Candidate | MessageCreatedPayload | PlatformMessage
     ) -> dict[str, bool]:
-        metadata = message.metadata
-        status = delivery_status_for_agent(metadata, self.agent_id)
-        cached = delivery_status_for_agent(
-            self.host.delivery_metadata(message.id), self.agent_id
+        observation = (
+            source.observed_metadata if isinstance(source, Candidate) else None
+        )
+        message = source.event.payload if isinstance(source, Candidate) else source
+        assert message is not None
+        status = delivery_status_for_agent(
+            observation if observation is not None else message.metadata,
+            self.agent_id,
+        )
+        cached = (
+            delivery_status_for_agent(
+                self.host.delivery_metadata(message.id), self.agent_id
+            )
+            if observation is None and not isinstance(message, PlatformMessage)
+            else None
         )
         return {
             "self_echo": bool(
@@ -178,13 +185,19 @@ class DeliveryLifecycle:
         }
 
     def eligibility(
-        self, message: MessageCreatedPayload | PlatformMessage
+        self,
+        message: Candidate | MessageCreatedPayload | PlatformMessage,
+        *,
+        remember_completion: bool = True,
     ) -> DeliveryEligibility:
-        eligibility = self.claims.delivery_eligibility(
-            self.room_id, message.id, self.retry_tracker, **self._facts(message)
+        message_id = (
+            message.message_id if isinstance(message, Candidate) else message.id
         )
-        if eligibility == "completed":
-            self.claims.remember_completed(self.room_id, message.id)
+        eligibility = self.claims.delivery_eligibility(
+            self.room_id, message_id, self.retry_tracker, **self._facts(message)
+        )
+        if eligibility == "completed" and remember_completion:
+            self.claims.remember_completed(self.room_id, message_id)
         return eligibility
 
     def awaits_retry_confirmation(self, message_id: str) -> bool:
@@ -193,18 +206,18 @@ class DeliveryLifecycle:
         return pending is not None and pending["continuation"]["kind"] == "retry"
 
     @contextlib.contextmanager
-    def claim(self, events: tuple[MessageEvent, ...]) -> Iterator[bool]:
+    def claim(self, members: tuple[Candidate, ...]) -> Iterator[bool]:
         acquired: list[str] = []
         try:
-            for event in events:
-                message = event.payload
+            for candidate in members:
+                message = candidate.event.payload
                 assert message is not None
                 if (
                     self.claims.guarded_claim(
                         self.room_id,
                         message.id,
                         self.retry_tracker,
-                        **self._facts(message),
+                        **self._facts(candidate),
                     )
                     != "runnable"
                 ):
@@ -239,67 +252,67 @@ class DeliveryLifecycle:
 
     async def run(
         self,
-        events: tuple[MessageEvent, ...],
+        members: tuple[Candidate, ...],
         revision: int,
         *,
         control: bool = False,
     ) -> TurnOutcome:
         """Every source crosses the same gates before a handler can consume input."""
+        current = list(members)
         while True:
-            outcome = await self._run_once(events, revision, control=control)
+            outcome = await self._run_once(current, revision, control=control)
             if outcome is not TurnOutcome.ADVANCED or not any(
-                event.payload is not None
-                and self.eligibility(event.payload) == "runnable"
-                for event in events
+                self.eligibility(candidate) == "runnable" for candidate in current
             ):
                 return outcome
 
     async def _run_once(
         self,
-        events: tuple[MessageEvent, ...],
+        members: list[Candidate],
         revision: int,
         *,
         control: bool,
     ) -> TurnOutcome:
-        members: list[MessageEvent] = []
-        for event in events:
-            assert event.payload is not None
-            eligibility = self.eligibility(event.payload)
+        runnable: list[Candidate] = []
+        for candidate in members:
+            eligibility = self.eligibility(candidate)
             if eligibility == "pending":
-                if not await self.retry_settlement(event.payload.id):
+                if not await self.retry_settlement(candidate.message_id):
                     return TurnOutcome.RETRY_LATER
-                eligibility = self.eligibility(event.payload)
+                eligibility = self.eligibility(candidate)
             if eligibility == "inflight":
                 return TurnOutcome.RETRY_LATER
             if eligibility == "runnable":
-                members.append(event)
-        if not members:
+                runnable.append(candidate)
+        if not runnable:
             return TurnOutcome.ADVANCED
-        originals = tuple(members)
-        with self.claim(originals) as acquired:
+        members[:] = runnable
+        with self.claim(tuple(members)) as acquired:
             if not acquired:
                 return TurnOutcome.RETRY_LATER
-            return await self._run_claimed(originals, revision, control=control)
+            return await self._run_claimed(members, revision, control=control)
 
     async def _run_claimed(
-        self, events: tuple[MessageEvent, ...], revision: int, *, control: bool
+        self, members: list[Candidate], revision: int, *, control: bool
     ) -> TurnOutcome:
         scope = await self.host.begin_delivery()
         if scope is None:
             return self._unadmitted_outcome()
         charged: list[str] = []
-        scope.originals = events
+        scope.originals = tuple(candidate.event for candidate in members)
         try:
             if revision != self.host.control_revision:
                 return self._unadmitted_outcome()
+            context_token = self.host.delivery_context_token
             if not control and not self.host.context_hydrated:
                 await self.host.prepare_delivery_context()
+            if self.host.delivery_context_token is not context_token:
+                members[:] = [self._hydrated(candidate) for candidate in members]
             # Hydration can reveal durable completion after initial selection.
             scope.originals = tuple(
-                event
-                for event in events
-                if event.payload is not None
-                and self.eligibility(event.payload) not in {"completed", "failed"}
+                candidate.event
+                for candidate in members
+                if self.eligibility(candidate) not in {"completed", "failed"}
             )
             if not scope.originals:
                 return TurnOutcome.ADVANCED
@@ -352,6 +365,12 @@ class DeliveryLifecycle:
             if scope.intent is None or scope.kind is ControlMode.INTERRUPT:
                 self.discard_attempts(charged)
             self.host.finish_delivery(scope)
+
+    def _hydrated(self, candidate: Candidate) -> Candidate:
+        metadata = self.host.delivery_metadata(candidate.message_id)
+        if metadata is None:
+            return candidate
+        return replace(candidate, observed_metadata=metadata)
 
     @staticmethod
     def _first_id(scope: TurnScope) -> str | None:
@@ -469,10 +488,6 @@ class DeliveryLifecycle:
             return await self.settle(scope)
         except RoomExecutionStoppedError:
             return False
-
-    def is_parked(self, message_id: str) -> bool:
-        pending = self.claims.pending_settlement(self.room_id, message_id)
-        return pending is not None and pending["parked"] is not None
 
     async def write_settlement(self, message_id: str) -> SettlementResult:
         pending = self.claims.pending_settlement(self.room_id, message_id)

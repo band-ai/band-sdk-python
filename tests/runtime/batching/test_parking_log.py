@@ -14,23 +14,25 @@ from tests.runtime.helpers import ROOM_ID
 pytestmark = pytest.mark.looptime
 
 EXECUTION_LOGGER = "band.runtime.execution"
+SCHEDULER_LOGGER = "band.runtime.scheduler"
 
 
 @pytest.fixture(autouse=True)
 def capture_execution_log(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.DEBUG, logger=EXECUTION_LOGGER)
+    for name in (EXECUTION_LOGGER, SCHEDULER_LOGGER):
+        caplog.set_level(logging.DEBUG, logger=name)
 
 
-def room_debug(text: str) -> tuple[int, str]:
+def room_debug(text: str, *, owner: str = "Room") -> tuple[int, str]:
     """The (level, message) the room's execution logs for ``text`` at DEBUG."""
-    return logging.DEBUG, f"ExecutionContext {ROOM_ID}: {text}"
+    return logging.DEBUG, f"{owner} {ROOM_ID}: {text}"
 
 
 def execution_lines(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
     return [
         (record.levelno, record.getMessage())
         for record in caplog.records
-        if record.name == EXECUTION_LOGGER
+        if record.name in (EXECUTION_LOGGER, SCHEDULER_LOGGER)
     ]
 
 
@@ -85,5 +87,6 @@ class TestParkingLog:
             await room.quiesce()
 
         assert room_debug(
-            "Input m1 not accepted (busy); keeping it pending for scheduler recovery"
+            "Input m1 not accepted (busy); keeping it pending for scheduler recovery",
+            owner="ExecutionContext",
         ) in execution_lines(caplog)

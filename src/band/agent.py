@@ -31,6 +31,7 @@ from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.agentconfig import AgentConfig
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.contacts import ContactEventConfig
+from band.runtime.execution import ExecutionContext
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
@@ -38,7 +39,6 @@ from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
 if TYPE_CHECKING:
     from band.core.types import AgentInput
     from band.platform.event import MessageEvent, PlatformEvent
-    from band.runtime.execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -573,7 +573,7 @@ class Agent:
             agent_id=self._runtime.agent_id,
         )
 
-        if inp is None or await self._try_control(inp):
+        if inp is None or await self._try_control(ctx, inp):
             return
 
         await self._commit_unless_refused(inp, self._adapter.on_event(inp))
@@ -624,8 +624,18 @@ class Agent:
         inp = await self._preprocessor.process(
             ctx=ctx, event=event, agent_id=self._runtime.agent_id
         )
-        return await self._try_control(inp) if inp is not None else False
+        return await self._try_control(ctx, inp) if inp is not None else False
 
-    async def _try_control(self, inp: AgentInput) -> bool:
+    async def _try_control(self, ctx: ExecutionContext, inp: AgentInput) -> bool:
         handler = getattr(self._adapter, "try_handle_control", None)
-        return await handler(inp.msg, inp.tools) if handler is not None else False
+        if handler is None:
+            return False
+        scheduler = ctx.scheduler if isinstance(ctx, ExecutionContext) else None
+        if scheduler is not None and scheduler.declined(inp.msg.id):
+            return False
+        active = scheduler.current_pass if scheduler is not None else None
+        revision = ctx.control_revision if scheduler is not None else 0
+        handled = await handler(inp.msg, inp.tools)
+        if not handled and scheduler is not None:
+            scheduler.record_decline(active, revision, inp.msg.id)
+        return handled

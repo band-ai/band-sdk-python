@@ -19,6 +19,7 @@ from tests.runtime.helpers import (
     KEEP_ALIVE,
     STOP_ECHO,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityHeartbeat:
@@ -44,7 +45,7 @@ class TestActivityHeartbeat:
             peer, handler, observer, max_cycle_seconds=keep_alive - 0.5
         ) as ctx:
             assert (
-                await ctx._process_event(make_message_event(msg_id="trigger"))
+                await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 is TurnOutcome.RETRY_LATER
             )
 
@@ -63,7 +64,7 @@ class TestActivityHeartbeat:
         async with activity_context(peer, handler, observer) as ctx:
             event = make_message_event(msg_id="trigger")
             async with asyncio.TaskGroup() as tasks:
-                turn = tasks.create_task(ctx._process_event(event))
+                turn = tasks.create_task(attempt_delivery(ctx, event))
                 await handler.started.wait()
                 peer.stopped = True
                 await turn
@@ -78,7 +79,7 @@ class TestActivityHeartbeat:
 
             peer.stopped = False
             await ctx.resume_room()
-            await ctx._process_event(event)
+            await attempt_delivery(ctx, event)
             assert handler.invoked == ["trigger", "trigger"]
             assert handler.completed == ["trigger"]
             assert peer.marked("processed") == ["trigger"]

@@ -17,6 +17,7 @@ from tests.conftest import (
     make_message_event,
 )
 from tests.runtime.helpers import LifecyclePlatform, rest_client_over
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestTurnDiagnosticsDistinguishRunningHandlerFromAck:
@@ -44,12 +45,13 @@ class TestTurnDiagnosticsDistinguishRunningHandlerFromAck:
             )
             async with asyncio.TaskGroup() as tasks:
                 task = tasks.create_task(
-                    ctx._process_event(
+                    attempt_delivery(
+                        ctx,
                         make_message_event(
                             room_id="room-123",
                             msg_id="observed-turn",
                             content="private prompt",
-                        )
+                        ),
                     )
                 )
                 await entered.wait()

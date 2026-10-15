@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from enum import Enum, StrEnum
+from enum import StrEnum
 from functools import partial
 from typing import (
     TYPE_CHECKING,
     Any,
     Protocol,
-    TypeGuard,
     runtime_checkable,
 )
 
@@ -28,8 +26,6 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import (
     ControlMode,
     DeliveryStatus,
-    MessageCreatedPayload,
-    MessageMetadata,
 )
 from band.core.exceptions import (
     BandConfigError,
@@ -48,7 +44,6 @@ from band.core.turn_lifecycle import (
     terminal_deadline,
 )
 from band.core.types import (
-    is_contact_hub_turn,
     metadata_to_dict,
 )
 from band.logging_config import TRACE_CONTEXT
@@ -64,26 +59,15 @@ from band.runtime.context import ConversationContext
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.delivery import (
-    DEFERRED_OUTCOMES,
-    ControlOutcome,
     DeliveryLifecycle,
     TurnOutcome,
     log_delivery_error,
     observe_delivery_phase,
 )
 from band.runtime.formatters import build_participants_message, format_history_for_llm
-from band.runtime.messages import PlatformMessage
+from band.runtime.originals import delivery_id
 from band.runtime.participants import log_roster_call, log_roster_error
-from band.runtime.resync import ResyncSchedule
-from band.runtime.selection import (
-    Candidate,
-    Disposition,
-    MessageKey,
-    Selection,
-    Stop,
-    merge,
-    select_prefix,
-)
+from band.runtime.scheduler import Scheduler
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
 from band.runtime.working_state import WorkingStateReporter
@@ -94,67 +78,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ResyncRequest:
-    """Request reconciliation at the next serial queue boundary."""
-
-    type: str = "_resync"  # Matches the .type attribute pattern of PlatformEvent
-
-
-class ResyncOutcome(Enum):
-    EMPTY = "empty"
-    WORK = "work"
-    BLOCKED = "blocked"
-    RETRY = "retry"
-    STOPPED = "stopped"
-    PROGRESS = "progress"
-    """A pass advanced the room and another is due; a drain never returns it."""
-
-
 class ExecutionState(StrEnum):
     """Lifecycle state for one room execution."""
 
     STARTING = "starting"
     IDLE = "idle"
     PROCESSING = "processing"
-
-
-def _payload(event: MessageEvent) -> MessageCreatedPayload:
-    """The payload of a message event that carries a real delivery."""
-    if event.payload is None:
-        raise ValueError("a message event without a payload has no delivery")
-    return event.payload
-
-
-def _event_message_id(event: MessageEvent) -> str:
-    """The platform id of a message event that carries a real delivery."""
-    return _payload(event).id
-
-
-def _message_ids(events: Iterable[MessageEvent]) -> tuple[str, ...]:
-    return tuple(_event_message_id(event) for event in events)
-
-
-def _delivery_id(event: PlatformEvent) -> str | None:
-    """The platform id of a message delivery; ``None`` for any other event."""
-    if isinstance(event, MessageEvent) and event.payload is not None:
-        return event.payload.id
-    return None
-
-
-def _is_ordinary(event: PlatformEvent) -> TypeGuard[MessageEvent]:
-    """Whether the event is a real delivery a turn can include."""
-    return _delivery_id(event) is not None and not _is_synthetic(event)
-
-
-def _is_synthetic(event: PlatformEvent) -> TypeGuard[MessageEvent]:
-    """Whether the event is a contact-hub turn that owes no delivery write."""
-    return (
-        isinstance(event, MessageEvent)
-        and event.payload is not None
-        and is_contact_hub_turn(
-            sender_type=event.payload.sender_type, sender_id=event.payload.sender_id
-        )
-    )
 
 
 @runtime_checkable
@@ -266,15 +195,7 @@ BatchExecutionHandler = Callable[
 
 
 class ExecutionContext:
-    """
-    Default execution: context accumulation model.
-
-    Extracted from AgentSession.
-
-    - Accumulates inputs (history, participants)
-    - Queues messages
-    - Feeds agent when instantiated
-    - Agent disappears after execution
+    """Own room context and provider tasks under serialized delivery scheduling.
 
     Example:
         async def on_execute(ctx: ExecutionContext, event: PlatformEvent):
@@ -391,7 +312,6 @@ class ExecutionContext:
         # max_tracked=10_000 (oldest-first eviction) -- an intentional shared
         # memory-safety policy, not a promise to remember more than 10,000
         # distinct message ids for the life of this context.
-        self._first_ws_msg_id: str | None = None  # First WS message = sync point
         self._retry_tracker = RetryTracker(max_retries=self.config.max_message_retries)
         # Loop time before which an unconfirmed terminal write is not retried, so
         # arrivals cannot multiply an outage's writes. A due or requested
@@ -405,30 +325,12 @@ class ExecutionContext:
             self,
             self._agent_id,
         )
-        self._sync_complete = False  # True after sync with /next completes
-        self._deferred_message_id: str | None = None
-        # Retained local events in observed order: synthetic hub turns, original
-        # deliveries not yet settled, and (batch mode) every housekeeping event.
-        self._pending: deque[PlatformEvent] = deque()
-        self._scan_cursor: str | None = None
-        self._last_selection: tuple[str, ...] = ()
-        self._control_cursor: str | None = None
-
         # Graceful shutdown: event signaled when state becomes idle
         self._idle_event: asyncio.Event = asyncio.Event()
         self._idle_event.set()  # Start as idle
 
         # Pending system messages to inject (e.g., contact broadcasts)
         self._pending_system_messages: list[str] = []
-        self._pending_resync: ResyncRequest | None = None
-        self._resync_schedule = ResyncSchedule(
-            self.config.idle_resync_seconds,
-            self.config.idle_resync_max_seconds,
-            stopped=self.config.stopped_resync_seconds,
-        )
-        self._resync_handled_work = False
-        self._queue_wait: asyncio.Timeout | None = None
-
         self._detached_cycle_tasks: dict[asyncio.Task[None], TurnTask] = {}
         self.current_scope: TurnScope | None = None
         self._control_revision = 0
@@ -450,6 +352,8 @@ class ExecutionContext:
         # when a cycle is interrupted/stopped. Filled by the activity-signal
         # work; a no-op (None) here.
         self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
+
+        self.scheduler = Scheduler(self)
 
     @property
     def thread_id(self) -> str:
@@ -538,9 +442,9 @@ class ExecutionContext:
         logger.info("Starting ExecutionContext for room: %s", self.room_id)
         self._closing = False
         self._is_running = True
-        self._unpark_terminal_acks()
+        self.scheduler.unpark()
         self._process_loop_task = asyncio.create_task(
-            self._process_loop(),
+            self.scheduler.run(),
             name=f"execution-{self.room_id}",
         )
 
@@ -615,7 +519,6 @@ class ExecutionContext:
         Handle a platform event.
 
         Called by RoomPresence/AgentRuntime when an event arrives.
-        Tracks first WebSocket message ID for crash recovery sync.
         Reconnect events trigger a fresh /next synchronization immediately.
         """
         if isinstance(event, ReconnectedEvent):
@@ -623,28 +526,16 @@ class ExecutionContext:
                 "ExecutionContext %s: Reconnected, scheduling synchronization",
                 self.room_id,
             )
-            self._unpark_terminal_acks()
+            self.scheduler.unpark()
             await self.request_resync()
             return
-
-        # Track first WebSocket message ID for sync point
-        if isinstance(event, MessageEvent) and self._first_ws_msg_id is None:
-            msg_id = event.payload.id if event.payload else None
-            if msg_id:
-                self._first_ws_msg_id = msg_id
-                logger.debug("Sync point marker set: %s", msg_id)
 
         self.queue.put_nowait(event)
         logger.debug("Event %s enqueued for room %s", event.type, self.room_id)
 
     async def request_resync(self) -> None:
         """Queue an immediate /next reconciliation, coalescing pending requests."""
-        self.delivery.retry_not_before.clear()
-        if self._pending_resync is not None:
-            return
-        self._pending_resync = ResyncRequest()
-        self.queue.put_nowait(self._pending_resync)  # type: ignore[arg-type]  # The sentinel only wakes this loop.
-        logger.debug("ExecutionContext %s: Resync sentinel enqueued", self.room_id)
+        self.scheduler.request_resync()
 
     def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
         """Abort the in-flight reasoning cycle, if any.
@@ -702,27 +593,18 @@ class ExecutionContext:
     def stop_room(self) -> None:
         """Pause triggers and abort the cycle, leaving it actionable for PLAY."""
         self._stopped = True
-        self._reset_resync_interval()
+        self.scheduler.reset_interval()
         self.interrupt(kind=ControlMode.STOP)
 
     async def resume_room(self) -> None:
         """Clear the local pause and request immediate reconciliation."""
-        self._resume_room()
+        self.resume_from_gate()
         await self.request_resync()
 
-    def _resume_room(self) -> None:
+    def resume_from_gate(self) -> None:
         self._control_revision += 1
         self._stopped = False
-        self._reset_resync_interval()
-
-    def _reset_resync_interval(self) -> None:
-        if self._resync_schedule.due_at is None:
-            return
-        self._resync_schedule.reset(
-            asyncio.get_running_loop().time(), stopped=self._stopped
-        )
-        if self._queue_wait is not None and not self._queue_wait.expired():
-            self._queue_wait.reschedule(self._resync_schedule.due_at)
+        self.scheduler.reset_interval()
 
     def owns_stop_observation(self, scope: TurnScope) -> bool:
         return self._owns_control_revision(scope, scope.stop_revision)
@@ -1175,90 +1057,11 @@ class ExecutionContext:
 
     # --- Internal processing ---
 
-    async def _process_loop(self) -> None:
-        """Synchronize startup, then serialize queued events and due recovery."""
-        try:
-            # A blocked startup yields to the scheduler so controls can reach
-            # active work without letting newer ordinary messages run.
-            await self._synchronize_with_next()
-            if self._sync_complete and (
-                self.config.consume_all_queued or self._pending
-            ):
-                await self._reconcile()
-
-            self._set_state(ExecutionState.IDLE)
-            logger.info(
-                "ExecutionContext %s: Startup pass finished; servicing queue and recovery",
-                self.room_id,
-            )
-
-            loop = asyncio.get_running_loop()
-            self._resync_schedule.start(loop.time())
-            while not self._closing:
-                deadline = self._resync_schedule.due_at
-                if deadline is not None and deadline <= loop.time():
-                    self.delivery.retry_not_before.clear()
-                    await self._reconcile()
-                    continue
-                try:
-                    # Keep cancellation on the owner task so shutdown cannot
-                    # be lost in a child queue-wait task on Windows.
-                    async with asyncio.timeout_at(deadline) as self._queue_wait:
-                        event = await self.queue.get()
-                except TimeoutError:
-                    continue
-                finally:
-                    self._queue_wait = None
-
-                if isinstance(event, ResyncRequest):
-                    if event is self._pending_resync:
-                        await self._reconcile()
-                    continue
-                if self.config.consume_all_queued:
-                    self._retain_arrival(event)
-                    await self._service_arrival()
-                    continue
-                if isinstance(event, MessageEvent) and (
-                    not self._sync_complete or self._has_pending_work
-                ):
-                    await self._retain_or_handle_control(event)
-                    continue
-                if self._enqueue_synthetic(event):
-                    await self._drain_synthetics()
-                    continue
-                if (
-                    await self._process_event(event) in DEFERRED_OUTCOMES
-                    and not self._has_pending_work
-                ):
-                    await self._reconcile()
-
-        except asyncio.CancelledError:
-            logger.debug("ExecutionContext %s cancelled", self.room_id)
-        except Exception:
-            logger.exception("ExecutionContext %s error", self.room_id)
-        logger.debug("ExecutionContext %s loop exited", self.room_id)
-
-    @property
-    def _has_pending_work(self) -> bool:
-        return self._ordinary_work_deferred or self._has_synthetic
-
-    @property
-    def _ordinary_work_deferred(self) -> bool:
-        return (
-            self._deferred_message_id is not None
-            or self.claims.has_retryable_settlement(self.room_id)
-        )
-
-    def _set_deferred_head(self, message_id: str | None) -> None:
-        if message_id != self._deferred_message_id:
-            self._deferred_message_id = message_id
-            self._control_cursor = None
-
     def defer_delivery(
         self, message_id: str | None, *, reason: InputNotAccepted
     ) -> None:
         if message_id:
-            self._set_deferred_head(message_id)
+            self.scheduler.defer(message_id)
         logger.debug(
             "ExecutionContext %s: Input %s not accepted (%s); "
             "keeping it pending for scheduler recovery",
@@ -1267,690 +1070,10 @@ class ExecutionContext:
             reason,
         )
 
-    def _retain(self, event: PlatformEvent, *, first: bool = False) -> None:
-        """Keep a message delivery's payload until its lifecycle settles it."""
-        delivery_id = _delivery_id(event)
-        if delivery_id is None:
-            return
-        if any(_delivery_id(item) == delivery_id for item in self._pending):
-            return
-        if first:
-            self._pending.appendleft(event)
-        else:
-            self._pending.append(event)
-
-    def _release(self, message_ids: Iterable[str]) -> None:
-        released = set(message_ids)
-        self._pending = deque(
-            event
-            for event in self._pending
-            if _delivery_id(event) not in released
-            or (
-                _is_ordinary(event)
-                and self.delivery.awaits_retry_confirmation(_payload(event).id)
-            )
-        )
-
-    async def _retain_or_handle_control(self, event: MessageEvent) -> None:
-        self._retain(event)
-        if _is_synthetic(event):
-            return
-        if self._stopped or self._on_message_control is None:
-            return
-        await self._scan_controls()
-        # A control may have settled the deferred head the input waited behind.
-        if self._sync_complete and not self._has_pending_work and not self._stopped:
-            await self._reconcile()
-
-    async def _scan_controls(self) -> None:
-        """Offer each candidate, retained originals included, to control handling."""
-        if self._on_message_control is None:
-            return
-        revision = self._control_revision
-        try:
-            page = await self.link.get_actionable_page(
-                self.room_id, cursor=self._control_cursor
-            )
-            if revision != self._control_revision:
-                return
-            for candidate in self._control_candidates(page.messages):
-                if self._stopped or revision != self._control_revision:
-                    return
-                if candidate.disposition is Disposition.SKIP:
-                    # A pending failure may restore a retry that needs its original.
-                    if (
-                        self.claims.pending_settlement(
-                            self.room_id, candidate.message_id
-                        )
-                        is None
-                    ):
-                        self._settled_control(candidate.event)
-                    continue
-                await self._probe_control(candidate.event)
-            self._control_cursor = page.next_cursor
-        except RoomExecutionStoppedError:
-            return
-        except Exception:
-            logger.exception("Control recovery failed for room %s", self.room_id)
-
-    def _control_candidates(
-        self, messages: Iterable[PlatformMessage]
-    ) -> list[Candidate]:
-        """Merge original payloads with REST disposition, including the deferred head."""
-        rest = [self._candidate(_backlog_event(message)) for message in messages]
-        retained = [
-            self._candidate(event) for event in self._pending if _is_ordinary(event)
-        ]
-        return merge(rest, retained)
-
     def recognizes_delivery_control(self, event: MessageEvent) -> bool:
         return self._is_message_control is not None and self._is_message_control(
             self, event
         )
-
-    async def _probe_control(self, event: MessageEvent) -> ControlOutcome:
-        if self._on_message_control is None or event.payload is None:
-            return ControlOutcome.DECLINED
-        if not self.recognizes_delivery_control(event):
-            return ControlOutcome.DECLINED
-        outcome = await self.delivery.run(
-            (event,), self._control_revision, control=True
-        )
-        if outcome is TurnOutcome.ADVANCED:
-            return self._settled_control(event)
-        if outcome is TurnOutcome.DECLINED:
-            return ControlOutcome.DECLINED
-        return ControlOutcome.DEFERRED
-
-    def _settled_control(self, event: MessageEvent) -> ControlOutcome:
-        """A settled control leaves the line and no longer heads it."""
-        self._release((_event_message_id(event),))
-        self._clear_deferred_head_for((event,))
-        return ControlOutcome.CONSUMED
-
-    async def _retry_pending_terminal_acks(self) -> bool:
-        """Retry every unparked pending write once; False while any stays retryable."""
-        resolved = [
-            await self.delivery.retry_settlement(message_id)
-            for message_id in self.claims.pending_ack_ids(self.room_id)
-        ]
-        return all(resolved)
-
-    def _unpark_terminal_acks(self) -> None:
-        """Let a reconnect or rejoin retry every refused terminal write once."""
-        if unparked := self.claims.unpark_acks(self.room_id):
-            logger.info(
-                "ExecutionContext %s: retrying %s parked terminal write(s)",
-                self.room_id,
-                unparked,
-            )
-
-    async def _reconcile(self) -> None:
-        # Requests received after this pass starts retain their own sentinel.
-        self._pending_resync = None
-        if (
-            not self._sync_complete
-            and not self._stopped
-            and not await self._synchronize_with_next()
-        ):
-            outcome = ResyncOutcome.BLOCKED
-        else:
-            outcome = await self._wait_until_resync_complete()
-        if self._has_pending_work and not self._stopped:
-            await self._scan_controls()
-        self._resync_schedule.complete(
-            asyncio.get_running_loop().time(),
-            empty=outcome is ResyncOutcome.EMPTY,
-            stopped=self._stopped,
-        )
-
-    async def _wait_until_resync_complete(self) -> ResyncOutcome:
-        """Preserve recovery ordering while allowing stopped-room discovery."""
-        candidate: PlatformMessage | None = None
-        if self._stopped:
-            revision = self._control_revision
-            try:
-                candidate = await self._get_next_message()
-            except Exception:
-                logger.exception("Stopped-room probe failed for %s", self.room_id)
-                return ResyncOutcome.RETRY
-            if revision != self._control_revision:
-                return ResyncOutcome.BLOCKED
-            if candidate is None:
-                return ResyncOutcome.STOPPED
-            if self._is_nonrunnable(candidate):
-                return ResyncOutcome.STOPPED
-            self._resume_room()
-
-        if await self._retry_pending_terminal_acks():
-            if self._stopped:
-                return ResyncOutcome.STOPPED
-            outcome = await self._resync_pending_messages(candidate)
-            if outcome is not ResyncOutcome.RETRY:
-                return outcome
-        if self._stopped:
-            return ResyncOutcome.STOPPED
-        self._set_state(ExecutionState.IDLE)
-        return ResyncOutcome.RETRY
-
-    async def _synchronize_with_next(self) -> bool:
-        """
-        Synchronize backlog via /next API until caught up with WebSocket.
-
-        /next includes unfinished processing messages and gates stopped rooms.
-        Process in platform order until empty or the first queued WebSocket
-        message is reached; remove its queued duplicate before continuing.
-        """
-        if self.config.consume_all_queued:
-            # The selector reads the actionable list and merges retained
-            # originals by id, so there is no sync point to find.
-            self._sync_complete = True
-            return True
-        logger.debug(
-            "ExecutionContext %s: Starting /next synchronization", self.room_id
-        )
-
-        previous_id: str | None = None
-        try:
-            while not self._closing:
-                revision = self._control_revision
-                next_msg = await self._get_next_message()
-                if revision != self._control_revision:
-                    if self._stopped:
-                        return True
-                    continue
-                if (
-                    next_msg is not None
-                    and next_msg.id == previous_id
-                    and self._is_nonrunnable(next_msg)
-                ):
-                    break
-                previous_id = next_msg.id if next_msg is not None else None
-
-                if next_msg is None:
-                    logger.debug(
-                        "ExecutionContext %s: /next returned None, synced",
-                        self.room_id,
-                    )
-                    self._sync_complete = True
-                    return True
-
-                at_sync_point = next_msg.id == self._first_ws_msg_id
-                level = logging.INFO if at_sync_point else logging.DEBUG
-                message = (
-                    "ExecutionContext %s: Sync point reached at message %s"
-                    if at_sync_point
-                    else "ExecutionContext %s: Processing backlog message %s"
-                )
-                logger.log(level, message, self.room_id, next_msg.id)
-                result = await self._process_backlog_message(
-                    next_msg, revision=revision
-                )
-                if result in DEFERRED_OUTCOMES:
-                    self._set_deferred_head(next_msg.id)
-                    return False
-                if at_sync_point:
-                    # Preserve other queued events when removing the sync point.
-                    self._drain_duplicate_from_queue(next_msg.id)
-                    self._first_ws_msg_id = None
-                    self._sync_complete = True
-                    return True
-
-                if self._stopped or result is TurnOutcome.PAUSED:
-                    # A stop control signal landed mid-cycle: the message was
-                    # deliberately left in 'processing' for replay on play, but
-                    # /next excludes only 'processed' messages, so the next
-                    # iteration would just re-fetch and fully re-run the very
-                    # cycle stop just aborted. Pause here instead; play's
-                    # resync will pick the message back up.
-                    logger.debug(
-                        "ExecutionContext %s: stopped mid-backlog-sync, "
-                        "pausing /next polling",
-                        self.room_id,
-                    )
-                    break
-
-        except Exception:
-            logger.exception("ExecutionContext %s: Sync error", self.room_id)
-            return False
-
-        if self._closing:
-            return False
-        logger.debug("ExecutionContext %s: Synchronization complete", self.room_id)
-        self._sync_complete = True
-        return True
-
-    async def _get_next_message(self) -> PlatformMessage | None:
-        """Use /next's room gate, then read past locally excluded originals."""
-        next_message = await self.link.get_next_message(self.room_id)
-        if next_message is None or not self._is_nonrunnable(next_message):
-            return next_message
-        cursor: str | None = None
-        while True:
-            page = await self.link.get_actionable_page(self.room_id, cursor=cursor)
-            for message in page.messages:
-                if not self._is_nonrunnable(message):
-                    return message
-            if page.next_cursor is None:
-                return None
-            cursor = page.next_cursor
-
-    async def _resync_pending_messages(
-        self, candidate: PlatformMessage | None = None
-    ) -> ResyncOutcome:
-        """Drain actionable work, distinguishing empty from blocked recovery."""
-        self._resync_handled_work = False
-        if self.config.consume_all_queued:
-            return await self._drain_pending()
-        if (
-            self._deferred_message_id is None
-            and (outcome := await self._drain_synthetics()) is not None
-        ):
-            return outcome
-        previous_id: str | None = None
-        try:
-            while not self._closing:
-                revision = self._control_revision
-                next_msg = candidate
-                candidate = None
-                if next_msg is None:
-                    next_msg = await self._get_next_message()
-                if revision != self._control_revision:
-                    # A STOP ends the pass; an INTERRUPT leaves the room running,
-                    # so the read it overtook is repeated.
-                    if self._stopped:
-                        return ResyncOutcome.BLOCKED
-                    continue
-                if (retained := self._retained_before(next_msg)) is not None:
-                    candidate = next_msg
-                    match await self._process_event(retained):
-                        case TurnOutcome.ADVANCED:
-                            pass
-                        case TurnOutcome.PAUSED:
-                            return ResyncOutcome.STOPPED
-                        case _:
-                            return ResyncOutcome.BLOCKED
-                    if self._stopped:
-                        return ResyncOutcome.STOPPED
-                    continue
-                if next_msg is None:
-                    self._set_deferred_head(None)
-                    if self._has_synthetic:
-                        return ResyncOutcome.BLOCKED
-                    return (
-                        ResyncOutcome.WORK
-                        if self._resync_handled_work
-                        else ResyncOutcome.EMPTY
-                    )
-                if next_msg.id == previous_id and self._is_nonrunnable(next_msg):
-                    return ResyncOutcome.BLOCKED
-                previous_id = next_msg.id
-                result = await self._process_backlog_message(
-                    next_msg, revision=revision
-                )
-                if self._stopped:
-                    return ResyncOutcome.STOPPED
-                match result:
-                    case TurnOutcome.NOT_ACCEPTED:
-                        return ResyncOutcome.BLOCKED
-                    case TurnOutcome.RETRY_LATER:
-                        self._set_deferred_head(next_msg.id)
-                        return ResyncOutcome.RETRY
-                    case TurnOutcome.ADVANCED | TurnOutcome.PAUSED:
-                        pass
-                if next_msg.id == self._deferred_message_id:
-                    self._set_deferred_head(None)
-                if self._has_synthetic:
-                    return ResyncOutcome.BLOCKED
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: Error during /next resync", self.room_id
-            )
-            return ResyncOutcome.RETRY
-        return ResyncOutcome.STOPPED
-
-    def _is_nonrunnable(
-        self, delivery: PlatformMessage | MessageCreatedPayload
-    ) -> bool:
-        return self.delivery.eligibility(delivery) not in {
-            "runnable",
-            "pending",
-            "inflight",
-        } or self.delivery.is_parked(delivery.id)
-
-    @property
-    def _has_synthetic(self) -> bool:
-        return any(_is_synthetic(event) for event in self._pending)
-
-    def _oldest_synthetic(self) -> MessageEvent | None:
-        """The oldest retained synthetic turn, still sitting in the queue."""
-        for event in self._pending:
-            if _is_synthetic(event):
-                return event
-        return None
-
-    def _enqueue_synthetic(self, event: PlatformEvent) -> bool:
-        if not _is_synthetic(event):
-            return False
-        self._retain(event)
-        return True
-
-    async def _drain_synthetics(self) -> ResyncOutcome | None:
-        """Run retained synthetic turns in receive order.
-
-        The head stays queued until its turn advances, so a pause cannot
-        read the same message as progress and spin.
-        """
-        while self._oldest_synthetic() is not None:
-            outcome = await self._finish_synthetic()
-            if outcome is not ResyncOutcome.PROGRESS:
-                return outcome
-        return None
-
-    async def _finish_synthetic(self) -> ResyncOutcome:
-        """Advance the oldest synthetic turn; PROGRESS once that one settled."""
-        event = self._oldest_synthetic()
-        if event is None:
-            return ResyncOutcome.PROGRESS
-        match await self._process_event(event):
-            case TurnOutcome.ADVANCED:
-                self._release((_event_message_id(event),))
-                return ResyncOutcome.PROGRESS
-            case TurnOutcome.PAUSED:
-                return ResyncOutcome.STOPPED
-            case _:
-                return ResyncOutcome.BLOCKED
-
-    def _retained_before(self, next_msg: PlatformMessage | None) -> MessageEvent | None:
-        """The oldest retained original that precedes ``next_msg`` (or any, if none).
-
-        An original REST omits (a thread reply) can only be ordered by its own
-        key; settled or self-authored ones are dropped here.
-        """
-        live: list[MessageEvent] = []
-        dead: list[str] = []
-        for event in self._pending:
-            if not _is_ordinary(event):
-                continue
-            payload = _payload(event)
-            if self._is_nonrunnable(payload):
-                dead.append(payload.id)
-            else:
-                live.append(event)
-        self._release(dead)
-        if not live:
-            return None
-        oldest = min(live, key=MessageKey.of_event)
-        if next_msg is None or MessageKey.of_event(oldest) < MessageKey.of_message(
-            next_msg
-        ):
-            return oldest
-        return None
-
-    def _retain_arrival(self, event: PlatformEvent) -> None:
-        if isinstance(event, MessageEvent):
-            self._retain(event)
-        else:
-            self._pending.append(event)
-
-    def _absorb_queue(self) -> None:
-        """Move queued events onto the retained line, keeping arrival order.
-
-        The live resync request stays queued: this pass began before it, so the
-        loop must still serve it with another pass.
-        """
-        live_resync: ResyncRequest | None = None
-        while True:
-            try:
-                event = self.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            if not isinstance(event, ResyncRequest):
-                self._retain_arrival(event)
-            elif event is self._pending_resync:
-                live_resync = event
-        if live_resync is not None:
-            self.queue.put_nowait(live_resync)  # type: ignore[arg-type]  # The sentinel only wakes this loop.
-
-    async def _service_arrival(self) -> None:
-        """React to one arrival: controls only while ordinary work is deferred."""
-        if self._stopped:
-            return
-        if self._ordinary_work_deferred:
-            await self._scan_controls()
-        if not self._ordinary_work_deferred:
-            await self._drain_pending()
-
-    async def _drain_pending(self) -> ResyncOutcome:
-        """Run selection passes until the room is empty, blocked or stopped."""
-        self._last_selection = ()
-        self._scan_cursor = None
-        try:
-            while (outcome := await self._batch_step()) is ResyncOutcome.PROGRESS:
-                # Controls and local boundaries get the loop between passes.
-                await asyncio.sleep(0)
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: Error during batch selection", self.room_id
-            )
-            return ResyncOutcome.RETRY
-        if outcome is ResyncOutcome.EMPTY:
-            self._set_deferred_head(None)
-            if self._resync_handled_work:
-                return ResyncOutcome.WORK
-        return outcome
-
-    async def _batch_step(self) -> ResyncOutcome:
-        """One selection pass; ``PROGRESS`` means another pass is due."""
-        self._absorb_queue()
-        if self._stopped:
-            return ResyncOutcome.STOPPED
-        if self._pending and not _is_ordinary(self._pending[0]):
-            return await self._run_boundary()
-        revision = self._control_revision
-        page = await self.link.get_actionable_page(
-            self.room_id, cursor=self._scan_cursor
-        )
-        self._absorb_queue()
-        if self._stopped:
-            return ResyncOutcome.STOPPED
-        if revision != self._control_revision:
-            # A control landed during the read, so the page is stale; unlike a
-            # STOP it leaves the room running, which reads again.
-            return ResyncOutcome.PROGRESS
-        segment, limit, later_ids = self._local_segment()
-        rest = [
-            self._candidate(_backlog_event(msg))
-            for msg in page.messages
-            if msg.id not in later_ids
-        ]
-        retained = [self._candidate(event) for event in segment]
-        selection = select_prefix(
-            rest,
-            retained,
-            cap=self.config.max_queued_messages,
-            page_reaches=MessageKey.of_message(page.messages[-1])
-            if page.messages
-            else None,
-            exhausted=page.next_cursor is None,
-            limit=limit,
-        )
-        pruned = self._prune_skipped(retained, rest)
-        if not selection.members:
-            return self._after_empty_scan(selection, page.next_cursor, pruned)
-        return await self._run_selection(selection, revision)
-
-    async def _run_boundary(self) -> ResyncOutcome:
-        """Execute the head non-message event or synthetic turn on its own.
-
-        A synthetic stays at the head until it advances. Anything else leaves
-        the line once this pass has attempted it.
-        """
-        event = self._pending[0]
-        if _is_synthetic(event):
-            return await self._finish_synthetic()
-        self._pending.popleft()
-        if await self._process_event_body(event) is TurnOutcome.ADVANCED:
-            return ResyncOutcome.PROGRESS
-        return ResyncOutcome.BLOCKED
-
-    def _local_segment(
-        self,
-    ) -> tuple[list[MessageEvent], MessageKey | None, set[str]]:
-        """Leading originals, unknown REST's ceiling and known later identities.
-
-        Local membership is authoritative even when timestamp/UUID order differs.
-        REST-only originals past the last local key have no known event position.
-        """
-        segment: list[MessageEvent] = []
-        later_ids: set[str] = set()
-        bounded = False
-        for event in self._pending:
-            if not _is_ordinary(event):
-                bounded = True
-            elif bounded:
-                later_ids.add(_event_message_id(event))
-            else:
-                segment.append(event)
-        limit = MessageKey.of_event(segment[-1]) if bounded and segment else None
-        return segment, limit, later_ids
-
-    def _candidate(self, event: MessageEvent) -> Candidate:
-        disposition = self._disposition(_payload(event))
-        if (
-            disposition is Disposition.RUNNABLE
-            and self._on_message_control is not None
-            and self.recognizes_delivery_control(event)
-        ):
-            disposition = Disposition.CONTROL
-        return Candidate(MessageKey.of_event(event), event, disposition)
-
-    def _disposition(self, payload: MessageCreatedPayload) -> Disposition:
-        match self.delivery.eligibility(payload):
-            case "runnable":
-                return Disposition.RUNNABLE
-            case "inflight":
-                return Disposition.HELD
-            case _:
-                return Disposition.SKIP
-
-    def _prune_skipped(self, retained: list[Candidate], rest: list[Candidate]) -> bool:
-        """Drop retained originals nothing will ever run; True if any went."""
-        rest_skipped = {c.message_id for c in rest if c.disposition is Disposition.SKIP}
-        gone = [
-            c.message_id
-            for c in retained
-            if c.disposition is Disposition.SKIP or c.message_id in rest_skipped
-        ]
-        if gone:
-            logger.debug(
-                "ExecutionContext %s: Releasing retained message(s) %s that no turn will run",
-                self.room_id,
-                gone,
-            )
-        self._release(gone)
-        return bool(gone)
-
-    def _after_empty_scan(
-        self, selection: Selection, next_cursor: str | None, pruned: bool
-    ) -> ResyncOutcome:
-        if selection.stop is Stop.HELD and selection.at is not None:
-            logger.debug(
-                "ExecutionContext %s: Message %s is held by another claim; deferring behind it",
-                self.room_id,
-                selection.at.message_id,
-            )
-            self._set_deferred_head(selection.at.message_id)
-            return ResyncOutcome.BLOCKED
-        # Stop.LIMIT is no page verdict: the retained prefix before a boundary was
-        # all skipped and has just been pruned, so the first page is read again.
-        if next_cursor is not None and selection.stop is not Stop.LIMIT:
-            self._scan_cursor = next_cursor
-            return ResyncOutcome.PROGRESS
-        self._scan_cursor = None
-        return ResyncOutcome.PROGRESS if pruned else ResyncOutcome.EMPTY
-
-    async def _run_selection(
-        self, selection: Selection, revision: int
-    ) -> ResyncOutcome:
-        events = selection.events
-        ids = _message_ids(events)
-        if ids == self._last_selection:
-            logger.debug(
-                "ExecutionContext %s: Selection %s repeated without progress; "
-                "leaving it for the next resync",
-                self.room_id,
-                ids,
-            )
-            return ResyncOutcome.BLOCKED
-        self._last_selection = ids
-        if selection.members[0].disposition is Disposition.CONTROL:
-            match await self._probe_control(events[0]):
-                case ControlOutcome.CONSUMED:
-                    return ResyncOutcome.PROGRESS
-                case ControlOutcome.DEFERRED:
-                    self._set_deferred_head(ids[0])
-                    return ResyncOutcome.RETRY
-        outcome = await self.delivery.run(events, revision=revision)
-        if self._stopped:
-            return ResyncOutcome.STOPPED
-        match outcome:
-            case TurnOutcome.ADVANCED:
-                self._release(ids)
-                # An INTERRUPT that consumed the attempt only bumped the
-                # revision; the room runs on and what queued behind it is due.
-                self._clear_deferred_head_for(events)
-                return ResyncOutcome.PROGRESS
-            case _ if revision != self._control_revision:
-                return ResyncOutcome.BLOCKED
-            case TurnOutcome.NOT_ACCEPTED | TurnOutcome.DECLINED:
-                return ResyncOutcome.BLOCKED
-            case TurnOutcome.RETRY_LATER:
-                self._set_deferred_head(ids[0])
-                return ResyncOutcome.RETRY
-            case TurnOutcome.PAUSED:
-                return ResyncOutcome.STOPPED
-
-    async def _process_backlog_message(
-        self, msg: PlatformMessage, *, revision: int | None = None
-    ) -> TurnOutcome:
-        outcome = await self.delivery.run(
-            (_backlog_event(msg),),
-            self._control_revision if revision is None else revision,
-        )
-        if outcome is TurnOutcome.ADVANCED:
-            self._release((msg.id,))
-        return outcome
-
-    def _clear_deferred_head_for(self, events: tuple[MessageEvent, ...]) -> None:
-        if self._deferred_message_id in _message_ids(events):
-            self._set_deferred_head(None)
-
-    def _drain_duplicate_from_queue(self, msg_id: str) -> None:
-        """
-        Remove duplicate message from WebSocket queue after sync point reached.
-
-        The message at sync point exists in both /next and WS queue.
-        """
-        # Drain queue and re-add non-duplicates
-        items = []
-        while not self.queue.empty():
-            try:
-                event = self.queue.get_nowait()
-                if (
-                    isinstance(event, MessageEvent)
-                    and event.payload
-                    and event.payload.id == msg_id
-                ):
-                    logger.debug("Removed duplicate from WS queue: %s", msg_id)
-                    continue
-                items.append(event)
-            except asyncio.QueueEmpty:
-                break
-
-        # Re-add non-duplicates
-        for item in items:
-            self.queue.put_nowait(item)
 
     async def _invoke_handler(self, event: PlatformEvent) -> None:
         """Coroutine wrapper around the execution handler so it can run as a
@@ -1961,7 +1084,7 @@ class ExecutionContext:
         handler drains; participant add/remove events are housekeeping and
         skip it.
         """
-        message_id = _delivery_id(event)
+        message_id = delivery_id(event)
         with observe_delivery_phase("cycle", self.room_id, message_id):
             if isinstance(event, MessageEvent):
                 await self._execute_message_cycle(event, message_id)
@@ -2000,8 +1123,8 @@ class ExecutionContext:
         scope = self.current_scope
         if scope is not None and scope.terminating:
             raise asyncio.CancelledError
-        self._resync_handled_work = True
-        self._reset_resync_interval()
+        self.scheduler.handled_work = True
+        self.scheduler.reset_interval()
         originals = scope.originals if scope is not None else ()
         with observe_delivery_phase("handler", self.room_id, message_id):
             if len(originals) > 1 and self._on_execute_batch is not None:
@@ -2194,58 +1317,12 @@ class ExecutionContext:
         )
         return False
 
-    async def _process_event(self, event: PlatformEvent) -> TurnOutcome:
-        """
-        Process single event through execution callback.
+    @property
+    def delivery_context_token(self) -> object:
+        return self._context_cache
 
-        For message events, handles full lifecycle:
-        1. Check if permanently failed or duplicate
-        2. Record attempt with retry tracker
-        3. Mark as processing on server
-        4. Execute handler
-        5. Mark as processed (success) or failed (exception)
-        """
-        if isinstance(event, ReconnectedEvent):
-            await self._reconcile()
-            return TurnOutcome.ADVANCED
-
-        # While stopped, leave message triggers actionable for replay on play.
-        # Suppression is platform-authoritative; skipping here is a local
-        # efficiency short-circuit that avoids claiming/marking (mark->204) and
-        # never reaches the adapter (reply->403). A real message stays on the
-        # platform for /next; a synthetic one stays at the head of its queue.
-        if self._stopped and isinstance(event, MessageEvent):
-            logger.debug(
-                "ExecutionContext %s: stopped, skipping message %s (left for replay)",
-                self.room_id,
-                event.payload.id if event.payload else None,
-            )
-            # The platform replays a listed message on PLAY; only the retained
-            # payload can bring back one it omits.
-            self._retain(event)
-            return TurnOutcome.PAUSED
-
-        payload = event.payload if isinstance(event, MessageEvent) else None
-        msg_id = payload.id if payload else None
-
-        if (
-            isinstance(event, MessageEvent)
-            and msg_id
-            and payload
-            and not _is_synthetic(event)
-        ):
-            self._retain(event)
-            outcome = await self.delivery.run((event,), self._control_revision)
-            if outcome is TurnOutcome.ADVANCED:
-                self._release((msg_id,))
-            else:
-                self._retain(event)
-            return outcome
-
-        outcome = await self._process_event_body(event)
-        if outcome in DEFERRED_OUTCOMES:
-            self._retain(event, first=True)
-        return outcome
+    def finish_startup(self) -> None:
+        self._set_state(ExecutionState.IDLE)
 
     def note_turn_failure_reported(self) -> None:
         """Record that the adapter already told the room this turn failed."""
@@ -2279,7 +1356,7 @@ class ExecutionContext:
                 self.room_id,
             )
 
-    async def _process_event_body(self, event: PlatformEvent) -> TurnOutcome:
+    async def execute_local(self, event: PlatformEvent) -> TurnOutcome:
         """Run an event that owes no delivery write: housekeeping or a synthetic message."""
         # Participant events are housekeeping, admitted only once their
         # handler starts. A synthetic message admits immediately so a control
@@ -2294,7 +1371,7 @@ class ExecutionContext:
         logger.debug(
             "Dispatch source=websocket room=%s message=%s event=%s",
             self.room_id,
-            _delivery_id(event),
+            delivery_id(event),
             event.type,
         )
 
@@ -2348,45 +1425,3 @@ class ExecutionContext:
 
         finally:
             self.finish_delivery(scope)
-
-
-def _backlog_event(msg: PlatformMessage) -> MessageEvent:
-    created_at_str = (
-        msg.created_at.isoformat() if msg.created_at else datetime.now(UTC).isoformat()
-    )
-
-    # REST mentions may use name; the WebSocket projection requires username.
-    metadata = metadata_to_dict(msg.metadata).copy()
-    if "mentions" in metadata:
-        normalized_mentions = []
-        for mention in metadata.get("mentions", []):
-            if isinstance(mention, dict):
-                normalized_mentions.append(
-                    {
-                        "id": mention.get("id", ""),
-                        "username": mention.get("username")
-                        or mention.get("name")
-                        or mention.get("id", ""),
-                    }
-                )
-        metadata["mentions"] = normalized_mentions
-    else:
-        metadata["mentions"] = []
-
-    if "status" not in metadata:
-        metadata["status"] = "sent"
-
-    return MessageEvent(
-        room_id=msg.room_id,
-        payload=MessageCreatedPayload(
-            id=msg.id,
-            content=msg.content,
-            sender_id=msg.sender_id,
-            sender_type=msg.sender_type,
-            message_type=msg.message_type,
-            metadata=MessageMetadata(**metadata),
-            chat_room_id=msg.room_id,
-            inserted_at=created_at_str,
-            updated_at=created_at_str,
-        ),
-    )

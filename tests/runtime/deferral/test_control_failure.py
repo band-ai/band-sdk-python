@@ -50,8 +50,8 @@ class TestControlFailure:
                         report_turn_failures_to_room=False,
                     ),
                 )
-                await ctx._reconcile()
-                await ctx._reconcile()
+                await ctx.scheduler.run_pass(recovery=True)
+                await ctx.scheduler.run_pass(recovery=True)
                 assert peer.marked("failed") == ["C"]
                 await ctx.stop()
             else:

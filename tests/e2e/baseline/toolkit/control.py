@@ -177,11 +177,9 @@ class ObservedExecution(ExecutionContext):
 
     startup_synced: asyncio.Event
 
-    async def _synchronize_with_next(self) -> bool:
-        synced = await super()._synchronize_with_next()
-        if synced:
-            self.startup_synced.set()
-        return synced
+    def finish_startup(self) -> None:
+        super().finish_startup()
+        self.startup_synced.set()
 
 
 class ControlLink(BandLink):

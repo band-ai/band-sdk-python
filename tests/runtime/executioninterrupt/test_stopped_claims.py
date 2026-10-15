@@ -15,6 +15,7 @@ from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStoppedClaims:
@@ -29,12 +30,12 @@ class TestStoppedClaims:
         mock_link.mark_processing.side_effect = RoomExecutionStoppedError(ctx.room_id)
         if path == "live":
             assert (
-                await ctx._process_event(make_message_event(msg_id="refused"))
+                await attempt_delivery(ctx, make_message_event(msg_id="refused"))
                 is TurnOutcome.RETRY_LATER
             )
         else:
             assert (
-                await ctx._process_backlog_message(backlog_message("refused"))
+                await attempt_delivery(ctx, backlog_message("refused"))
                 is TurnOutcome.RETRY_LATER
             )
         assert handler.invoked == []
@@ -42,7 +43,7 @@ class TestStoppedClaims:
         mock_link.mark_failed.assert_not_awaited()
         mock_link.mark_processing.side_effect = None
         assert (
-            await ctx._process_backlog_message(backlog_message("refused"))
+            await attempt_delivery(ctx, backlog_message("refused"))
             is TurnOutcome.ADVANCED
         )
         assert handler.completed == ["refused"]
@@ -64,12 +65,12 @@ class TestStoppedClaims:
         await entered.wait()
         monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
         assert (
-            await ctx._process_event(make_message_event(msg_id="later"))
+            await attempt_delivery(ctx, make_message_event(msg_id="later"))
             is TurnOutcome.RETRY_LATER
         )
         mock_link.mark_processing.assert_not_awaited()
         release.set()
         assert (
-            await ctx._process_event(make_message_event(msg_id="later"))
+            await attempt_delivery(ctx, make_message_event(msg_id="later"))
             is TurnOutcome.ADVANCED
         )

@@ -11,6 +11,7 @@ from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestControlSignalInClaimWindow:
@@ -40,7 +41,9 @@ class TestControlSignalInClaimWindow:
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w1")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="w1"))
+        )
         await claiming.wait()
 
         # Not admitted yet: nothing to terminate, but the signal is not lost.
@@ -62,7 +65,9 @@ class TestControlSignalInClaimWindow:
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w2")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="w2"))
+        )
         await claiming.wait()
 
         ctx.stop_room()  # sets _stopped and records the pending stop
@@ -84,7 +89,7 @@ class TestControlSignalInClaimWindow:
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_backlog_message(backlog_message("bw1")))
+        proc = asyncio.create_task(attempt_delivery(ctx, backlog_message("bw1")))
         await claiming.wait()
 
         assert ctx.interrupt() is False
@@ -105,6 +110,6 @@ class TestControlSignalInClaimWindow:
         assert ctx.interrupt() is False
 
         # The next message runs to completion, unaffected.
-        result = await ctx._process_event(make_message_event(msg_id="n1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="n1"))
         assert result is TurnOutcome.ADVANCED
         assert handler.completed == ["n1"]

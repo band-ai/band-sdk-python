@@ -3,13 +3,13 @@
 Two sources describe a room's outstanding messages: the REST list, which
 omits some deliveries (thread replies) and is ordered by ``(inserted_at,
 id)``, and the originals the WebSocket delivered and the room retained. The
-walk below merges them by that key into one frozen, bounded prefix; the
-caller owns every read, claim and write.
+caller resolves identity and orders the candidates before the walk selects
+one frozen, bounded prefix. The caller owns every read, claim and write.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
@@ -46,16 +46,18 @@ class Disposition(StrEnum):
     RUNNABLE = "runnable"
     SKIP = "skip"  # settled, failed, self-authored or otherwise not this turn's
     HELD = "held"  # another owner holds its claim; the prefix waits for it
+    BOUNDARY = "boundary"  # a control reclassified during this pass stays separate
     CONTROL = "control"  # the adapter handles it individually, never in a batch
 
 
 @dataclass(frozen=True)
 class Candidate:
-    """One original with its position and disposition."""
+    """An original and selection facts; observed metadata never rewrites its payload."""
 
     key: MessageKey
     event: MessageEvent
     disposition: Disposition
+    observed_metadata: dict[str, object] | None = None
 
     @property
     def message_id(self) -> str:
@@ -88,7 +90,7 @@ class Selection:
 
 
 def merge(rest: Sequence[Candidate], retained: Sequence[Candidate]) -> list[Candidate]:
-    """One chronological list; an original in both sources appears once.
+    """Resolve identities in source order; an original in both appears once.
 
     The retained payload is the original that was delivered, so it wins; the
     REST disposition wins because it reflects the platform's delivery status.
@@ -99,21 +101,28 @@ def merge(rest: Sequence[Candidate], retained: Sequence[Candidate]) -> list[Cand
         merged[candidate.message_id] = (
             candidate
             if seen is None
-            else replace(candidate, key=seen.key, disposition=seen.disposition)
+            else replace(
+                candidate,
+                key=seen.key,
+                disposition=seen.disposition,
+                observed_metadata=seen.observed_metadata,
+            )
         )
-    return sorted(merged.values(), key=lambda candidate: candidate.key)
+    return list(merged.values())
 
 
 def select_prefix(
-    rest: Sequence[Candidate],
-    retained: Sequence[Candidate],
+    candidates: Sequence[Candidate],
     *,
+    listed: set[str],
+    retained: set[str],
     cap: int,
     page_reaches: MessageKey | None,
     exhausted: bool,
     limit: MessageKey | None = None,
+    resumed: Collection[str] = (),
 ) -> Selection:
-    """The bounded ordinary prefix to run now, in chronological order.
+    """The bounded ordinary prefix from the caller's explicitly ordered input.
 
     ``page_reaches`` is the key of the last message the REST read returned and
     ``exhausted`` says that read was the last. A retained original absent from
@@ -122,29 +131,40 @@ def select_prefix(
     messages is unknown, so the prefix stops short of it. ``limit`` bounds the
     REST-only candidates to the current local segment. Retained candidates are
     already known to belong before its boundary, regardless of their keys.
+    ``resumed`` identifies confirmed retry continuations whose retained originals
+    keep their position without another REST frontier observation.
     """
     members: list[Candidate] = []
-    rest_ids = {candidate.message_id for candidate in rest}
-    retained_ids = {candidate.message_id for candidate in retained}
     limited_at: Candidate | None = None
-    for candidate in merge(rest, retained):
+    for candidate in candidates:
         if (
             limit is not None
             and candidate.key > limit
-            and candidate.message_id not in retained_ids
+            and candidate.message_id not in retained
         ):
             if limited_at is None:
                 limited_at = candidate
             continue
+        unmatched = candidate.message_id not in listed
+        if (
+            unmatched
+            and candidate.message_id not in resumed
+            and not read_reaches(candidate, page_reaches, exhausted)
+        ):
+            return Selection(tuple(members), Stop.FRONTIER, candidate)
         if candidate.disposition is Disposition.SKIP:
             continue
         if candidate.disposition is Disposition.HELD:
             return Selection(tuple(members), Stop.HELD, candidate)
-        unmatched = candidate.message_id not in rest_ids
-        if unmatched and not _read_reaches(candidate, page_reaches, exhausted):
-            return Selection(tuple(members), Stop.FRONTIER, candidate)
-        if unmatched or candidate.disposition is Disposition.CONTROL:
-            stop = Stop.BOUNDARY if unmatched else Stop.CONTROL
+        if unmatched or candidate.disposition in {
+            Disposition.CONTROL,
+            Disposition.BOUNDARY,
+        }:
+            stop = (
+                Stop.CONTROL
+                if not unmatched and candidate.disposition is Disposition.CONTROL
+                else Stop.BOUNDARY
+            )
             return Selection(tuple(members) or (candidate,), stop, candidate)
         members.append(candidate)
         if len(members) == cap:
@@ -154,7 +174,7 @@ def select_prefix(
     return Selection(tuple(members), Stop.END)
 
 
-def _read_reaches(
+def read_reaches(
     candidate: Candidate, page_reaches: MessageKey | None, exhausted: bool
 ) -> bool:
     """Whether the REST read has reached or passed the candidate's position."""

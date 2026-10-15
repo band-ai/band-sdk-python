@@ -17,6 +17,7 @@ from tests.runtime.helpers import (
     rest_client_over,
     run_through,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestRejectionDiagnostic:
@@ -40,11 +41,11 @@ class TestRejectionDiagnostic:
             )
             with caplog.at_level(logging.DEBUG, logger="band.runtime.execution"):
                 if hosting == "live":
-                    await ctx._process_event(
-                        make_message_event(room_id=ROOM_ID, msg_id="B")
+                    await attempt_delivery(
+                        ctx, make_message_event(room_id=ROOM_ID, msg_id="B")
                     )
                 else:
-                    await ctx._reconcile()
+                    await ctx.scheduler.run_pass(recovery=True)
             await ctx.stop()
 
         assert peer.marked("processed") == peer.marked("failed") == []

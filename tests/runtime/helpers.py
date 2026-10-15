@@ -32,6 +32,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.identifiers import UUID_ID
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 @asynccontextmanager
@@ -107,11 +108,12 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
     """Deliver one user message live over the socket, or from the backlog."""
     match path:
         case "live":
-            await ctx._process_event(
-                make_message_event(room_id=ROOM_ID, sender_id="user-1")
+            await attempt_delivery(
+                ctx, make_message_event(room_id=ROOM_ID, sender_id="user-1")
             )
         case "backlog":
-            await ctx._process_backlog_message(
+            await attempt_delivery(
+                ctx,
                 PlatformMessage(
                     id="msg-backlog",
                     room_id=ROOM_ID,
@@ -122,7 +124,7 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
                     message_type="text",
                     metadata={},
                     created_at=datetime.now(UTC),
-                )
+                ),
             )
 
 

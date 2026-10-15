@@ -28,6 +28,7 @@ from band.runtime.tools import AgentTools
 from tests.conftest import (
     make_message_event,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestTurnFailureReport:
@@ -89,8 +90,8 @@ class TestTurnFailureReport:
         (which can carry secrets) or its class name, and nobody is mentioned."""
         mock_link.rest.agent_api_messages = mock_rest_client.agent_api_messages
 
-        await self._context(mock_link)._process_backlog_message(
-            self._backlog_message("msg-backlog")
+        await attempt_delivery(
+            self._context(mock_link), self._backlog_message("msg-backlog")
         )
 
         mock_link.mark_failed.assert_awaited_once()
@@ -109,7 +110,8 @@ class TestTurnFailureReport:
         )
 
         assert (
-            await self._context(mock_link)._process_event(event) is TurnOutcome.ADVANCED
+            await attempt_delivery(self._context(mock_link), event)
+            is TurnOutcome.ADVANCED
         )
 
         mock_link.mark_failed.assert_awaited_once()
@@ -138,7 +140,7 @@ class TestTurnFailureReport:
         )
 
         async with asyncio.TaskGroup() as tasks:
-            delivery = tasks.create_task(ctx._process_event(event))
+            delivery = tasks.create_task(attempt_delivery(ctx, event))
             try:
                 await final_started.wait()
                 mock_link.mark_failed.assert_awaited_once()
@@ -150,7 +152,7 @@ class TestTurnFailureReport:
         assert mock_link.mark_failed.await_count == 2
         error_events.assert_awaited_once()
 
-        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
+        assert await attempt_delivery(ctx, event) is TurnOutcome.ADVANCED
         error_events.assert_awaited_once()
 
     @pytest.mark.parametrize("sender_type", ["Agent", "System"])
@@ -167,7 +169,8 @@ class TestTurnFailureReport:
         )
 
         assert (
-            await self._context(mock_link)._process_event(event) is TurnOutcome.ADVANCED
+            await attempt_delivery(self._context(mock_link), event)
+            is TurnOutcome.ADVANCED
         )
 
         error_events.assert_awaited_once()
@@ -175,9 +178,10 @@ class TestTurnFailureReport:
     async def test_disabled_flag_suppresses_report(
         self, mock_link: MagicMock, error_events: AsyncMock
     ) -> None:
-        await self._context(
-            mock_link, report_turn_failures_to_room=False
-        )._process_backlog_message(self._backlog_message("msg-off"))
+        await attempt_delivery(
+            self._context(mock_link, report_turn_failures_to_room=False),
+            self._backlog_message("msg-off"),
+        )
 
         mock_link.mark_failed.assert_awaited_once()
         error_events.assert_not_awaited()
@@ -194,14 +198,13 @@ class TestTurnFailureReport:
 
         async def deliver() -> TurnOutcome:
             if path == "websocket":
-                return await ctx._process_event(
+                return await attempt_delivery(
+                    ctx,
                     make_message_event(
                         room_id="room-123", msg_id="msg-hydration", sender_id="user-1"
-                    )
+                    ),
                 )
-            return await ctx._process_backlog_message(
-                self._backlog_message("msg-hydration")
-            )
+            return await attempt_delivery(ctx, self._backlog_message("msg-hydration"))
 
         assert await deliver() is TurnOutcome.RETRY_LATER
         handler.assert_not_awaited()
@@ -234,10 +237,10 @@ class TestTurnFailureReport:
 
         ctx = self._context(mock_link, reporting_handler)
 
-        await ctx._process_backlog_message(self._backlog_message("msg-reported"))
+        await attempt_delivery(ctx, self._backlog_message("msg-reported"))
         assert self._reporters(error_events) == ["codex"]
 
-        await ctx._process_backlog_message(self._backlog_message("msg-unreported"))
+        await attempt_delivery(ctx, self._backlog_message("msg-unreported"))
         assert self._reporters(error_events) == ["codex", TURN_FAILURE_PROVIDER]
 
     async def test_an_already_reported_claim_without_a_post_is_still_reported(
@@ -248,8 +251,9 @@ class TestTurnFailureReport:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             raise TurnResultAlreadyReported("reported by a nested handler")
 
-        await self._context(mock_link, handler)._process_backlog_message(
-            self._backlog_message("msg-already-reported")
+        await attempt_delivery(
+            self._context(mock_link, handler),
+            self._backlog_message("msg-already-reported"),
         )
 
         mock_link.mark_failed.assert_awaited_once()
@@ -262,8 +266,8 @@ class TestTurnFailureReport:
         processing from advancing."""
         error_events.side_effect = RuntimeError("network down")
 
-        result = await self._context(mock_link)._process_backlog_message(
-            self._backlog_message("msg-post-fails")
+        result = await attempt_delivery(
+            self._context(mock_link), self._backlog_message("msg-post-fails")
         )
 
         assert result is TurnOutcome.ADVANCED

@@ -8,6 +8,7 @@ import pytest
 
 from band.runtime.execution import ExecutionContext
 from tests.conftest import make_message_event, mirror_settlement_results
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 def delivery_link() -> MagicMock:
@@ -32,8 +33,8 @@ class TestAdapterDelivery:
         context.prepare_delivery_context = AsyncMock()  # type: ignore[method-assign]
         event = make_message_event(room_id="room-baseline", msg_id="message-replayed")
 
-        await context._process_event(event)
-        await context._process_event(event)
+        await attempt_delivery(context, event)
+        await attempt_delivery(context, event)
 
         handler.assert_awaited_once_with(context, event)
         link.mark_processed.assert_awaited_once_with(

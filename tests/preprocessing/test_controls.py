@@ -14,6 +14,7 @@ from tests.conftest import make_message_event
 from tests.preprocessing.kit import ControlPolicy
 from tests.runtime.deferral.kit import ApprovalAdapter
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 @pytest.mark.parametrize("hosting", ["normal", "pending"])
@@ -55,9 +56,9 @@ class TestConfiguredControlPolicy:
             ctx.inject_system_message("Contact update still owed")
             event = make_message_event(room_id=ROOM_ID, msg_id="C", content=content)
             if hosting == "normal":
-                await ctx._process_event(event)
+                await attempt_delivery(ctx, event)
             else:
-                await ctx._probe_control(event)
+                await attempt_delivery(ctx, event, priority=True)
             await ctx.stop()
 
         assert policy.seen == (["C"] if hosting == "normal" or consumed else [])

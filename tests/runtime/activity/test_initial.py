@@ -14,6 +14,7 @@ from tests.runtime.helpers import (
     KEEP_ALIVE,
     STOP_ECHO,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityInitial:
@@ -47,7 +48,7 @@ class TestActivityInitial:
         async with activity_context(peer, handler, observer) as ctx:
             async with asyncio.TaskGroup() as tasks:
                 turn = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await peer.entered.wait()
                 turn.cancel()

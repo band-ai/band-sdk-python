@@ -13,6 +13,7 @@ from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     assert_fresh_cycle_still_propagates_shutdown_cancel,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 _WATCHDOG_TEST_DEADLINE = 0.05
 # Long enough that a handler blocking on it never finishes naturally within a test.
@@ -38,7 +39,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        result = await ctx._process_event(make_message_event(msg_id="watchdog-1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="watchdog-1"))
 
         # Loop continues; the watchdog is a handled error.
         assert result is TurnOutcome.ADVANCED
@@ -53,7 +54,7 @@ class TestCycleWatchdog:
         # Loop stays alive: a fresh message still processes normally afterward.
         handler2 = BlockingHandler(block=False)
         ctx._on_execute = handler2
-        result2 = await ctx._process_event(make_message_event(msg_id="watchdog-2"))
+        result2 = await attempt_delivery(ctx, make_message_event(msg_id="watchdog-2"))
         assert result2 is TurnOutcome.ADVANCED
         assert handler2.completed == ["watchdog-2"]
 
@@ -64,7 +65,7 @@ class TestCycleWatchdog:
         handler = BlockingHandler(block_seconds=0.05)
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        result = await ctx._process_event(make_message_event(msg_id="no-watchdog"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="no-watchdog"))
 
         assert result is TurnOutcome.ADVANCED
         assert not handler.cancelled.is_set()
@@ -88,7 +89,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_AMPLE_CYCLE_BUDGET_SECONDS),
         )
 
-        result = await ctx._process_event(make_message_event(msg_id="own-timeout"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="own-timeout"))
 
         assert result is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
@@ -118,7 +119,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
-        result = await ctx._process_event(make_message_event(msg_id="swallowed"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="swallowed"))
 
         # Loop continues; the watchdog is a handled error.
         assert result is TurnOutcome.ADVANCED
@@ -158,7 +159,7 @@ class TestCycleWatchdog:
                 await asyncio.sleep(0)
 
         ctx._on_execute = interrupted_cleanup
-        result = await ctx._process_event(make_message_event(msg_id="race-1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="race-1"))
 
         assert result is TurnOutcome.ADVANCED
         # The interrupt won, not the watchdog: consumed/acked, not failed.
@@ -183,7 +184,7 @@ class TestCycleWatchdog:
             config=SessionConfig(max_cycle_seconds=1e-9),
         )
         assert (
-            await ctx._process_event(make_message_event(msg_id="boundary"))
+            await attempt_delivery(ctx, make_message_event(msg_id="boundary"))
             is TurnOutcome.ADVANCED
         )
         assert completed == ["reply"]
@@ -216,7 +217,7 @@ class TestCycleWatchdog:
 
         with patch("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
             result = await asyncio.wait_for(
-                ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
+                attempt_delivery(ctx, make_message_event(msg_id="stuck-cleanup")),
                 timeout=0.2,
             )
 

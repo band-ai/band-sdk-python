@@ -11,6 +11,7 @@ from tests.runtime.helpers import (
     ROOM_ID,
     run_through,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 from tests.runtime.verdict.kit import (
     ROWS,
     ScriptedAdapter,
@@ -26,8 +27,8 @@ class TestEachTurnOutcomeIsReportedHonestly:
         steps, completes = ROWS[row]
         ctx = run_through(ScriptedAdapter(steps), link)
 
-        await ctx._process_event(
-            make_message_event(room_id=ROOM_ID, sender_id="user-1")
+        await attempt_delivery(
+            ctx, make_message_event(room_id=ROOM_ID, sender_id="user-1")
         )
 
         assert_runtime_outcome(link, completes)

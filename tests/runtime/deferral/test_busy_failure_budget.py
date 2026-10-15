@@ -14,6 +14,7 @@ from tests.runtime.helpers import (
     rest_client_over,
     run_through,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestBusyFailureBudget:
@@ -39,14 +40,14 @@ class TestBusyFailureBudget:
             )
             event = make_message_event(room_id=ROOM_ID, msg_id="B")
             try:
-                assert await ctx._process_event(event) is TurnOutcome.NOT_ACCEPTED
+                assert await attempt_delivery(ctx, event) is TurnOutcome.NOT_ACCEPTED
                 for _ in range(4):
-                    await ctx._reconcile()
+                    await ctx.scheduler.run_pass(recovery=True)
                 assert peer.marked("failed") == ["B"]
                 assert peer.marked("processed") == []
                 adapter.busy = False
-                await ctx._reconcile()
-                await ctx._reconcile()
+                await ctx.scheduler.run_pass(recovery=True)
+                await ctx.scheduler.run_pass(recovery=True)
                 assert peer.marked("failed") == ["B", "B"]
                 assert (adapter.failure_attempts, adapter.busy_attempts) == (2, 5)
             finally:

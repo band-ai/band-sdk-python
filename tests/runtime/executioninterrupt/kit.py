@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -22,6 +23,7 @@ from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.helpers import AGENT_ID, ROOM_ID
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 async def assert_fresh_cycle_still_propagates_shutdown_cancel(
@@ -38,7 +40,7 @@ async def assert_fresh_cycle_still_propagates_shutdown_cancel(
 
     ctx._on_execute = block
     shutdown = asyncio.create_task(
-        ctx._process_event(make_message_event(msg_id=msg_id))
+        attempt_delivery(ctx, make_message_event(msg_id=msg_id))
     )
     await started.wait()
     shutdown.cancel()
@@ -57,7 +59,7 @@ def backlog_message(msg_id: str = "msg-bk") -> PlatformMessage:
         sender_name="User One",
         message_type="text",
         metadata={},
-        created_at=None,
+        created_at=datetime.now(UTC),
     )
 
 

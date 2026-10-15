@@ -17,6 +17,6 @@ class TestStaleNextMessage:
         peer.add_message("stale", metadata=PROCESSED_BY_AGENT)
 
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         assert (invoked, peer.requested_marks) == ([], [])

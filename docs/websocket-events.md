@@ -121,8 +121,8 @@ With `SessionConfig.consume_all_queued` ([guide](consume-all-queued.md)) the roo
 selects its next turn from two sources and takes a bounded, ordered prefix of
 the ordinary messages.
 
-- **REST list.** One page of `GET agent/chats/{room}/messages` per scheduling
-  pass: ascending cursor pagination with no status filter, 100 per page, ordered
+- **REST list.** Each discovery step reads one page of
+  `GET agent/chats/{room}/messages`: ascending cursor pagination with no status filter, 100 per page, ordered
   by `(inserted_at, id)`. It returns outstanding agent-addressed text, including
   `processing` and `failed` deliveries.
 - **Retained WebSocket originals.** The list and `/next` omit some deliveries the
@@ -131,12 +131,22 @@ the ordinary messages.
   The room therefore keeps each delivered original's payload, not just its ID,
   until the original settles.
 
-The two sources merge by original ID into one chronological list: an original in
-both counts once, keeping the retained payload and the REST delivery status. A
+One room scheduler consumes live arrivals and recovery wakes in either mode.
+With batching off, live messages keep receive order without a REST read per
+arrival; startup and recovery honor the `/next` head and first-WebSocket handoff.
+Batch selection orders its resolved candidates chronologically.
+
+The two sources resolve by original ID: an original in
+both counts once, keeping the retained payload and the REST delivery status
+separately. A newer context read before admission may supersede that status; an
+older cached context cannot. Neither read rewrites the original payload. A
 retained original the REST read lacks is trusted only once the read has reached
 or passed its `(inserted_at, id)` or ended; it then runs as a singleton, after
-the eligible earlier prefix. Until then the prefix stops short of it, so a
+the eligible earlier prefix. Originals beyond that frontier are retained without
+recording a completion from an unselected replay. Until then the prefix stops short of it, so a
 continuous stream of arrivals never makes a turn wait for the end of the list.
+Ordinary discovery yields between skipped pages and continues immediately;
+priority discovery reads at most one page per wake at its retained cursor.
 
 Self-authored, locally settled or settlement-pending deliveries, and those the
 platform reports `processed` or `failed` for this agent, are skipped. A delivery

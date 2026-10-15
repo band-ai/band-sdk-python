@@ -13,6 +13,7 @@ from band.runtime.selection import (
     MessageKey,
     Selection,
     Stop,
+    merge,
     select_prefix,
 )
 from tests.conftest import make_message_event
@@ -57,8 +58,9 @@ def omitted_original_outcomes(
     return [
         outcome(
             select_prefix(
-                listed,
-                [omitted],
+                sorted(merge(listed, [omitted]), key=lambda member: member.key),
+                listed={member.message_id for member in listed},
+                retained={omitted.message_id},
                 cap=10,
                 page_reaches=rest[-1].key,
                 exhausted=False,
@@ -77,8 +79,9 @@ def select_at_end(
 ) -> Selection:
     """Select from a REST read that reached the end of the actionable list."""
     return select_prefix(
-        rest,
-        retained,
+        sorted(merge(rest, retained), key=lambda member: member.key),
+        listed={member.message_id for member in rest},
+        retained={member.message_id for member in retained},
         cap=cap,
         page_reaches=None,
         exhausted=True,
@@ -174,7 +177,12 @@ class TestPrefixSelection:
         later = candidate("z", 50)
 
         selection = select_prefix(
-            rest, [later], cap=10, page_reaches=rest[-1].key, exhausted=False
+            sorted(merge(rest, [later]), key=lambda member: member.key),
+            listed={member.message_id for member in rest},
+            retained={later.message_id},
+            cap=10,
+            page_reaches=rest[-1].key,
+            exhausted=False,
         )
 
         assert outcome(selection) == (["a", "b"], Stop.FRONTIER)

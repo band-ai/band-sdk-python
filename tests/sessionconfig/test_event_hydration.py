@@ -7,6 +7,7 @@ import pytest
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestProcessEventHydration:
@@ -31,7 +32,7 @@ class TestProcessEventHydration:
             config=config,
         )
 
-        await ctx._process_event(sample_event)
+        await attempt_delivery(ctx, sample_event)
 
         assert handler_called
         # Should NOT have fetched context
@@ -56,7 +57,7 @@ class TestProcessEventHydration:
             config=config,
         )
 
-        await ctx._process_event(sample_event)
+        await attempt_delivery(ctx, sample_event)
 
         assert handler_called
         # Should have fetched context

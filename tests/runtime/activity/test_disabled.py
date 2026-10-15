@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.activity.kit import ActivityPeer, activity_context
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityDisabled:
@@ -15,6 +16,6 @@ class TestActivityDisabled:
         peer = ActivityPeer()
         handler = BlockingHandler(block=False)
         async with activity_context(peer, handler, AsyncMock(), enabled=False) as ctx:
-            await ctx._process_event(make_message_event(msg_id="trigger"))
+            await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             assert handler.completed == ["trigger"]
             assert peer.activity_reports == []

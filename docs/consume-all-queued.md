@@ -227,8 +227,9 @@ that each input was answered.
   stopped-room `/next` probe cannot tell an empty room from a missed PLAY; see
   [limits of WebSocket-only backlog](websocket-events.md#limits-of-websocket-only-backlog).
 - **Long failed history is re-read.** Failed deliveries ahead of new work are
-  scanned 100 per pass; nothing hides them, so a later scan can find one another
-  runtime reopened.
+  read 100 per page, yielding between reads; nothing hides them, so a later scan
+  can find one another runtime reopened. Priority control scans advance one page
+  per wake.
 - **Cursor runs one turn per room.** A Cursor room with a running turn returns
   ordinary input to the room's scheduler instead of batching it into that turn; see
   [Cursor room turns](acp.md#cursor-room-turns).
@@ -252,6 +253,11 @@ Priority controls require both a read-only message projection and recognizer.
 Recognition is rechecked after processing acceptance. A candidate reclassified
 or declined as a control stays in its ordinary position without committing
 prepared model context or immediately repeating the probe in that pass.
+A declined probe is reused by ordinary fallback for the same scheduling pass
+and native-control revision, so an expiry notice is emitted once. A later wake
+or revision may reconsider it. A control that becomes ordinary during the
+pass remains a singleton boundary; recognition alone never authorizes a probe.
+
 Claude SDK recognises its approval commands while approvals are on, Codex
 recognises every local command, and Cursor recognises `/cursor` commands, valid
 or not.
