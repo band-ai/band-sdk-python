@@ -1,4 +1,4 @@
-"""A terminal-write outage warns once per intent, however often it is retried."""
+"""Recent terminal-write intents suppress repeated outage warnings."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import logging
 import pytest
 
 from band.platform.link import BandLink
+from band.platform.message_lifecycle import UNCONFIRMED_WRITE_LIMIT
 from tests.platform.settlement.kit import (
     MESSAGE_ID,
     Reply,
@@ -33,6 +34,34 @@ def warning_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 class TestOutageLogging:
+    async def test_old_intents_expire_but_recent_retries_stay_quiet(
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        settlement_peer.reply = Reply(400)
+        oldest = Terminal(terminal.action, "oldest")
+        await oldest.detailed(link)
+        await terminal.detailed(link)
+        for index in range(UNCONFIRMED_WRITE_LIMIT - 2):
+            await Terminal(terminal.action, f"pending-{index}").detailed(link)
+        await terminal.detailed(link)
+        await Terminal(terminal.action, "newest").detailed(link)
+        await Terminal(terminal.action, "next-newest").detailed(link)
+        caplog.clear()
+
+        await terminal.detailed(link)
+
+        assert warning_lines(caplog) == []
+
+        await oldest.detailed(link)
+
+        lines = warning_lines(caplog)
+        assert lines
+        assert all("oldest" in line for line in lines)
+
     async def test_the_first_unconfirmed_write_of_an_intent_warns(
         self,
         terminal: Terminal,
