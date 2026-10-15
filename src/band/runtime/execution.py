@@ -210,13 +210,6 @@ def _event_message_id(event: MessageEvent) -> str:
     return _payload(event).id
 
 
-def _diagnostic_message_id(event: PlatformEvent) -> str | None:
-    """The message id a diagnostic names; None for an event that is no delivery."""
-    if isinstance(event, MessageEvent) and event.payload:
-        return event.payload.id
-    return None
-
-
 def _message_ids(events: Iterable[MessageEvent]) -> tuple[str, ...]:
     return tuple(_event_message_id(event) for event in events)
 
@@ -2487,7 +2480,7 @@ class ExecutionContext:
         handler drains; participant add/remove events are housekeeping and
         skip it.
         """
-        message_id = _diagnostic_message_id(event)
+        message_id = _delivery_id(event)
         with _observe_phase("cycle", self.room_id, message_id):
             if isinstance(event, MessageEvent):
                 await self._execute_message_cycle(event, message_id)
@@ -2932,7 +2925,7 @@ class ExecutionContext:
         logger.debug(
             "Dispatch source=websocket room=%s message=%s event=%s",
             self.room_id,
-            _diagnostic_message_id(event),
+            _delivery_id(event),
             event.type,
         )
 
