@@ -5,9 +5,8 @@ set -uo pipefail
 : "${FINAL:?FINAL scorecard path is required}"
 
 # INFO live and in the failure capture, on every nightly and dispatch run.
-# A model call that never returns leaves a "request N starting" line with no
-# matching "finished" line. HTTP client loggers stay at WARNING (baseline
-# conftest) so those lines stay readable.
+# HTTP client loggers stay at WARNING (baseline conftest) so those lines
+# stay readable.
 pytest_args=(
   -p no:rerunfailures
   --log-cli-level=INFO

@@ -341,11 +341,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "content": tool_results,
                     }
                 )
-                # A successful band_no_reply already ended the turn. Another
-                # model call would only wait for a non-tool stop, and a call
-                # that never returns leaves the message in processing until
-                # this handler returns. A failed band_no_reply stays in the
-                # loop so the model receives the error.
+                # A follow-up that never returns leaves the message in
+                # processing until on_message returns. declined stays false
+                # when band_no_reply fails.
                 if declined:
                     logger.info(
                         "Room %s: %s settled the turn after request %s; "
