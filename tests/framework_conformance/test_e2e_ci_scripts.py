@@ -78,6 +78,39 @@ def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
     assert "--last-failed" not in command
 
 
+@posix_shell_only
+def test_baseline_runner_forwards_a_diagnostic_log_level(tmp_path: Path) -> None:
+    stub = tmp_path / "uv"
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "with Path(os.environ['CALL_LOG']).open('a') as log:\n"
+        "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "Path(os.environ['BAND_E2E_SCORECARD_JSON']).write_text('[]')\n"
+    )
+    stub.chmod(0o755)
+    call_log = tmp_path / "calls.txt"
+    result = subprocess.run(
+        ["bash", str(_RUN_BASELINE_E2E)],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "CALL_LOG": str(call_log),
+            "FINAL": str(tmp_path / "scorecard.json"),
+            "BAND_E2E_LOG_LEVEL": "DEBUG",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    (command,) = call_log.read_text().splitlines()
+    assert "--log-level=DEBUG" in command
+    assert "--log-cli-level=DEBUG" in command
+
+
 def _emit_lane_matrix(lane: str, os_id: str) -> subprocess.CompletedProcess[str]:
     """Run the lane-matrix emitter for one dispatch selection.
 
