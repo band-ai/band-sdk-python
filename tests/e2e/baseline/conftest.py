@@ -27,7 +27,11 @@ from tests.e2e.baseline.fixtures.agents import (
     cell,
     peer,
 )
-from tests.e2e.baseline.fixtures.capture import judge, reply_capture
+from tests.e2e.baseline.fixtures.capture import (
+    invocation_observer,
+    judge,
+    reply_capture,
+)
 from tests.e2e.baseline.fixtures.diagnostics import diagnostic_logs
 from tests.e2e.baseline.fixtures.platform import (
     baseline_run_id,
@@ -61,6 +65,7 @@ __all__ = [
     "baseline_ws",
     "cell",
     "diagnostic_logs",
+    "invocation_observer",
     "judge",
     "orphan_sweep",
     "peer",

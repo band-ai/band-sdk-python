@@ -25,7 +25,13 @@ from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    Capability,
+    Emit,
+    FeatureKwargs,
+    PlatformMessage,
+    distinct_sender_ids,
+)
 from band.integrations.parlant.customschema import check_parlant_custom_tools
 from band.integrations.parlant.sessiontools import bound_session_tools
 from band.integrations.parlant.tools import create_parlant_tools
@@ -91,6 +97,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     @property
     def judges_turns(self) -> bool:
@@ -309,15 +316,42 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Post the turn into the room's Parlant session and relay the response."""
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: ParlantMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Post the turn's inputs into the room's Parlant session as one
+        customer message and relay the response to their senders."""
+        message_ids = [msg.id for msg in messages]
+        logger.debug("Handling messages %s in room %s", message_ids, room_id)
         rooms = self._rooms
         if rooms is None:
             await self._fail_uninitialized(tools)
 
-        sender_name = msg.sender_name or msg.sender_id or FALLBACK_SENDER_NAME
+        # The room's customer is named once, after whoever wrote first; every
+        # input's own sender is in the message itself.
+        first = messages[0]
+        customer_name = first.sender_name or first.sender_id or FALLBACK_SENDER_NAME
         session_id = await self._session_for(
-            rooms, room_id=room_id, sender_name=sender_name, tools=tools
+            rooms, room_id=room_id, customer_name=customer_name, tools=tools
         )
         with bound_session_tools(session_id=str(session_id), tools=tools):
             if is_session_bootstrap and history:
@@ -331,7 +365,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     "Room %s: Injected %s messages from history", room_id, injected
                 )
             user_message = compose_user_message(
-                msg=msg, participants_msg=participants_msg, contacts_msg=contacts_msg
+                messages=messages,
+                participants_msg=participants_msg,
+                contacts_msg=contacts_msg,
             )
             try:
                 await self._converse(
@@ -340,7 +376,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     room_id=room_id,
                     user_message=user_message,
                     tools=tools,
-                    sender_name=sender_name,
+                    audience=distinct_sender_ids(messages),
                 )
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
@@ -351,7 +387,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 )
                 raise
 
-        logger.debug("Message %s processed successfully", msg.id)
+        logger.debug("Messages %s processed successfully", message_ids)
 
     async def _fail_uninitialized(self, tools: AgentToolsProtocol) -> NoReturn:
         logger.error(NOT_INITIALIZED_ERROR)
@@ -363,11 +399,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         rooms: RoomSessions,
         *,
         room_id: str,
-        sender_name: str,
+        customer_name: str,
         tools: AgentToolsProtocol,
     ) -> SessionId:
         try:
-            return await rooms.session_for(room_id, customer_name=sender_name)
+            return await rooms.session_for(room_id, customer_name=customer_name)
         except Exception as e:
             logger.error("Failed to get/create session for room %s: %s", room_id, e)
             await tools.send_failure(
@@ -383,7 +419,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         room_id: str,
         user_message: str,
         tools: AgentToolsProtocol,
-        sender_name: str,
+        audience: Sequence[str],
     ) -> None:
         """Post *user_message* as the customer, then relay the engine's reply."""
         offset = await post_user_message(
@@ -395,7 +431,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             room_id=room_id,
             min_offset=offset,
             tools=tools,
-            sender_name=sender_name,
+            audience=audience,
             timeout=self.config.response_timeout,
             poll=self.config.response_poll,
         )

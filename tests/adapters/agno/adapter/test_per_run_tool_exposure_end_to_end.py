@@ -5,7 +5,9 @@ from agno.agent import Agent as AgnoAgent
 from band.adapters.agno import (
     AgnoAdapter,
 )
-from tests.adapters.agno.adapter.kit import _msg
+from tests.adapters.agno.adapter.kit import (
+    _msg,
+)
 from tests.adapters.agno.helpers import (
     CapturingModel,
     ContactAwareTools,

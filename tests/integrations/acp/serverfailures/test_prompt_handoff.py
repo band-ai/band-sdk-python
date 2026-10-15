@@ -14,7 +14,10 @@ from tests.integrations.acp.conftest import (
     make_platform_message,
     wait_for_pending_prompt,
 )
-from tests.integrations.acp.serverfailures.kit import prompt, running_server
+from tests.integrations.acp.serverfailures.kit import (
+    prompt,
+    running_server,
+)
 
 
 class TestPromptHandoff:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.crewai import CrewAIAdapterConfig
+from band.adapters.crewai import (
+    CrewAIAdapterConfig,
+)
 
 
 class TestVerboseMode:

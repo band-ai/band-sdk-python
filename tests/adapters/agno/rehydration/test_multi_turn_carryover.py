@@ -3,6 +3,7 @@ from __future__ import annotations
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 
+from band.runtime.formatters import format_current_inputs
 from tests.adapters.agno.helpers import make_agent_input, run_input
 
 
@@ -34,5 +35,5 @@ class TestMultiTurnCarryover:
 
         msgs = run_input(agent)  # the second (follow-up) turn's input
         assert [m.content for m in msgs[:2]] == ["[Alice]: q1", "a1"]
-        assert msgs[-1].content == sample_platform_message.format_for_llm()
+        assert msgs[-1].content == format_current_inputs([sample_platform_message])
         assert len(msgs) == 3

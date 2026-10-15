@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import warnings
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -109,6 +109,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    distinct_sender_ids,
 )
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
@@ -136,7 +137,11 @@ from band.runtime.decisions import (
     DecisionRegistry,
     Timeout,
 )
-from band.runtime.formatters import format_tokens, strip_leading_mentions
+from band.runtime.formatters import (
+    format_current_inputs,
+    format_tokens,
+    strip_leading_mentions,
+)
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -543,7 +548,6 @@ class PendingApproval:
     summary: str
     created_at: datetime
     future: asyncio.Future[ApprovalReply | None]
-    requester: dict[str, str]
 
 
 async def _fail_turn(
@@ -600,20 +604,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.FILES, Capability.TASKS}
     )
-
-    def _control_command(
-        self, msg: PlatformMessage
-    ) -> tuple[ClaudeSDKCommand, str] | None:
-        """The room command ``msg`` carries, if approvals make it a control.
-
-        The one parser behind both ``is_control_message`` and ``try_handle_control``.
-        """
-        if self.config.approvals is None:
-            return None
-        return self._extract_command(msg.content)
-
-    def is_control_message(self, msg: PlatformMessage) -> bool:
-        return self._control_command(msg) is not None
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -677,8 +668,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # {room_id: DecisionRegistry of PendingApproval}
         self._pending_approvals: dict[str, DecisionRegistry[PendingApproval]] = {}
         self._approval_seq: dict[str, int] = {}  # per-room counters
-        # Last message sender per room (used for @mentions in approval notifications)
-        self._room_last_sender: dict[str, dict[str, str]] = {}
+        # The running turn's audience per room: the distinct senders of its
+        # originals, whom its automatic approval notices address. The turn
+        # sets it and drops it when it ends, so no later message replaces it.
+        self._turn_audience: dict[str, tuple[str, ...]] = {}
         # tool_use_ids (per room) whose decline was actually posted as a
         # room-visible notice this turn (see _record_notified_decline). Popped
         # unconditionally once per turn in _on_turn_complete — see
@@ -834,6 +827,20 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             )
         }
 
+    def _control_command(
+        self, msg: PlatformMessage
+    ) -> tuple[ClaudeSDKCommand, str] | None:
+        """The room command ``msg`` carries, if approvals make it a control.
+
+        The one parser behind both ``is_control_message`` and ``try_handle_control``.
+        """
+        if self.config.approvals is None:
+            return None
+        return self._extract_command(msg.content)
+
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return self._control_command(msg) is not None
+
     async def try_handle_control(
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
@@ -855,7 +862,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         tools.turn.settle()
         return True
 
-    # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -867,14 +873,37 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: ClaudeSDKSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
         """
-        Handle incoming message.
+        Handle one turn over its original messages.
 
         - Reserve the room's turn task before anything awaits
         - Bind the turn's tools, then reuse or start the room's CLI
         - Stream response and log events (tools execute via MCP)
         """
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        message_ids = [msg.id for msg in messages]
+        logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         if not self._session_manager:
             raise RuntimeError(
@@ -883,14 +912,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         self._admit_turn(room_id, "Claude")
         session = self._session_manager.room(room_id)
-        if self.config.approvals is not None:
-            self._room_last_sender[room_id] = {
-                "id": msg.sender_id,
-                "name": msg.sender_name or msg.sender_type,
-            }
 
         full_message = self._compose_prompt(
-            msg,
+            messages,
             history,
             participants_msg,
             contacts_msg,
@@ -916,7 +940,8 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 session,
                 tools,
                 full_message,
-                msg.id,
+                message_ids,
+                distinct_sender_ids(messages),
                 release_future,
                 resume_from=history.session_id if is_session_bootstrap else None,
             ),
@@ -943,7 +968,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
     def _compose_prompt(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         history: ClaudeSDKSessionState,
         participants_msg: str | None,
         contacts_msg: str | None,
@@ -951,7 +976,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         is_session_bootstrap: bool,
         room_id: str,
     ) -> str:
-        """The text sent to Claude: bootstrap memory, system updates, message."""
+        """The text sent to Claude: bootstrap memory, system updates, the turn's inputs."""
         messages_to_send = []
 
         # Include historical context on first message. Frame it as authoritative
@@ -981,7 +1006,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             messages_to_send.append(f"{SYSTEM_UPDATE_PREFIX}{contacts_msg}")
             logger.info("Room %s: Contacts broadcast received", room_id)
 
-        messages_to_send.append(msg.format_for_llm())
+        messages_to_send.append(format_current_inputs(messages))
 
         logger.info(
             "Room %s: Sending query to Claude SDK (first_msg=%s, parts=%s)",
@@ -997,18 +1022,21 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
         full_message: str,
-        msg_id: str,
+        message_ids: list[str],
+        audience: tuple[str, ...],
         release_future: asyncio.Future[None],
         *,
         resume_from: str | None,
     ) -> None:
         """Run one turn under the room's lease; always releases ``release_future``."""
         owner = await owner_ready
+        self._turn_audience[session.room_id] = audience
         try:
             async with self._turn_lease(session, tools, resume_from) as client:
                 await self._converse(owner, session, client, tools, full_message)
-            logger.debug("Message %s processed successfully", msg_id)
+            logger.debug("Messages %s processed successfully", message_ids)
         finally:
+            self._turn_audience.pop(session.room_id, None)
             self._release_turn(session.room_id, release_future)
             if self._turn_tasks.get(session.room_id) is owner:
                 del self._turn_tasks[session.room_id]
@@ -1431,7 +1459,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Close out the turn: persist session id, emit usage, surface failure.
 
         A turn released early for an approval is judged here, at its real end;
-        any other turn is judged by ``run_judged_turn`` once ``on_message`` returns.
+        any other turn is judged by ``judged_turn`` once ``on_turn`` returns.
         """
         room_id = session.room_id
         logger.info(
@@ -1635,7 +1663,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._room_tools.pop(room_id, None)
         self._mcp_room_tools.pop(room_id, None)
         self._recorded_session_ids.pop(room_id, None)
-        self._room_last_sender.pop(room_id, None)
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
         self._turn_release.pop(room_id, None)
@@ -1709,9 +1736,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # this approval surfaces to the user (summary, notifications, logs).
         tool_name = self._semantic_tool_name(tool_name)
         summary = self._approval_summary(tool_name, tool_input)
-        # Capture the sender now so it doesn't get overwritten by
-        # messages arriving while we wait for a decision.
-        requester = self._room_last_sender.get(room_id)
+        mentions = list(self._turn_audience.get(room_id, ())) or None
         # Always a real string for a can_use_tool callback (see
         # ToolPermissionContext.tool_use_id); matched against this same call's
         # entry in ResultMessage.permission_denials at turn end.
@@ -1727,7 +1752,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         if self._approvals.mode == "auto_accept":
             if self._approvals.text_notifications:
                 await self._notify_auto_decision(
-                    room_id, summary, "accept", requester=requester
+                    room_id, summary, "accept", mentions=mentions
                 )
             return PermissionResultAllow()
 
@@ -1735,7 +1760,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             notified = False
             if self._approvals.text_notifications:
                 notified = await self._notify_auto_decision(
-                    room_id, summary, "decline", requester=requester
+                    room_id, summary, "decline", mentions=mentions
                 )
             if notified and tool_use_id:
                 self._record_notified_decline(room_id, tool_use_id)
@@ -1745,7 +1770,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         # --- manual mode ---------------------------------------------------
         return await self._resolve_manual_approval(
-            room_id, tool_name, tool_input, summary, tool_use_id, requester=requester
+            room_id, tool_name, tool_input, summary, tool_use_id, mentions=mentions
         )
 
     async def _send_best_effort(
@@ -1776,7 +1801,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         summary: str,
         decision: ApprovalDecision,
         *,
-        requester: dict[str, str] | None = None,
+        mentions: list[str] | None,
     ) -> bool:
         """Best-effort chat notification for auto-approve / auto-decline.
 
@@ -1788,13 +1813,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         tools = self._room_tools.get(room_id)
         if not tools:
             return False
-        mention = [requester["id"]] if requester else None
         return await self._send_best_effort(
             tools,
             APPROVAL_POLICY_DECISION_TEMPLATE.format(
                 summary=summary, decision=decision
             ),
-            mention,
+            mentions,
             room_id=room_id,
             failure_note="Failed to send approval policy notification",
         )
@@ -1807,7 +1831,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         summary: str,
         tool_use_id: str | None,
         *,
-        requester: dict[str, str] | None = None,
+        mentions: list[str] | None,
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Block until a user approves / declines via ``/approve`` or ``/decline``."""
         loop = asyncio.get_running_loop()
@@ -1819,7 +1843,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             summary=summary,
             created_at=datetime.now(UTC),
             future=loop.create_future(),
-            requester=requester or {"id": "", "name": ""},
         )
 
         # Store pending approval (evict oldest if capacity exceeded)
@@ -1843,12 +1866,11 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # Notify user — if we can't deliver the prompt, decline immediately
         # so the caller isn't left waiting for a timeout nobody will see.
         tools = self._room_tools.get(room_id)
-        mention = [requester["id"]] if requester else None
         if tools:
             try:
                 await tools.send_notice(
                     APPROVAL_REQUESTED_TEMPLATE.format(summary=summary, token=token),
-                    mentions=mention,
+                    mentions=mentions,
                 )
             except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Room %s: Failed to send approval notification", room_id)
@@ -1878,7 +1900,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         match decision:
             case Timeout.TIMED_OUT:
                 return await self._apply_approval_timeout(
-                    tools, room_id, token, mention, tool_use_id
+                    tools, room_id, token, mentions, tool_use_id
                 )
             case ApprovalReply():
                 return await self._apply_approval_reply(
@@ -1915,7 +1937,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         tools: AgentToolsProtocol | None,
         room_id: str,
         token: str,
-        mention: list[str] | None,
+        mentions: list[str] | None,
         tool_use_id: str | None,
     ) -> PermissionResultAllow | PermissionResultDeny:
         decision = self._approvals.timeout_decision
@@ -1924,7 +1946,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             notified = await self._send_best_effort(
                 tools,
                 APPROVAL_TIMED_OUT_TEMPLATE.format(token=token, decision=decision),
-                mention,
+                mentions,
                 room_id=room_id,
                 failure_note="Failed to send timeout notification",
                 log_level=logging.DEBUG,

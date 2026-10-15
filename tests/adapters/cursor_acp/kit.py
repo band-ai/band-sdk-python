@@ -75,13 +75,13 @@ def cursor_turn(
     adapter: CursorACPAdapter,
     room_id: str,
     tools: AgentToolsProtocol,
-    requester_id: str | None,
+    sender_id: str,
     session_id: str | None = None,
 ) -> CursorTurn:
     return CursorTurn(
         room=adapter._room(room_id),
         tools=tools,
-        requester_id=requester_id,
+        audience=(sender_id,),
         release=asyncio.get_running_loop().create_future(),
         session_id=session_id,
     )
