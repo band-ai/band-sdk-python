@@ -25,7 +25,6 @@ from pydantic import BaseModel
 
 from band.adapters.copilot_acp import CopilotACPAdapter
 from band.adapters.cursor_acp import CursorACPAdapter
-from band.adapters.omp_acp import OmpACPAdapter
 from band.core.exceptions import InputNotAccepted
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
@@ -1250,9 +1249,7 @@ async def test_replay_after_midrun_respawn() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "adapter_class", [CopilotACPAdapter, CursorACPAdapter, OmpACPAdapter]
-)
+@pytest.mark.parametrize("adapter_class", [CopilotACPAdapter, CursorACPAdapter])
 @pytest.mark.parametrize(
     "selection, expected",
     [

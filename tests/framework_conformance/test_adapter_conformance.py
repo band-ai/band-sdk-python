@@ -276,7 +276,6 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
     ),
     ExcludedAdapter(Adapter.COPILOT_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
     ExcludedAdapter(Adapter.CURSOR_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
-    ExcludedAdapter(Adapter.OMP_ACP, _WRAPS_ACP_CLIENT_ADAPTER_REASON),
 )
 
 # parlant is absent from the Adapter enum entirely (NON_AGENT_ADAPTERS), so it
@@ -338,9 +337,8 @@ class TestImagePassthroughMatrix:
         while coverage quietly regressed. The two lists differ by design
         (see the comment above IMAGE_PASSTHROUGH_ADAPTERS): -crewai_flow (no
         Band tool loop to drive a file round-trip), +copilot_acp, +cursor_acp,
-        +omp_acp, and +letta (they share opencode's already-fixed MCP engine,
-        so they're excluded from *this* unit-level set as having no probe of
-        their own, but get a real E2E cell each)."""
+        and +letta (they share opencode's MCP engine, so they're excluded from
+        this unit-level set but get a real E2E cell each)."""
         # Real circular import: test_capability_matrix imports
         # IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS from this module at its own
         # top level, so this side must defer to call time.
@@ -353,7 +351,6 @@ class TestImagePassthroughMatrix:
         ) | {
             Adapter.COPILOT_ACP.value,
             Adapter.CURSOR_ACP.value,
-            Adapter.OMP_ACP.value,
             Adapter.LETTA.value,
         }
 
