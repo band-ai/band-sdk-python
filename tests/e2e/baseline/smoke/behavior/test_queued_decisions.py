@@ -5,8 +5,8 @@ the model together. The SDK's turn guidance tells it to weigh them as a whole, s
 
 * an actionable request still gets its answer when an unrelated FYI arrived after
   it, rather than a decline because the last input needs nothing;
-* a queue of FYIs that collectively needs no answer ends in one deliberate decline,
-  which completes every original (the turn is otherwise reported as FAILED);
+* a queue of FYIs whose senders explicitly need no answer ends in one deliberate
+  decline, which completes every original (the turn is otherwise reported as FAILED);
 * a request followed by its sender's correction is answered as corrected.
 
 Every original in the shared turn ends in the same durable state. The agent runs
@@ -29,6 +29,7 @@ from tests.e2e.baseline.smoke.samples.queuedroom import queued_room
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     ASSISTANT_PROMPT,
     FYI_NOTICES,
+    NO_REPLY_FYI_NOTICES,
     correction_probe,
     liveness_probe,
     unique_marker,
@@ -89,7 +90,7 @@ class TestQueuedDecisions:
             budget=BUDGET,
             consume_all_queued=True,
         ) as room:
-            batch = await room.queue_texts_while_busy(list(FYI_NOTICES))
+            batch = await room.queue_texts_while_busy(list(NO_REPLY_FYI_NOTICES))
 
             assert room.partition == batch.batched_turns
             assert batch.processed == batch.originals

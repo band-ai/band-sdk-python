@@ -192,6 +192,9 @@ FYI_NOTICES = (
     "FYI: the weekly sync moved to Thursday at 4pm.",
     "FYI: the staging database was refreshed overnight.",
 )
+NO_REPLY_FYI_NOTICES = tuple(
+    f"{notice} No reply or acknowledgment is needed." for notice in FYI_NOTICES
+)
 
 
 def correction_probe(marker: str) -> str:
