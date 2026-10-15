@@ -35,6 +35,10 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   close errors and close timeouts retain the claim for retry. A timed-out or
   cancelled caller does not abandon subprocess cleanup; retry room cleanup to
   finish releasing ownership. Shutdown attempts every room and reports failures.
+  On Windows, the client owns the helper and its process-tree job from startup
+  through cleanup. Cleanup confirms the helper has exited before terminating
+  and draining the job; an empty job alone does not establish helper exit.
+  Failed cleanup retains that same owner and job for retry.
 - **Leaving is final.** Leaving a room stops it admitting work at once. A
   leave that fails or runs over keeps the process, thread and workspace claim,
   and the room refuses work until a retried leave succeeds; a later rejoin

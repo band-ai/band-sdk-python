@@ -25,7 +25,7 @@ from band.integrations.codex.winspawn import (
     Job,
     JobNotDrained,
     SpawnFailure,
-    _await_status,
+    _read_status,
     _start_and_wait,
 )
 from tests.integrations.codex.cleanup import cleanup_snapshot
@@ -163,8 +163,14 @@ class TestSubprocessCleanup:
         async def refuse_kill(_process: asyncio.subprocess.Process) -> None:
             raise RuntimeError("kill failed")
 
+        def refuse_helper_kill() -> None:
+            raise RuntimeError("kill failed")
+
         with monkeypatch.context() as patch:
-            patch.setattr(stdio_client, "kill_process_tree", refuse_kill)
+            if client._windows_process is not None:
+                patch.setattr(process, "kill", refuse_helper_kill)
+            else:
+                patch.setattr(stdio_client, "kill_process_tree", refuse_kill)
             with pytest.raises(RuntimeError, match="kill failed"):
                 await client.close()
             assert process.returncode is None
@@ -269,10 +275,11 @@ class TestSubprocessCleanup:
     async def test_missing_status_fails_before_the_ack_timeout(self) -> None:
         """A helper that exits without a status line is end-of-file, not a 30s wait."""
         read_fd, write_fd = os.pipe()
+        os.close(write_fd)
         try:
             started = time.monotonic()
             with pytest.raises(SpawnFailure):
-                await _await_status(read_fd, write_fd, CLOSE_BOUND_S)
+                await _read_status(read_fd, CLOSE_BOUND_S)
             elapsed = time.monotonic() - started
         finally:
             with suppress(OSError):
@@ -302,7 +309,7 @@ class TestSubprocessCleanup:
         ("active", "drained"),
         [(0, True), (1, False), (None, False)],
     )
-    async def test_idle_wait_closes_the_job_only_when_it_has_no_members(
+    async def test_idle_wait_preserves_ownership_until_explicit_release(
         self, active: int | None, drained: bool
     ) -> None:
         job = Job.__new__(Job)
@@ -325,7 +332,7 @@ class TestSubprocessCleanup:
         else:
             with pytest.raises(JobNotDrained):
                 await job.wait_until_idle(0)
-        assert closed is drained
+        assert not closed
 
     def test_windows_helper_does_not_import_a_room_package(
         self, tmp_path: Path

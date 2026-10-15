@@ -16,8 +16,8 @@ import os
 import subprocess
 import sys
 import uuid
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from ctypes import wintypes
 from typing import Any, NoReturn
 
@@ -33,6 +33,8 @@ _STATUS_ERROR = "error"
 _SPAWN_ACK_S = 30.0
 _JOB_POLL_S = 0.05
 _ERROR_ALREADY_EXISTS = 183
+_ERROR_BROKEN_PIPE = 109
+_STATUS_READ_SIZE = 256
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
@@ -50,7 +52,7 @@ _WAIT_FAILED = 0xFFFFFFFF
 
 
 class SpawnFailure(Exception):
-    """The command never became a member of its job."""
+    """Windows startup did not establish readiness."""
 
     def __init__(self, winerror: int | None) -> None:
         self.winerror = winerror
@@ -252,6 +254,15 @@ def _kernel32() -> Any:
         ctypes.c_void_p,
     ]
     library.WriteFile.restype = wintypes.BOOL
+    library.PeekNamedPipe.argtypes = [
+        handle,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    library.PeekNamedPipe.restype = wintypes.BOOL
     return library
 
 
@@ -277,9 +288,9 @@ class Job:
 
     def close(self) -> None:
         handle = self._handle
-        self._handle = None
         if handle is not None and not _kernel32().CloseHandle(handle):
-            logger.warning("CloseHandle failed: winerror %s", _last_error())
+            raise _win_os_error(_last_error())
+        self._handle = None
 
     def _open_handle(self) -> ctypes.c_void_p:
         handle = self._handle
@@ -312,34 +323,21 @@ class Job:
         the other end closes. Wait only after that end is closed.
         """
         if not _kernel32().TerminateJobObject(self._open_handle(), 1):
-            logger.warning(
-                "TerminateJobObject failed: winerror %s",
-                _last_error(),
-            )
+            raise _win_os_error(_last_error())
 
     async def wait_until_idle(self, timeout: float) -> None:
-        """Wait until no members remain, then close this handle.
-
-        A query failure or a member that outlives ``timeout`` leaves the
-        handle open and raises, so the caller can terminate the same job
-        again. Closing it early drops the only parent reference while the
-        helper may still hold one, and kill-on-close does not run.
-        """
+        """Observe tree exit without releasing ownership of the job."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
             active = self.active_processes()
             if active == 0:
-                self.close()
                 return
             remaining = deadline - loop.time()
             if active is None or remaining <= 0:
                 logger.warning("Codex job still has %s active processes", active)
                 raise JobNotDrained(active)
             await asyncio.sleep(min(_JOB_POLL_S, remaining))
-
-
-_JOBS: dict[int, Job] = {}
 
 
 def create_job() -> Job:
@@ -387,8 +385,32 @@ def _error_code(line: str) -> int | None:
     return None
 
 
+def _read_available(read_fd: int) -> bytes:
+    size = _STATUS_READ_SIZE
+    if os.name == "nt":
+        available = wintypes.DWORD()
+        if not _kernel32().PeekNamedPipe(
+            ctypes.c_void_p(_os_handle(read_fd)),
+            None,
+            0,
+            None,
+            ctypes.byref(available),
+            None,
+        ):
+            code = _last_error()
+            if code == _ERROR_BROKEN_PIPE:
+                return b""
+            raise _win_os_error(code)
+        if not available.value:
+            raise BlockingIOError
+        size = min(size, available.value)
+    return os.read(read_fd, size)
+
+
 async def _read_status(read_fd: int, timeout: float) -> str:
-    os.set_blocking(read_fd, False)
+    # Windows 3.11 lacks os.set_blocking; the sole reader peeks before reading.
+    if os.name != "nt":
+        os.set_blocking(read_fd, False)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     data = bytearray()
@@ -398,7 +420,7 @@ async def _read_status(read_fd: int, timeout: float) -> str:
             logger.warning("Codex spawn helper did not report readiness")
             raise SpawnFailure(None)
         try:
-            chunk = os.read(read_fd, 256)
+            chunk = _read_available(read_fd)
         except BlockingIOError:
             await asyncio.sleep(min(_JOB_POLL_S, remaining))
             continue
@@ -410,17 +432,6 @@ async def _read_status(read_fd: int, timeout: float) -> str:
         logger.warning("Codex spawn helper did not report readiness")
         raise SpawnFailure(None)
     return line
-
-
-async def _await_status(read_fd: int, write_fd: int, timeout: float) -> str:
-    """Read the helper's status line after dropping our copy of its write end.
-
-    The helper inherited its own copy. Keeping this one open means a helper
-    that exits without a status byte is not end-of-file, so connect waits
-    out the whole ack timeout.
-    """
-    os.close(write_fd)
-    return await _read_status(read_fd, timeout)
 
 
 async def await_returncode(process: asyncio.subprocess.Process, timeout: float) -> bool:
@@ -454,96 +465,127 @@ async def close_stdin(process: asyncio.subprocess.Process) -> None:
     await asyncio.sleep(0)
 
 
-async def _stop_failed_spawn(
-    process: asyncio.subprocess.Process, job: Job, timeout: float
-) -> None:
-    job.terminate()
-    await close_stdin(process)
-    drained = False
-    try:
-        await job.wait_until_idle(timeout)
-        drained = True
-    except JobNotDrained:
-        pass
-    if not drained and process.returncode is None:
-        with suppress(ProcessLookupError):
-            process.kill()
-    if not await await_returncode(process, timeout):
-        logger.warning(
-            "Codex spawn helper %s still alive after job termination", process.pid
-        )
-
-
-async def spawn(
-    command_for: Callable[[str, int], Sequence[str]],
+async def _launch_helper(
+    command: Sequence[str],
+    status_handle: int,
     *,
     cwd: str | None,
     env: Mapping[str, str] | None,
     limit: int,
-    observe_timeout: float,
 ) -> asyncio.subprocess.Process:
-    """Start the wrapper and return it once the real command is in the job."""
-    job = create_job()
-    read_fd = -1
-    write_fd = -1
-    started: asyncio.subprocess.Process | None = None
-    registered = False
-    try:
-        read_fd, write_fd = _status_pipe()
-        status_handle = _os_handle(write_fd)
-        startup = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
-        startup.lpAttributeList = {"handle_list": [status_handle]}
-        started = await asyncio.create_subprocess_exec(
-            *command_for(job.name, status_handle),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            env=env,
-            startupinfo=startup,
-            limit=limit,
+    startup = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+    startup.lpAttributeList = {"handle_list": [status_handle]}
+    return await asyncio.create_subprocess_exec(
+        *command,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        env=env,
+        startupinfo=startup,
+        limit=limit,
+    )
+
+
+class WindowsProcess:
+    """One client-owned helper and job, including incomplete startup."""
+
+    def __init__(self) -> None:
+        self.job: Job | None = create_job()
+        self.process: asyncio.subprocess.Process | None = None
+        self.closing = False
+        self._creation: asyncio.Task[None] | None = None
+        self._status: asyncio.Task[str] | None = None
+        self._read_fd: int | None = None
+
+    async def start(
+        self,
+        command_for: Callable[[str, int], Sequence[str]],
+        *,
+        cwd: str | None,
+        env: Mapping[str, str] | None,
+        limit: int,
+    ) -> asyncio.subprocess.Process:
+        if self.closing or self._creation is not None:
+            raise SpawnFailure(None)
+        self._creation = asyncio.create_task(
+            self._create(command_for, cwd=cwd, env=env, limit=limit)
         )
-        line = await _await_status(read_fd, write_fd, _SPAWN_ACK_S)
-        write_fd = -1
+        # Cancelling connect must not discard a helper created by the transport.
+        await asyncio.shield(self._creation)
+        if self.closing or self._read_fd is None:
+            raise SpawnFailure(None)
+        self._status = asyncio.create_task(self._ready())
+        line = await asyncio.shield(self._status)
+        if self.closing:
+            raise SpawnFailure(None)
         if line != _READY:
             code = _error_code(line)
             logger.warning("Codex process spawn failed: winerror %s", code)
             raise SpawnFailure(code)
-        _JOBS[started.pid] = job
-        registered = True
-        return started
-    finally:
-        for fd in (read_fd, write_fd):
-            if fd >= 0:
-                with suppress(OSError):
-                    os.close(fd)
-        if not registered:
-            try:
-                if started is not None:
-                    await _stop_failed_spawn(started, job, observe_timeout)
-            finally:
-                job.close()
+        assert self.process is not None
+        return self.process
 
+    async def _create(
+        self,
+        command_for: Callable[[str, int], Sequence[str]],
+        *,
+        cwd: str | None,
+        env: Mapping[str, str] | None,
+        limit: int,
+    ) -> None:
+        assert self.job is not None
+        self._read_fd, write_fd = _status_pipe()
+        try:
+            status_handle = _os_handle(write_fd)
+            self.process = await _launch_helper(
+                command_for(self.job.name, status_handle),
+                status_handle,
+                cwd=cwd,
+                env=env,
+                limit=limit,
+            )
+        finally:
+            # Only the helper may keep the writer; its exit must produce EOF.
+            os.close(write_fd)
 
-def request_job_termination(pid: int) -> Job | None:
-    """Mark ``pid``'s job for termination and return it, still registered.
+    async def _ready(self) -> str:
+        assert self._read_fd is not None
+        try:
+            return await _read_status(self._read_fd, _SPAWN_ACK_S)
+        finally:
+            self._close_status_pipe()
 
-    The caller closes the child's stdin before ``Job.wait_until_idle``. A
-    synchronous read stays inside the member until that write end closes.
-    The job stays registered until :func:`release_job`, so a close that
-    times out can terminate the same job again.
-    """
-    job = _JOBS.get(pid)
-    if job is None:
-        logger.warning("Codex process %s has no job to terminate", pid)
-        return None
-    job.terminate()
-    return job
+    def _close_status_pipe(self) -> None:
+        read_fd, self._read_fd = self._read_fd, None
+        if read_fd is not None:
+            os.close(read_fd)
 
-
-def release_job(pid: int) -> None:
-    """Forget a job whose members have already exited."""
-    _JOBS.pop(pid, None)
+    async def close(self, timeout: float) -> None:
+        self.closing = True
+        if self._creation is not None:
+            done, _pending = await asyncio.wait([self._creation], timeout=timeout)
+            if not done:
+                raise TimeoutError("Codex spawn helper creation is still pending")
+            # A failed launch still owns its empty job.
+            self._creation.exception()
+        if self._status is not None:
+            self._status.cancel()
+            await asyncio.gather(self._status, return_exceptions=True)
+        self._close_status_pipe()
+        if (process := self.process) is not None:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            if not await await_returncode(process, timeout):
+                raise TimeoutError("Codex spawn helper did not exit")
+        if (job := self.job) is not None:
+            job.terminate()
+            if process is not None:
+                await close_stdin(process)
+            await job.wait_until_idle(timeout)
+            job.close()
+            self.job = None
 
 
 def _set_inheritable(handle: int, inherit: bool) -> None:
@@ -709,13 +751,22 @@ def _resume(thread: ctypes.c_void_p) -> None:
         raise _win_os_error(_last_error())
 
 
+@contextmanager
+def _borrow_job(name: str) -> Iterator[ctypes.c_void_p]:
+    job = _open_job(name)
+    try:
+        yield job
+    finally:
+        if not _kernel32().CloseHandle(job):
+            raise _win_os_error(_last_error())
+
+
 def _start_and_wait(job_name: str, status_handle: int, command: Sequence[str]) -> int:
-    job: ctypes.c_void_p | None = None
     thread: ctypes.c_void_p | None = None
     try:
         try:
-            job = _open_job(job_name)
-            process, thread = _spawn_suspended(job, command, status_handle)
+            with _borrow_job(job_name) as job:
+                process, thread = _spawn_suspended(job, command, status_handle)
         except OSError as exc:
             _write_status(status_handle, _winerror(exc))
             return 1
@@ -736,8 +787,6 @@ def _start_and_wait(job_name: str, status_handle: int, command: Sequence[str]) -
     finally:
         if thread is not None:
             _kernel32().CloseHandle(thread)
-        if job is not None:
-            _kernel32().CloseHandle(job)
 
 
 def _parse(argv: Sequence[str]) -> tuple[str, int, tuple[str, ...]]:

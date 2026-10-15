@@ -20,11 +20,9 @@ from band.integrations.codex.winspawn import (
     MISSING_EXECUTABLE,
     MODULE_NAME,
     SpawnFailure,
+    WindowsProcess,
     await_returncode,
     close_stdin,
-    release_job,
-    request_job_termination,
-    spawn,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,24 +98,17 @@ async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Force-stop ``process`` and everything it spawned.
+    """Force-stop a Unix process and everything in its session.
 
     The codex launcher is a shim whose real CLI is its child. On Unix the
     child leads a session, so ``killpg`` still reaches that group after the
-    leader has exited. On Windows the tree belongs to a job created before
-    the child ran, so termination does not need the launcher pid to be alive.
+    leader has exited.
     """
     if os.name != "nt":
         if not _session_pid_reused(process):
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
         return
-    # A member blocked in ReadFile(stdin) stays inside that call until this
-    # write end closes, so the job cannot drain first.
-    if (job := request_job_termination(process.pid)) is not None:
-        await close_stdin(process)
-        await job.wait_until_idle(_EXIT_OBSERVE_S)
-        release_job(process.pid)
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -144,6 +135,7 @@ class CodexStdioClient(BaseJsonRpcClient):
             self.env = merged_env
 
         self._proc: asyncio.subprocess.Process | None = None
+        self._windows_process: WindowsProcess | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -180,13 +172,19 @@ class CodexStdioClient(BaseJsonRpcClient):
 
     async def _spawn(self) -> asyncio.subprocess.Process:
         if os.name == "nt":
-            return await spawn(
-                self._windows_command,
-                cwd=self.cwd,
-                env=self.env,
-                limit=_STDOUT_LIMIT,
-                observe_timeout=_EXIT_OBSERVE_S,
-            )
+            if self._windows_process is not None:
+                raise BandConnectionError("Codex process is already starting")
+            self._windows_process = owner = WindowsProcess()
+            try:
+                return await owner.start(
+                    self._windows_command,
+                    cwd=self.cwd,
+                    env=self.env,
+                    limit=_STDOUT_LIMIT,
+                )
+            except BaseException:
+                await self.close()
+                raise
         # The child leads its own session, so its pid is the group id.
         return await asyncio.create_subprocess_exec(
             *self.command,
@@ -225,8 +223,10 @@ class CodexStdioClient(BaseJsonRpcClient):
 
     async def close(self) -> None:
         """Share retryable cleanup that survives a cancelled or timed-out caller."""
-        if self._proc is None:
+        if self._windows_process is None and self._proc is None:
             return
+        if self._windows_process is not None:
+            self._windows_process.closing = True
         self._connected = False
         if self._close_task is None or (
             self._close_task.done()
@@ -253,7 +253,11 @@ class CodexStdioClient(BaseJsonRpcClient):
             # A cancelled pipe read on Windows stays pending while the child is
             # blocked in a synchronous stdin read, and awaiting that read never
             # times out. Terminate the tree and close our write end first.
-            if (process := self._proc) is not None:
+            if self._windows_process is not None:
+                await self._windows_process.close(_EXIT_OBSERVE_S)
+                self._windows_process = None
+                self._proc = None
+            elif (process := self._proc) is not None:
                 await kill_process_tree(process)
                 await close_stdin(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
