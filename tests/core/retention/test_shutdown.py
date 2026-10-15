@@ -122,3 +122,23 @@ class TestShutdown:
                 ),
             )
         ]
+
+    async def test_owned_shutdown_can_wait_beyond_the_callers_reporting_budget(
+        self, impatient_host: ResidenceHost
+    ) -> None:
+        resident = impatient_host.room()
+        await resident.turn()
+        resident.leaving = Hold()
+        stopping = asyncio.create_task(impatient_host.owner.stop(report_timeout_s=None))
+        try:
+            await asyncio.wait(
+                {stopping}, timeout=2 * impatient_host.owner.config.transition_timeout_s
+            )
+            if stopping.done():
+                await stopping
+                pytest.fail("owned shutdown returned before disposal settled")
+            assert resident.identity is not None
+        finally:
+            resident.leaving.released.set()
+        await stopping
+        assert resident.identity is None
