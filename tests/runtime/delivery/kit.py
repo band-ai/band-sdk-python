@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 from band_sdk_core import ClaimRegistry
 
-from band.client.streaming import DeliveryStatus
+from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import Execution, ExecutionContext
 from band.runtime.runtime import AgentRuntime
@@ -378,10 +378,13 @@ class JournaledControls(ControlScript):
     """The batching kit's control vocabulary, noting each consumed control."""
 
     journal: list[str] = field(default_factory=list)
+    payloads: list[MessageCreatedPayload] = field(default_factory=list)
 
     async def handle(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
         consumed = await super().handle(ctx, event)
         if consumed:
+            assert event.payload is not None
+            self.payloads.append(event.payload)
             self.journal.append(control(event.payload.id))
         return consumed
 
@@ -434,6 +437,7 @@ class Session(Observer):
 
     ctx: ExecutionContext
     started_at: float
+    controls: JournaledControls
 
     async def deliver(self, *events: PlatformEvent) -> None:
         for event in events:
@@ -496,7 +500,7 @@ async def started_session(
         started_at = asyncio.get_running_loop().time()
         await ctx.start()
         try:
-            yield Session(peer, turns, ctx, started_at)
+            yield Session(peer, turns, ctx, started_at, scripted)
         finally:
             turns.release.set()
             await ctx.stop(timeout=2)

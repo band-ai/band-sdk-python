@@ -81,6 +81,7 @@ from band.runtime.selection import (
     MessageKey,
     Selection,
     Stop,
+    merge,
     select_prefix,
 )
 from band.runtime.sessionconfig import SessionConfig
@@ -1306,10 +1307,20 @@ class ExecutionContext:
             )
             if revision != self._control_revision:
                 return
-            for event in self._control_candidates(page.messages):
+            for candidate in self._control_candidates(page.messages):
                 if self._stopped or revision != self._control_revision:
                     return
-                await self._probe_control(event)
+                if candidate.disposition is Disposition.SKIP:
+                    # A pending failure may restore a retry that needs its original.
+                    if (
+                        self.claims.pending_settlement(
+                            self.room_id, candidate.message_id
+                        )
+                        is None
+                    ):
+                        self._settled_control(candidate.event)
+                    continue
+                await self._probe_control(candidate.event)
             self._control_cursor = page.next_cursor
         except RoomExecutionStoppedError:
             return
@@ -1318,17 +1329,13 @@ class ExecutionContext:
 
     def _control_candidates(
         self, messages: Iterable[PlatformMessage]
-    ) -> list[MessageEvent]:
-        """REST candidates and retained originals, once each, oldest first.
-
-        A retained payload wins over its REST copy; the deferred head is
-        included because a pending question may now make it a control.
-        """
-        events = {_event_message_id(e): e for e in map(_backlog_event, messages)}
-        for event in self._pending:
-            if _is_ordinary(event):
-                events[_event_message_id(event)] = event
-        return sorted(events.values(), key=MessageKey.of_event)
+    ) -> list[Candidate]:
+        """Merge original payloads with REST disposition, including the deferred head."""
+        rest = [self._candidate(_backlog_event(message)) for message in messages]
+        retained = [
+            self._candidate(event) for event in self._pending if _is_ordinary(event)
+        ]
+        return merge(rest, retained)
 
     def recognizes_delivery_control(self, event: MessageEvent) -> bool:
         return self._is_message_control is not None and self._is_message_control(
