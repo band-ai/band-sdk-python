@@ -158,6 +158,7 @@ async def relay_agent_response(
         offset = batch.offset
         if batch.final_seen and not batch.final_texts:
             logger.warning("Room %s: the agent's final message was empty", room_id)
+        already_settled = tools.turn.replied
         if batch.final_texts:
             await relay_reply(
                 tools,
@@ -165,7 +166,7 @@ async def relay_agent_response(
                 mentions=[sender_name],
             )
         if tools.turn.replied:
-            if batch.final_texts:
+            if already_settled and batch.final_texts:
                 logger.info(
                     "Room %s: left Parlant text unsent because the turn already replied or declined: %s",
                     room_id,

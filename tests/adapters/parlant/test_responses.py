@@ -81,7 +81,7 @@ async def test_retries_past_empty_windows_then_forwards_late_reply(
 
 
 async def test_relays_all_final_parts_in_one_batch_without_preamble(
-    relay, mock_app, mock_tools
+    relay, mock_app, mock_tools, caplog
 ):
     answer_after(
         mock_app,
@@ -89,11 +89,13 @@ async def test_relays_all_final_parts_in_one_batch_without_preamble(
         events=MULTIPART_BATCH,
     )
 
-    await relay(timeout=LONG_BUDGET_SECONDS)
+    with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+        await relay(timeout=LONG_BUDGET_SECONDS)
 
     mock_tools.assert_message_sent(
         content=f"{BOOKED}\n\n{PEANUTS}", mentions=[SENDER_NAME], count=1
     )
+    assert not any("left Parlant text unsent" in message for message in caplog.messages)
 
 
 @pytest.mark.parametrize("declined", [False, True], ids=["tool-reply", "tool-decline"])
