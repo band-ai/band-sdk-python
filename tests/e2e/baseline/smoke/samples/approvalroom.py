@@ -88,6 +88,8 @@ class ApprovalRoom:
     user_ops: UserOps
     budget: SlowTurnBudget
     handled_requests: set[str] = field(default_factory=set)
+    # Ids of the approval replies ``decide`` posted, in order.
+    decision_ids: list[str] = field(default_factory=list)
 
     async def say(self, text: str, *, sender: UserOps | None = None) -> int:
         """Post ``text`` to the agent; return a cursor at what came before it."""
@@ -106,7 +108,8 @@ class ApprovalRoom:
 
     async def decide(self, outcome: Outcome, request: re.Match[str]) -> int:
         """Answer one request as the room owner."""
-        cursor = await self.say(self.dialect.reply(outcome, request))
+        cursor, decision_id = await self.post(self.dialect.reply(outcome, request))
+        self.decision_ids.append(decision_id)
         self.handled_requests.add(request["token"])
         logger.log(
             APPROVAL_LOG_LEVEL,

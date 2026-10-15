@@ -12,7 +12,7 @@ pytestmark = pytest.mark.looptime
 
 
 class TestControlEligibility:
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [True, False], ids=["batching", "singleton"])
     @pytest.mark.parametrize(
         "retained_duplicate", [False, True], ids=["rest", "retained"]
     )

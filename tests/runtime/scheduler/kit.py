@@ -57,7 +57,7 @@ async def declining_room(
     peer = RestPeer()
     runtime = make_runtime()
     runtime.agent_id = AGENT_ID
-    runtime.session_config = session_config(batching=False)
+    runtime.session_config = session_config(batching=True)
     async with Agent(runtime=runtime, adapter=adapter):
         callbacks = runtime.start.await_args.kwargs
         async with rest_client_over(peer.answer) as rest:
@@ -67,7 +67,7 @@ async def declining_room(
                 callbacks["on_execute"],
                 config=runtime.session_config,
                 agent_id=AGENT_ID,
-                on_execute_batch=callbacks.get("on_execute_batch"),
+                on_execute_batch=callbacks["on_execute_batch"],
                 on_message_control=callbacks["on_message_control"],
                 is_message_control=callbacks["is_message_control"],
             )

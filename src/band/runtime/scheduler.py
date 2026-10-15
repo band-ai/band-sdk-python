@@ -86,7 +86,7 @@ class Scheduler:
         self.owner = owner
         self.queue = owner.queue
         self.pending: deque[PlatformEvent] = deque()
-        self.sync_complete = False
+        self.sync_complete = owner.config.consume_all_queued
         self.first_ws_id: str | None = None
         self.deferred_id: str | None = None
         self.scan_cursor: str | None = None
@@ -405,13 +405,19 @@ class Scheduler:
                 disposition = Disposition.SKIP
         return replace(candidate, disposition=disposition)
 
-    def local_segment(self) -> list[MessageEvent]:
+    def local_segment(self) -> tuple[list[MessageEvent], MessageKey | None, set[str]]:
         segment: list[MessageEvent] = []
+        later: set[str] = set()
+        bounded = False
         for event in self.pending:
             if not is_ordinary(event):
-                break
-            segment.append(event)
-        return segment
+                bounded = True
+            elif bounded:
+                later.add(message_id(event))
+            else:
+                segment.append(event)
+        limit = MessageKey.of_event(segment[-1]) if bounded and segment else None
+        return segment, limit, later
 
     def prune_skipped(
         self,
@@ -450,14 +456,18 @@ class Scheduler:
         if self.owner.is_stopped or self.owner.is_closing:
             return ResyncOutcome.STOPPED
         recovery = active.recovery or not self.sync_complete
-        if not recovery and self.pending and (not is_ordinary(self.pending[0])):
+        if (
+            (not recovery or self.owner.config.consume_all_queued)
+            and self.pending
+            and not is_ordinary(self.pending[0])
+        ):
             return (await self.dispatch(self.pending[0])).scheduling
         revision = self.owner.control_revision
-        if not recovery:
+        if not self.owner.config.consume_all_queued and not recovery:
             rows: list[PlatformMessage] = []
             exhausted = True
             next_cursor = None
-        elif self.next_fallback:
+        elif self.owner.config.consume_all_queued or self.next_fallback:
             page = await self.owner.link.get_actionable_page(
                 self.owner.room_id, cursor=self.scan_cursor
             )
@@ -496,31 +506,42 @@ class Scheduler:
             and not is_ordinary(self.pending[0])
         ):
             return (await self.dispatch(self.pending[0])).scheduling
-        segment = self.local_segment()
+        segment, limit, later = self.local_segment()
+        batching = self.owner.config.consume_all_queued
         candidates = self.candidates(
-            rows,
-            (event for event in self.pending if is_ordinary(event)),
+            (row for row in rows if not batching or row.id not in later),
+            segment
+            if batching
+            else (event for event in self.pending if is_ordinary(event)),
         )
         rest_ids = {row.id for row in rows}
         leading_ids = {message_id(event) for event in segment}
-        candidates.sort(
-            key=lambda candidate: candidate.message_id not in active.resumed_retries
-        )
+        if batching:
+            candidates.sort(key=lambda candidate: candidate.key)
+        else:
+            candidates.sort(
+                key=lambda candidate: candidate.message_id not in active.resumed_retries
+            )
         frontier = MessageKey.of_message(rows[-1]) if rows else None
         selection = select_prefix(
             candidates,
             listed=rest_ids,
             retained=leading_ids,
-            cap=1,
+            cap=self.owner.config.max_queued_messages
+            if self.owner.config.consume_all_queued
+            else 1,
             page_reaches=frontier,
             exhausted=exhausted,
-            limit=None,
+            limit=limit if batching else None,
             resumed=active.resumed_retries,
         )
         skipped = self.prune_skipped(candidates, frontier, exhausted=exhausted)
         if selection.members:
             result = (await self.dispatch(selection.members)).scheduling
-            if result is ResyncOutcome.PROGRESS:
+            if (
+                result is ResyncOutcome.PROGRESS
+                and not self.owner.config.consume_all_queued
+            ):
                 self.next_fallback = False
                 self.scan_cursor = None
                 if any(c.message_id == self.first_ws_id for c in selection.members):

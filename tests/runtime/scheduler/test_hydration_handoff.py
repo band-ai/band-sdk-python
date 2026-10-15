@@ -9,7 +9,7 @@ from tests.runtime.scheduler.hydration import observe_handoff
 
 
 class TestHydrationHandoff:
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [False, True], ids=["singleton", "batch"])
     @pytest.mark.parametrize("control", [False, True], ids=["ordinary", "priority"])
     @pytest.mark.parametrize("warm", [False, True], ids=["new-context", "old-cache"])
     @pytest.mark.parametrize(
@@ -46,7 +46,7 @@ class TestHydrationHandoff:
             assert observed.blocked_attempts >= 1
             assert observed.blocked_settlements == 0
 
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [False, True], ids=["singleton", "batch"])
     @pytest.mark.parametrize("control", [False, True], ids=["ordinary", "priority"])
     @pytest.mark.parametrize("warm", [False, True], ids=["new-context", "old-cache"])
     async def test_fresh_failed_discovery_obeys_the_configured_replay_policy(

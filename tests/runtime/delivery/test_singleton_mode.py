@@ -46,7 +46,7 @@ class TestSingletonMode:
             1,
         )
 
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [True, False], ids=["batching", "singleton"])
     async def test_an_input_runs_only_after_its_admission_is_accepted(
         self, rest_peer: RestPeer, batching: bool
     ) -> None:

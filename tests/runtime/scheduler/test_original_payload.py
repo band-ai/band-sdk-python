@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.looptime]
 
 
 class TestOriginalPayload:
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [False, True])
     async def test_preserve_original(self, batching: bool) -> None:
         peer = RestPeer()
         received: list[Any] = []

@@ -201,7 +201,7 @@ class PlatformRuntime:
             on_control: Callback for an interrupt/stop control signal, for
                 adapter work that outlives the message cycle it started in
             on_execute_batch: Callback for a turn over several originals;
-                used when a host accepts several originals
+                required when ``SessionConfig.consume_all_queued`` is set
             is_message_control: Read-only recognition of a delivery the adapter
                 would handle as a control
 

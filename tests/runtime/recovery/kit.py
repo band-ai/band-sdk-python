@@ -113,7 +113,14 @@ class Ending(StrEnum):
 
 # Default-budget failures finish the input; configured retries are covered by
 # the continuation suite.
-TURNS = [(Shape.OFF, Ending.DECLINES), (Shape.OFF, Ending.RAISES)]
+TURNS = [
+    (Shape.OFF, Ending.DECLINES),
+    (Shape.OFF, Ending.RAISES),
+    (Shape.SINGLETON, Ending.DECLINES),
+    (Shape.SINGLETON, Ending.RAISES),
+    (Shape.BATCH, Ending.DECLINES),
+    (Shape.BATCH, Ending.RAISES),
+]
 
 
 class Route(StrEnum):

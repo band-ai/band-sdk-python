@@ -74,7 +74,7 @@ assert adapter.config.command == ("codex-acp",)
   room context owed. Fresh sessions also keep transcript replay owed; restored
   sessions already hold their history and receive only Band context. Replay uses
   a nonce'd boundary marker so history cannot spoof the live message, and stops
-  strictly before the triggering message (`messages_before`).
+  strictly before the turn's earliest stored original (`messages_before`).
 
 ## Upgrading from SDK 4.x to 5.x
 
@@ -198,8 +198,8 @@ failure fails that room turn visibly instead of falling back.
   turn closes or is interrupted. Cursor omits the session id on its
   extension requests, so each room process gets its own client profile and binds them to
   that room's active turn on that process; a request from a replaced process opens no
-  decision. Rooms run in parallel, one turn per room; a message that arrives while its
-  room's turn still runs is not accepted, so the host keeps it unacknowledged and
+  decision. Rooms run in parallel, one turn per room ([room turns](#cursor-room-turns)); a
+  message that arrives while its room's turn still runs is not accepted, so the host keeps it unacknowledged and
   retries it once the room is free, and a `/cursor` reply still reaches the parked
   turn. Only the turn holding the room's lease answers Cursor's extension requests,
   and a failed turn reports its failure before the lease passes on, once, whether
@@ -216,6 +216,40 @@ failure fails that room turn visibly instead of falling back.
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
   as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
+
+## Cursor room turns
+
+Each room runs one Cursor provider turn at a time, and independent rooms run in
+parallel. The room's accepted `CursorTurn` owns the provider task it runs in.
+A batch of queued inputs (`consume_all_queued`) is one provider prompt, admitted,
+cancelled and judged exactly like a single message:
+
+- **Admission is a synchronous check-and-claim.** Ordinary input arriving while
+  the room's turn is still running raises `InputNotAccepted` before any provider
+  submission, failure notice, context commit or completion write. The room
+  scheduler keeps the delivery outstanding and retries at its own pace.
+- **`/cursor` commands are controls.** The runtime recognizes them
+  (`is_control_message`, valid or not) and hands each to `try_handle_control`
+  alone, never inside a batch and without starting work, so a reply always
+  reaches a parked turn.
+- **Early delivery release does not free the room.** A turn parked on a decision
+  releases its message (`tools.turn.detach()`) but stays the room's accepted turn
+  until its task ends.
+- **STOP, INTERRUPT and shutdown cancel the owned task**, also after that
+  release, once per turn. The task's `CancelledError` path sends `session/cancel`
+  to Cursor. Cancellation is requested once; it is not confirmation. Room
+  retirement (`on_cleanup`) wakes a parked decision as declined, gives the turn
+  `turn_settle_timeout_s` to end on its own, then cancels it. It is bounded by
+  `retention.transition_timeout_s`: an overdue disposal raises
+  `CleanupIncompleteError` and a retry joins it.
+- **The room returns only when the task has actually ended**, including a task
+  cancelled before it first ran. A failed task launch leaves the room free, and a
+  stale turn never unbinds its successor.
+- **Notices address the turn's own inputs.** A decision prompt or timeout notice
+  mentions each distinct sender of the inputs the turn was admitted with, once,
+  in first-appearance order. Later messages never change that audience, and being
+  mentioned grants no authority to resolve a decision; `decision_authorized_senders`
+  does.
 
 ## Server prompt outcomes
 

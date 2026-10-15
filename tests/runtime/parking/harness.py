@@ -230,8 +230,13 @@ OFF_PROCESSED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.PROCESSED)
 # Off-mode failure has retry continuations and a separate acceptance contract.
 OFF_FAILED = Cell(mode=Mode.OFF, terminal=DeliveryStatus.FAILED)
 
-CELLS = (OFF_PROCESSED,)
-
+CELLS = (
+    OFF_PROCESSED,
+    Cell(mode=Mode.SINGLETON, terminal=DeliveryStatus.PROCESSED),
+    Cell(mode=Mode.BATCH, terminal=DeliveryStatus.PROCESSED),
+    Cell(mode=Mode.SINGLETON, terminal=DeliveryStatus.FAILED),
+    Cell(mode=Mode.BATCH, terminal=DeliveryStatus.FAILED),
+)
 
 TERMINALS = (DeliveryStatus.PROCESSED, DeliveryStatus.FAILED)
 

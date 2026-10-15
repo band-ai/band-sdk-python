@@ -4,15 +4,21 @@ from __future__ import annotations
 
 from typing import Annotated, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The platform clears working state after this TTL if refreshes stop.
 # Keep-alive validation leaves headroom for a missed or slow refresh.
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
+# The platform's list endpoint serves at most this many messages per page.
 ACTIONABLE_PAGE_SIZE = 100
+
+# Model attempts per message when batching is off; batching allows only this.
 DEFAULT_MAX_MESSAGE_RETRIES = 1
+
+# How many queued messages one turn consumes when batching is on.
+DEFAULT_MAX_QUEUED_MESSAGES = 10
 
 
 def _require_positive_when_set(name: str, value: float | None) -> None:
@@ -40,6 +46,13 @@ class SessionConfig(BaseSettings):
     # Max attempts per message before permanently failing. band_sdk_core.RetryTracker's
     # constructor validates this range itself -- no second Python-side check.
     max_message_retries: int = DEFAULT_MAX_MESSAGE_RETRIES
+    # Opt in to one turn consuming the ordinary messages already queued in a
+    # room, oldest first, up to ``max_queued_messages``. The ceiling bounds a
+    # turn; it is never a target to wait for.
+    consume_all_queued: bool = False
+    max_queued_messages: Annotated[int, Field(ge=1, le=ACTIONABLE_PAGE_SIZE)] = (
+        DEFAULT_MAX_QUEUED_MESSAGES
+    )
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
     # Base reconciliation interval, also used for retries and, unless
     # stopped_resync_seconds is set, for stopped-room probes.
@@ -78,6 +91,26 @@ class SessionConfig(BaseSettings):
     # These probes are the only way to discover a missed PLAY, so a longer
     # interval delays resuming by up to that long. None uses idle_resync_seconds.
     stopped_resync_seconds: PositiveFiniteSeconds | None = None
+
+    @field_validator("max_queued_messages", mode="before")
+    @classmethod
+    def reject_boolean_ceiling(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("max_queued_messages must be an integer, not a bool")
+        return value
+
+    @model_validator(mode="after")
+    def validate_queueing(self) -> Self:
+        if (
+            self.consume_all_queued
+            and self.max_message_retries != DEFAULT_MAX_MESSAGE_RETRIES
+        ):
+            raise ValueError(
+                "consume_all_queued runs one model attempt per batch; "
+                f"max_message_retries must stay {DEFAULT_MAX_MESSAGE_RETRIES} "
+                f"(got {self.max_message_retries})"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_timing(self) -> Self:

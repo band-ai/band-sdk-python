@@ -986,15 +986,6 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_agent_scenarios.py::test_two_agents_greet_each_other",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
       "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-accept-claude_sdk]",
       "adapter": "suite",
       "lanes": [
@@ -1058,8 +1049,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
-      "adapter": "claude_sdk",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[False-claude_sdk]",
+      "adapter": "suite",
       "lanes": [
         "core"
       ],
@@ -1067,8 +1058,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
-      "adapter": "codex",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[False-codex]",
+      "adapter": "suite",
       "lanes": [
         "backends"
       ],
@@ -1076,8 +1067,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
-      "adapter": "cursor_acp",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[False-cursor_acp]",
+      "adapter": "suite",
       "lanes": [
         "backends"
       ],
@@ -1085,8 +1076,44 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
-      "adapter": "opencode",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[False-opencode]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[True-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[True-codex]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[True-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own[True-opencode]",
+      "adapter": "suite",
       "lanes": [
         "backends"
       ],
@@ -1112,8 +1139,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
-      "adapter": "claude_sdk",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[False-claude_sdk]",
+      "adapter": "suite",
       "lanes": [
         "core"
       ],
@@ -1121,8 +1148,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
-      "adapter": "codex",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[False-codex]",
+      "adapter": "suite",
       "lanes": [
         "backends"
       ],
@@ -1130,8 +1157,53 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
-      "adapter": "opencode",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[False-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[False-opencode]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[True-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[True-codex]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[True-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval[True-opencode]",
+      "adapter": "suite",
       "lanes": [
         "backends"
       ],
@@ -1247,6 +1319,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_agent_scenarios.py::test_two_agents_greet_each_other",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_control_signals.py::test_interrupt_cancels_and_consumes",
       "adapter": "suite",
       "lanes": [
@@ -1301,6 +1382,15 @@
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_duplicate_start.py::test_second_start_is_refused_and_the_incumbent_keeps_replying",
       "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_failure_continuation.py::TestFailureContinuation::test_a_failed_original_retries_only_after_its_write_is_confirmed",
+      "adapter": "suite",
       "lanes": [
         "core"
       ],
@@ -1409,6 +1499,1383 @@
       "adapter": "letta",
       "lanes": [
         "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_queue_of_fyis_is_declined_once_for_every_original",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_as_its_sender_corrected_it",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_decisions.py::TestQueuedDecisions::test_a_request_is_answered_when_an_fyi_arrived_after_it",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_a_user_and_an_agent_share_one_invocation_and_both_are_answered",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_originals_queued_by_two_senders_share_one_invocation_and_both_are_answered",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_queued_originals_share_one_invocation",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "codex",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "copilot_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "letta",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "omp_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "opencode",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_messages.py::TestQueuedMessages::test_without_opt_in_each_queued_original_gets_its_own_invocation",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-agno]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-anthropic]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-codex]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-copilot_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-copilot_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-crewai]",
+      "adapter": "suite",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-gemini]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-google_adk]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-langgraph]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-letta]",
+      "adapter": "suite",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-nooa]",
+      "adapter": "suite",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-omp_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-opencode]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-pydantic_ai]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[False-strands]",
+      "adapter": "suite",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-agno]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-anthropic]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-codex]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-copilot_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-copilot_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-crewai]",
+      "adapter": "suite",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-cursor_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-gemini]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-google_adk]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-langgraph]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-letta]",
+      "adapter": "suite",
+      "lanes": [
+        "letta"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-nooa]",
+      "adapter": "suite",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-omp_acp]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-opencode]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-pydantic_ai]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_queued_rooms.py::TestQueuedRooms::test_a_turn_held_in_one_room_leaves_the_other_room_progressing[True-strands]",
+      "adapter": "suite",
+      "lanes": [
+        "strands"
       ],
       "status": "pass",
       "reason": null

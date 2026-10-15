@@ -17,7 +17,7 @@ from tests.runtime.helpers import AGENT_ID, ROOM_ID, rest_client_over, synthetic
 
 
 class TestHousekeeping:
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [False, True], ids=["singleton", "batch"])
     @pytest.mark.parametrize("stopped", [False, True], ids=["refused", "stopped"])
     async def test_roster_changes_pass_paused_inputs_without_running_them(
         self, batching: bool, stopped: bool
