@@ -395,6 +395,13 @@ class LegacyPreprocessor:
         return None
 
 
+class BatchOnlyPreprocessor(LegacyPreprocessor):
+    """Can build batches but has no shared read-only projection."""
+
+    async def process_batch(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 class RewritingPreprocessor(DefaultPreprocessor):
     """A subclass may transform content, so its projection is not trusted."""
 

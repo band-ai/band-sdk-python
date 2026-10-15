@@ -30,7 +30,8 @@ one turn with one outcome. It is off unless you turn it on.
 
 `consume_all_queued` and `max_queued_messages` are `SessionConfig` fields, passed
 as `session_config=` to `Agent.create` or `Agent.from_config`. The YAML file holds
-credentials only; there is no file or environment setting for session options.
+credentials only. Session options also read case-insensitive environment variables
+such as `CONSUME_ALL_QUEUED`; explicit constructor values take precedence.
 
 ```python
 import asyncio
@@ -81,11 +82,20 @@ Enabling it is refused when it cannot work, rather than falling back silently:
 | --- | --- |
 | `max_queued_messages` outside 1 to 100, a `bool`, or not a whole number | `ValueError` from `SessionConfig` |
 | `max_message_retries` other than 1 | `ValueError` from `SessionConfig` |
-| Adapter without `supports_batch_input`, or a custom preprocessor without `process_batch` | `BandConfigError` from `Agent.start()` |
+| Adapter without `supports_batch_input`, or a custom preprocessor missing either `process_batch` or a read-only `message` projection | `BandConfigError` from `Agent.start()` |
 | A custom `execution_factory`, or an execution without a batch callback | `BandConfigError` at construction |
 | One-shot invocation (`OneShotInvoker`) | `BandConfigError` at construction |
 
 One-shot keeps its one-event-per-invocation drain; it never batches.
+
+Custom batch preprocessors implement `BatchPreprocessor`: both `process` and
+`process_batch` build their originals through `message(ctx, event, agent_id)`.
+That synchronous projection returns a `PlatformMessage` or `None` without I/O,
+context consumption or delivery writes. Control recognition reads the same
+projection, so transformations apply equally to ordinary inputs and controls.
+`DefaultPreprocessor` subclasses inherit this contract and override `message`
+when transforming input. Legacy custom preprocessors keep conservative control
+probing when batching is off.
 
 ## Supported adapters
 

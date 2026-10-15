@@ -545,8 +545,19 @@ class BatchFrameworkAdapter(FrameworkAdapter, Protocol):
 
 
 @runtime_checkable
-class BatchPreprocessor(Preprocessor, Protocol):
-    """A preprocessor that can build one ``AgentInput`` from several deliveries."""
+class MessageProjector(Protocol):
+    """The read-only message projection shared by recognition and preprocessing."""
+
+    def message(
+        self, ctx: ExecutionContext, event: PlatformEvent, agent_id: str
+    ) -> PlatformMessage | None:
+        """Project an original without I/O, context consumption or delivery writes."""
+        ...
+
+
+@runtime_checkable
+class BatchPreprocessor(Preprocessor, MessageProjector, Protocol):
+    """Build one input using the same ``message`` projection as control recognition."""
 
     async def process_batch(
         self,

@@ -23,6 +23,7 @@ from band.core.protocols import (
     BatchPreprocessor,
     ControlRecognizer,
     FrameworkAdapter,
+    MessageProjector,
     Preprocessor,
 )
 from band.core.simple_adapter import SimpleAdapter
@@ -157,9 +158,9 @@ class Agent:
             )
         if not isinstance(preprocessor, BatchPreprocessor):
             raise BandConfigError(
-                f"{type(preprocessor).__name__} has no process_batch; "
-                "consume_all_queued needs a preprocessor that builds one input "
-                "over several deliveries"
+                f"{type(preprocessor).__name__} must implement process_batch and "
+                "a read-only message projection; consume_all_queued needs the same "
+                "projection for control recognition and input construction"
             )
         return adapter, preprocessor
 
@@ -606,17 +607,23 @@ class Agent:
     def _is_control(self, ctx: ExecutionContext, event: MessageEvent) -> bool:
         """Whether the adapter would handle the delivery as a control; writes nothing.
 
-        Only the stock preprocessor's projection is trusted: a subclass may
-        transform content before handling, so anything else is probed as a
-        possible control rather than misclassified as ordinary.
+        Batch preprocessors share their projection with input construction.
+        Legacy custom singleton preprocessors remain conservatively probed.
         """
         adapter = self._adapter
+        if getattr(adapter, "try_handle_control", None) is None:
+            return False
+        preprocessor = self._preprocessor
         if (
             not isinstance(adapter, ControlRecognizer)
-            or type(self._preprocessor) is not DefaultPreprocessor
+            or not isinstance(preprocessor, MessageProjector)
+            or (
+                not self._runtime.session_config.consume_all_queued
+                and type(preprocessor) is not DefaultPreprocessor
+            )
         ):
             return True
-        msg = DefaultPreprocessor.message(ctx, event, self._runtime.agent_id)
+        msg = preprocessor.message(ctx, event, self._runtime.agent_id)
         return msg is not None and adapter.is_control_message(msg)
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:

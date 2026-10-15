@@ -9,6 +9,7 @@ from band.core.exceptions import BandConfigError
 from tests.core.agentlifecycle.kit import make_runtime
 from tests.runtime.batching.kit import (
     BatchAdapter,
+    BatchOnlyPreprocessor,
     LegacyAdapter,
     LegacyPreprocessor,
     batching_agent,
@@ -26,6 +27,12 @@ class TestBatchHosts:
         agent = batching_agent(BatchAdapter(), preprocessor=LegacyPreprocessor())
 
         with pytest.raises(BandConfigError, match="LegacyPreprocessor"):
+            await agent.start()
+
+    async def test_a_batch_preprocessor_without_a_projection_is_refused(self) -> None:
+        agent = batching_agent(BatchAdapter(), preprocessor=BatchOnlyPreprocessor())
+
+        with pytest.raises(BandConfigError, match="read-only message projection"):
             await agent.start()
 
     async def test_a_legacy_adapter_still_starts_when_batching_is_off(self) -> None:
