@@ -34,11 +34,7 @@ def name_this_agent(
     if not content or not agent_id or not agent_name:
         return content
     tokens = _self_mention_tokens(agent_id, participants)
-    if not tokens:
-        return content
-    pattern = re.compile(
-        "|".join(rf"{re.escape(token)}(?!\S)" for token in tokens)
-    )
+    pattern = re.compile("|".join(rf"{re.escape(token)}(?!\S)" for token in tokens))
     return pattern.sub(agent_name, content)
 
 
