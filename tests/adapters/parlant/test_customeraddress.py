@@ -29,8 +29,12 @@ class TestCustomerAddress:
             agent_id=AGENT_ID,
             room_id=sample_message.room_id,
             participants=[
-                seeded_participant(AGENT_ID, handle=HANDLE, name="showcase", type="Agent"),
-                seeded_participant("other", handle=OTHER_HANDLE, name="other", type="Agent"),
+                seeded_participant(
+                    AGENT_ID, handle=HANDLE, name="showcase", type="Agent"
+                ),
+                seeded_participant(
+                    "other", handle=OTHER_HANDLE, name="other", type="Agent"
+                ),
             ],
         )
         message = replace(
@@ -71,7 +75,9 @@ class TestCustomerAddress:
             agent_id=AGENT_ID,
             room_id=sample_message.room_id,
             participants=[
-                seeded_participant(AGENT_ID, handle=HANDLE, name="showcase", type="Agent")
+                seeded_participant(
+                    AGENT_ID, handle=HANDLE, name="showcase", type="Agent"
+                )
             ],
         )
         message = replace(sample_message, content=f"@{HANDLE} look up the code")
