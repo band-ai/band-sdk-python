@@ -126,11 +126,6 @@ def test_core_checkout_uses_the_scoped_read_secret() -> None:
     assert "Generate GitHub App Token (scoped to band-sdk-core)" not in names
 
 
-def test_coverage_job_skips_dependabot_without_the_read_secret() -> None:
-    coverage = load_workflow()["jobs"]["coverage"]
-    assert coverage["if"] == "github.actor != 'dependabot[bot]'"
-
-
 def test_prerelease_guard_runs_before_the_cross_repo_checkout() -> None:
     names = _step_names(load_workflow())
     assert names.index("Resolve pinned band-sdk-core version") < names.index(

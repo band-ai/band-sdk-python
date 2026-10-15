@@ -109,8 +109,7 @@ def normalized_label(label: str) -> str:
 def agent_name(*, token: str, label: str) -> str:
     """The provisioned name for ``label`` and ``token``.
 
-    Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
-    repeating a name, so an adapter-id label must already be in the form they echo.
+    Underscored adapter ids become the hyphenated names models echo.
     """
     return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
 

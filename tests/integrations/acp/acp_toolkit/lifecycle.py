@@ -1,4 +1,4 @@
-"""The OMP, Cursor and Copilot ACP adapters' bridge into the common Room
+"""The Cursor and Copilot ACP adapters' bridge into the common Room
 lifecycle suite (``tests/adapters/lifecycle``).
 
 Each room process is a real stdio ACP agent (:mod:`workspacepeer`) started
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from functools import partial
 from typing import Any, Literal, Self
@@ -20,21 +19,17 @@ from acp import spawn_agent_process
 
 from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
-from band.adapters.omp_acp import OmpACPAdapter, OmpACPAdapterConfig
 from band.core.retention import RetainedRoom
 from band.integrations.acp import client_adapter, client_runtime
 from band.integrations.acp.client_adapter import ACPClientAdapter
-from band.integrations.omp import OMP_ACP_SUBCOMMAND, OMP_CWD_FLAG
 from tests.adapters.hold import Hold
 from tests.adapters.lifecycle.kit import LifecycleBridge, RetentionHost, pause_at
 from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.paths import REPO_ROOT
 
-ACPProfile = Literal["omp_acp", "cursor_acp", "copilot_acp"]
+ACPProfile = Literal["cursor_acp", "copilot_acp"]
 
 PEER_MODULE = "tests.integrations.acp.acp_toolkit.workspacepeer"
-# How OMP is told its room workspace, which it gets instead of a launch cwd.
-OMP_CWD_PREFIX = f"{OMP_CWD_FLAG}="
 
 
 class LifecycleChild:
@@ -107,7 +102,7 @@ def install(
 
     def spawn(client: Any, *command: str, cwd: str | None, **kwargs: Any) -> Any:
         child = LifecycleChild(spawn_agent_process(client, *command, cwd=cwd, **kwargs))
-        host.spawned(child, _workspace(command, cwd))
+        host.spawned(child, cwd)
         return child
 
     kill_process = client_runtime._kill
@@ -135,11 +130,6 @@ def _adapter(profile: ACPProfile, host: RetentionHost) -> ACPClientAdapter[Any]:
     command = (sys._base_executable, "-m", PEER_MODULE, *host.peer_arguments)
     env = {"PYTHONPATH": str(REPO_ROOT), "__PYVENV_LAUNCHER__": sys.executable}
     match profile:
-        case "omp_acp":
-            return OmpACPAdapter(
-                OmpACPAdapterConfig(command=(*command, OMP_ACP_SUBCOMMAND), env=env),
-                workspace_for_room=host.workspace,
-            )
         case "cursor_acp":
             return CursorACPAdapter(
                 CursorACPAdapterConfig(command=command, env=env),
@@ -150,14 +140,6 @@ def _adapter(profile: ACPProfile, host: RetentionHost) -> ACPClientAdapter[Any]:
                 CopilotACPAdapterConfig(command=command, env=env),
                 workspace_for_room=host.workspace,
             )
-
-
-def _workspace(command: Sequence[str], cwd: str | None) -> str | None:
-    """The room workspace a process was started in."""
-    if cwd is not None:
-        return cwd
-    flagged = (arg for arg in command if arg.startswith(OMP_CWD_PREFIX))
-    return next((arg.removeprefix(OMP_CWD_PREFIX) for arg in flagged), None)
 
 
 def _residency(adapter: ACPClientAdapter[Any], room_id: str) -> RetainedRoom | None:

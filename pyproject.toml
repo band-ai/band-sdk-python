@@ -136,6 +136,9 @@ acp = [
     "starlette>=0.40.0",
     "uvicorn>=0.29",
 ]
+omp = [
+    "psutil>=6",
+]
 slack = [
     "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
     "starlette>=0.40.0",     # HTTP server framework
@@ -200,6 +203,7 @@ dev = [
     "pytest-rerunfailures>=14.0.0",
     "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
+    "psutil>=6",  # Native OMP process-tree cleanup tests
     "packaging>=23.0",  # PEP 440 pre-release detection for the CI coverage-gate version guard
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
