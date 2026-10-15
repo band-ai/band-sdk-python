@@ -115,7 +115,7 @@ async def test_tool_reply_or_decline_suppresses_entire_final_batch(
 
     assert (
         f"Room {mock_tools.room_id}: left Parlant text unsent because the turn "
-        "already replied or declined"
+        f"already replied or declined: {BOOKED}\n\n{PEANUTS}"
     ) in caplog.messages
     if declined:
         mock_tools.assert_no_messages_sent()

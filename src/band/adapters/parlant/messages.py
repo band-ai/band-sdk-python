@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
 from band.core.types import PlatformMessage
 
@@ -15,11 +17,51 @@ if TYPE_CHECKING:
 SYSTEM_UPDATE_PREFIX = "[System Update]: "
 
 
+def name_this_agent(
+    content: str,
+    *,
+    agent_id: str | None,
+    agent_name: str,
+    participants: list[Any],
+) -> str:
+    """Rewrite this agent's mention to the name Parlant's prompt uses.
+
+    The tool caller is told "You are an AI agent named {agent_name}". The room
+    text it also sees has already turned ``@[[id]]`` into ``@handle`` (or a
+    whitespace-collapsed ``@name``), which does not match that name, so the
+    model reads the mention as a different agent.
+    """
+    if not content or not agent_id or not agent_name:
+        return content
+    tokens = _self_mention_tokens(agent_id, participants)
+    if not tokens:
+        return content
+    pattern = re.compile(
+        "|".join(rf"{re.escape(token)}(?!\S)" for token in tokens)
+    )
+    return pattern.sub(agent_name, content)
+
+
 def compose_user_message(
-    *, msg: PlatformMessage, participants_msg: str | None, contacts_msg: str | None
+    *,
+    msg: PlatformMessage,
+    participants_msg: str | None,
+    contacts_msg: str | None,
+    agent_id: str | None = None,
+    agent_name: str = "",
+    participants: list[Any] | None = None,
 ) -> str:
     """The turn's message with any roster/contacts updates in front of it."""
-    user_message = msg.format_for_llm()
+    addressed = replace(
+        msg,
+        content=name_this_agent(
+            msg.content,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            participants=participants or [],
+        ),
+    )
+    user_message = addressed.format_for_llm()
     for update in (participants_msg, contacts_msg):
         if update:
             user_message = f"{SYSTEM_UPDATE_PREFIX}{update}\n\n{user_message}"
@@ -42,3 +84,32 @@ async def post_user_message(
         metadata=None,
     )
     return event.offset
+
+
+def _self_mention_tokens(agent_id: str, participants: list[Any]) -> list[str]:
+    """Every token this agent's mention may already have been written as.
+
+    Longest first, so ``@owner/agent`` does not consume ``@owner/agent-2``.
+    """
+    tokens = {f"@[[{agent_id}]]"}
+    for participant in participants:
+        if _field(participant, "id") != agent_id:
+            continue
+        handle = _field(participant, "handle")
+        name = _field(participant, "name")
+        if handle:
+            tokens.add(f"@{handle}")
+        if name:
+            collapsed = "-".join(name.split())
+            if collapsed:
+                tokens.add(f"@{collapsed}")
+    return sorted(tokens, key=len, reverse=True)
+
+
+def _field(participant: Any, key: str) -> str | None:
+    value = (
+        participant.get(key)
+        if isinstance(participant, dict)
+        else getattr(participant, key, None)
+    )
+    return value if isinstance(value, str) and value else None

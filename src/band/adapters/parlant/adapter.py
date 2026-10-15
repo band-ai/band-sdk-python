@@ -222,6 +222,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         as Parlant ToolEntry objects, built at startup."""
         return list(self._tools)
 
+    def _prompt_name(self) -> str:
+        """The name the tool-caller prompt uses: "You are an AI agent named …"."""
+        live_name = getattr(self._lifecycle.agent, "name", None)
+        if isinstance(live_name, str) and live_name:
+            return live_name
+        return self.config.name or self.agent_name or FALLBACK_AGENT_NAME
+
     def _agent_instructions(self, agent_description: str) -> str:
         """Behavioral instructions for the adapter-created Parlant agent."""
         if self.config.system_prompt:
@@ -237,7 +244,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         async def prepare(server: p.Server) -> tuple[p.Agent, Application]:
             return await self._prepare_server(
-                server, agent_name=agent_name, agent_description=agent_description
+                server, agent_description=agent_description
             )
 
         try:
@@ -257,13 +264,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         )
 
     async def _prepare_server(
-        self, server: p.Server, *, agent_name: str, agent_description: str
+        self, server: p.Server, *, agent_description: str
     ) -> tuple[p.Agent, Application]:
         """Declare everything Parlant must process before its setup phase."""
         agent = self._lifecycle.agent
         if agent is None:
             agent = await server.create_agent(
-                name=self.config.name or agent_name,
+                name=self._prompt_name(),
                 description=self._agent_instructions(agent_description),
             )
 
@@ -330,8 +337,20 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 logger.info(
                     "Room %s: Injected %s messages from history", room_id, injected
                 )
+            agent_name = self._prompt_name()
             user_message = compose_user_message(
-                msg=msg, participants_msg=participants_msg, contacts_msg=contacts_msg
+                msg=msg,
+                participants_msg=participants_msg,
+                contacts_msg=contacts_msg,
+                agent_id=tools.agent_id,
+                agent_name=agent_name,
+                participants=list(tools.participants),
+            )
+            logger.info(
+                "Room %s: posting to Parlant (agent %s): %s",
+                room_id,
+                agent_name,
+                user_message,
             )
             try:
                 await self._converse(

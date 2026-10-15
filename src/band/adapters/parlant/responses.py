@@ -167,8 +167,9 @@ async def relay_agent_response(
         if tools.turn.replied:
             if batch.final_texts:
                 logger.info(
-                    "Room %s: left Parlant text unsent because the turn already replied or declined",
+                    "Room %s: left Parlant text unsent because the turn already replied or declined: %s",
                     room_id,
+                    FINAL_SEGMENT_SEPARATOR.join(batch.final_texts),
                 )
             return
         if batch.final_seen:
