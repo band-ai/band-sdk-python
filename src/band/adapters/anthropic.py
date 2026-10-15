@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, ClassVar, cast
 
 from anthropic import APIStatusError, AsyncAnthropic
@@ -33,12 +34,28 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    BandTool,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_names(content: list) -> str:
+    names = [block.name for block in content if isinstance(block, ToolUseBlock)]
+    return ",".join(names) if names else "-"
+
+
+def _declined_this_response(response: Message, tools: AgentToolsProtocol) -> bool:
+    """This response's successful ``band_no_reply`` ended the turn."""
+    if tools.turn.replied is not True:
+        return False
+    return any(
+        isinstance(block, ToolUseBlock) and block.name == BandTool.NO_REPLY
+        for block in response.content
+    )
 
 
 def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -259,18 +276,42 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         # per API call, so sum it across every iteration of the loop into one
         # per-turn TurnUsage, emitted on every exit via the finally.
         turn_usage = TurnUsage()
+        call_index = 0
         try:
             while True:
+                call_index += 1
+                message_count = len(self._message_history[room_id])
+                started = time.perf_counter()
+                logger.info(
+                    "Room %s: Anthropic request %s starting (%s messages)",
+                    room_id,
+                    call_index,
+                    message_count,
+                )
                 try:
                     response = await self._call_anthropic(
                         messages=self._message_history[room_id],
                         tools=tool_schemas,
                     )
                 except Exception as e:
-                    logger.exception("Error calling Anthropic")
+                    logger.exception(
+                        "Room %s: Anthropic request %s failed after %.3fs",
+                        room_id,
+                        call_index,
+                        time.perf_counter() - started,
+                    )
                     await tools.send_failure(_to_agent_failure(e))
                     raise  # Re-raise so message is marked as failed
 
+                logger.info(
+                    "Room %s: Anthropic request %s finished in %.3fs "
+                    "stop_reason=%s tools=%s",
+                    room_id,
+                    call_index,
+                    time.perf_counter() - started,
+                    response.stop_reason,
+                    _tool_names(response.content),
+                )
                 turn_usage = turn_usage + self._usage_from_response(response)
 
                 # Check for tool use
@@ -310,6 +351,19 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "content": tool_results,
                     }
                 )
+                # band_no_reply already ended the turn. Another model call
+                # would only wait for a non-tool stop, and a call that never
+                # returns leaves the message in processing until this handler
+                # returns.
+                if _declined_this_response(response, tools):
+                    logger.info(
+                        "Room %s: %s settled the turn after request %s; "
+                        "not sending a follow-up",
+                        room_id,
+                        BandTool.NO_REPLY,
+                        call_index,
+                    )
+                    break
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)

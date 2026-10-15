@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.turn import Turn
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -32,6 +33,7 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
+from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
@@ -288,6 +290,53 @@ class TestHelperMethods:
 
 class TestToolExecution:
     """Tests for tool execution."""
+
+    @pytest.mark.asyncio
+    async def test_no_reply_ends_the_turn_without_a_follow_up_model_call(
+        self, sample_message, mock_tools
+    ):
+        """A successful band_no_reply settles the turn; no second request is sent."""
+        adapter = AnthropicAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        mock_tools.turn = Turn()
+
+        async def execute(name: str, arguments: dict[str, Any]) -> dict[str, str]:
+            if name == BandTool.NO_REPLY:
+                mock_tools.turn.record(TurnEffect.DECLINE)
+            return {"status": "no_reply"}
+
+        mock_tools.execute_tool_call = AsyncMock(side_effect=execute)
+        declined = SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool-1",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                )
+            ],
+            usage=make_usage(10, 4),
+        )
+        follow_up = SimpleNamespace(
+            stop_reason="end_turn",
+            content=[TextBlock(type="text", text="should not be requested")],
+            usage=make_usage(1, 1),
+        )
+        call_anthropic = AsyncMock(side_effect=[declined, follow_up])
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert call_anthropic.call_count == 1
+        assert mock_tools.turn.replied is True
 
     @pytest.mark.asyncio
     async def test_reports_tool_calls_when_enabled(self, mock_tools):

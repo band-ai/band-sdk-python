@@ -10,6 +10,7 @@ The fixture re-exports are listed in ``__all__`` so they read as intentional.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,10 @@ from tests.e2e.baseline.scorecard import ScorecardCollector
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.toolkit.timeouts import effective_timeout
 
+# Client libraries log every HTTP request at INFO. Live logging is INFO for
+# the nightly run; these stay quiet so an adapter line is readable.
+_HTTP_CLIENT_LOGGERS = ("httpx", "httpx2", "httpcore", "httpcore2")
+
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
     "adapter_id",
@@ -73,6 +78,14 @@ __all__ = [
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    # `--log-cli-level` enables live logging; `log_cli` is ini-only and is not
+    # an attribute of config.option.
+    live_logging = (
+        config.getoption("--log-cli-level") is not None or config.getini("log_cli")
+    )
+    if live_logging:
+        for name in _HTTP_CLIENT_LOGGERS:
+            logging.getLogger(name).setLevel(logging.WARNING)
     # Register the scorecard plugin only when a path is set (empty = don't emit, the
     # local default), so its hooks own their state instead of module globals.
     scorecard_json = BaselineSettings().run.scorecard_json
