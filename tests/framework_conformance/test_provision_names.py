@@ -15,10 +15,13 @@ from band_rest import AgentRegisterRequest
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
     AGENT_NAME_MAX,
+    API_KEY_NAME_MAX,
     MENTION_HANDLE_CAP,
     NAME_PREFIX,
     NAME_TOKEN_HEX,
+    REGISTRATION_NAME_MAX,
     ResourceManager,
+    credential_name,
     name_budget,
     name_token,
     run_id_len,
@@ -105,21 +108,25 @@ class TestProvisionNames:
             assert label == "copilot-sdk"
             assert is_hex(token)
             assert len(token) == 32
-            assert len(name) <= AGENT_NAME_MAX
+            assert len(name) <= REGISTRATION_NAME_MAX
 
-    async def test_long_label_clamps_the_token_to_the_name_limit(self) -> None:
+    async def test_long_label_clamps_so_the_key_name_fits(self) -> None:
         manager, register = recording_manager()
         # One shorter than a full uuid, so the token has to shrink to fit.
-        label = "x" * (name_budget(AGENT_NAME_MAX, 0) - (NAME_TOKEN_HEX - 1))
+        label = "x" * (name_budget(REGISTRATION_NAME_MAX, 0) - (NAME_TOKEN_HEX - 1))
 
         await manager.provision_agent(label)
 
-        token, parsed = name_parts(registered_names(register)[0])
+        name = registered_names(register)[0]
+        token, parsed = name_parts(name)
         assert parsed == label
         assert len(token) < NAME_TOKEN_HEX
         assert len(token) >= run_id_len()
-        assert len(registered_names(register)[0]) == AGENT_NAME_MAX
+        assert len(credential_name(name, REGISTERED_AGENT_ID)) == API_KEY_NAME_MAX
 
-    def test_label_too_long_for_a_unique_name_is_rejected(self) -> None:
+    def test_label_that_fits_the_agent_row_but_not_the_key_is_rejected(self) -> None:
+        # Longest label the agent-row cap still gives a token. The key name
+        # does not fit, so the label is rejected instead of registered.
+        label_len = name_budget(AGENT_NAME_MAX, 0) - run_id_len()
         with pytest.raises(ValueError, match="unique name token"):
-            name_token("x" * 90)
+            name_token("x" * label_len)

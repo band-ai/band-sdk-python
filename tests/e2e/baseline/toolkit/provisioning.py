@@ -72,9 +72,16 @@ MENTION_HANDLE_CAP = 24
 # silently truncating a handle.
 MAX_MENTIONED_LABEL_LEN = len("invitable")  # 9
 
-# Platform ``validate_length(:name, max: 100)``. A longer register is rejected
-# for length, which is a different 422 from name-taken.
+# Platform ``validate_length(:name, max: 100)`` on the agent row. A longer
+# register is rejected for length, which is a different 422 from name-taken.
 AGENT_NAME_MAX = 100
+
+# Same cap on the API key created in that register. The key name is longer
+# than the agent name; see :func:`credential_name`.
+API_KEY_NAME_MAX = 100
+
+# Leading characters of the agent id appended to that key's name.
+CREDENTIAL_ID_SLICE = 8
 
 # ``uuid4().hex`` width. Labels that may exceed the mention cap take the whole
 # uuid so a leftover row cannot collide with the next provision of that label.
@@ -108,24 +115,42 @@ def agent_name(*, token: str, label: str) -> str:
     return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
 
 
+def credential_name(name: str, agent_id: str) -> str:
+    """Name the platform stores on the API key created with the agent.
+
+    The agent row and the key are one transaction. The key name has its own
+    ``API_KEY_NAME_MAX`` cap, so an agent name inside ``AGENT_NAME_MAX`` still
+    rolls the registration back when this string does not fit.
+    """
+    return f"{name} ({agent_id[:CREDENTIAL_ID_SLICE]})"
+
+
+# Longest agent name whose key name still fits. Measured with an id of
+# ``CREDENTIAL_ID_SLICE`` characters; every registered id is at least that long.
+REGISTRATION_NAME_MAX = min(
+    AGENT_NAME_MAX,
+    API_KEY_NAME_MAX - len(credential_name("", "0" * CREDENTIAL_ID_SLICE)),
+)
+
+
 def name_token(label: str) -> str:
     """A fresh hex token for one provision of ``label``.
 
     A label a scenario can @mention gets :func:`run_id_len` characters, so the
     longest such name stays inside ``MENTION_HANDLE_CAP``. A longer label is not
     a mention handle and gets a full uuid slice, clamped so the name stays
-    inside ``AGENT_NAME_MAX``. A fresh token per provision is what keeps a
+    inside ``REGISTRATION_NAME_MAX``. A fresh token per provision is what keeps a
     leftover row from colliding with the next register of the same label.
     """
     normalized = normalized_label(label)
     if len(normalized) <= MAX_MENTIONED_LABEL_LEN:
         return uuid.uuid4().hex[: run_id_len()]
-    width = min(NAME_TOKEN_HEX, name_budget(AGENT_NAME_MAX, len(normalized)))
+    width = min(NAME_TOKEN_HEX, name_budget(REGISTRATION_NAME_MAX, len(normalized)))
     if width < run_id_len():
         raise ValueError(
             f"label {normalized!r} leaves {width} characters for a unique name "
             f"token; need at least {run_id_len()} within the "
-            f"{AGENT_NAME_MAX}-character name limit"
+            f"{REGISTRATION_NAME_MAX}-character registration name limit"
         )
     return uuid.uuid4().hex[:width]
 
