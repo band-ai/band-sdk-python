@@ -202,3 +202,161 @@ class TestMcpCancellation:
             if cleanup is not None:
                 await asyncio.gather(cleanup, return_exceptions=True)
             await adapter.cleanup_all()
+
+    @pytest.mark.looptime
+    async def test_public_cancel_disarms_readiness_before_startup_settlement(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        entered, settling, release = (asyncio.Event() for _ in range(3))
+        cancellations: list[int] = []
+        order: list[str] = []
+        monkeypatch.setattr("band.adapters.codex._MCP_READINESS_TIMEOUT_S", 0.1)
+
+        class SettlingClient(StatusClient):
+            async def request(
+                self, method: str, params: dict[str, Any] | None = None, **kwargs: Any
+            ) -> dict[str, Any]:
+                if method != "mcpServerStatus/list":
+                    return await super().request(method, params, **kwargs)
+                self.requests.append((method, params or {}))
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    assert task is not None
+                    cancellations.append(task.cancelling())
+                    order.append("settling")
+                    settling.set()
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        cancellations.append(task.cancelling())
+                        order.append("cancelled-again")
+                        raise
+                    order.append("settled")
+                    raise
+
+            async def close(self) -> None:
+                order.append("close")
+                await super().close()
+
+        client = SettlingClient()
+        adapter, _ = mcp_adapter(
+            tmp_path, [client], private_servers, turn_settle_timeout_s=0.02
+        )
+        await adapter.on_started("Fixture", "Public cancellation custody")
+        running = message_task(adapter)
+        try:
+            await entered.wait()
+            room = adapter._room_clients["a"]
+            snapshot = room.mcp_snapshot
+            running.cancel()
+            await settling.wait()
+            await asyncio.sleep(0.2)  # Cross the original readiness deadline.
+            assert cancellations == [1]
+            assert order == ["settling"]
+            assert not client.closed
+            assert room.client is client and room.mcp_snapshot is snapshot
+            release.set()
+            await asyncio.gather(running, return_exceptions=True)
+            await adapter.on_cleanup("a")
+            assert order == ["settling", "settled", "close"]
+            assert client.closed
+            assert "a" not in adapter._workspaces.rooms
+        finally:
+            release.set()
+            await asyncio.gather(running, return_exceptions=True)
+            await adapter.cleanup_all()
+
+    @pytest.mark.looptime
+    @pytest.mark.parametrize("blocked_stage", ["resolution", "readiness"])
+    @pytest.mark.parametrize(
+        "cancel_order",
+        ["caller", "cleanup", "caller-then-cleanup", "cleanup-then-caller"],
+    )
+    async def test_public_cancel_consumed_count_keeps_settlement_owned(
+        self, tmp_path, monkeypatch, blocked_stage: str, cancel_order: str
+    ) -> None:
+        entered, settling, release = (asyncio.Event() for _ in range(3))
+        cancellations: list[int] = []
+        order: list[str] = []
+        monkeypatch.setattr("band.adapters.codex._MCP_READINESS_TIMEOUT_S", 0.1)
+
+        async def checkpoint(stage: str) -> None:
+            if stage != blocked_stage:
+                return
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                assert task is not None
+                cancellations.append(task.cancelling())
+                task.uncancel()
+                order.append("settling")
+                settling.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancellations.append(task.cancelling())
+                    order.append("cancelled-again")
+                    raise
+                order.append("settled")
+                raise
+
+        async def resolve(workspace: str) -> Mapping[str, CodexMcpServer]:
+            await checkpoint("resolution")
+            return await private_servers(workspace)
+
+        class ClosingClient(StatusClient):
+            async def close(self) -> None:
+                order.append("close")
+                await super().close()
+
+        client = ClosingClient(checkpoint=checkpoint)
+        adapter, launches = mcp_adapter(
+            tmp_path, [client], resolve, turn_settle_timeout_s=0.02
+        )
+        await adapter.on_started("Fixture", "Consumed cancellation custody")
+        running = message_task(adapter)
+        cleanup = None
+        try:
+            await entered.wait()
+            room = adapter._room_clients["a"]
+            snapshot, startup_client = room.mcp_snapshot, room.client
+            if cancel_order.startswith("caller"):
+                running.cancel()
+            else:
+                cleanup = asyncio.create_task(adapter.on_cleanup("a"))
+            await settling.wait()
+            if cancel_order == "caller-then-cleanup":
+                cleanup = asyncio.create_task(adapter.on_cleanup("a"))
+            elif cancel_order == "cleanup-then-caller":
+                running.cancel()
+            await asyncio.sleep(0.2)  # Cross both grace and readiness expiry.
+            assert cancellations == [1]
+            assert order == ["settling"]
+            assert room.client is startup_client and room.mcp_snapshot is snapshot
+            assert not client.closed
+            with pytest.raises(ValueError):
+                adapter._workspaces.claim("b", room.workspace)
+            release.set()
+            await asyncio.gather(running, return_exceptions=True)
+            if cleanup is not None:
+                await asyncio.gather(cleanup, return_exceptions=True)
+            await adapter.on_cleanup("a")
+            if blocked_stage == "readiness":
+                assert order == ["settling", "settled", "close"]
+                assert client.closed
+            else:
+                assert order == ["settling", "settled"]
+                assert launches == []
+            assert "a" not in adapter._workspaces.rooms
+        finally:
+            release.set()
+            await asyncio.gather(running, return_exceptions=True)
+            if cleanup is not None:
+                await asyncio.gather(cleanup, return_exceptions=True)
+            await adapter.cleanup_all()
+            adapter._workspaces.release("b")
