@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import cast
 
 from band.integrations.codex.stdio_client import CodexStdioClient
@@ -78,11 +78,13 @@ class WindowsLifecycle:
 
     async def launch(
         self,
-        command: Sequence[str],
-        status_handle: int,
-        *,
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
         cwd: str | None,
         env: Mapping[str, str] | None,
+        startupinfo: object,
         limit: int,
     ) -> asyncio.subprocess.Process:
         self.creation_started.set()

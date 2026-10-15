@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
@@ -20,7 +21,10 @@ async def windows_lifecycle(
     monkeypatch.setattr(stdio_client, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(winspawn, "create_job", peer.create_job)
     monkeypatch.setattr(winspawn, "_os_handle", lambda fd: fd)
-    monkeypatch.setattr(winspawn, "_launch_helper", peer.launch)
+    monkeypatch.setattr(
+        winspawn.subprocess, "STARTUPINFO", SimpleNamespace, raising=False
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", peer.launch)
     monkeypatch.setattr(winspawn, "_read_status", peer.read_status)
     monkeypatch.setattr(
         peer.client, "_windows_command", lambda _job, _handle: ["unused"]
