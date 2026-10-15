@@ -405,19 +405,13 @@ class Scheduler:
                 disposition = Disposition.SKIP
         return replace(candidate, disposition=disposition)
 
-    def local_segment(self) -> tuple[list[MessageEvent], MessageKey | None, set[str]]:
+    def local_segment(self) -> list[MessageEvent]:
         segment: list[MessageEvent] = []
-        later: set[str] = set()
-        bounded = False
         for event in self.pending:
             if not is_ordinary(event):
-                bounded = True
-            elif bounded:
-                later.add(message_id(event))
-            else:
-                segment.append(event)
-        limit = MessageKey.of_event(segment[-1]) if bounded and segment else None
-        return segment, limit, later
+                break
+            segment.append(event)
+        return segment
 
     def prune_skipped(
         self,
@@ -502,7 +496,7 @@ class Scheduler:
             and not is_ordinary(self.pending[0])
         ):
             return (await self.dispatch(self.pending[0])).scheduling
-        segment, _limit, _later = self.local_segment()
+        segment = self.local_segment()
         candidates = self.candidates(
             rows,
             (event for event in self.pending if is_ordinary(event)),
