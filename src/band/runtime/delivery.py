@@ -406,8 +406,7 @@ class DeliveryLifecycle:
     def _will_retry(self, scope: TurnScope) -> bool:
         for event in scope.originals:
             assert event.payload is not None
-            pending = self.claims.pending_settlement(self.room_id, event.payload.id)
-            if pending is not None and pending["continuation"]["kind"] == "retry":
+            if self.awaits_retry_confirmation(event.payload.id):
                 return True
         return False
 

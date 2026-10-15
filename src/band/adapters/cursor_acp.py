@@ -66,7 +66,6 @@ from band.runtime.decisions import (
     DecisionRegistry,
     Timeout,
 )
-from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from band.workspaces import WorkspaceResolver
 
@@ -668,8 +667,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
     async def _handle_control_message(
         self, msg: PlatformMessage, tools: AgentToolsProtocol, room_id: str
     ) -> bool:
-        words = strip_leading_mentions(msg.content).strip().split()
-        if not words or words[0].lower() != ROOM_COMMAND:
+        words = room_command_words(msg.content)
+        if words is None:
             return False
         mentions = [msg.sender_id]
         if len(words) == 1 or words[1].lower() == CursorCommandWord.DECISIONS:
