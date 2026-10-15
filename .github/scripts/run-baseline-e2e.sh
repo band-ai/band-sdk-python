@@ -5,7 +5,9 @@ set -uo pipefail
 : "${FINAL:?FINAL scorecard path is required}"
 
 pytest_args=(-p no:rerunfailures)
-if [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" = "true" ]; then
+if [ -n "${BAND_E2E_LOG_LEVEL:-}" ]; then
+  pytest_args+=(--log-level="${BAND_E2E_LOG_LEVEL}" --log-cli-level="${BAND_E2E_LOG_LEVEL}")
+elif [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" = "true" ]; then
   pytest_args+=(--log-cli-level=WARNING)
 fi
 if [ -n "${BAND_E2E_TEST_SELECTOR:-}" ]; then

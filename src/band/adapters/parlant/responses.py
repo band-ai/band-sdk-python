@@ -140,8 +140,16 @@ async def relay_agent_response(
         )
         match polled:
             case PollMiss.FAILED:
+                logger.info(
+                    "Room %s: stopped waiting for a Parlant reply because reading events failed",
+                    room_id,
+                )
                 return
             case PollMiss.NO_UPDATE if tools.turn.replied:
+                logger.info(
+                    "Room %s: stopped waiting for a Parlant reply because the turn already replied or declined",
+                    room_id,
+                )
                 return
             case PollMiss():
                 await _back_off(deadline)
@@ -156,7 +164,14 @@ async def relay_agent_response(
                 FINAL_SEGMENT_SEPARATOR.join(batch.final_texts),
                 mentions=[sender_name],
             )
-        if batch.final_seen or tools.turn.replied:
+        if tools.turn.replied:
+            if batch.final_texts:
+                logger.info(
+                    "Room %s: left Parlant text unsent because the turn already replied or declined",
+                    room_id,
+                )
+            return
+        if batch.final_seen:
             return
         logger.debug("Room %s: only a preamble so far; still waiting", room_id)
 
