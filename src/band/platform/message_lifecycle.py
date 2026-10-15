@@ -25,6 +25,7 @@ from band.core.exceptions import RoomExecutionStoppedError
 from band.core.settlement import SettlementResult
 from band.core.types import metadata_to_dict
 from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import ACTIONABLE_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +101,6 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
         metadata=metadata_to_dict(item.metadata, exclude_none=True),
         created_at=item.inserted_at or datetime.now(UTC),
     )
-
-
-ACTIONABLE_PAGE_SIZE = 100
 
 
 @dataclass(frozen=True)

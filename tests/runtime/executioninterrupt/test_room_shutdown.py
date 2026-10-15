@@ -77,7 +77,7 @@ class TestRoomShutdown:
         ctx = ExecutionContext(
             "room-123", mock_link, AsyncMock(), on_platform_stop=observer
         )
-        await ctx._begin_scope()
+        await ctx.begin_delivery()
         ctx.observe_platform_stop(ctx.current_scope)
         await entered.wait()
         await ctx.stop()
@@ -103,7 +103,7 @@ class TestRoomShutdown:
         ctx = ExecutionContext(
             "room-123", mock_link, AsyncMock(), on_platform_stop=observer
         )
-        await ctx._begin_scope()
+        await ctx.begin_delivery()
         ctx.observe_platform_stop(ctx.current_scope)
         await entered.wait()
         with pytest.raises(CleanupIncompleteError):

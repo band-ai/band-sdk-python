@@ -127,7 +127,7 @@ class TestTurnTask:
 
         owner = TurnTask(asyncio.create_task(work()))
         scope.bind(owner)
-        scope.settled = True
+        scope.settle()
         await started.wait()
         assert not scope.aborted
         owner.terminate()

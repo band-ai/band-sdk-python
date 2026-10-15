@@ -1,3 +1,5 @@
+"""codex advertises filtered central registry tools behavior."""
+
 from __future__ import annotations
 
 from typing import Any

@@ -1,3 +1,5 @@
+"""turn diagnostics distinguish running handler from ack behavior."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +17,7 @@ from tests.conftest import (
     make_message_event,
 )
 from tests.runtime.helpers import LifecyclePlatform, rest_client_over
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestTurnDiagnosticsDistinguishRunningHandlerFromAck:
@@ -30,7 +33,7 @@ class TestTurnDiagnosticsDistinguishRunningHandlerFromAck:
             entered.set()
             await release.wait()
 
-        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        caplog.set_level(logging.DEBUG, logger="band.runtime.delivery")
         async with rest_client_over(peer.answer) as rest:
             link = BandLink(agent_id="agent-123", api_key="test")
             link.rest = rest
@@ -42,12 +45,13 @@ class TestTurnDiagnosticsDistinguishRunningHandlerFromAck:
             )
             async with asyncio.TaskGroup() as tasks:
                 task = tasks.create_task(
-                    ctx._process_event(
+                    attempt_delivery(
+                        ctx,
                         make_message_event(
                             room_id="room-123",
                             msg_id="observed-turn",
                             content="private prompt",
-                        )
+                        ),
                     )
                 )
                 await entered.wait()

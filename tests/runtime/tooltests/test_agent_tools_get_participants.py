@@ -3,16 +3,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 from tests.conftest import make_participant_mock
 
 
 class TestAgentToolsGetParticipants:
     """Test get_participants tool."""
 
-    async def test_get_participants_success(self, mock_rest_client):
+    async def test_get_participants_success(self, mock_rest_client: MagicMock) -> None:
         """get_participants() should return Fern participant models."""
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -21,7 +19,7 @@ class TestAgentToolsGetParticipants:
         assert len(result) == 1
         assert result[0].name == "User One"
 
-    async def test_get_participants_empty(self, mock_rest_client):
+    async def test_get_participants_empty(self, mock_rest_client: MagicMock) -> None:
         """get_participants() should return empty list if none."""
         mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
             data=None
@@ -32,7 +30,9 @@ class TestAgentToolsGetParticipants:
 
         assert result == []
 
-    async def test_get_participants_updates_cache(self, mock_rest_client):
+    async def test_get_participants_updates_cache(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """get_participants() should refresh self._participants for mention resolution."""
         tools = AgentTools("room-123", mock_rest_client)
         assert tools._participants == []
@@ -50,8 +50,8 @@ class TestAgentToolsGetParticipants:
         ]
 
     async def test_get_participants_preserves_cache_when_data_none(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """``data is None`` indicates a transient/unexpected response — the
         cache should be preserved rather than wiped (an agent should always
         be a participant in its own room)."""
@@ -68,7 +68,9 @@ class TestAgentToolsGetParticipants:
         assert result == []
         assert tools._participants == cached
 
-    async def test_get_participants_clears_cache_on_empty_list(self, mock_rest_client):
+    async def test_get_participants_clears_cache_on_empty_list(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """An explicit empty list from the server is authoritative — cache should clear."""
         mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
             data=[]
@@ -80,7 +82,9 @@ class TestAgentToolsGetParticipants:
 
         assert tools._participants == []
 
-    async def test_get_participants_syncs_roster_to_ctx(self, mock_rest_client):
+    async def test_get_participants_syncs_roster_to_ctx(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """get_participants() must make the ctx roster follow the REST list —
         stale entries drop (even ctx-only ones this AgentTools never saw) and
         new ones appear — so the refresh survives turn boundaries."""
@@ -110,8 +114,8 @@ class TestAgentToolsGetParticipants:
         assert ctx.participants[0]["handle"] == "user-two"
 
     async def test_send_message_mentions_newly_discovered_participant(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Mentioning a participant first seen via get_participants() should not raise."""
         tools = AgentTools("room-123", mock_rest_client)
 

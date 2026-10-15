@@ -1,3 +1,5 @@
+"""Configured policy governs controls without consuming pending context."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -12,19 +14,20 @@ from tests.conftest import make_message_event
 from tests.preprocessing.kit import ControlPolicy
 from tests.runtime.deferral.kit import ApprovalAdapter
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
-class TestControls:
-    @pytest.mark.parametrize("hosting", ["normal", "pending"])
-    @pytest.mark.parametrize(
-        ("content", "rewritten", "consumed"),
-        [
-            ("approve", None, False),
-            ("approve", "ordinary", False),
-            ("permit", "approve", True),
-        ],
-        ids=["filtered", "transformed-away", "transformed-control"],
-    )
+@pytest.mark.parametrize("hosting", ["normal", "pending"])
+@pytest.mark.parametrize(
+    ("content", "rewritten", "consumed"),
+    [
+        ("approve", None, False),
+        ("approve", "ordinary", False),
+        ("permit", "approve", True),
+    ],
+    ids=["filtered", "transformed-away", "transformed-control"],
+)
+class TestConfiguredControlPolicy:
     async def test_configured_policy_governs_control_delivery(
         self, hosting: str, content: str, rewritten: str | None, consumed: bool
     ) -> None:
@@ -45,6 +48,7 @@ class TestControls:
                 agent._on_execute,
                 agent_id=AGENT_ID,
                 on_message_control=agent._on_control,
+                is_message_control=agent._is_control,
                 config=SessionConfig(
                     enable_context_hydration=False, enable_working_state=False
                 ),
@@ -52,12 +56,14 @@ class TestControls:
             ctx.inject_system_message("Contact update still owed")
             event = make_message_event(room_id=ROOM_ID, msg_id="C", content=content)
             if hosting == "normal":
-                await ctx._process_event(event)
+                await attempt_delivery(ctx, event)
             else:
-                await ctx._try_control(event)
+                await attempt_delivery(ctx, event, priority=True)
             await ctx.stop()
 
-        assert policy.seen == ["C"]
+        assert policy.seen == (["C"] if hosting == "normal" or consumed else [])
+        if hosting == "pending" and not consumed:
+            assert peer.requested("processing") == []
         assert adapter.controls == (["C"] if consumed else [])
         assert not ctx.is_llm_initialized
         assert ctx.participants_changed()

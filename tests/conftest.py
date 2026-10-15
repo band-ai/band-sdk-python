@@ -50,6 +50,7 @@ from band.client.streaming import (
     RoomDeletedPayload,
     RoomRemovedPayload,
 )
+from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -377,6 +378,29 @@ def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
 # =============================================================================
 # Event Factory Helpers (must return SDK-native types for pattern matching)
 # =============================================================================
+
+
+def mirror_settlement_results(link: MagicMock) -> MagicMock:
+    """Give a mock link detailed terminal writes that follow its boolean mocks.
+
+    Runtime tests script ``mark_processed``/``mark_failed``; the runtime reads
+    the detailed results, which here are ACCEPTED exactly when the boolean mock
+    is truthy. Wire-level classification is covered through the real client in
+    ``tests/platform/settlement``.
+    """
+
+    def settled(accepted: object) -> SettlementResult:
+        return SettlementResult.ACCEPTED if accepted else SettlementResult.UNCONFIRMED
+
+    async def processed(*args: Any, **kwargs: Any) -> SettlementResult:
+        return settled(await link.mark_processed(*args, **kwargs))
+
+    async def failed(*args: Any, **kwargs: Any) -> SettlementResult:
+        return settled(await link.mark_failed(*args, **kwargs))
+
+    link.mark_processed_result = AsyncMock(side_effect=processed)
+    link.mark_failed_result = AsyncMock(side_effect=failed)
+    return link
 
 
 def make_message_event(

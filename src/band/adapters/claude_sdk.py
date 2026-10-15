@@ -601,6 +601,20 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         {Capability.MEMORY, Capability.CONTACTS, Capability.FILES, Capability.TASKS}
     )
 
+    def _control_command(
+        self, msg: PlatformMessage
+    ) -> tuple[ClaudeSDKCommand, str] | None:
+        """The room command ``msg`` carries, if approvals make it a control.
+
+        The one parser behind both ``is_control_message`` and ``try_handle_control``.
+        """
+        if self.config.approvals is None:
+            return None
+        return self._extract_command(msg.content)
+
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return self._control_command(msg) is not None
+
     def __init__(
         self,
         config: ClaudeSDKAdapterConfig | None = None,
@@ -823,9 +837,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     async def try_handle_control(
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
-        if self.config.approvals is None:
-            return False
-        command = self._extract_command(msg.content)
+        command = self._control_command(msg)
         if command is None:
             return False
         cmd, args = command

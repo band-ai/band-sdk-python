@@ -17,7 +17,7 @@ class TestStopNotification:
         stopping_adapter: StoppingAdapter,
     ) -> None:
         runtime, ctx = stopping_room
-        scope = await ctx._begin_scope()
+        scope = await ctx.begin_delivery()
         assert scope is not None
         ctx.observe_platform_stop(scope)
         while not stopping_adapter.heard:
@@ -34,13 +34,13 @@ class TestStopNotification:
         stopping_adapter: StoppingAdapter,
     ) -> None:
         runtime, ctx = stopping_room
-        observed = await ctx._begin_scope()
+        observed = await ctx.begin_delivery()
         assert observed is not None
         stopping_adapter.release.set()
         ctx.observe_platform_stop(observed)
         assert observed.observer_task is not None
         await observed.observer_task
-        assert await ctx._begin_scope() is not None
+        assert await ctx.begin_delivery() is not None
 
         await runtime.handle_control(control_payload(ControlMode.STOP))
 

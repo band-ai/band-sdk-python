@@ -5,9 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 from tests.conftest import make_participant_mock
 
 
@@ -21,7 +19,9 @@ class TestAgentToolsContextSyncBack:
     """
 
     @pytest.mark.asyncio
-    async def test_add_participant_syncs_back_to_ctx(self, mock_rest_client):
+    async def test_add_participant_syncs_back_to_ctx(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """add_participant() must call ctx.add_participant() with full dict."""
         mock_ctx = MagicMock()
         mock_ctx.room_id = "room-456"
@@ -50,7 +50,9 @@ class TestAgentToolsContextSyncBack:
         assert added["description"] == "Another agent"
 
     @pytest.mark.asyncio
-    async def test_remove_participant_syncs_back_to_ctx(self, mock_rest_client):
+    async def test_remove_participant_syncs_back_to_ctx(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """remove_participant() must call ctx.remove_participant() with correct ID."""
         participant = {
             "id": "user-1",
@@ -80,8 +82,8 @@ class TestAgentToolsContextSyncBack:
 
     @pytest.mark.asyncio
     async def test_add_participant_persists_across_recreated_tools(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Added participant must survive tools recreation via from_context().
 
         Uses real ExecutionContext — its ``participants`` property returns a
@@ -113,8 +115,8 @@ class TestAgentToolsContextSyncBack:
 
     @pytest.mark.asyncio
     async def test_remove_participant_persists_across_recreated_tools(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Removed participant must stay removed after tools recreation.
 
         Uses real ExecutionContext — its ``participants`` property returns a

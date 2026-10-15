@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from band.runtime.execution import ExecutionContext, ResyncRequest
+from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncRequest
 from tests.runtime.conftest import wait_for_condition
 
 
@@ -24,7 +25,7 @@ class TestRequestResync:
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
         await ctx.start()
 
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         call_count_before = mock_link.get_next_message.call_count
 
@@ -42,7 +43,7 @@ class TestRequestResync:
         """Multiple rapid request_resync() calls should not crash or deadlock."""
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         for _ in range(5):
             await ctx.request_resync()

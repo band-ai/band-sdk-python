@@ -1,3 +1,5 @@
+"""ExecutionContextEvents behavior."""
+
 from __future__ import annotations
 
 from band.runtime.execution import (
