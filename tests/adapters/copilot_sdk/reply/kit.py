@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.runtime.tools import BandTool
 from tests.adapters.copilot_sdk.fakes import (
     ToolSchemaFakeTools,
 )
-
-if _COPILOT_SDK_AVAILABLE:
-    pass
 
 
 class CreateChatroomFakeTools(ToolSchemaFakeTools):
