@@ -40,6 +40,7 @@ from band.runtime.agentconfig import AgentConfig
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
+from tests.e2e.baseline.toolkit.restclient import baseline_rest_client
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 if TYPE_CHECKING:
@@ -134,7 +135,7 @@ def user_rest_client(
     )
     if not api_key:
         raise ValueError(f"{name} is required for the user REST client")
-    return AsyncRestClient(api_key=api_key, base_url=settings.endpoints.rest_url)
+    return baseline_rest_client(api_key=api_key, base_url=settings.endpoints.rest_url)
 
 
 def agent_rest_client(
@@ -149,7 +150,9 @@ def agent_rest_client(
     left to be reclaimed at event-loop teardown rather than closed explicitly.
     ``ReplyCapture`` reuses one client per agent to bound how many are opened.
     """
-    return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
+    return baseline_rest_client(
+        api_key=agent.api_key, base_url=settings.endpoints.rest_url
+    )
 
 
 class PeerActor:
