@@ -18,6 +18,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     NAME_PREFIX,
     ResourceManager,
     name_token,
+    run_id_len,
 )
 
 
@@ -70,7 +71,14 @@ class TestProvisionNames:
             assert name.startswith(NAME_PREFIX)
             assert label == "invitable"
             assert is_hex(token)
+            assert len(token) == run_id_len()
             assert len(name) == MENTION_HANDLE_CAP
+
+        short = await manager.provision_agent("echo")
+        short_token, short_label = name_parts(short.name)
+        assert short_label == "echo"
+        assert len(short_token) == run_id_len()
+        assert len(short.name) <= MENTION_HANDLE_CAP
 
     async def test_adapter_label_uses_a_wide_token_within_the_name_limit(
         self,

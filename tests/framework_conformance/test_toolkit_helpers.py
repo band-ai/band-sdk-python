@@ -292,7 +292,7 @@ async def test_adopt_room_is_reaped_once_on_teardown() -> None:
 
 def test_adapter_id_labels_become_names_models_echo_verbatim() -> None:
     """A model repeating ``omp_acp`` writes ``omp-acp``; the name must already match."""
-    assert agent_name(run_id="ab12c", label="omp_acp") == "e2e-band-ab12c-omp-acp"
+    assert agent_name(token="ab12c", label="omp_acp") == "e2e-band-ab12c-omp-acp"
 
 
 def test_mentioned_peer_names_fit_handle_cap() -> None:
@@ -315,7 +315,7 @@ def test_mentioned_peer_names_fit_handle_cap() -> None:
 
     # The longest label a scenario provisions AND asserts by @mention must fit.
     longest = "x" * MAX_MENTIONED_LABEL_LEN
-    name = agent_name(run_id="a" * length, label=longest)
+    name = agent_name(token="a" * length, label=longest)
     assert len(name) <= MENTION_HANDLE_CAP, (
         f"longest @mentioned peer name {name!r} is {len(name)} chars, over the "
         f"{MENTION_HANDLE_CAP}-char mention-handle cap"

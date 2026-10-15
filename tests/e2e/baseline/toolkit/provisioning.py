@@ -88,32 +88,31 @@ def normalized_label(label: str) -> str:
     return label.replace("_", "-")
 
 
-def agent_name(*, run_id: str, label: str) -> str:
-    """The provisioned name for ``label`` and name token ``run_id``.
+def agent_name(*, token: str, label: str) -> str:
+    """The provisioned name for ``label`` and ``token``.
 
     Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
     repeating a name, so an adapter-id label must already be in the form they echo.
     """
-    return f"{NAME_PREFIX}{run_id}-{normalized_label(label)}"
+    return f"{NAME_PREFIX}{token}-{normalized_label(label)}"
 
 
 def name_token(label: str) -> str:
     """A fresh hex token for one provision of ``label``.
 
-    A peer a scenario @mentions only surfaces its full name inside
-    ``MENTION_HANDLE_CAP``, so that token uses whatever width the cap still
-    leaves. Adapter-id labels already pass the cap and take a full uuid slice:
-    every cell of one adapter would otherwise register the same name, and a
-    row left behind makes the next cell's register fail with name-taken.
+    A label a scenario can @mention gets :func:`run_id_len` characters, so the
+    longest such name stays inside ``MENTION_HANDLE_CAP``. A longer label is not
+    a mention handle and gets a full uuid slice, clamped so the name stays
+    inside ``AGENT_NAME_MAX``. Replacing the shared session id is what keeps a
+    leftover row from making the next provision of the same label fail name-taken.
     """
     normalized = normalized_label(label)
     if len(normalized) <= MAX_MENTIONED_LABEL_LEN:
-        width = MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - len(normalized)
-    else:
-        width = min(
-            NAME_TOKEN_HEX,
-            AGENT_NAME_MAX - len(NAME_PREFIX) - 1 - len(normalized),
-        )
+        return uuid.uuid4().hex[: run_id_len()]
+    width = min(
+        NAME_TOKEN_HEX,
+        AGENT_NAME_MAX - len(NAME_PREFIX) - 1 - len(normalized),
+    )
     if width < run_id_len():
         raise ValueError(
             f"label {normalized!r} leaves {width} characters for a unique name "
@@ -346,7 +345,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = agent_name(run_id=name_token(label), label=label)
+        name = agent_name(token=name_token(label), label=label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
