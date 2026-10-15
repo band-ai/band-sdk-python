@@ -187,6 +187,11 @@ class DeliveryLifecycle:
             self.claims.remember_completed(self.room_id, message.id)
         return eligibility
 
+    def awaits_retry_confirmation(self, message_id: str) -> bool:
+        """A skipped settlement can still need its original after confirmation."""
+        pending = self.claims.pending_settlement(self.room_id, message_id)
+        return pending is not None and pending["continuation"]["kind"] == "retry"
+
     @contextlib.contextmanager
     def claim(self, events: tuple[MessageEvent, ...]) -> Iterator[bool]:
         acquired: list[str] = []
@@ -240,6 +245,22 @@ class DeliveryLifecycle:
         control: bool = False,
     ) -> TurnOutcome:
         """Every source crosses the same gates before a handler can consume input."""
+        while True:
+            outcome = await self._run_once(events, revision, control=control)
+            if outcome is not TurnOutcome.ADVANCED or not any(
+                event.payload is not None
+                and self.eligibility(event.payload) == "runnable"
+                for event in events
+            ):
+                return outcome
+
+    async def _run_once(
+        self,
+        events: tuple[MessageEvent, ...],
+        revision: int,
+        *,
+        control: bool,
+    ) -> TurnOutcome:
         members: list[MessageEvent] = []
         for event in events:
             assert event.payload is not None

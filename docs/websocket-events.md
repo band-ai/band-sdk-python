@@ -151,9 +151,11 @@ queue as messages, in the order the room observed them. Participant events carry
 no server timestamp comparable to a message's, so that local order is the only
 order used.
 
-- The first queued non-message event bounds the current segment: no REST message
-  past the segment's last original joins the turn, because its position relative
-  to the event is unknown.
+- The first queued non-message event defines the current segment. Originals
+  known to follow it cannot join, even when their timestamps and IDs sort first.
+- REST-only messages past the segment's last original key cannot join, because
+  their position relative to the event is unknown. Known leading originals stay
+  in the segment even when their keys sort above that ceiling.
 - A leading non-message event runs on its own before the following segment.
 - The queue is absorbed again after the REST read and before the membership is
   fixed. Events arriving after that point apply at the next serial boundary and
@@ -172,8 +174,10 @@ stays on the paced retry cadence.
 
 ### Limits of WebSocket-only backlog
 
-A retained original survives local deferral and STOP because the room keeps its
-payload. It does not survive the loss of that payload (process exit, or retirement
+A retained original survives local deferral, STOP and configured singleton retries.
+Confirmed retryable failures continue in the same delivery call; uncertain or
+parked failures retain the payload until their retry continuation is confirmed.
+It does not survive the loss of that payload (process exit, or retirement
 of the room's execution): neither the list nor `/next` can rebuild a thread reply
 afterwards.
 

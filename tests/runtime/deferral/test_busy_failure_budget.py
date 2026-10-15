@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from band.core.exceptions import InputNotAccepted
 from band.platform.link import BandLink
+from band.runtime.delivery import TurnOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
-from tests.runtime.deferral.kit import ApprovalAdapter
+from tests.runtime.deferral.kit import FailureThenBusyAdapter
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
@@ -24,23 +22,13 @@ class TestBusyFailureBudget:
     ) -> None:
         peer = LifecyclePlatform()
         peer.add_message("B")
-        mode = "failure"
-        invoked: list[str] = []
-
-        class FailingAdapter(ApprovalAdapter):
-            async def on_message(
-                self, msg: Any, tools: Any, *args: Any, **kwargs: Any
-            ) -> None:
-                invoked.append(mode)
-                if mode == "busy":
-                    raise InputNotAccepted()
-                raise OSError("provider transport uncertainty")
+        adapter = FailureThenBusyAdapter()
 
         async with rest_client_over(peer.answer) as rest:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
             link.rest = rest
             ctx = run_through(
-                FailingAdapter(),
+                adapter,
                 link,
                 config=SessionConfig(
                     enable_context_hydration=False,
@@ -50,15 +38,16 @@ class TestBusyFailureBudget:
                 ),
             )
             event = make_message_event(room_id=ROOM_ID, msg_id="B")
-            await ctx._process_event(event)
-            mode = "busy"
-            for _ in range(5):
+            try:
+                assert await ctx._process_event(event) is TurnOutcome.NOT_ACCEPTED
+                for _ in range(4):
+                    await ctx._reconcile()
+                assert peer.marked("failed") == ["B"]
+                assert peer.marked("processed") == []
+                adapter.busy = False
                 await ctx._reconcile()
-            assert peer.marked("failed") == ["B"]
-            assert peer.marked("processed") == []
-            mode = "failure"
-            await ctx._reconcile()
-            await ctx._reconcile()
-            assert peer.marked("failed") == ["B", "B"]
-            assert invoked == ["failure", *["busy"] * 5, "failure"]
-            await ctx.stop()
+                await ctx._reconcile()
+                assert peer.marked("failed") == ["B", "B"]
+                assert (adapter.failure_attempts, adapter.busy_attempts) == (2, 5)
+            finally:
+                await ctx.stop()

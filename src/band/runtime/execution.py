@@ -1282,7 +1282,13 @@ class ExecutionContext:
     def _release(self, message_ids: Iterable[str]) -> None:
         released = set(message_ids)
         self._pending = deque(
-            event for event in self._pending if _delivery_id(event) not in released
+            event
+            for event in self._pending
+            if _delivery_id(event) not in released
+            or (
+                _is_ordinary(event)
+                and self.delivery.awaits_retry_confirmation(_payload(event).id)
+            )
         )
 
     async def _retain_or_handle_control(self, event: MessageEvent) -> None:
@@ -1752,14 +1758,20 @@ class ExecutionContext:
             # A control landed during the read, so the page is stale; unlike a
             # STOP it leaves the room running, which reads again.
             return ResyncOutcome.PROGRESS
-        segment, limit = self._local_segment()
-        rest = [self._candidate(_backlog_event(msg)) for msg in page.messages]
+        segment, limit, later_ids = self._local_segment()
+        rest = [
+            self._candidate(_backlog_event(msg))
+            for msg in page.messages
+            if msg.id not in later_ids
+        ]
         retained = [self._candidate(event) for event in segment]
         selection = select_prefix(
             rest,
             retained,
             cap=self.config.max_queued_messages,
-            page_reaches=rest[-1].key if rest else None,
+            page_reaches=MessageKey.of_message(page.messages[-1])
+            if page.messages
+            else None,
             exhausted=page.next_cursor is None,
             limit=limit,
         )
@@ -1782,18 +1794,26 @@ class ExecutionContext:
             return ResyncOutcome.PROGRESS
         return ResyncOutcome.BLOCKED
 
-    def _local_segment(self) -> tuple[list[MessageEvent], MessageKey | None]:
-        """The leading ordinary originals of the line and REST's expansion limit.
+    def _local_segment(
+        self,
+    ) -> tuple[list[MessageEvent], MessageKey | None, set[str]]:
+        """Leading originals, unknown REST's ceiling and known later identities.
 
-        A later non-message event bounds the segment at its last original: a
-        REST candidate past that key cannot be placed before or after the event.
+        Local membership is authoritative even when timestamp/UUID order differs.
+        REST-only originals past the last local key have no known event position.
         """
         segment: list[MessageEvent] = []
+        later_ids: set[str] = set()
+        bounded = False
         for event in self._pending:
             if not _is_ordinary(event):
-                return segment, MessageKey.of_event(segment[-1]) if segment else None
-            segment.append(event)
-        return segment, None
+                bounded = True
+            elif bounded:
+                later_ids.add(_event_message_id(event))
+            else:
+                segment.append(event)
+        limit = MessageKey.of_event(segment[-1]) if bounded and segment else None
+        return segment, limit, later_ids
 
     def _candidate(self, event: MessageEvent) -> Candidate:
         disposition = self._disposition(_payload(event))
@@ -2214,6 +2234,7 @@ class ExecutionContext:
             and payload
             and not _is_synthetic(event)
         ):
+            self._retain(event)
             outcome = await self.delivery.run((event,), self._control_revision)
             if outcome is TurnOutcome.ADVANCED:
                 self._release((msg_id,))

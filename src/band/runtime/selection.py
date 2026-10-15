@@ -120,13 +120,22 @@ def select_prefix(
     the read is trusted as a singleton only once the read has reached or
     passed its key (or ended); until then its position against later REST
     messages is unknown, so the prefix stops short of it. ``limit`` bounds the
-    prefix to the current local segment.
+    REST-only candidates to the current local segment. Retained candidates are
+    already known to belong before its boundary, regardless of their keys.
     """
     members: list[Candidate] = []
     rest_ids = {candidate.message_id for candidate in rest}
+    retained_ids = {candidate.message_id for candidate in retained}
+    limited_at: Candidate | None = None
     for candidate in merge(rest, retained):
-        if limit is not None and candidate.key > limit:
-            return Selection(tuple(members), Stop.LIMIT, candidate)
+        if (
+            limit is not None
+            and candidate.key > limit
+            and candidate.message_id not in retained_ids
+        ):
+            if limited_at is None:
+                limited_at = candidate
+            continue
         if candidate.disposition is Disposition.SKIP:
             continue
         if candidate.disposition is Disposition.HELD:
@@ -140,6 +149,8 @@ def select_prefix(
         members.append(candidate)
         if len(members) == cap:
             return Selection(tuple(members), Stop.CAP)
+    if limited_at is not None:
+        return Selection(tuple(members), Stop.LIMIT, limited_at)
     return Selection(tuple(members), Stop.END)
 
 

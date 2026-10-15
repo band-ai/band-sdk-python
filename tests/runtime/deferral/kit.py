@@ -45,6 +45,24 @@ class ApprovalAdapter(SimpleAdapter[Any]):
             tools.turn.settle()
 
 
+class FailureThenBusyAdapter(ApprovalAdapter):
+    """An execution failure makes its next attempts temporarily unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.busy = False
+        self.busy_attempts = 0
+        self.failure_attempts = 0
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        if self.busy:
+            self.busy_attempts += 1
+            raise InputNotAccepted()
+        self.failure_attempts += 1
+        self.busy = True
+        raise OSError("provider transport uncertainty")
+
+
 def envelope(message_id: str) -> dict[str, Any]:
     return {
         "event_type": "message_created",
