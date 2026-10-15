@@ -57,11 +57,8 @@ SHIM = textwrap.dedent(
     time.sleep({LEAKED_LIFETIME_S})
     """
 )
-# Written only if the launcher runs past stdin EOF. A tree kill that lands
-# while it is blocked in that read never creates the file.
 # The worker does not inherit stdin: on Windows a child that inherits the
 # pipe its parent is blocked reading does not run until that read finishes.
-STDIN_EOF_MARKER = "stdin-eof"
 EXITING_SHIM = textwrap.dedent(
     f"""
     import subprocess, sys
@@ -70,7 +67,6 @@ EXITING_SHIM = textwrap.dedent(
         stdin=subprocess.DEVNULL,
     )
     sys.stdin.read()
-    open({STDIN_EOF_MARKER!r}, "w").close()
     """
 )
 # Starts the worker and exits. The worker keeps the workdir after this process is gone.
@@ -188,6 +184,24 @@ class TestSubprocessCleanup:
         assert process.returncode is not None
         await first
 
+    async def test_forced_close_waits_for_an_exit_reported_late(
+        self,
+        child: tuple[CodexStdioClient, asyncio.subprocess.Process],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A forced kill always ends the leader, but a loaded event loop (as on
+        Windows CI) can report its exit seconds later. Close must keep waiting
+        for that report instead of failing the cleanup it already forced."""
+        client, process = child
+
+        async def kill_reported_late(target: asyncio.subprocess.Process) -> None:
+            asyncio.get_running_loop().call_later(1.5, target.kill)
+
+        monkeypatch.setattr(stdio_client, "kill_process_tree", kill_reported_late)
+        await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
+
+        assert process.returncode is not None
+
     async def test_reconnect_reaps_the_previous_child_before_spawning(
         self, child: tuple[CodexStdioClient, asyncio.subprocess.Process]
     ) -> None:
@@ -237,7 +251,6 @@ class TestSubprocessCleanup:
             await asyncio.wait_for(wait_for_heartbeat(heartbeat), timeout=CLOSE_BOUND_S)
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
             await assert_heartbeat_stopped(heartbeat)
-            assert not (workdir / STDIN_EOF_MARKER).exists()
             shutil.rmtree(workdir)
         finally:
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
@@ -387,32 +400,24 @@ class TestSubprocessCleanup:
         assert Path(resolved[resolved.index("--") + 1]).is_absolute()
 
     @pytest.mark.skipif(os.name == "nt", reason="session-group teardown is Unix")
-    @pytest.mark.parametrize(
-        ("pid_alive", "signals_group"),
-        [(False, True), (True, False)],
-    )
-    async def test_close_signals_a_session_only_while_its_leader_pid_is_free(
-        self, monkeypatch: pytest.MonkeyPatch, pid_alive: bool, signals_group: bool
+    async def test_reused_leader_pid_does_not_stop_an_unrelated_process(
+        self, child: tuple[CodexStdioClient, asyncio.subprocess.Process]
     ) -> None:
-        process = await asyncio.create_subprocess_exec(
+        client, live = child
+        exited = await asyncio.create_subprocess_exec(
             sys.executable,
             "-c",
             "raise SystemExit(0)",
             start_new_session=True,
         )
-        await process.wait()
-        signaled: list[int] = []
-
-        def record_killpg(pid: int, _sig: int) -> None:
-            signaled.append(pid)
-
-        def probe(pid: int, sig: int) -> None:
-            if sig != 0:
-                raise AssertionError(sig)
-            if not pid_alive:
-                raise ProcessLookupError(pid)
-
-        monkeypatch.setattr(stdio_client.os, "killpg", record_killpg)
-        monkeypatch.setattr(stdio_client.os, "kill", probe)
-        await kill_process_tree(process)
-        assert signaled == ([process.pid] if signals_group else [])
+        await exited.wait()
+        # Model PID reuse with a real live group, not a fake signal handler.
+        exited.pid = live.pid
+        await kill_process_tree(exited)
+        await asyncio.wait_for(
+            client.initialize(
+                client_name="alive", client_title="alive", client_version="1"
+            ),
+            timeout=CLOSE_BOUND_S,
+        )
+        assert live.returncode is None

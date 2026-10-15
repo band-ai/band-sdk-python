@@ -54,31 +54,58 @@ class TurnTask:
 
     def __init__(self, task: asyncio.Task[None]) -> None:
         self.task = task
-        if task.done():
-            self._retrieve_result(task)
-        else:
-            task.add_done_callback(self._retrieve_result)
+        self._cancel_baseline = task.cancelling()
         self.deadline: float | None = None
         self._cancel_delivered = False
         self._grace_expired = False
         self._timer: asyncio.Timeout | None = None
         self._cleanup_timer = False
+        self._expiry_timer: asyncio.TimerHandle | None = None
+        self._closed = False
+        if task.done():
+            self._finish(task)
+        else:
+            task.add_done_callback(self._finish)
 
     @staticmethod
     def _retrieve_result(task: asyncio.Task[None]) -> None:
         if not task.cancelled():
             task.exception()
 
+    def _finish(self, task: asyncio.Task[None]) -> None:
+        self.close()
+        self._retrieve_result(task)
+
+    def close(self) -> None:
+        """End this owner's lifetime without cancelling its task."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._expiry_timer is not None:
+            self._expiry_timer.cancel()
+            self._expiry_timer = None
+        if self._timer is not None and not self._timer.expired():
+            self._timer.reschedule(None)
+        self.task.remove_done_callback(self._finish)
+
+    def _schedule_expiry(self, deadline: float) -> None:
+        if self._expiry_timer is not None:
+            self._expiry_timer.cancel()
+        self._expiry_timer = asyncio.get_running_loop().call_at(deadline, self._expire)
+
     def terminate(
         self, *, deadline: float | None = None, cooperative: bool = False
     ) -> None:
         """Start the cleanup grace once; later requests never renew it."""
+        if self._closed:
+            return
+        self._adopt_cancellation()
         if self.deadline is not None:
             return
         bound = deadline if deadline is not None else terminal_deadline()
         self.deadline = self._release_timer(bound)
         # The owner enforces its own deadline: a detached worker may have no drainer.
-        asyncio.get_running_loop().call_at(self.deadline, self._expire)
+        self._schedule_expiry(self.deadline)
         if not cooperative:
             self._cancel()
 
@@ -88,19 +115,24 @@ class TurnTask:
         A task that swallowed its cancel would otherwise stay unfinished on
         every cleanup retry; within an unexpired grace this is ``terminate``.
         """
+        if self._closed:
+            return
         if not self._grace_expired:
             self.terminate(deadline=deadline)
             return
         self.deadline = deadline
         self._grace_expired = False
         self._cancel_delivered = False
-        asyncio.get_running_loop().call_at(deadline, self._expire)
+        self._schedule_expiry(deadline)
         self._cancel()
 
     def _expire(self) -> None:
+        if self._closed:
+            return
         # The loop's own timer marks expiry: it can fire up to one clock
         # resolution before loop.time() reaches the deadline.
         self._grace_expired = True
+        self._adopt_cancellation()
         self._cancel()
 
     def _release_timer(self, bound: float) -> float:
@@ -116,8 +148,13 @@ class TurnTask:
             timer.reschedule(None)
         return bound
 
+    def _adopt_cancellation(self) -> None:
+        # Counts predating this owner belong to a previous cancellation lifetime.
+        if self.task.cancelling() > self._cancel_baseline:
+            self._cancel_delivered = True
+
     def _cancel(self) -> None:
-        if not self._cancel_delivered and not self.task.done():
+        if not self._closed and not self._cancel_delivered and not self.task.done():
             self._cancel_delivered = True
             self.task.cancel()
 
@@ -125,6 +162,8 @@ class TurnTask:
         """Wait within the original terminal grace without cancelling a waiter."""
         if self.task.done():
             return True
+        if self._closed:
+            return False
         if self.deadline is None:
             raise RuntimeError("Turn draining requires termination")
         remaining = max(0.0, self.deadline - asyncio.get_running_loop().time())
@@ -136,7 +175,7 @@ class TurnTask:
         self, timeout: float | None, *, cleanup: bool = False
     ) -> AsyncIterator[asyncio.Timeout]:
         """Coordinate an existing provider timer with terminal cancellation."""
-        if self.deadline is not None:
+        if self._closed or self.deadline is not None:
             raise asyncio.CancelledError
         if self._timer is not None or asyncio.current_task() is not self.task:
             raise RuntimeError("A turn timer must run in its owner, without nesting")

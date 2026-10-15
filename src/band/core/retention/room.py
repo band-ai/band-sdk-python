@@ -245,6 +245,8 @@ class RetainedRoom:
         """
         self.require_admission()
         holder = asyncio.current_task()
+        if holder is not None and holder.cancelling():
+            raise asyncio.CancelledError
         self._holders[holder] += 1
         self._schedule()
         try:
@@ -329,6 +331,8 @@ class RetainedRoom:
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
         if transition.cancelled():
+            if initiator:
+                raise asyncio.CancelledError from None
             # Closed admission means disposal cancelled it; otherwise recovery
             # did, and the caller re-evaluates the room.
             self.require_admission()
@@ -354,7 +358,8 @@ class RetainedRoom:
                 self.room_id,
                 self._generation,
             )
-            transition.cancel(f"Room {self.room_id} acquisition was abandoned")
+            if not transition.cancelling():
+                transition.cancel(f"Room {self.room_id} acquisition was abandoned")
 
     def _request(self, cause: ReleaseCause) -> None:
         self._cause = stronger_cause(self._cause, cause)
@@ -531,7 +536,11 @@ class RetainedRoom:
 
     def enrolls(self, task: asyncio.Task[Any] | None) -> bool:
         """Whether ``task`` is accepted work this room's disposal would await."""
-        return task in self._owned or task in self._holders
+        return (
+            task in self._owned
+            or task in self._holders
+            or (task is self._transition and self._state == Residency.ACQUIRING)
+        )
 
     def _spare_requester(self) -> bool:
         """Exempt enrolled work requesting cleanup from cancellation; it is
@@ -602,7 +611,11 @@ class RetainedRoom:
             self._work_cancelled = True
             for task in self._uncancelled_work():
                 task.cancel()
-            if self._state == Residency.ACQUIRING and self._transition is not None:
+            if (
+                self._state == Residency.ACQUIRING
+                and self._transition is not None
+                and not self._transition.cancelling()
+            ):
                 self._transition.cancel()
         await self._drained.wait()
 
