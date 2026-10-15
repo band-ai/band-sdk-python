@@ -56,6 +56,13 @@ EXITING_SHIM = textwrap.dedent(
     open({STDIN_EOF_MARKER!r}, "w").close()
     """
 )
+# Starts the worker and exits. The worker keeps the workdir after this process is gone.
+EXITED_LAUNCHER = textwrap.dedent(
+    f"""
+    import subprocess, sys
+    subprocess.Popen([sys.executable, "-c", {WORKER!r}])
+    """
+)
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -87,6 +94,17 @@ async def child(
 async def wait_for_heartbeat(path: Path) -> None:
     while not path.exists():
         await asyncio.sleep(HEARTBEAT_S)
+
+
+async def wait_until_exited(process: asyncio.subprocess.Process) -> None:
+    while process.returncode is None:
+        await asyncio.sleep(HEARTBEAT_S)
+
+
+async def assert_heartbeat_stopped(heartbeat: Path) -> None:
+    stopped_at = heartbeat.stat().st_size
+    await asyncio.sleep(QUIET_S)
+    assert heartbeat.stat().st_size == stopped_at
 
 
 class TestSubprocessCleanup:
@@ -177,10 +195,7 @@ class TestSubprocessCleanup:
 
         # A surviving child also holds the pipes that close() waits to drain.
         await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
-
-        stopped_at = heartbeat.stat().st_size
-        await asyncio.sleep(QUIET_S)
-        assert heartbeat.stat().st_size == stopped_at
+        await assert_heartbeat_stopped(heartbeat)
 
     async def test_close_reaps_a_worker_when_its_launcher_exits_on_stdin_eof(
         self, tmp_path: Path
@@ -198,10 +213,36 @@ class TestSubprocessCleanup:
             heartbeat = workdir / HEARTBEAT_FILE
             await wait_for_heartbeat(heartbeat)
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
-            stopped_at = heartbeat.stat().st_size
-            await asyncio.sleep(QUIET_S)
-            assert heartbeat.stat().st_size == stopped_at
+            await assert_heartbeat_stopped(heartbeat)
             assert not (workdir / STDIN_EOF_MARKER).exists()
+            shutil.rmtree(workdir)
+        finally:
+            await client.close()
+        assert not workdir.exists()
+
+    async def test_close_reaps_a_worker_when_its_launcher_has_already_exited(
+        self, tmp_path: Path
+    ) -> None:
+        """A launcher that exits after starting the worker leaves that worker
+        holding the workdir."""
+        workdir = tmp_path / "room"
+        workdir.mkdir()
+        client = CodexStdioClient(
+            command=[sys.executable, "-c", EXITED_LAUNCHER],
+            cwd=str(workdir),
+        )
+        await client.connect()
+        try:
+            heartbeat = workdir / HEARTBEAT_FILE
+            await wait_for_heartbeat(heartbeat)
+            process = client._proc
+            assert process is not None
+            await asyncio.wait_for(wait_until_exited(process), timeout=CLOSE_BOUND_S)
+            still_running = heartbeat.stat().st_size
+            await asyncio.sleep(QUIET_S)
+            assert heartbeat.stat().st_size > still_running
+            await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
+            await assert_heartbeat_stopped(heartbeat)
             shutil.rmtree(workdir)
         finally:
             await client.close()

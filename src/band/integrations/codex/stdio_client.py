@@ -8,45 +8,50 @@ import logging
 import os
 import shutil
 import signal
+import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
 from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
+from band.integrations.codex.winspawn import (
+    MISSING_EXECUTABLE,
+    MODULE_NAME,
+    SpawnFailure,
+    spawn,
+    terminate_job,
+)
 
 logger = logging.getLogger(__name__)
 
 # Long enough for the child watcher to record an exit, short enough that a
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
+_STDOUT_LIMIT = 16 * 1024 * 1024
+
+
+def _missing_cli_message(binary: str) -> str:
+    return (
+        f"Codex CLI binary not found: '{binary}'. "
+        "Install it (`npm install -g @openai/codex`), authenticate "
+        "(`codex login`), or configure CodexAdapterConfig.codex_command."
+    )
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
     """Force-stop ``process`` and everything it spawned.
 
-    The ``codex`` launcher is a shim (``codex.cmd`` on Windows, a node script
-    elsewhere) whose real CLI is its child; killing only the shim leaves that
-    child running, and on Windows its open workdir cannot be removed.
+    The codex launcher is a shim whose real CLI is its child. On Unix the
+    child leads a session, so ``killpg`` still reaches that group after the
+    leader has exited. On Windows the tree belongs to a job created before
+    the child ran, so termination does not need the launcher pid to be alive.
     """
     if os.name != "nt":
-        # The child leads its own session, so its pid is the group id.
         with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
         return
-    taskkill = await asyncio.create_subprocess_exec(
-        "taskkill",
-        "/F",
-        "/T",
-        "/PID",
-        str(process.pid),
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    if (code := await taskkill.wait()) != 0:
-        logger.warning("taskkill /T for pid %s exited %s", process.pid, code)
-        with suppress(ProcessLookupError):
-            process.kill()
+    await terminate_job(process.pid, _EXIT_OBSERVE_S)
 
 
 async def _observe_exit(process: asyncio.subprocess.Process) -> bool:
@@ -119,26 +124,58 @@ class CodexStdioClient(BaseJsonRpcClient):
             return
 
         try:
-            self._proc = await asyncio.create_subprocess_exec(
-                *self.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
-                env=self.env,
-                start_new_session=True,
-                limit=16 * 1024 * 1024,  # 16 MB — Codex sends large JSON-RPC lines
-            )
+            self._proc = await self._spawn()
         except FileNotFoundError as exc:
-            binary = self.command[0] if self.command else "codex"
-            raise BandConnectionError(
-                f"Codex CLI binary not found: '{binary}'. "
-                "Install it (`npm install -g @openai/codex`), authenticate "
-                "(`codex login`), or configure CodexAdapterConfig.codex_command."
-            ) from exc
+            raise BandConnectionError(_missing_cli_message(self.command[0])) from exc
+        except SpawnFailure as exc:
+            raise self._spawn_connection_error(exc) from exc
         self._connected = True
         self._reader_task = asyncio.create_task(self._read_stdout_loop())
         self._stderr_task = asyncio.create_task(self._read_stderr_loop())
+
+    async def _spawn(self) -> asyncio.subprocess.Process:
+        if os.name == "nt":
+            return await spawn(
+                self._windows_command,
+                cwd=self.cwd,
+                env=self.env,
+                limit=_STDOUT_LIMIT,
+                observe_timeout=_EXIT_OBSERVE_S,
+            )
+        # The child leads its own session, so its pid is the group id.
+        return await asyncio.create_subprocess_exec(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.cwd,
+            env=self.env,
+            start_new_session=True,
+            limit=_STDOUT_LIMIT,
+        )
+
+    def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
+        return [
+            sys.executable,
+            "-m",
+            MODULE_NAME,
+            job_name,
+            str(status_handle),
+            "--",
+            *self.command,
+        ]
+
+    def _spawn_connection_error(self, failure: SpawnFailure) -> BandConnectionError:
+        if failure.winerror in MISSING_EXECUTABLE:
+            return BandConnectionError(_missing_cli_message(self.command[0]))
+        detail = (
+            f"winerror {failure.winerror}"
+            if failure.winerror is not None
+            else "the spawn helper did not report readiness"
+        )
+        return BandConnectionError(
+            f"Codex process could not be assigned to its job ({detail})"
+        )
 
     async def close(self) -> None:
         """Share retryable cleanup that survives a cancelled or timed-out caller."""
@@ -169,10 +206,9 @@ class CodexStdioClient(BaseJsonRpcClient):
         await asyncio.gather(*readers, return_exceptions=True)
 
         if (process := self._proc) is not None:
-            # Kill while this pid is alive. Closing stdin first lets a launcher
-            # exit, and its children can no longer be reaped from a pid that is gone.
-            if process.returncode is None:
-                await kill_process_tree(process)
+            # A launcher that has already exited still leaves descendants. Unix
+            # signals the session group; Windows terminates the job.
+            await kill_process_tree(process)
             if process.stdin is not None:
                 process.stdin.close()
             if not await _observe_exit(process):
