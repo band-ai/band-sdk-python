@@ -217,6 +217,28 @@ class TestMessagePostFailure:
             "message msg-1 was created; id=recip-1 name=Unknown, id=recip-3 name=Also"
         )
 
+    async def test_a_body_without_a_message_id_stays_a_parse_error(
+        self, mock_rest_client, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        payload = {
+            "data": {
+                "success": True,
+                "recipients": [{"name": "Unknown"}],
+            }
+        }
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(payload)
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ParsingError):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert _post_logs(caplog) == []
+
     @pytest.mark.parametrize("present_handle", ["", None, 0])
     async def test_a_present_falsy_handle_is_not_named(
         self, mock_rest_client, present_handle: str | None | int

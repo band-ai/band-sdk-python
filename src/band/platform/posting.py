@@ -96,6 +96,15 @@ _HANDLE = "handle"
 _MISSING_RECIPIENT_HANDLE = "recipient handle missing"
 
 
+def _omitted_recipient(item: object) -> str | None:
+    if not isinstance(item, dict) or _HANDLE in item:
+        return None
+    recipient_id = item.get("id")
+    if not isinstance(recipient_id, str) or not recipient_id:
+        return None
+    return f"id={recipient_id} name={item.get('name')}"
+
+
 def _unconfirmed_recipient(error: ParsingError) -> str | None:
     """Origin text when a 2xx body omits a recipient handle, else None.
 
@@ -117,14 +126,14 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
         return None
     data = error.body.get("data") if isinstance(error.body, dict) else None
     if not isinstance(data, dict):
-        return _MISSING_RECIPIENT_HANDLE
-    missing = [
-        f"id={item.get('id')} name={item.get('name')}"
-        for item in data.get(_RECIPIENTS) or []
-        if isinstance(item, dict) and _HANDLE not in item
-    ]
+        return None
+    message_id = data.get("id")
+    if not isinstance(message_id, str) or not message_id:
+        return None
+    named = [_omitted_recipient(item) for item in data.get(_RECIPIENTS) or []]
+    missing = [item for item in named if item is not None]
     who = ", ".join(missing) if missing else _MISSING_RECIPIENT_HANDLE
-    return f"message {data.get('id')} was created; {who}"
+    return f"message {message_id} was created; {who}"
 
 
 async def post_message(
