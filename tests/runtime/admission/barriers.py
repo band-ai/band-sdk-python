@@ -258,7 +258,17 @@ class Platform:
     ) -> httpx.Response:
         match answer:
             case Answer.ACCEPT | Answer.LOST:
-                return self.peer.answer(request)
+                response = self.peer.answer(request)
+                if response.status_code == 200 and call.endpoint in {
+                    Endpoint.PROCESSING,
+                    Endpoint.FAILED,
+                }:
+                    for row in self.peer.messages:
+                        if row["id"] == call.message_id:
+                            row["metadata"]["delivery_status"] = {
+                                AGENT_ID: {"status": call.endpoint}
+                            }
+                return response
             case Answer.REFUSE:
                 return httpx.Response(422, json=REFUSAL)
             case Answer.STOP if call.endpoint is Endpoint.WORKING:

@@ -606,6 +606,12 @@ class ExecutionContext:
         """Return this agent's delivery status from message metadata."""
         return delivery_status_for_agent(metadata, self._agent_id)
 
+    def _failed_without_retry(self, metadata: Any) -> bool:
+        """Batch mode never reopens a durably failed delivery."""
+        return self.config.consume_all_queued and (
+            self._delivery_status_for_agent(metadata) == DeliveryStatus.FAILED
+        )
+
     def _context_message_metadata(self, message_id: str) -> dict[str, Any] | None:
         """Return metadata for a hydrated context message by ID."""
         if not self._context_cache:
@@ -1579,7 +1585,9 @@ class ExecutionContext:
             return ControlOutcome.DECLINED
         payload = event.payload
         msg_id = payload.id
-        if self._is_nonrunnable(payload):
+        if self._is_nonrunnable(payload) or self._failed_without_retry(
+            payload.metadata
+        ):
             return ControlOutcome.DECLINED
         if self.claims.is_ack_pending(self.room_id, msg_id):
             await self._retry_terminal_ack(msg_id)
@@ -1591,7 +1599,9 @@ class ExecutionContext:
             return ControlOutcome.DECLINED
         revision = self._control_revision
         with self._claim_message(msg_id) as acquired:
-            if not acquired or (scope := await self._begin_turn(revision)) is None:
+            if not acquired or (scope := await self._begin_scope()) is None:
+                return ControlOutcome.DEFERRED
+            if revision != self._control_revision:
                 return ControlOutcome.DEFERRED
             scope.originals = (event,)
 
@@ -1599,14 +1609,9 @@ class ExecutionContext:
                 return await self._on_message_control(self, event)
 
             try:
-                if not await self._mark_processing(msg_id):
+                if not await self._confirm_processing(scope, revision):
                     return ControlOutcome.DEFERRED
-                if not self._owns_attempt(scope, revision):
-                    if scope.kind is None:
-                        return ControlOutcome.DEFERRED
-                    self._select_intent(scope, None, timed_out=False)
-                    await self._abort_cycle(scope.kind, scope)
-                    return self._aborted_control_outcome(event, scope)
+                scope.admitted = True
                 await self._ensure_fresh_context()
                 if scope.kind is None and revision != self._control_revision:
                     return ControlOutcome.DEFERRED
@@ -2116,10 +2121,9 @@ class ExecutionContext:
             self.room_id, payload.id
         ):
             return Disposition.SKIP
-        if self._delivery_status_for_agent(payload.metadata) in {
-            DeliveryStatus.PROCESSED,
-            DeliveryStatus.FAILED,
-        }:
+        if self._delivery_status_for_agent(
+            payload.metadata
+        ) == DeliveryStatus.PROCESSED or self._failed_without_retry(payload.metadata):
             return Disposition.SKIP
         if payload.id in self.claims.inflight_ids(self.room_id):
             return Disposition.HELD
