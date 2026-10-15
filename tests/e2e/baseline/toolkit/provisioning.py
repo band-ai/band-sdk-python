@@ -87,8 +87,11 @@ def name_budget(limit: int, label_len: int) -> int:
 
 
 def run_id_len() -> int:
-    """Hex length for a run id that keeps the longest @mentioned peer name within
-    the handle cap."""
+    """Hex length of a mentionable provision token.
+
+    The longest label a scenario can @mention stays inside the handle cap at
+    this width. :func:`name_token` uses it for those labels.
+    """
     return name_budget(MENTION_HANDLE_CAP, MAX_MENTIONED_LABEL_LEN)
 
 
@@ -111,8 +114,8 @@ def name_token(label: str) -> str:
     A label a scenario can @mention gets :func:`run_id_len` characters, so the
     longest such name stays inside ``MENTION_HANDLE_CAP``. A longer label is not
     a mention handle and gets a full uuid slice, clamped so the name stays
-    inside ``AGENT_NAME_MAX``. Replacing the shared session id is what keeps a
-    leftover row from making the next provision of the same label fail name-taken.
+    inside ``AGENT_NAME_MAX``. A fresh token per provision is what keeps a
+    leftover row from colliding with the next register of the same label.
     """
     normalized = normalized_label(label)
     if len(normalized) <= MAX_MENTIONED_LABEL_LEN:
@@ -130,11 +133,9 @@ def name_token(label: str) -> str:
 def new_run_id() -> str:
     """Short token the session fixture draws once for the orphan sweep's self-skip.
 
-    Its length is derived from the mention-handle cap (see :func:`run_id_len`) so
-    a name that still embeds this token fits the longest @mentioned peer. Each
-    provision draws its own token via :func:`name_token` rather than reusing this
-    one. The sweep still skips names containing this session's token; per-provision
-    names rely on the age gate, the same protection another job's agents have.
+    Provisions do not embed it; they draw :func:`name_token`. The sweep skips
+    names that still contain this token. Per-provision names rely on the age
+    gate, the same protection another job's agents have.
     """
     return uuid.uuid4().hex[: run_id_len()]
 

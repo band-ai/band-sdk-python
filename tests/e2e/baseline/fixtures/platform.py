@@ -50,7 +50,7 @@ def baseline_settings() -> BaselineSettings:
 
 @pytest.fixture(scope="session")
 def baseline_run_id() -> str:
-    """Token identifying this session's provisioned resources (for naming/sweep)."""
+    """Token for this session's orphan-sweep self-skip."""
     return new_run_id()
 
 
