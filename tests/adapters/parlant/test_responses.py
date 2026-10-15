@@ -144,6 +144,28 @@ async def test_empty_window_after_a_tool_reply_ends_the_wait(
     ) in caplog.messages
 
 
+async def test_failed_event_read_stops_the_wait(relay, mock_app, mock_tools, caplog):
+    mock_app.sessions.wait_for_more_events = AsyncMock(
+        side_effect=RuntimeError("read failed")
+    )
+
+    with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+        await relay(timeout=LONG_BUDGET_SECONDS)
+
+    mock_app.sessions.wait_for_more_events.assert_awaited_once()
+    mock_tools.assert_no_messages_sent()
+    stopped = (
+        f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
+        "because reading events failed"
+    )
+    settled = (
+        f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
+        "because the turn already replied or declined"
+    )
+    assert stopped in caplog.messages
+    assert settled not in caplog.messages
+
+
 async def test_gives_up_after_budget_when_no_reply_ever_arrives(relay, mock_tools):
     """A genuinely silent turn is bounded: the wait returns once the budget
     elapses (the hang guard would raise otherwise) and nothing is forwarded."""
