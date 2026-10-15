@@ -484,7 +484,8 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | ------------ | ------------- | ------------------------------------ | --------------------------------------------- |
 | A2A bridge   | `a2a`         | `A2AAdapter`                         | [examples](examples/a2a_bridge/)              |
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
-| ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `OmpACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
+| ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
+| OMP native RPC | `omp`       | `OmpAdapter`                         | [example](examples/omp.py), [setup](docs/acp.md#omp-native-rpc) |
 | Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
 
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
@@ -497,7 +498,7 @@ Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` s
 
 Agents using the Band SDK can receive built-in tools for interacting with Band. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities, configured via `capabilities=` on the adapters that support them, and are disabled unless you explicitly enable them.
 
-The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; the A2A adapters (`A2AAdapter`, `A2AGatewayAdapter`) and the ACP server adapter (`BandACPServerAdapter`) declare no capabilities, so `capabilities=` has nothing to enable there. `ACPClientAdapter` and the Copilot, Cursor and OMP backends built on it accept them.
+The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; the A2A adapters (`A2AAdapter`, `A2AGatewayAdapter`) and the ACP server adapter (`BandACPServerAdapter`) declare no capabilities, so `capabilities=` has nothing to enable there. `ACPClientAdapter`, its Copilot and Cursor backends, and the native `OmpAdapter` accept them.
 
 | Category     | Tool Names | What They Enable |
 | ------------ | ---------- | ---------------- |

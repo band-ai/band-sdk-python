@@ -674,7 +674,7 @@ def omp_agent_home_dir(work_dir: str) -> str:
     return home
 
 
-def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
+def omp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
     """Hermetic OMP child env: provider key and isolated agent state dir."""
     env = omp_provider_env(model=omp_model(s), api_key=omp_provider_api_key(s))
     env["PI_CODING_AGENT_DIR"] = agent_home
@@ -682,12 +682,12 @@ def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
 
 
 @adapter(
-    Adapter.OMP_ACP,
+    Adapter.OMP,
     requires=[Dep.OMP],
     supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
 )
-def _build_omp_acp(
+def _build_omp(
     s: BaselineSettings,
     *,
     prompt: str | None,
@@ -695,24 +695,20 @@ def _build_omp_acp(
     tools: list[ToolSpec] | None = None,
     workspace_for_room: WorkspaceResolver | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.omp_acp import (  # noqa: PLC0415
-        OmpACPAdapter,
-        OmpACPAdapterConfig,
+    from band.adapters.omp import (  # noqa: PLC0415 -- isolates the omp extra from other framework builders
+        OmpAdapter,
+        OmpAdapterConfig,
     )
 
-    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-omp-acp-")
-    config_kwargs: dict[str, Any] = {
-        "command": omp_command(s),
-        "custom_section": prompt or "",
-        "cwd": sandbox.name,
-        "model": omp_model(s),
-        "env": omp_acp_env(s, omp_agent_home_dir(sandbox.name)),
-    }
-
-    if workspace_for_room is not None:
-        config_kwargs.pop("cwd")
-    adapter = OmpACPAdapter(
-        config=OmpACPAdapterConfig(**config_kwargs),
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-omp-")
+    adapter = OmpAdapter(
+        config=OmpAdapterConfig(
+            command=omp_command(s),
+            custom_section=prompt or "",
+            cwd=sandbox.name if workspace_for_room is None else None,
+            model=omp_model(s),
+            env=omp_env(s, omp_agent_home_dir(sandbox.name)),
+        ),
         workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),

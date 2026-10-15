@@ -28,7 +28,7 @@ WORKSPACE_BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=4)
     Adapter.CODEX,
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,
-    Adapter.OMP_ACP,
+    Adapter.OMP,
     prompt=REPLY_PROMPT,
 )
 @pytest.mark.timeout(extra=WORKSPACE_BUDGET.extra_s)

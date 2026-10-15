@@ -1,18 +1,20 @@
-# ACP (Agent Client Protocol) Integration
+# ACP and native OMP integrations
 
-Facts about the ACP integration that span modules or that the code cannot say for
-itself. The client side is `ACPClientAdapter` (Band room → room-owned ACP subprocess);
-the server side is `ACPServer` + `BandACPServerAdapter`.
+Facts about the ACP and native OMP integrations that span modules or that the
+code cannot say for itself. The ACP client side is `ACPClientAdapter` (Band room →
+room-owned ACP subprocess); the server side is `ACPServer` +
+`BandACPServerAdapter`. OMP uses a separate [native RPC integration](#omp-native-rpc),
+not ACP.
 
 Client-side automatic idle release is unavailable pending provider-specific
 safety qualification; see [idle room resource retention](idle-room-release.md).
 
 ## Configuration
 
-`ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig`,
-`CopilotACPAdapterConfig` and `OmpACPAdapterConfig` extend it with backend defaults
-and fields. Callables (`workspace_for_room`, `resolve_session_config`,
-`resolve_permission`) are keyword-only constructor arguments.
+`ACPClientAdapterConfig` holds the plain settings; `CursorACPAdapterConfig` and
+`CopilotACPAdapterConfig` extend it with backend defaults and fields. Callables
+(`workspace_for_room`, `resolve_session_config`, `resolve_permission`) are
+keyword-only constructor arguments.
 
 ```python
 from band.adapters import ACPClientAdapter, ACPClientAdapterConfig
@@ -169,10 +171,10 @@ assert slow.retention.transition_timeout_s == 120
   overdue server close stays owned and a retry joins it. A stop is final: later
   turns are refused until `on_started` (an `Agent.start()`) finishes it and serves
   again.
-- **Idle release stays off.** OMP, Cursor and Copilot report `ProviderActivity.UNKNOWN`,
-  so an idle release always answers BUSY. Native qualification is still owed: OMP
-  background jobs (including suppressed or acknowledged work), Cursor work beyond
-  subagent drain, and Copilot scheduled `/after` prompts. Band MCP calls and ACP
+- **Idle release stays off.** Cursor and Copilot report `ProviderActivity.UNKNOWN`,
+  so an idle release always answers BUSY. Native qualification is still owed for
+  Cursor work beyond subagent drain and Copilot scheduled `/after` prompts.
+  Band MCP calls and ACP
   permission or extension requests carry no prompt id, so a call arriving after its
   turn is served with the room's current tools.
 
@@ -185,11 +187,6 @@ failure fails that room turn visibly instead of falling back.
 
 ## Backends
 
-- **OMP:** `approval_mode="yolo"` bypasses OMP's native approval and gives the agent full
-  access to its host. It does not change Band tool registration or platform permissions.
-  `OmpACPAdapterConfig.model` is passed as OMP's `--model` flag; OMP does not read an
-  `OMP_MODEL` env variable. Set `api_key` with it and the adapter passes the key in the env
-  variable that model's provider needs.
 - **Cursor:** question, plan and permission decisions default to `manual`, resolved by a
   room participant with `/cursor <word> <token>`. Band's own tools, including
   `additional_tools`, are approved once per call in every `approval_mode` during
@@ -216,6 +213,112 @@ failure fails that room turn visibly instead of falling back.
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
   as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
+
+## OMP native RPC
+
+`OmpAdapter`, `OmpAdapterConfig` and `OmpPermissionRequest` live in
+`band.adapters.omp` and are exported from `band.adapters`. Install `band-sdk[omp]`
+and an OMP executable at version 18.8.9 or later; the executable fixture is pinned
+to 18.8.9 and requires Bun 1.3.14 or later. The `omp` extra does not require the ACP
+runtime. Native sessions negotiate RPC protocol v2 to preserve structured
+text/image tool results.
+
+- **Configuration.** Pass `OmpAdapterConfig` to the adapter. `model` selects
+  `provider/model`, and `reasoning_effort` selects the native thinking level,
+  including `"auto"`. Automatic effort stays automatic rather than being replaced
+  with the effective level chosen for one turn.
+  `api_key` requires `model` and reaches the child in that provider's environment
+  variable; OMP does not read an `OMP_MODEL` environment variable.
+  `workspace_for_room` and `resolve_permission` remain constructor callables.
+  OMP does not use the ACP `resolve_session_config` callback.
+- **Tools and replies.** Canonical Band tools and `additional_tools` are
+  registered through native `set_host_tools`; results retain text/image content.
+  Room replies still require `band_send_message`, and deliberate declines use
+  `band_no_reply`. Native assistant text is optional thought telemetry, not a
+  room reply. `SimpleAdapter.run_judged_turn` remains the sole turn-judging owner:
+  native-only output and failed tools followed by narration still reach the
+  missing-reply verdict.
+- **Instructions and attribution.** A private always-apply native rule places Band's
+  stable communication and completion guidance in OMP's genuine system prompt,
+  preserving native instructions, user prompt additions and append-file discovery.
+  A startup command verifies the rule is present before inference, even without
+  external MCP servers. Disabling rules or using a system-prompt template that
+  omits them fails startup rather than silently dropping Band's connection policy.
+  The rule survives restored sessions and prompt rebuilds during background work.
+  Per-message platform context contains
+  room, requester, roster and contact facts as JSON, not `[System]`-styled commands.
+  Replayed history is identified as previously handled data; it is not a new
+  participant handoff. Native lifecycle fields describe runtime progress, while the
+  Band turn ledger separately determines whether a reply was delivered or declined.
+- **Background settlement.** Prompt acceptance, an initial `prompt_result`, and
+  `agent_end` with async work remaining are not completion. The reader stays
+  attached through automatic background continuations and waits for both the
+  matching prompt outcome and actual native session settlement
+  (`session_settled` or `get_state.isSettled`). An error in a resumed assistant
+  message fails the same Band turn. This is a native lifecycle barrier, not an
+  instruction-only mitigation, and it does not synthesize a reply or decline.
+  `turn_timeout_s` covers the whole lifecycle. Timeout, errors and cancellation
+  close that room's process and terminate its captured descendants before returning;
+  a subsequent message starts a fresh process rather than inheriting unfinished work.
+- **Process close.** A usable reader gets a best-effort abort request bounded to
+  one second, then stdin closes for EOF while output is drained. The root gets
+  one second to exit before termination and, if needed, kill, each followed by
+  another one-second exit wait. Captured descendants are terminated and, if
+  needed, killed concurrently with the root's EOF grace; Python running behind
+  a Windows virtualenv launcher is one such descendant.
+  On POSIX, termination sends `SIGTERM` and kill sends `SIGKILL`. On Windows,
+  both are forced `TerminateProcess` operations, not graceful signal delivery.
+  Successful close proves the root was waited for and captured descendants
+  settled; it does not guarantee exit status zero. Caller cancellation still
+  waits for shared cleanup, and cleanup failures propagate.
+- **Isolation and state.** Each room owns a native process, persistent session
+  and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
+  starts without a supplied cwd. Session state carries `omp_session_id`,
+  `omp_session_file` and `omp_room_id`. A workspace is not an OS sandbox.
+- **External MCP servers.** `mcp_servers` is a name-to-`OmpMcpServer` map; import
+  that typed model from `band.integrations.omp`. Stdio entries use `command`,
+  `args`, `env` and optional `cwd`; remote entries use `url`, `headers` and optional
+  `type` (`http` or `sse`). Relative stdio `cwd` resolves from the room workspace;
+  relative path-like commands resolve from that server cwd, or the room workspace
+  when cwd is omitted, before plugin projection. The adapter writes an owner-only temporary
+  `band-sdk/.mcp.json` plugin overlay and passes it with `--plugin-dir`. The overlay
+  stays alive until the child closes, then is removed. User profiles and native
+  credentials are not rewritten.
+  The SDK requires native connection and tool-mount receipts for every configured
+  server before inference. It uses the RPC UI event mode and a private startup
+  setting to enable those receipts without rewriting user settings. Missing or
+  failed receipts fail startup rather than allowing a model to answer without its
+  required tools. Native connection and tool failures remain errors, not successful
+  Band replies. The enclosing turn timeout still bounds startup.
+- **Permissions.** `approval_mode="yolo"` bypasses native approval checks without
+  changing Band platform permissions. Otherwise `resolve_permission` receives
+  `OmpPermissionRequest(room_id, session_id, title, options)` and returns an
+  offered option or `None`. Unknown or unoffered choices cancel the request.
+  Without a resolver, only the exact native `("Approve", "Deny")` select is
+  approved. Unsupported interactive forms are cancelled; this is not approval
+  for arbitrary UI requests.
+  A cancelled select posts an independent `omp_permission` call/result pair only
+  with `Emit.TOOL_CALLS`. Offered selections stay silent; option labels do not
+  determine an SDK denial outcome. Permission narration records no turn effect
+  or chat reply. Permission titles and native events share full-registry privacy
+  redaction, including `mcp__` names and executed `xd://` device writes. Bare Band
+  aliases use the canonical privacy policy without relabelling native events.
+  Native names and turn effects still use enabled capabilities plus contacts;
+  withheld device writes retain their path, other fields and string payload.
+  Unparseable arguments, including decoder integer-limit errors, use a fixed
+  placeholder. Synthetic IDs use `band-permission:`; metadata retains the
+  original `omp_request_id`. Native event IDs are never changed or merged with
+  permission records.
+  The shared file-content redactor counts UTF-8 bytes with surrogate preservation,
+  so lone surrogates cannot discard a tool event in any adapter. The shared OMP
+  normalizer treats all decoder `ValueError`s as unparseable executed payloads,
+  retaining its existing failed-tool identity. Unexpected privacy-projection
+  exceptions replace the payload with a fixed opaque placeholder without retrying;
+  native identity and device wrapper fields remain intact.
+  Final tool-call envelope encoding is protected too. If encoding fails, the
+  record keeps its event name and ID, scalar `path`/`file_path`/`target` fields
+  and an opaque arguments placeholder. Other private or nested fields are
+  discarded; enabled-native turn effects remain unchanged.
 
 ## Server prompt outcomes
 

@@ -24,13 +24,15 @@ import base64
 import importlib.util
 from collections.abc import Awaitable, Callable, Iterable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.mcp import BandMCPTransport
+from band.integrations.ompwire import OmpHostToolCall
 from band.runtime.tools import TOOL_DEFINITIONS, TOOL_MODELS, BandTool, ToolCallOutcome
 
 try:
@@ -109,6 +111,13 @@ class ReadRoomFileTools:
     ) -> dict[str, Any]:
         del tool_name, arguments
         return _IMAGE_RESULT
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        assert tool_name == BandTool.READ_ROOM_FILE
+        assert arguments == {"file_id": "file-1"}
+        return ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
 
 
 async def _probe_claude_sdk() -> bool:
@@ -369,6 +378,30 @@ async def _probe_codex() -> bool:
     return content_items == [{"type": "inputImage", "imageUrl": data_uri}]
 
 
+async def _probe_omp() -> bool:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
+        OmpAdapter,
+    )
+
+    adapter = OmpAdapter(capabilities={Capability.FILES})
+    result = await adapter._execute_tool(
+        OmpHostToolCall(
+            id="image-request",
+            toolCallId="image-call",
+            toolName=BandTool.READ_ROOM_FILE,
+            arguments={"file_id": "file-1"},
+        ),
+        cast(AgentToolsProtocol, ReadRoomFileTools()),
+    )
+    return not result.is_error and any(
+        block.type == "image"
+        and block.data is not None
+        and block.mimeType is not None
+        and _is_expected_image(block.data, block.mimeType)
+        for block in result.content
+    )
+
+
 async def _probe_pydantic_ai() -> bool:
     from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- pydantic_ai extra, absent from the standard dev-crewai/dev-parlant lane venvs
         PydanticAIAdapter,
@@ -424,6 +457,7 @@ IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "nooa": _probe_nooa,
     "copilot_sdk": _probe_copilot_sdk,
     "codex": _probe_codex,
+    "omp": _probe_omp,
     "pydantic_ai": _probe_pydantic_ai,
     "crewai": _probe_crewai,
     # crewai_flow shares integrations/crewai/tools.py with crewai -- same probe.

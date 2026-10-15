@@ -2,8 +2,8 @@
 
 The adapter is paired in process with a scripted ACP agent over real JSON-RPC,
 and the agent records each ``session/cancel`` and connection exit it sees.
-CopilotACPAdapter and OmpACPAdapter keep this adapter's ``on_message`` and
-``backend_turns``, so these cases cover them too.
+CopilotACPAdapter keeps this adapter's ``on_message`` and ``backend_turns``,
+so these cases cover it too.
 """
 
 from __future__ import annotations

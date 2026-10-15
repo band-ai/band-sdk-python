@@ -14,6 +14,10 @@ specific qualification blocker. This also applies to JSON/YAML configuration and
 Codex environment settings. There is no supported bypass or restricted feature
 profile.
 
+`OmpAdapterConfig` has no `retention` setting. Native OMP turn settlement gates
+Band message completion, not automatic idle process release; room processes still
+remain resident until explicit cleanup, a failed turn, or cancellation.
+
 ```python
 from pydantic import ValidationError
 
@@ -43,7 +47,7 @@ Qualification on 2026-10-11 found these blockers:
 | Codex CLI 0.160.0 and 0.162.1 | Native probes reproduced background terminal and asynchronous hook loss on shutdown after foreground completion. The hook case had an idle thread and empty terminal inventory. | Whole-session inactivity or a non-cancelling drain covering hooks, terminals, and delegated continuation. |
 | Claude SDK 0.2.159; candidate 0.2.165 with CLI 2.1.294 | Candidate probes passed isolated shell/subagent completion and same-session resume, but asynchronous hooks continued after empty Stop inventories and native idle. Disconnect killed them; a resident control completed. | Hook-inclusive inactivity/drain or a complete effective configuration and change boundary, including managed policy. |
 | Copilot ACP CLI 1.0.89 | Native probes showed scheduled `/after` work survives in a resident process but is lost after shutdown and successful reload of the same session. | Activity/drain that includes scheduled autonomous work. |
-| OMP ACP 18.2.8 | Released source shows pending-work helpers omit suppressed/acknowledged jobs and shutdown cancels jobs. | Activity/drain covering every owned job. Source evidence; no native loss probe was executed for this row. |
+| Retired OMP ACP 18.2.8 profile | Released source shows pending-work helpers omit suppressed/acknowledged jobs and shutdown cancels jobs. | Activity/drain covering every owned job. Source evidence; no native loss probe was executed for this row, and it does not qualify the replacement native RPC adapter for idle release. |
 | Cursor ACP 2026.09.28-64d2043 | Installed source drains subagent completions but does not establish general background-work inactivity. | A demonstrated whole-session safe release boundary. Source evidence; no native loss probe was executed for this row. |
 | Generic ACP | `end_turn`, `loadSession`, and session closure do not provide a general non-cancelling process drain. | Qualification for the concrete provider and launch profile. |
 

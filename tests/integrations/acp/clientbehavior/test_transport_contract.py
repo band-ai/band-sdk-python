@@ -6,7 +6,6 @@ import pytest
 
 from band.adapters.copilot_acp import CopilotACPAdapter
 from band.adapters.cursor_acp import CursorACPAdapter
-from band.adapters.omp_acp import OmpACPAdapter
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
 )
@@ -26,7 +25,7 @@ from tests.integrations.acp.clientbehavior.kit import rehydration_history
 
 class TestTransportContract:
     @pytest.mark.parametrize(
-        "adapter_class", [CopilotACPAdapter, CursorACPAdapter, OmpACPAdapter]
+        "adapter_class", [CopilotACPAdapter, CursorACPAdapter]
     )
     @pytest.mark.parametrize(
         "selection, expected",

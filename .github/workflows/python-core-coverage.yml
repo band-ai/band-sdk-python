@@ -38,10 +38,14 @@ concurrency:
 
 jobs:
   coverage:
-    # Dependabot cannot read repository Actions secrets, so it cannot check
-    # out the private Core repository with this workflow's token.
+    # Fork pull requests and Dependabot cannot read repository Actions secrets.
+    # Validate fork revisions through a reviewed upstream branch and manual dispatch.
     # Drafts get no CI; ready_for_review above fires the first real run.
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

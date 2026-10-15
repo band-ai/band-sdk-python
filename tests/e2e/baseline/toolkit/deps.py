@@ -259,7 +259,8 @@ def _omp_cli_responds(settings: BaselineSettings) -> bool:
 
 def _omp_available(settings: BaselineSettings) -> bool:
     return (
-        _bun_meets_min_version(OMP_MIN_BUN)
+        importlib.util.find_spec("psutil") is not None
+        and _bun_meets_min_version(OMP_MIN_BUN)
         and _omp_cli_responds(settings)
         and bool(omp_provider_api_key(settings))
     )
@@ -384,7 +385,7 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.OMP: DepSpec(
         _omp_available,
-        f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
+        f"band-sdk[omp], Bun >= {OMP_MIN_BUN}, working `omp --mode rpc`, and a provider key for OMP_MODEL are required",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(

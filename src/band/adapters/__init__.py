@@ -120,11 +120,14 @@ if TYPE_CHECKING:
     from band.adapters.nooa import NooaAdapter as NooaAdapter
     from band.adapters.nooa import NooaAdapterConfig as NooaAdapterConfig
     from band.adapters.nooa import NooaRoomAgent as NooaRoomAgent
-    from band.adapters.omp_acp import (
-        OmpACPAdapter as OmpACPAdapter,
+    from band.adapters.omp import (
+        OmpAdapter as OmpAdapter,
     )
-    from band.adapters.omp_acp import (
-        OmpACPAdapterConfig as OmpACPAdapterConfig,
+    from band.adapters.omp import (
+        OmpAdapterConfig as OmpAdapterConfig,
+    )
+    from band.adapters.omp import (
+        OmpPermissionRequest as OmpPermissionRequest,
     )
     from band.adapters.opencode import (
         OpencodeAdapter as OpencodeAdapter,
@@ -171,7 +174,7 @@ __all__, __getattr__ = lazy_exports(
     copilot_sdk=["CopilotSDKAdapter", "CopilotSDKAdapterConfig"],
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
     cursor_acp=["CursorACPAdapter", "CursorACPAdapterConfig"],
-    omp_acp=["OmpACPAdapter", "OmpACPAdapterConfig"],
+    omp=["OmpAdapter", "OmpAdapterConfig", "OmpPermissionRequest"],
     parlant=["ParlantAdapter", "ParlantAdapterConfig"],
     crewai=["CrewAIAdapter", "CrewAIAdapterConfig"],
     crewai_flow=["CrewAIFlowAdapter", "CrewAIFlowAdapterConfig"],

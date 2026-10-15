@@ -16,6 +16,7 @@ from tests.framework_conformance.stopprobes import codex as codex_probe
 from tests.framework_conformance.stopprobes import copilotsdk as copilotsdk_probe
 from tests.framework_conformance.stopprobes import cursoracp as cursoracp_probe
 from tests.framework_conformance.stopprobes import letta as letta_probe
+from tests.framework_conformance.stopprobes import omp as omp_probe
 from tests.framework_conformance.stopprobes import opencode as opencode_probe
 from tests.framework_conformance.stopprobes import parlant as parlant_probe
 
@@ -29,6 +30,7 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
     "CursorACPAdapter": cursoracp_probe.CASES,
     "LettaAdapter": letta_probe.CASES,
     "OpencodeAdapter": opencode_probe.CASES,
+    "OmpAdapter": omp_probe.CASES,
     "ParlantAdapter": parlant_probe.CASES,
 }
 
@@ -36,7 +38,6 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
 #: so the parent's probe covers them.
 INHERITED_PROBES: dict[str, str] = {
     "CopilotACPAdapter": "ACPClientAdapter",
-    "OmpACPAdapter": "ACPClientAdapter",
 }
 
 #: Adapters with no backend turn to stop, and why.
@@ -64,6 +65,7 @@ REQUIRED_MODULES: dict[str, str] = {
     "CopilotSDKAdapter": "copilot",
     "CursorACPAdapter": "acp",
     "LettaAdapter": "letta_client",
+    "OmpAdapter": "psutil",
     "ParlantAdapter": "parlant.sdk",
 }
 

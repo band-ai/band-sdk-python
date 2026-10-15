@@ -1,14 +1,13 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=4.0.0"]
+# dependencies = ["band-sdk[omp]>=4.0.0"]
 # ///
 """
-OMP ACP client — bridge Band rooms to ``omp acp``.
+OMP native RPC client — bridge Band rooms to ``omp --mode rpc``.
 
-By default the SDK enforces ``always-ask`` approval mode (hosts may opt in to
-``approval_mode="yolo"`` for unrestricted OMP execution), injects Band tools
-over loopback MCP, and forwards room messages. Provider credentials are passed
-only to the OMP child process environment.
+The SDK owns one process per room, registers Band tools as native host tools,
+and waits through background continuations until the session is settled.
+Provider credentials are passed only to the OMP child process environment.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import OmpACPAdapter, OmpACPAdapterConfig
+from band.adapters import OmpAdapter, OmpAdapterConfig
 from band.integrations.omp import (
     DEFAULT_OMP_MODEL,
     omp_model_provider,
@@ -36,7 +35,7 @@ class Settings(BaseSettings):
         extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
-    acp_agent_cwd: str = "."
+    omp_agent_cwd: str = "."
     omp_model: str = DEFAULT_OMP_MODEL
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
@@ -71,16 +70,16 @@ async def main() -> None:
     if not api_key:
         raise ValueError("Set the provider API key env var matching OMP_MODEL")
 
-    config = OmpACPAdapterConfig(
-        cwd=settings.acp_agent_cwd,
+    config = OmpAdapterConfig(
+        cwd=settings.omp_agent_cwd,
         model=settings.omp_model,
         api_key=api_key,
         inject_band_tools=True,
     )
-    adapter = OmpACPAdapter(config)
+    adapter = OmpAdapter(config)
 
-    logger.info("Starting OMP ACP client bridge...")
-    async with Agent.from_config("omp_acp_agent", adapter=adapter) as agent:
+    logger.info("Starting OMP native RPC bridge...")
+    async with Agent.from_config("omp_agent", adapter=adapter) as agent:
         await agent.run_forever()
 
 

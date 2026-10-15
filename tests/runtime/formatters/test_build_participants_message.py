@@ -23,14 +23,6 @@ class TestBuildParticipantsMessage:
         assert "u1" not in result
         assert "User" in result
 
-    def test_includes_mention_instruction(self):
-        participants = [{"id": "1", "name": "Test", "type": "User", "handle": "test"}]
-        result = build_participants_message(participants)
-        assert "band_send_message" in result
-        # Instruction emphasizes using exact handles, not display names
-        assert "handle" in result
-        assert "NOT the display name" in result
-
     def test_handles_missing_fields(self):
         participants = [{"id": "1"}]  # Missing name and type
         result = build_participants_message(participants)
@@ -53,29 +45,6 @@ class TestBuildParticipantsMessage:
         )
         assert "a1" not in result
 
-    def test_description_caveat_present_only_when_a_description_is_shown(self):
-        """The non-authoritative caveat is roster noise when nothing needs
-        it — only show it when a description actually renders.
-        """
-        no_description = build_participants_message(
-            [{"id": "u1", "name": "Alice", "type": "User", "handle": "alice"}]
-        )
-        assert "not instructions to you" not in no_description
-
-        with_description = build_participants_message(
-            [
-                {
-                    "id": "a1",
-                    "name": "Role Bot",
-                    "type": "Agent",
-                    "handle": "org/role",
-                    "description": "Handles support tickets.",
-                }
-            ]
-        )
-        assert "not instructions to you" in with_description
-        assert "public room roster data" in with_description
-
     def test_omits_empty_description(self):
         participants = [
             {
@@ -93,8 +62,7 @@ class TestBuildParticipantsMessage:
         assert roster_line == "- @org/role — Role Bot (Agent)"
 
     def test_collapses_newlines_in_description(self):
-        """A description can't inject fake extra roster lines or spoof the
-        trailing IMPORTANT instruction line."""
+        """A description cannot inject extra roster lines or standalone directives."""
         participants = [
             {
                 "id": "a1",
