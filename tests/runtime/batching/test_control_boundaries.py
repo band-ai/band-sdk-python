@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from band.client.streaming import DeliveryStatus
 from tests.runtime.batching.kit import ControlScript, FakeRoom, started_room
 
@@ -43,15 +45,20 @@ class TestControlBoundaries:
         self, platform: FakeRoom
     ) -> None:
         controls = ControlScript(recognized={"approve"})
+        discovery_read = asyncio.Event()
+
+        async def record_discovery() -> None:
+            discovery_read.set()
 
         async with started_room(platform, controls=controls) as room:
             room.turns.accepting = False
             await room.deliver(platform.post("m1"))
             await room.admission_attempted("m1")
             attempted = list(platform.admission_attempts)
+            platform.read_actions.append(record_discovery)
             await room.deliver(platform.post("m2"))
             await room.deliver(platform.post("m3"))
-            await room.until(lambda: platform.page_reads > 2)
+            await room.until(discovery_read.is_set)
 
         assert platform.admission_attempts == attempted
 
