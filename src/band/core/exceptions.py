@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from enum import StrEnum
 
 
 class BandError(Exception):
@@ -52,6 +53,33 @@ class BandConnectionError(BandError):
 
 class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
+
+
+class MessagePostKind(StrEnum):
+    """A chat-message post that did not confirm delivery to a recipient.
+
+    ``unconfirmed_recipient`` is an HTTP 2xx whose recipient has no handle:
+    the message row may already exist, and the mention is not a confirmed
+    participant. ``mentioned_participant_not_in_room`` is the platform's own
+    refusal token for a mention that is not in the room.
+    """
+
+    UNCONFIRMED_RECIPIENT = "unconfirmed_recipient"
+    MENTION_NOT_IN_ROOM = "mentioned_participant_not_in_room"
+
+
+class MessagePostError(BandToolError):
+    """A classified chat-message post failure.
+
+    ``kind`` is the stable token logs and tool results carry. ``detail`` is
+    the short origin (message id, recipient id and name) without response
+    headers.
+    """
+
+    def __init__(self, kind: MessagePostKind, detail: str) -> None:
+        super().__init__(f"{kind}: {detail}")
+        self.kind = kind
+        self.detail = detail
 
 
 class InvalidToolArgumentsError(BandError, ValueError):

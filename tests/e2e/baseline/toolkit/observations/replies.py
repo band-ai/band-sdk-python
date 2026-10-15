@@ -18,6 +18,9 @@ and those make suites brittle.
   metadata (not by parsing ``@`` text).
 - ``mentioning`` — the subset of replies that mention a participant (by metadata),
   for chaining into a further assertion (e.g. content) on just those replies.
+- ``assert_routed_value`` — some reply mentions a peer and contains an exact
+  value. The failure names ``no_sender_message``, ``no_mention_of_peer``, or
+  ``mention_omitted_value`` and lists the mention ids actually present.
 
 A list subclass, so it iterates/indexes/``len``s like one. A derived subset
 (slice or filter) is a plain ``list``, so re-wrap it to keep the methods:
@@ -26,11 +29,26 @@ A list subclass, so it iterates/indexes/``len``s like one. A derived subset
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import ClassVar
 
 from band.client.streaming import MessageCreatedPayload
 from band.core.types import MessageType
 from tests.e2e.baseline.toolkit.observations.assertions import ContentAssertions
+
+
+class RoutedRecallFailure(StrEnum):
+    """Why a sender's messages did not carry an exact value to one peer.
+
+    ``no_sender_message``: the sender posted nothing in the window.
+    ``no_mention_of_peer``: the sender posted, and none of those messages
+    mention the peer. ``mention_omitted_value``: a message mentions the peer
+    and its body does not contain the value.
+    """
+
+    NO_SENDER_MESSAGE = "no_sender_message"
+    NO_MENTION_OF_PEER = "no_mention_of_peer"
+    MENTION_OMITTED_VALUE = "mention_omitted_value"
 
 
 class Replies(ContentAssertions, list[MessageCreatedPayload]):
@@ -65,6 +83,24 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
                 f"expected at most {n} {self._noun()}(s), got {count} — a self-dispatch "
                 f"loop, not model reply batching:\n{haystack}"
             )
+
+    def assert_routed_value(self, peer_id: str, value: str) -> Replies:
+        """The sender messages that mention ``peer_id`` and contain ``value``.
+
+        The failure names which miss it was and lists every message in this
+        collection with its mention ids, so an empty mention set is not
+        reported as a missing token.
+        """
+        if not value:
+            raise ValueError("expected content value cannot be empty")
+        routed = self.mentioning(peer_id)
+        if any(value in message.content for message in routed):
+            return routed
+        kind = _routed_recall_failure(self, routed)
+        raise AssertionError(
+            f"{kind}: no message mentioning {peer_id} contained exact value {value!r}\n"
+            f"{_message_record(self)}"
+        )
 
     def mentioning(self, participant_id: str) -> Replies:
         """The subset of replies that mention ``participant_id`` (by metadata).
@@ -113,3 +149,24 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
         of a ``list`` subclass is a plain ``list``).
         """
         return Replies(self[cursor:])
+
+
+def _routed_recall_failure(observed: Replies, routed: Replies) -> RoutedRecallFailure:
+    if not observed:
+        return RoutedRecallFailure.NO_SENDER_MESSAGE
+    if not routed:
+        return RoutedRecallFailure.NO_MENTION_OF_PEER
+    return RoutedRecallFailure.MENTION_OMITTED_VALUE
+
+
+def _message_record(messages: Replies) -> str:
+    if not messages:
+        return "(no messages)"
+    return "\n".join(_message_line(message) for message in messages)
+
+
+def _message_line(message: MessageCreatedPayload) -> str:
+    mentions = message.metadata.mentions if message.metadata is not None else []
+    mention_ids = ",".join(mention.id for mention in mentions) or "none"
+    content = " ".join(message.content.split())
+    return f"mentions={mention_ids} | {content}"

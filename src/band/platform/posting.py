@@ -14,13 +14,19 @@ point, so every call here uses whatever ``rest`` the caller currently has.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
-from band_rest.errors import ForbiddenError
+from band_rest.core.parse_error import ParsingError
+from band_rest.errors import ForbiddenError, UnprocessableEntityError
+from pydantic import ValidationError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.content import has_visible_content
-from band.core.exceptions import RoomExecutionStoppedError
+from band.core.exceptions import (
+    MessagePostError,
+    MessagePostKind,
+    RoomExecutionStoppedError,
+)
 
 if TYPE_CHECKING:
     from band_rest.types import EventCreatedResponse, MessageSentResponse
@@ -61,23 +67,58 @@ def _truncate_event_content(content: str) -> str:
 _EXECUTION_STOPPED_MESSAGE = "execution is stopped"
 
 
-def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
-    """Whether a posting rejection identifies stopped room execution.
-
-    The body is the parsed Fern ``Error`` model when the response parsed, or
-    a raw dict/str when it did not; every shape that carries the message is
-    checked.
-    """
-    body = error.body
+def _error_message(body: object) -> str | None:
+    """The platform error message, whether the body parsed or stayed raw."""
     if isinstance(body, str):
-        message: object = body
-    elif isinstance(body, dict):
+        return body
+    if isinstance(body, dict):
         inner = body.get("error")
         message = inner.get("message") if isinstance(inner, dict) else None
     else:
         inner = getattr(body, "error", None)
         message = getattr(inner, "message", None)
-    return isinstance(message, str) and _EXECUTION_STOPPED_MESSAGE in message.lower()
+    return message if isinstance(message, str) else None
+
+
+def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
+    """Whether a posting rejection identifies stopped room execution."""
+    message = _error_message(error.body)
+    return message is not None and _EXECUTION_STOPPED_MESSAGE in message.lower()
+
+
+def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoReturn:
+    error = MessagePostError(kind, detail)
+    logger.error("message post in room %s failed: %s", room_id, error)
+    raise error
+
+
+def _unconfirmed_recipient(error: ParsingError) -> str | None:
+    """Origin text when a 2xx body omits a recipient handle, else None.
+
+    A handle-less recipient is not a confirmed mention. The message id in the
+    body means the row may already exist, so the failure names that instead of
+    dumping response headers.
+    """
+    status = error.status_code
+    if status is None or not 200 <= status < 300:
+        return None
+    if not isinstance(error.cause, ValidationError):
+        return None
+    if not any(
+        "recipients" in err["loc"] and "handle" in err["loc"]
+        for err in error.cause.errors()
+    ):
+        return None
+    data = error.body.get("data") if isinstance(error.body, dict) else None
+    if not isinstance(data, dict):
+        return "recipient handle missing"
+    missing = [
+        f"id={item.get('id')} name={item.get('name')}"
+        for item in data.get("recipients") or []
+        if isinstance(item, dict) and not item.get("handle")
+    ]
+    who = ", ".join(missing) if missing else "recipient handle missing"
+    return f"message {data.get('id')} was created; {who}"
 
 
 async def post_message(
@@ -107,6 +148,19 @@ async def post_message(
         if _is_execution_stopped_rejection(error):
             raise RoomExecutionStoppedError(room_id) from error
         raise
+    except ParsingError as error:
+        detail = _unconfirmed_recipient(error)
+        if detail is None:
+            raise
+        _raise_classified(MessagePostKind.UNCONFIRMED_RECIPIENT, room_id, detail)
+    except UnprocessableEntityError as error:
+        if _error_message(error.body) != MessagePostKind.MENTION_NOT_IN_ROOM:
+            raise
+        _raise_classified(
+            MessagePostKind.MENTION_NOT_IN_ROOM,
+            room_id,
+            "mentioned participant is not in the room",
+        )
     if not response.data:
         raise RuntimeError("Failed to send message - no response data")
     return response.data
