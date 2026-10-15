@@ -39,7 +39,9 @@ class TestCustomerAddress:
         )
         message = replace(
             sample_message,
-            content=f"@{HANDLE} look up the code and tell @{OTHER_HANDLE}",
+            content=(
+                f"@{HANDLE} look up the code, @{HANDLE}, and tell @{OTHER_HANDLE}"
+            ),
         )
         adapter = await start_adapter(
             ParlantAdapterConfig(
@@ -54,14 +56,14 @@ class TestCustomerAddress:
                 history=[],
                 participants_msg=None,
                 contacts_msg=None,
-                is_session_bootstrap=True,
+                is_session_bootstrap=False,
                 room_id=message.room_id,
             )
 
         posted = mock_app.sessions.create_customer_message.await_args.kwargs["message"]
-        assert (
-            posted
-            == f"[{SENDER_NAME}]: {PARLANT_NAME} look up the code and tell @{OTHER_HANDLE}"
+        assert posted == (
+            f"[{SENDER_NAME}]: {PARLANT_NAME} look up the code, {PARLANT_NAME}, "
+            f"and tell @{OTHER_HANDLE}"
         )
         assert (
             f"Room {message.room_id}: posting to Parlant (agent {PARLANT_NAME}): {posted}"
@@ -294,6 +296,14 @@ class TestCustomerAddress:
             participants=[{"id": AGENT_ID, "handle": "alexander.zaikman/tom"}],
         )
 
+        unescaped = name_this_agent(
+            "@alexanderXzaikman/tom please review",
+            agent_id=AGENT_ID,
+            agent_name=PARLANT_NAME,
+            participants=[{"id": AGENT_ID, "handle": "alexander.zaikman/tom"}],
+        )
+
         assert short == "@alexander.zaikman/tom please review"
         assert whole == f"{PARLANT_NAME} please review"
         assert suffix == "@alexander.zaikman/tom.extra please review"
+        assert unescaped == "@alexanderXzaikman/tom please review"

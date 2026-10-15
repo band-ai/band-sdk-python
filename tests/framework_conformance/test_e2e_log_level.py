@@ -14,18 +14,20 @@ class TestRunLogLevel:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("BAND_E2E_LOG_LEVEL", raising=False)
-        self._assert_levels_after(logging.WARNING, logging.WARNING)
+        self._assert_levels_after(logging.ERROR, logging.ERROR, start=logging.ERROR)
 
     def test_debug_sets_band_and_parlant(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BAND_E2E_LOG_LEVEL", "DEBUG")
-        self._assert_levels_after(logging.DEBUG, logging.DEBUG)
+        self._assert_levels_after(logging.DEBUG, logging.DEBUG, start=logging.WARNING)
 
-    def _assert_levels_after(self, band_level: int, parlant_level: int) -> None:
+    def _assert_levels_after(
+        self, band_level: int, parlant_level: int, *, start: int
+    ) -> None:
         band = logging.getLogger("band")
         parlant = logging.getLogger("parlant")
         previous = (band.level, parlant.level)
-        band.setLevel(logging.WARNING)
-        parlant.setLevel(logging.WARNING)
+        band.setLevel(start)
+        parlant.setLevel(start)
         try:
             apply_run_log_level()
             assert (band.level, parlant.level) == (band_level, parlant_level)
