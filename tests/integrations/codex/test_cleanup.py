@@ -45,12 +45,15 @@ SHIM = textwrap.dedent(
     time.sleep({LEAKED_LIFETIME_S})
     """
 )
-# Exits when stdin closes and does not stop the worker it spawned.
+# Written only if the launcher runs past stdin EOF. A tree kill that lands
+# while it is blocked in that read never creates the file.
+STDIN_EOF_MARKER = "stdin-eof"
 EXITING_SHIM = textwrap.dedent(
     f"""
     import subprocess, sys
     subprocess.Popen([sys.executable, "-c", {WORKER!r}])
     sys.stdin.read()
+    open({STDIN_EOF_MARKER!r}, "w").close()
     """
 )
 
@@ -198,6 +201,7 @@ class TestSubprocessCleanup:
             stopped_at = heartbeat.stat().st_size
             await asyncio.sleep(QUIET_S)
             assert heartbeat.stat().st_size == stopped_at
+            assert not (workdir / STDIN_EOF_MARKER).exists()
             shutil.rmtree(workdir)
         finally:
             await client.close()

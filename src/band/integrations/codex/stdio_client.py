@@ -17,6 +17,10 @@ from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPol
 
 logger = logging.getLogger(__name__)
 
+# Long enough for the child watcher to record an exit, short enough that a
+# held stdio pipe cannot stall room cleanup.
+_EXIT_OBSERVE_S = 2.0
+
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
     """Force-stop ``process`` and everything it spawned.
@@ -39,9 +43,31 @@ async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    if await taskkill.wait() != 0:
+    if (code := await taskkill.wait()) != 0:
+        logger.warning("taskkill /T for pid %s exited %s", process.pid, code)
         with suppress(ProcessLookupError):
             process.kill()
+
+
+async def _observe_exit(process: asyncio.subprocess.Process) -> bool:
+    """True once the direct child has exited.
+
+    ``Process.wait`` parks until every stdio pipe disconnects when it is
+    entered before a returncode is stored. After the watcher stores one, a
+    new ``wait`` returns immediately.
+    """
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_EXIT_OBSERVE_S)
+    except TimeoutError:
+        if process.returncode is None:
+            return False
+        logger.warning(
+            "Codex process %s exited with %s while a descendant still held its stdio pipes",
+            process.pid,
+            process.returncode,
+        )
+        await process.wait()
+    return True
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -149,7 +175,10 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await kill_process_tree(process)
             if process.stdin is not None:
                 process.stdin.close()
-            await process.wait()
+            if not await _observe_exit(process):
+                logger.warning(
+                    "Codex process %s still alive after tree kill", process.pid
+                )
 
         self._fail_pending("Codex stdio client closed")
 
