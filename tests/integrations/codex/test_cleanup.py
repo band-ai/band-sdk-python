@@ -47,11 +47,16 @@ SHIM = textwrap.dedent(
 )
 # Written only if the launcher runs past stdin EOF. A tree kill that lands
 # while it is blocked in that read never creates the file.
+# The worker does not inherit stdin: on Windows a child that inherits the
+# pipe its parent is blocked reading does not run until that read finishes.
 STDIN_EOF_MARKER = "stdin-eof"
 EXITING_SHIM = textwrap.dedent(
     f"""
     import subprocess, sys
-    subprocess.Popen([sys.executable, "-c", {WORKER!r}])
+    subprocess.Popen(
+        [sys.executable, "-c", {WORKER!r}],
+        stdin=subprocess.DEVNULL,
+    )
     sys.stdin.read()
     open({STDIN_EOF_MARKER!r}, "w").close()
     """
@@ -89,11 +94,6 @@ async def child(
             process.kill()
         await process.wait()
         await client.close()
-
-
-def cleanup_stage(message: str) -> None:
-    sys.stderr.write(f"cleanup-stage {message}\n")
-    sys.stderr.flush()
 
 
 async def wait_for_heartbeat(path: Path) -> None:
@@ -213,22 +213,16 @@ class TestSubprocessCleanup:
             command=[sys.executable, "-c", EXITING_SHIM],
             cwd=str(workdir),
         )
-        cleanup_stage("before-connect")
         await asyncio.wait_for(client.connect(), timeout=CLOSE_BOUND_S)
-        cleanup_stage("after-connect")
         try:
             heartbeat = workdir / HEARTBEAT_FILE
             await asyncio.wait_for(wait_for_heartbeat(heartbeat), timeout=CLOSE_BOUND_S)
-            cleanup_stage("after-heartbeat")
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
-            cleanup_stage("after-close")
             await assert_heartbeat_stopped(heartbeat)
             assert not (workdir / STDIN_EOF_MARKER).exists()
             shutil.rmtree(workdir)
         finally:
-            cleanup_stage("before-final-close")
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
-            cleanup_stage("after-final-close")
         assert not workdir.exists()
 
     async def test_close_reaps_a_worker_when_its_launcher_has_already_exited(
