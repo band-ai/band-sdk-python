@@ -140,17 +140,18 @@ class Terminal:
     """One terminal write, reachable through both the detailed and bool APIs."""
 
     action: DeliveryStatus
+    message_id: str = MESSAGE_ID
 
     async def detailed(self, link: BandLink) -> SettlementResult:
         if self.action is DeliveryStatus.PROCESSED:
-            return await link.mark_processed_result(ROOM_ID, MESSAGE_ID)
-        return await link.mark_failed_result(ROOM_ID, MESSAGE_ID, "boom")
+            return await link.mark_processed_result(ROOM_ID, self.message_id)
+        return await link.mark_failed_result(ROOM_ID, self.message_id, "boom")
 
     async def legacy(self, link: BandLink) -> bool:
         if self.action is DeliveryStatus.PROCESSED:
-            return await link.mark_processed(ROOM_ID, MESSAGE_ID)
-        return await link.mark_failed(ROOM_ID, MESSAGE_ID, "boom")
+            return await link.mark_processed(ROOM_ID, self.message_id)
+        return await link.mark_failed(ROOM_ID, self.message_id, "boom")
 
     @property
     def write(self) -> str:
-        return f"{MESSAGE_ID}/{self.action}"
+        return f"{self.message_id}/{self.action}"
