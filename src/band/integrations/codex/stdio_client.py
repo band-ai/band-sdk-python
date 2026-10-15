@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # Long enough for the child watcher to record an exit, short enough that a
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
+_EXIT_POLL_S = 0.05
 _STDOUT_LIMIT = 16 * 1024 * 1024
 
 
@@ -41,15 +42,29 @@ def _missing_cli_message(binary: str) -> str:
 
 
 async def _close_stdin(process: asyncio.subprocess.Process) -> None:
-    """Drop the write end so a synchronous read in the child can finish."""
+    """Drop the write end so a synchronous read in the child can finish.
+
+    ``wait_closed`` does not return while that read is still in progress, and
+    cancelling the wait on Windows never finishes. Closing the transport is
+    enough: the loop drops the OS handle on its next turn.
+    """
     stdin = process.stdin
     if stdin is None or stdin.is_closing():
         return
     stdin.close()
-    try:
-        await asyncio.wait_for(stdin.wait_closed(), timeout=_EXIT_OBSERVE_S)
-    except TimeoutError:
-        logger.warning("Codex stdin for %s did not close", process.pid)
+    await asyncio.sleep(0)
+
+
+async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
+    """Let cancelled reads finish without awaiting a pipe that may never close."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _EXIT_OBSERVE_S
+    while any(not task.done() for task in readers):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            logger.warning("Codex stdio readers still pending after tree kill")
+            return
+        await asyncio.sleep(min(_EXIT_POLL_S, remaining))
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
@@ -201,8 +216,8 @@ class CodexStdioClient(BaseJsonRpcClient):
             task.cancel()
         try:
             # A cancelled pipe read on Windows stays pending while the child is
-            # blocked in a synchronous stdin read. Terminate the tree, and close
-            # our write end, before waiting for those reads to finish.
+            # blocked in a synchronous stdin read, and awaiting that read never
+            # times out. Terminate the tree and close our write end first.
             if (process := self._proc) is not None:
                 # A launcher that has already exited still leaves descendants.
                 # Unix signals the session group; Windows terminates the job.
@@ -214,7 +229,7 @@ class CodexStdioClient(BaseJsonRpcClient):
                     )
             self._fail_pending("Codex stdio client closed")
         finally:
-            await asyncio.gather(*readers, return_exceptions=True)
+            await _wait_readers(readers)
 
     async def _send_json(self, payload: dict[str, Any]) -> None:
         if not self._proc or not self._proc.stdin:
