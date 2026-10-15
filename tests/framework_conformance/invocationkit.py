@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,8 +12,10 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 
 ROOM_ID = "room-1"
+IDENTITY = ProvisionedAgent(id="agent-1", api_key="key", name="agent")
 
 
 def original(message_id: str) -> PlatformMessage:
@@ -83,3 +86,20 @@ class BusyAdapter(DecliningAdapter):
             self.busy = False
             raise InputNotAccepted("The room already has an active turn")
         await super().on_turn(messages, tools, *args, **kwargs)
+
+
+class CellResources:
+    """Resources for a cell run without an overlapping-run guard."""
+
+    @contextmanager
+    def track_running(self, agent_id: str) -> Iterator[None]:
+        yield
+
+
+class ProvisionedResources:
+    """Resources that provision the one test identity."""
+
+    settings = None
+
+    async def provision_agent(self, label: str) -> ProvisionedAgent:
+        return IDENTITY

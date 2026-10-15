@@ -797,10 +797,9 @@ class ExecutionContext:
         self._set_state(ExecutionState.PROCESSING)
         return self.current_scope
 
-    async def _begin_turn(self, revision: int | None = None) -> TurnScope | None:
+    async def _begin_turn(self) -> TurnScope | None:
         """Begin a message turn that controls terminate from this point on."""
-        if revision is None:
-            revision = self._control_revision
+        revision = self._control_revision
         scope = await self.begin_delivery()
         if scope is None:
             return None
@@ -1310,7 +1309,7 @@ class ExecutionContext:
             for event in self._control_candidates(page.messages):
                 if self._stopped or revision != self._control_revision:
                     return
-                await self._try_control(event)
+                await self._probe_control(event)
             self._control_cursor = page.next_cursor
         except RoomExecutionStoppedError:
             return
@@ -1330,9 +1329,6 @@ class ExecutionContext:
             if _is_ordinary(event):
                 events[_event_message_id(event)] = event
         return sorted(events.values(), key=MessageKey.of_event)
-
-    async def _try_control(self, event: MessageEvent) -> bool:
-        return await self._probe_control(event) is ControlOutcome.CONSUMED
 
     def recognizes_delivery_control(self, event: MessageEvent) -> bool:
         return self._is_message_control is not None and self._is_message_control(

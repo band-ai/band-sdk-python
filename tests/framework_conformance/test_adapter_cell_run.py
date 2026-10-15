@@ -8,8 +8,8 @@ builds is real, and so are the observer and its holds.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -19,22 +19,15 @@ from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ProvisionedAgent
 from tests.framework_conformance.invocationkit import (
+    IDENTITY,
     ROOM_ID,
+    CellResources,
     DecliningAdapter,
     original,
     turn_input,
 )
 
-IDENTITY = ProvisionedAgent(id="agent-1", api_key="key", name="agent")
 DEADLINE_S = 5.0
-
-
-class IdleResources:
-    """Just enough ``ResourceManager`` for ``run_as``: no overlapping-run guard to trip."""
-
-    @contextmanager
-    def track_running(self, agent_id: str) -> Iterator[None]:
-        yield
 
 
 @pytest.fixture
@@ -45,27 +38,8 @@ def adapter(monkeypatch: pytest.MonkeyPatch) -> DecliningAdapter:
     return built
 
 
-@pytest.fixture
-def started_with(monkeypatch: pytest.MonkeyPatch) -> list[SessionConfig | None]:
-    """The session config of each agent a cell starts."""
-    configs: list[SessionConfig | None] = []
-
-    @asynccontextmanager
-    async def running_agent(
-        provisioned: ProvisionedAgent,
-        adapter: Any,
-        settings: Any,
-        session_config: SessionConfig | None = None,
-    ) -> AsyncIterator[ProvisionedAgent]:
-        configs.append(session_config)
-        yield provisioned
-
-    monkeypatch.setattr(provisioning, "running_agent", running_agent)
-    return configs
-
-
 def cell() -> AdapterCell:
-    return AdapterCell(adapter_id="anthropic", settings=None, resources=IdleResources())
+    return AdapterCell(adapter_id="anthropic", settings=None, resources=CellResources())
 
 
 class TestAdapterCellRun:

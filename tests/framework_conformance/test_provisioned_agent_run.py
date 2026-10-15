@@ -7,56 +7,18 @@ and so are the observer and its turns.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
-
-import pytest
-
 from band.runtime.sessionconfig import SessionConfig
-from tests.e2e.baseline.toolkit import provisioning
 from tests.e2e.baseline.toolkit.invocations import InvocationObserver
-from tests.e2e.baseline.toolkit.provisioning import (
-    ProvisionedAgent,
-    running_provisioned_agent,
-)
+from tests.e2e.baseline.toolkit.provisioning import running_provisioned_agent
 from tests.framework_conformance.invocationkit import (
     ROOM_ID,
     DecliningAdapter,
+    ProvisionedResources,
     original,
     turn_input,
 )
 
-IDENTITY = ProvisionedAgent(id="agent-1", api_key="key", name="agent")
 DEADLINE_S = 5.0
-
-
-class IdleResources:
-    """Just enough ``ResourceManager`` to provision the one identity."""
-
-    settings = None
-
-    async def provision_agent(self, label: str) -> ProvisionedAgent:
-        return IDENTITY
-
-
-@pytest.fixture
-def started_with(monkeypatch: pytest.MonkeyPatch) -> list[SessionConfig | None]:
-    """The session config of each agent started."""
-    configs: list[SessionConfig | None] = []
-
-    @asynccontextmanager
-    async def running_agent(
-        provisioned: ProvisionedAgent,
-        adapter: Any,
-        settings: Any,
-        session_config: SessionConfig | None = None,
-    ) -> AsyncIterator[ProvisionedAgent]:
-        configs.append(session_config)
-        yield provisioned
-
-    monkeypatch.setattr(provisioning, "running_agent", running_agent)
-    return configs
 
 
 class TestProvisionedAgentRun:
@@ -66,7 +28,7 @@ class TestProvisionedAgentRun:
         batching = SessionConfig(consume_all_queued=True)
 
         async with running_provisioned_agent(
-            DecliningAdapter(), IdleResources(), session_config=batching
+            DecliningAdapter(), ProvisionedResources(), session_config=batching
         ):
             pass
 
@@ -81,7 +43,7 @@ class TestProvisionedAgentRun:
         )
 
         async with running_provisioned_agent(
-            adapter, IdleResources(), observer=observer
+            adapter, ProvisionedResources(), observer=observer
         ):
             await adapter.on_messages(turn_input(original("m1"), original("m2")))
 

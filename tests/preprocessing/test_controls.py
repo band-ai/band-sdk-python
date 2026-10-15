@@ -57,7 +57,7 @@ class TestConfiguredControlPolicy:
             if hosting == "normal":
                 await ctx._process_event(event)
             else:
-                await ctx._try_control(event)
+                await ctx._probe_control(event)
             await ctx.stop()
 
         assert policy.seen == (["C"] if hosting == "normal" or consumed else [])

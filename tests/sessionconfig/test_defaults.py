@@ -20,3 +20,7 @@ class TestSessionConfigDefaults:
         """Should be able to explicitly disable context hydration."""
         config = SessionConfig(enable_context_hydration=False)
         assert config.enable_context_hydration is False
+
+    def test_default_max_message_retries(self) -> None:
+        config = SessionConfig()
+        assert config.max_message_retries == 1
