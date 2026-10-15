@@ -6,7 +6,7 @@ compares whole dicts, so a volatile field leaking through the projection
 
 Merge/duplicate/capacity behavior now lives in
 ``band_sdk_core.ParticipantRoster`` and is covered at the
-``ExecutionContext`` boundary (``tests/runtime/test_execution.py``), not here.
+``ExecutionContext`` boundary (``tests/runtime/execution/``), not here.
 """
 
 from __future__ import annotations

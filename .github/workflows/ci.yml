@@ -226,7 +226,7 @@ jobs:
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
-          tests/adapters/test_strands_adapter.py \
+          tests/adapters/strands/ \
           tests/adapters/nooa/ \
           tests/converters/test_strands.py \
           tests/framework_conformance/ -k 'strands or nooa or legacy or probe_registry'
