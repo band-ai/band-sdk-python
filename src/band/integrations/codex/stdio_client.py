@@ -19,8 +19,9 @@ from band.integrations.codex.winspawn import (
     MISSING_EXECUTABLE,
     MODULE_NAME,
     SpawnFailure,
+    await_returncode,
+    request_job_termination,
     spawn,
-    terminate_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,18 @@ def _missing_cli_message(binary: str) -> str:
     )
 
 
+async def _close_stdin(process: asyncio.subprocess.Process) -> None:
+    """Drop the write end so a synchronous read in the child can finish."""
+    stdin = process.stdin
+    if stdin is None or stdin.is_closing():
+        return
+    stdin.close()
+    try:
+        await asyncio.wait_for(stdin.wait_closed(), timeout=_EXIT_OBSERVE_S)
+    except TimeoutError:
+        logger.warning("Codex stdin for %s did not close", process.pid)
+
+
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
     """Force-stop ``process`` and everything it spawned.
 
@@ -51,28 +64,11 @@ async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
         with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
         return
-    await terminate_job(process.pid, _EXIT_OBSERVE_S)
-
-
-async def _observe_exit(process: asyncio.subprocess.Process) -> bool:
-    """True once the direct child has exited.
-
-    ``Process.wait`` parks until every stdio pipe disconnects when it is
-    entered before a returncode is stored. After the watcher stores one, a
-    new ``wait`` returns immediately.
-    """
-    try:
-        await asyncio.wait_for(process.wait(), timeout=_EXIT_OBSERVE_S)
-    except TimeoutError:
-        if process.returncode is None:
-            return False
-        logger.warning(
-            "Codex process %s exited with %s while a descendant still held its stdio pipes",
-            process.pid,
-            process.returncode,
-        )
-        await process.wait()
-    return True
+    # A member blocked in ReadFile(stdin) stays inside that call until this
+    # write end closes, so the job cannot drain first.
+    if (job := request_job_termination(process.pid)) is not None:
+        await _close_stdin(process)
+        await job.wait_until_idle(_EXIT_OBSERVE_S)
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -203,20 +199,22 @@ class CodexStdioClient(BaseJsonRpcClient):
         ]
         for task in readers:
             task.cancel()
-        await asyncio.gather(*readers, return_exceptions=True)
-
-        if (process := self._proc) is not None:
-            # A launcher that has already exited still leaves descendants. Unix
-            # signals the session group; Windows terminates the job.
-            await kill_process_tree(process)
-            if process.stdin is not None:
-                process.stdin.close()
-            if not await _observe_exit(process):
-                logger.warning(
-                    "Codex process %s still alive after tree kill", process.pid
-                )
-
-        self._fail_pending("Codex stdio client closed")
+        try:
+            # A cancelled pipe read on Windows stays pending while the child is
+            # blocked in a synchronous stdin read. Terminate the tree, and close
+            # our write end, before waiting for those reads to finish.
+            if (process := self._proc) is not None:
+                # A launcher that has already exited still leaves descendants.
+                # Unix signals the session group; Windows terminates the job.
+                await kill_process_tree(process)
+                await _close_stdin(process)
+                if not await await_returncode(process, _EXIT_OBSERVE_S):
+                    logger.warning(
+                        "Codex process %s still alive after tree kill", process.pid
+                    )
+            self._fail_pending("Codex stdio client closed")
+        finally:
+            await asyncio.gather(*readers, return_exceptions=True)
 
     async def _send_json(self, payload: dict[str, Any]) -> None:
         if not self._proc or not self._proc.stdin:

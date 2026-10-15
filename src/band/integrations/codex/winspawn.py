@@ -304,14 +304,21 @@ class Job:
             return None
         return int(info.ActiveProcesses)
 
-    async def terminate_and_wait(self, timeout: float) -> None:
-        """Stop every member, then wait until none remain."""
+    def terminate(self) -> None:
+        """Mark every member for termination.
+
+        Members blocked in a synchronous pipe read stay inside that call until
+        the other end closes. Wait only after that end is closed.
+        """
+        if not _kernel32().TerminateJobObject(self._open_handle(), 1):
+            logger.warning(
+                "TerminateJobObject failed: winerror %s",
+                _last_error(),
+            )
+
+    async def wait_until_idle(self, timeout: float) -> None:
+        """Wait until no members remain, then close the job handle."""
         try:
-            if not _kernel32().TerminateJobObject(self._open_handle(), 1):
-                logger.warning(
-                    "TerminateJobObject failed: winerror %s",
-                    _last_error(),
-                )
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             while True:
@@ -407,16 +414,35 @@ async def _read_status(read_fd: int, timeout: float) -> str:
     return data.split(b"\n", 1)[0].decode("ascii", "replace").strip()
 
 
+async def await_returncode(process: asyncio.subprocess.Process, timeout: float) -> bool:
+    """True once ``process.returncode`` is set.
+
+    ``Process.wait`` stays pending while a descendant holds a stdio pipe, and
+    cancelling that wait on Windows never finishes. The transport publishes
+    ``returncode`` when the direct child exits.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while process.returncode is None:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(_JOB_POLL_S, remaining))
+    return True
+
+
 async def _stop_failed_spawn(
     process: asyncio.subprocess.Process, job: Job, timeout: float
 ) -> None:
-    await job.terminate_and_wait(timeout)
+    job.terminate()
+    stdin = process.stdin
+    if stdin is not None and not stdin.is_closing():
+        stdin.close()
+    await job.wait_until_idle(timeout)
     if process.returncode is None:
         with suppress(ProcessLookupError):
             process.kill()
-    try:
-        await asyncio.wait_for(process.wait(), timeout)
-    except TimeoutError:
+    if not await await_returncode(process, timeout):
         logger.warning(
             "Codex spawn helper %s still alive after job termination", process.pid
         )
@@ -471,12 +497,18 @@ async def spawn(
                 job.close()
 
 
-async def terminate_job(pid: int, timeout: float) -> None:
+def request_job_termination(pid: int) -> Job | None:
+    """Mark ``pid``'s job for termination and return it, still open.
+
+    The caller closes the child's stdin before ``Job.wait_until_idle``. A
+    synchronous read stays inside the member until that write end closes.
+    """
     job = _JOBS.pop(pid, None)
     if job is None:
         logger.warning("Codex process %s has no job to terminate", pid)
-        return
-    await job.terminate_and_wait(timeout)
+        return None
+    job.terminate()
+    return job
 
 
 def _set_inheritable(handle: int, inherit: bool) -> None:
@@ -525,7 +557,7 @@ def _standard_handles() -> tuple[int, int, int]:
 
 def _spawn_suspended(
     job: ctypes.c_void_p, command: Sequence[str], status_handle: int
-) -> ctypes.c_void_p:
+) -> tuple[ctypes.c_void_p, ctypes.c_void_p]:
     """Create the command suspended and assign it before it can run."""
     _set_inheritable(status_handle, False)
     standard = _standard_handles()
@@ -562,11 +594,11 @@ def _spawn_suspended(
         thread = info.hThread
         if not _kernel32().AssignProcessToJobObject(job, process):
             raise _win_os_error(_last_error())
-        if _kernel32().ResumeThread(thread) == _WAIT_FAILED:
-            raise _win_os_error(_last_error())
-        _kernel32().CloseHandle(thread)
+        child_thread = thread
         thread = None
-        return process
+        if process is None or child_thread is None:
+            raise _win_os_error(_last_error())
+        return process, child_thread
     except OSError:
         if process is not None:
             _kernel32().TerminateProcess(process, 1)
@@ -620,20 +652,37 @@ def _open_job(name: str) -> ctypes.c_void_p:
     return handle
 
 
+def _resume(thread: ctypes.c_void_p) -> None:
+    if _kernel32().ResumeThread(thread) == _WAIT_FAILED:
+        raise _win_os_error(_last_error())
+
+
 def _start_and_wait(job_name: str, status_handle: int, command: Sequence[str]) -> int:
     job = _open_job(job_name)
+    thread: ctypes.c_void_p | None = None
     try:
         try:
-            process = _spawn_suspended(job, command, status_handle)
+            process, thread = _spawn_suspended(job, command, status_handle)
         except OSError as exc:
             _write_status(status_handle, _winerror(exc))
             return 1
-        # Only the child keeps the pipes. A copy held here would keep the
-        # parent's read open after the child, and every descendant, is gone.
+        # The child already holds its stdio handles and is still suspended.
+        # Drop ours before it runs so a later close cannot overlap a read.
         _close_stdio()
+        try:
+            if thread is None:
+                raise _win_os_error(_last_error())
+            _resume(thread)
+        except OSError as exc:
+            _kernel32().TerminateProcess(process, 1)
+            _kernel32().CloseHandle(process)
+            _write_status(status_handle, _winerror(exc))
+            return 1
         _write_status(status_handle, None)
         return _wait_process(process)
     finally:
+        if thread is not None:
+            _kernel32().CloseHandle(thread)
         _kernel32().CloseHandle(job)
 
 
