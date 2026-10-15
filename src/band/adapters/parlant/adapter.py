@@ -18,7 +18,11 @@ from band.adapters.parlant.config import ConfigureCallback, ParlantAdapterConfig
 from band.adapters.parlant.guidelines import GuidelineLedger, GuidelineSpec
 from band.adapters.parlant.history import inject_history
 from band.adapters.parlant.lifecycle import ServerLifecycle
-from band.adapters.parlant.messages import compose_user_message, post_user_message
+from band.adapters.parlant.messages import (
+    compose_user_message,
+    name_this_agent_in_history,
+    post_user_message,
+)
 from band.adapters.parlant.responses import relay_agent_response
 from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
@@ -327,17 +331,23 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             rooms, room_id=room_id, sender_name=sender_name, tools=tools
         )
         with bound_session_tools(session_id=str(session_id), tools=tools):
-            if is_session_bootstrap and history:
+            agent_name = self._prompt_name()
+            addressed_history = name_this_agent_in_history(
+                history,
+                agent_id=tools.agent_id,
+                agent_name=agent_name,
+                participants=list(tools.participants),
+            )
+            if is_session_bootstrap and addressed_history:
                 injected = await inject_history(
                     app=rooms.app,
                     session_id=session_id,
-                    history=history,
+                    history=addressed_history,
                     agent_name=self.agent_name or FALLBACK_AGENT_NAME,
                 )
                 logger.info(
                     "Room %s: Injected %s messages from history", room_id, injected
                 )
-            agent_name = self._prompt_name()
             user_message = compose_user_message(
                 msg=msg,
                 participants_msg=participants_msg,
