@@ -286,10 +286,16 @@ CURSOR_PROFILE_NAME = "cursor"
 
 
 class KiroExtension(StrEnum):
-    """Kiro's experimental agent-to-client notifications (https://kiro.dev/docs/cli/acp)."""
+    """Names ``ext_notification`` receives for Kiro's extension notifications.
 
-    MCP_OAUTH_REQUEST = "_kiro.dev/mcp/oauth_request"
-    METADATA = "_kiro.dev/metadata"
+    The wire methods are ``_kiro.dev/mcp/oauth_request`` and
+    ``_kiro.dev/metadata`` (https://kiro.dev/docs/cli/acp). ACP's
+    ``MessageRouter`` strips one leading underscore before the callback,
+    so these values omit it.
+    """
+
+    MCP_OAUTH_REQUEST = "kiro.dev/mcp/oauth_request"
+    METADATA = "kiro.dev/metadata"
 
 
 class KiroACPClientProfile(NoopACPClientProfile):

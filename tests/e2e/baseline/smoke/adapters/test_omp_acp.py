@@ -70,7 +70,7 @@ async def test_omp_raw_acp_prompt_completes(
                 stage = "new_session"
                 session_id = await runtime.create_session(cwd=sandbox, mcp_servers=[])
                 stage = "prompt"
-                chunks = await runtime.prompt(
+                result = await runtime.prompt(
                     session_id=session_id,
                     prompt_text="Reply with one short greeting.",
                 )
@@ -80,7 +80,8 @@ async def test_omp_raw_acp_prompt_completes(
             await runtime.stop()
 
     assert any(
-        chunk.chunk_type == ChunkType.TEXT and chunk.content.strip() for chunk in chunks
+        chunk.chunk_type == ChunkType.TEXT and chunk.content.strip()
+        for chunk in result.chunks
     ), "OMP raw ACP prompt completed without a text response"
 
 

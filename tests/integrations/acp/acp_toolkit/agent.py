@@ -435,6 +435,24 @@ class FakeACPAgent:
         self._script.append(_action)
         return self
 
+    def will_send_wire_notification(
+        self, method: str, params: dict[str, Any]
+    ) -> FakeACPAgent:
+        """Send a JSON-RPC notification whose method is exactly ``method``.
+
+        ``ext_notification`` prefixes ``_`` on the way out and the client
+        router strips one leading ``_`` before the callback. A vendor's
+        documented wire spelling has to be sent as that spelling.
+        """
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a._conn_for(sid)._conn.send_notification(
+                method, {"sessionId": sid, **params}
+            )
+
+        self._script.append(_action)
+        return self
+
     def will_call_invalid_mcp_tool(
         self, tool_call_id: str, tool_name: str, *, arguments: dict[str, Any]
     ) -> FakeACPAgent:

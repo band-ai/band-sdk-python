@@ -719,13 +719,22 @@ class ACPClientAdapter(
                     room_id=room_id,
                     session_id=session_id,
                 )
+                reported_usage: Usage | None = None
+                prompt_responded = False
+
+                def remember_prompt_usage(usage: Usage | None) -> None:
+                    nonlocal reported_usage, prompt_responded
+                    reported_usage = usage
+                    prompt_responded = True
+
                 turn_deadline = asyncio.timeout(self.config.turn_timeout_s)
                 try:
                     async with turn_deadline:
-                        result = await runtime.prompt(
+                        await runtime.prompt(
                             session_id=session_id,
                             prompt_text=prompt_text,
                             on_chunk=emitter.emit,
+                            on_usage=remember_prompt_usage,
                         )
                         session.bootstrap_pending = False
                         session.replay_pending = False
@@ -764,7 +773,12 @@ class ACPClientAdapter(
                     raise ACPTurnTimeoutError(
                         f"ACP turn timed out after {self.config.turn_timeout_s}s"
                     ) from None
-                await self.emit_usage(tools, self._turn_usage(result.usage))
+                finally:
+                    # The deadline has already turned its own cancel into
+                    # TimeoutError. emit_usage still skips while this task is
+                    # cancelling, so an external cancel reports nothing.
+                    if prompt_responded:
+                        await self.emit_usage(tools, self._turn_usage(reported_usage))
         except DeliveryFailedError as e:
             # The turn's reply is what failed to post -- Band-side delivery,
             # never an ACP provider failure, so the connection stays up.

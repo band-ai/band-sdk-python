@@ -148,8 +148,10 @@ failure fails that room turn visibly instead of falling back.
   as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
 - **Kiro:** stdio only (Kiro documents no remote mode). `KiroACPClientProfile` posts
   `_kiro.dev/metadata`'s `contextUsagePercentage` as a plan chunk (the field name comes from
-  the `kiro-cli` 2.24 binary, not a live session) and only logs `_kiro.dev/mcp/oauth_request`,
-  since a headless agent cannot complete MCP OAuth. Headless auth needs `KIRO_API_KEY`,
+  the `kiro-cli` 2.24 binary, not a live session). ACP's client router strips one leading
+  underscore before the extension callback, so the profile matches `kiro.dev/metadata` and
+  `kiro.dev/mcp/oauth_request`. It only logs the OAuth notification, since a headless agent
+  cannot complete MCP OAuth. Headless auth needs `KIRO_API_KEY`,
   which requires a paid subscription with no bring-your-own-key route. The org has not
   bought one, so the baseline builder is `e2e_pending`: only unit and `FakeACPAgent` wire
   tests cover Band's side, not `kiro-cli`'s real wire behavior.

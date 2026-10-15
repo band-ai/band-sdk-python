@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TypeVar, cast
 
@@ -187,6 +187,7 @@ class ACPSessionOperations(ABC):
         session_id: str,
         prompt_text: str,
         on_chunk: ChunkSink | None = None,
+        on_usage: Callable[[Usage | None], None] | None = None,
     ) -> PromptResult:
         conn = await self.ensure_connection(can_respawn=False)
         if on_chunk is not None and self._client is not None:
@@ -195,6 +196,10 @@ class ACPSessionOperations(ABC):
             response = await self._request(
                 conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
             )
+            # Flush can block on room delivery until the turn deadline cancels
+            # this call. Usage has to be in the caller's hands before that.
+            if on_usage is not None:
+                on_usage(response.usage)
             if self._client is not None:
                 await self._client.flush(session_id)
         finally:

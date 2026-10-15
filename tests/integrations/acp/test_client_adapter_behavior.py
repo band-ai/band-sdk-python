@@ -15,6 +15,7 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -39,7 +40,7 @@ from band.integrations.acp.client_adapter import (
     ACPTurnTimeoutError,
     SessionInitializer,
 )
-from band.integrations.acp.client_profiles import KiroACPClientProfile, KiroExtension
+from band.integrations.acp.client_profiles import KiroACPClientProfile
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.integrations.mcp import BandMCPBackendStoppedError
@@ -468,6 +469,68 @@ async def test_no_usage_event_when_agent_does_not_report_it(fake_agent) -> None:
         reply = await session.send("do work")
 
     assert reply.usage == []
+
+
+def _tools_blocking_on_thought(
+    started: asyncio.Event | None = None,
+) -> TranscriptTools:
+    """Room tools whose thought posts never finish."""
+
+    class BlockingThoughtTools(TranscriptTools):
+        async def send_event(
+            self,
+            content: str,
+            message_type: str,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            if message_type == "thought":
+                if started is not None:
+                    started.set()
+                await asyncio.Event().wait()
+            return await super().send_event(content, message_type, metadata)
+
+    return BlockingThoughtTools()
+
+
+@pytest.mark.asyncio
+async def test_usage_is_emitted_when_thought_flush_times_out(fake_agent) -> None:
+    """A completed ``session/prompt`` usage survives a flush that blocks until the deadline."""
+    tools = _tools_blocking_on_thought()
+    fake_agent.will_think("still working").reports_usage(
+        Usage(input_tokens=10, output_tokens=20, total_tokens=30)
+    )
+    async with acp_adapter(fake_agent, fake_agent_config(turn_timeout_s=1)) as session:
+        with pytest.raises(ACPTurnTimeoutError):
+            await session.send("do work", tools=tools)
+
+    assert session.last_reply.usage == [
+        {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_external_cancel_does_not_emit_a_completed_prompts_usage(
+    fake_agent,
+) -> None:
+    """An external cancel drops usage even if ``session/prompt`` already responded."""
+    delivering = asyncio.Event()
+    tools = _tools_blocking_on_thought(delivering)
+    fake_agent.will_think("still working").reports_usage(
+        Usage(input_tokens=10, output_tokens=20, total_tokens=30)
+    )
+    async with acp_adapter(fake_agent, fake_agent_config(turn_timeout_s=30)) as session:
+        turn = asyncio.create_task(session.send("do work", tools=tools))
+        await delivering.wait()
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+    assert tools.reply.usage == []
 
 
 @pytest.mark.asyncio
@@ -1452,17 +1515,39 @@ async def test_turn_timeout_cancels_only_its_own_room(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_kiro_metadata_notification_posts_a_context_window_plan(
+async def test_kiro_metadata_wire_notification_posts_a_context_window_plan(
     fake_agent,
 ) -> None:
-    fake_agent.will_send_ext_notification(
-        KiroExtension.METADATA, {"contextUsagePercentage": 3}
+    """The documented wire method, not the callback name, reaches the profile."""
+    fake_agent.will_send_wire_notification(
+        "_kiro.dev/metadata", {"contextUsagePercentage": 3}
     ).will_say("done")
 
     async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
         reply = await session.send("do work")
 
     assert reply.plans == ["[Kiro context window] 3% used"]
+
+
+@pytest.mark.asyncio
+async def test_kiro_oauth_wire_notification_is_logged(
+    fake_agent, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_agent.will_send_wire_notification("_kiro.dev/mcp/oauth_request", {}).will_say(
+        "done"
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="band.integrations.acp.client_profiles"
+    ):
+        async with acp_adapter(fake_agent, profile=KiroACPClientProfile()) as session:
+            reply = await session.send("do work")
+
+    assert reply.plans == []
+    assert any(
+        record.levelno == logging.WARNING and "OAuth" in record.message
+        for record in caplog.records
+    )
 
 
 @pytest.mark.parametrize(
