@@ -22,6 +22,7 @@ from band.client.streaming import (
 )
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
+from band.core.settlement import SettlementResult
 from band.core.types import ConflictPolicy, PlatformConnection
 from band.platform.event import (
     ContactAddedEvent,
@@ -578,6 +579,20 @@ class BandLink:
 
     async def mark_failed(self, room_id: str, message_id: str, error: str) -> bool:
         return await self._messages.mark_failed(self.rest, room_id, message_id, error)
+
+    async def mark_processed_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        return await self._messages.mark_processed_result(
+            self.rest, room_id, message_id
+        )
+
+    async def mark_failed_result(
+        self, room_id: str, message_id: str, error: str
+    ) -> SettlementResult:
+        return await self._messages.mark_failed_result(
+            self.rest, room_id, message_id, error
+        )
 
     async def report_activity(
         self,
