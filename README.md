@@ -861,7 +861,7 @@ Run isolated environments without replacing a concurrently used `.venv`:
 
 ```bash
 uv run --locked --isolated --python 3.12 --all-packages --extra dev pytest tests/ --ignore=tests/e2e/ --ignore=tests/integration/
-uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest tests/adapters/test_strands_adapter.py tests/adapters/nooa/ tests/framework_conformance/ -k 'strands or nooa or legacy'
+uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest tests/adapters/strands/ tests/adapters/nooa/ tests/framework_conformance/ -k 'strands or nooa or legacy'
 ```
 
 
