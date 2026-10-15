@@ -216,6 +216,33 @@ class TestMessagePostFailure:
             "message msg-1 was created; id=recip-1 name=Unknown"
         )
 
+    @pytest.mark.parametrize("present_handle", ["", None, 0])
+    async def test_a_present_falsy_handle_is_not_named(
+        self, mock_rest_client, present_handle: str | None | int
+    ) -> None:
+        payload = {
+            "data": {
+                "id": "msg-1",
+                "success": True,
+                "recipients": [
+                    {"id": "blank", "name": "Blank", "handle": present_handle},
+                    {"id": "gone", "name": "Gone"},
+                ],
+            }
+        }
+        mock_rest_client.agent_api_messages.create_agent_chat_message.side_effect = (
+            _parsing_error(payload)
+        )
+
+        with pytest.raises(MessagePostError) as caught:
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-1",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
+        assert caught.value.detail == "message msg-1 was created; id=gone name=Gone"
+
     async def test_a_non_2xx_parse_error_stays_unclassified(
         self, mock_rest_client, caplog: pytest.LogCaptureFixture
     ) -> None:

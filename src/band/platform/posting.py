@@ -65,6 +65,8 @@ def _truncate_event_content(content: str) -> str:
 # error code is the generic "forbidden", so only the message text identifies
 # this rejection among other permission failures.
 _EXECUTION_STOPPED_MESSAGE = "execution is stopped"
+_RECIPIENTS = "recipients"
+_HANDLE = "handle"
 _MISSING_RECIPIENT_HANDLE = "recipient handle missing"
 
 
@@ -82,7 +84,6 @@ def _error_message(body: object) -> str | None:
 
 
 def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
-    """Whether a posting rejection identifies stopped room execution."""
     message = _error_message(error.body)
     return message is not None and _EXECUTION_STOPPED_MESSAGE in message.lower()
 
@@ -107,8 +108,8 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
         return None
     if not any(
         err.get("type") == "missing"
-        and "recipients" in err["loc"]
-        and "handle" in err["loc"]
+        and _RECIPIENTS in err["loc"]
+        and _HANDLE in err["loc"]
         for err in error.cause.errors()
     ):
         return None
@@ -117,8 +118,8 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
         return _MISSING_RECIPIENT_HANDLE
     missing = [
         f"id={item.get('id')} name={item.get('name')}"
-        for item in data.get("recipients") or []
-        if isinstance(item, dict) and not item.get("handle")
+        for item in data.get(_RECIPIENTS) or []
+        if isinstance(item, dict) and _HANDLE not in item
     ]
     who = ", ".join(missing) if missing else _MISSING_RECIPIENT_HANDLE
     return f"message {data.get('id')} was created; {who}"
