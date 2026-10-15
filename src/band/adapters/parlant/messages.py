@@ -6,7 +6,9 @@ import re
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from band.converters.parlant import ParlantMessages, ParlantRole
 from band.core.types import PlatformMessage
+from band.runtime.formatters import mention_label
 
 if TYPE_CHECKING:
     from parlant.core.application import Application
@@ -15,6 +17,10 @@ if TYPE_CHECKING:
 # Prefixes the change-triggered roster/contacts updates injected into a turn,
 # so the model reads them as platform state, not as the requester speaking.
 SYSTEM_UPDATE_PREFIX = "[System Update]: "
+
+# A mention token is ``@`` plus a whitespace-free label. ``/`` and ``-`` continue
+# it (``owner/agent`` must not consume ``owner/agent-2``); punctuation does not.
+_MENTION_CONTINUATION = r"[\w/-]"
 
 
 def name_this_agent(
@@ -34,8 +40,9 @@ def name_this_agent(
     if not content or not agent_id or not agent_name:
         return content
     tokens = _self_mention_tokens(agent_id, participants)
-    pattern = re.compile("|".join(rf"{re.escape(token)}(?!\S)" for token in tokens))
-    return pattern.sub(agent_name, content)
+    alternation = "|".join(re.escape(token) for token in tokens)
+    pattern = re.compile(rf"(?<!\S)(?:{alternation})(?!{_MENTION_CONTINUATION})")
+    return pattern.sub(lambda _match: agent_name, content)
 
 
 def compose_user_message(
@@ -83,23 +90,48 @@ async def post_user_message(
 
 
 def _self_mention_tokens(agent_id: str, participants: list[Any]) -> list[str]:
-    """Every token this agent's mention may already have been written as.
+    """Spellings this agent's mention may already have, longest first.
 
-    Longest first, so ``@owner/agent`` does not consume ``@owner/agent-2``.
+    The pattern tries them left to right, so a shorter spelling must not win
+    when one of this agent's own tokens is a prefix of another.
     """
     tokens = {f"@[[{agent_id}]]"}
     for participant in participants:
         if _field(participant, "id") != agent_id:
             continue
-        handle = _field(participant, "handle")
-        name = _field(participant, "name")
-        if handle:
-            tokens.add(f"@{handle}")
-        if name:
-            collapsed = "-".join(name.split())
-            if collapsed:
-                tokens.add(f"@{collapsed}")
+        label = mention_label(
+            handle=_field(participant, "handle"),
+            name=_field(participant, "name"),
+        )
+        if label:
+            tokens.add(f"@{label}")
     return sorted(tokens, key=len, reverse=True)
+
+
+def name_this_agent_in_history(
+    history: ParlantMessages,
+    *,
+    agent_id: str | None,
+    agent_name: str,
+    participants: list[Any],
+) -> ParlantMessages:
+    """Rewrite this agent's mention in customer lines the session will replay."""
+    renamed: ParlantMessages = []
+    for message in history:
+        content = message.get("content", "")
+        if message.get("role", ParlantRole.USER) != ParlantRole.USER or not content:
+            renamed.append(message)
+            continue
+        updated = name_this_agent(
+            content,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            participants=participants,
+        )
+        renamed.append(
+            message if updated == content else {**message, "content": updated}
+        )
+    return renamed
 
 
 def _field(participant: Any, key: str) -> str | None:
