@@ -11,8 +11,16 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 
 def validate_https_url(value: str) -> str:
     """Keep the exact URL spelling, especially for issuer equality checks."""
-    if any(character.isspace() for character in value) or "\\" in value:
-        raise ValueError("HTTPS URLs cannot contain whitespace or backslashes")
+    if (
+        any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
+        or "\\" in value
+    ):
+        raise ValueError(
+            "HTTPS URLs cannot contain controls, whitespace or backslashes"
+        )
     try:
         parts = urlsplit(value)
         port = parts.port
