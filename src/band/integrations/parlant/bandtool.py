@@ -19,6 +19,7 @@ from parlant.core.tools import ToolParameterOptions, ToolResult
 from band.integrations.parlant.guard import guard_failures
 from band.integrations.parlant.sessiontools import CONTEXT_PARAMETER
 from band.runtime.tools import get_tool_description, resolve_tool_model
+from band.runtime.tools.effects import turn_effect
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,8 @@ def build_band_tool(spec: BandToolSpec) -> Any:
     )
     wrapper.__signature__ = _described_signature(spec)  # type: ignore[attr-defined]
     wrapper.__doc__ = get_tool_description(spec.name).rstrip() + spec.extra_doc
-    return p.tool(wrapper)
+    # Turn-settling tools need Parlant's explicit applicability check.
+    return p.tool(consequential=turn_effect(spec.name).did_work)(wrapper)
 
 
 def or_none(value: str) -> str | None:
