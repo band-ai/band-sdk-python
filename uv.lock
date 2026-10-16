@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant' and extra != 'extra-8-band-sdk-dev-strands-nooa' and extra != 'extra-8-band-sdk-nooa' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai' and extra != 'extra-8-band-sdk-strands'",
@@ -147,6 +147,7 @@ conflicts = [[
 [manifest]
 members = [
     "band-mcp",
+    "band-pap",
     "band-sdk",
 ]
 constraints = [
@@ -692,6 +693,21 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "typer", specifier = ">=0.16.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
+]
+
+[[package]]
+name = "band-pap"
+version = "0.1.0.dev0"
+source = { editable = "packages/band-pap" }
+dependencies = [
+    { name = "band-sdk" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "band-sdk", editable = "." },
+    { name = "pydantic", specifier = ">=2,<3" },
 ]
 
 [[package]]

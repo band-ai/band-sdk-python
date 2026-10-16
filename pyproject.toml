@@ -554,6 +554,7 @@ project_includes = [
     # longer filters out.
     ".claude/skills/**/*.py",
     "packages/band-mcp/src/**/*.py",
+    "packages/band-pap/src/**/*.py",
 ]
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing

@@ -1,0 +1,18 @@
+[project]
+name = "band-pap"
+version = "0.1.0.dev0"
+description = "Personal Agent Protocol integration for Band collaboration"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["band-sdk>=5.1.0,<6", "pydantic>=2,<3"]
+
+[tool.uv.sources]
+band-sdk = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "bandpap"
+module-root = "src"
+
+[build-system]
+requires = ["uv_build>=0.8.22,<0.13.0"]
+build-backend = "uv_build"
