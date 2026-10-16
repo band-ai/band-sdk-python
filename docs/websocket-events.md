@@ -45,6 +45,11 @@ Newer STOP, PLAY or INTERRUPT controls invalidate obsolete recovery results. A 2
 response preserves the local pause because it cannot distinguish stopped from
 empty rooms.
 
+Local events have no REST delivery to replay. If a local turn is deferred, its
+queue position is retained while due stopped-room probes can discover a missed
+PLAY. These probes do not dispatch newer REST work before the local event is
+accepted; newer queued events remain behind it.
+
 While working-state reporting is active, its existing activity keep-alive also
 recovers a missed STOP: the platform answers a `working: true` report with
 `working: false` when the room execution is stopped. The runtime cancels the
