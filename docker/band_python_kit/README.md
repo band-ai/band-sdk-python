@@ -104,10 +104,17 @@ Two tiers — prefer the first.
 holds the real keys and writes them onto outbound requests; the sandbox only ever
 sees a sentinel. Requires `sbx create --kit`.
 
-- **LLM providers** are built-in `sbx` services — store the one your agent uses:
+- **Claude through the Anthropic API** is configured by the kit: it allows
+  `api.anthropic.com` and declares proxy-managed `ANTHROPIC_API_KEY` injection
+  into the `x-api-key` header. Store your key on the host:
   ```bash
-  sbx secret set -g anthropic        # or openai, google, groq, mistral, …
+  sbx secret set anthropic
   ```
+  No extra kit or manual network rule is needed. Your workspace still supplies
+  the agent code and its locked dependencies. The credential is optional for
+  the echo starter and agents that use another provider.
+- **Other LLM providers** use their own host secret and network configuration;
+  see [Network access](#network-access).
 - **Band** is provisioned host-side. The `**.band.ai` wildcard follows whichever
   Band deployment you point the agent at via `BAND_REST_URL` (prod `app.band.ai`,
   staging, self-hosted, …) — the endpoint config is the control knob:
@@ -275,14 +282,13 @@ contain secret values.
 
 ## Network access
 
-The kit's immutable baseline allows only Band Cloud and the two PyPI hosts
-needed for `uv sync --locked` on a fresh sandbox. Everything else is denied by
-the sandbox proxy, including LLM providers, source-control hosts, and custom
-APIs. Grant only the exact host an agent needs, scoped to that sandbox:
+The kit allows Band Cloud, the two PyPI hosts needed for `uv sync --locked`,
+and `api.anthropic.com` for Claude. Other model providers, source-control
+hosts, and custom APIs need explicit access. Grant only the exact host an
+agent needs, scoped to that sandbox:
 
 ```bash
-# Direct LLM providers
-sbx policy allow network --sandbox my-band-agent api.anthropic.com
+# Another model provider
 sbx policy allow network --sandbox my-band-agent api.openai.com
 
 # Clone a repository hosted on GitHub
