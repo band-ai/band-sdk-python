@@ -3,13 +3,55 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from typing import Any
 
+import httpcore
 import httpx
 from band_rest import AsyncRestClient
 
 # httpcore selects AF_INET for this wildcard, so the dial never tries IPv6.
 _IPV4_LOCAL_ADDRESS = "0.0.0.0"
+
+
+class Ipv4Backend(httpcore.AsyncNetworkBackend):
+    """Opens every TCP socket on IPv4.
+
+    httpcore's proxy connections dial with ``local_address`` left unset.
+    Passing it here is what selects ``AF_INET``.
+    """
+
+    def __init__(self, backend: httpcore.AsyncNetworkBackend) -> None:
+        self._backend = backend
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        return await self._backend.connect_tcp(
+            host,
+            port,
+            timeout=timeout,
+            local_address=_IPV4_LOCAL_ADDRESS,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        return await self._backend.connect_unix_socket(
+            path, timeout=timeout, socket_options=socket_options
+        )
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
 
 
 def baseline_rest_client(*, api_key: str, base_url: str) -> AsyncRestClient:
@@ -32,9 +74,8 @@ def _windows_httpx_client() -> httpx.AsyncClient:
     """An httpx client with the generated client's timeout and redirects.
 
     Built without an explicit transport: httpx enables environment proxies
-    only when ``transport`` is omitted. ``local_address`` passed to
-    ``AsyncHTTPTransport`` does not reach an HTTP proxy pool, so the IPv4
-    bind is applied to each pool after httpx builds it.
+    only when ``transport`` is omitted. The IPv4 backend is installed on each
+    pool after httpx has chosen the route, including proxy mounts.
     """
     client = httpx.AsyncClient(timeout=60, follow_redirects=True)
     _bind_ipv4(client)
@@ -44,4 +85,5 @@ def _windows_httpx_client() -> httpx.AsyncClient:
 def _bind_ipv4(client: httpx.AsyncClient) -> None:
     for transport in (client._transport, *client._mounts.values()):
         if isinstance(transport, httpx.AsyncHTTPTransport):
-            transport._pool._local_address = _IPV4_LOCAL_ADDRESS
+            pool = transport._pool
+            pool._network_backend = Ipv4Backend(pool._network_backend)
