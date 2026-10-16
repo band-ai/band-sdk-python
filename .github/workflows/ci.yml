@@ -234,6 +234,7 @@ jobs:
           tests/integrations/parlant/test_customtools.py \
           tests/integrations/parlant/test_filetools.py \
           tests/integrations/parlant/test_guard.py \
+          tests/integrations/parlant/test_preambletask.py \
           tests/integrations/parlant/test_server.py \
           tests/integrations/parlant/test_tasktools.py \
           tests/integrations/parlant/test_vocabulary.py \

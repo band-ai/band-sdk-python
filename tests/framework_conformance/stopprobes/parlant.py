@@ -3,8 +3,9 @@ see ``stopprobes``.
 
 The engine answers a session from its own background task, and the stub model
 never answers, so that task ends only when it is stopped. The evidence is that
-the task ``process_session_tag`` names finishes after the stop, with nothing
-posted. Every case skips outside the dev-parlant venv.
+the task ``process_session_tag`` names finishes after the stop, and that the
+preamble child captured before the stop is done, with nothing posted. Every
+case skips outside the dev-parlant venv.
 """
 
 from __future__ import annotations
@@ -82,10 +83,16 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
         tools = FakeAgentTools()
         turn, session_id = await processing_turn(adapter, nlp, tools)
         engine = background_tasks(adapter)._tasks[process_session_tag(session_id)]
-        await wait_until(lambda: bool(live_preamble_tasks(session_id)))
+        preamble: list[asyncio.Task[Any]] = []
+
+        def preamble_is_running() -> bool:
+            preamble[:] = live_preamble_tasks(session_id)
+            return bool(preamble)
+
+        await wait_until(preamble_is_running)
         await end_turn(adapter, turn, ROOM_ID, mode)
         stopped, _ = await asyncio.wait({engine}, timeout=ENGINE_WAIT_SECONDS)
-        preamble_stopped = not live_preamble_tasks(session_id)
+        preamble_stopped = bool(preamble) and all(task.done() for task in preamble)
         return [
             *([ENGINE_STOPPED] if stopped else []),
             *([PREAMBLE_STOPPED] if preamble_stopped else []),

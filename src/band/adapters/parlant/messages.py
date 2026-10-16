@@ -37,9 +37,9 @@ def process_session_tag(session_id: SessionId | str) -> str:
 
 
 # Parlant 3.3.2 creates this child with asyncio.create_task inside
-# process-session and does not cancel it when that task is cancelled
-# (engine.py preamble generation). Pinned by the real-engine stop probe.
-PREAMBLE_TASK_QUALNAME = "Engine._get_preamble_task.<locals>.preamble_task"
+# AlphaEngine._get_preamble_task and does not cancel it when process-session
+# is cancelled. The nested coroutine's qualname is the class that defines it.
+PREAMBLE_TASK_QUALNAME = "AlphaEngine._get_preamble_task.<locals>.preamble_task"
 
 
 def live_preamble_tasks(session_id: str) -> list[asyncio.Task[Any]]:
