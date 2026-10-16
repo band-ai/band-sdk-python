@@ -37,6 +37,7 @@ from tests.framework_conformance.turnprobes import (
     copilotsdk,
     crewai,
     letta,
+    omp,
     opencode,
     toolloop,
     turn_tools,
@@ -49,6 +50,7 @@ TURN_OUTCOME_PROBES: dict[str, TurnOutcomeProbe] = {
     **copilotsdk.PROBES,
     **crewai.PROBES,
     **letta.PROBES,
+    **omp.PROBES,
     **opencode.PROBES,
     **toolloop.PROBES,
 }

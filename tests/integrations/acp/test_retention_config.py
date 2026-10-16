@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from band.adapters.copilot_acp import CopilotACPAdapterConfig
 from band.adapters.cursor_acp import CursorACPAdapterConfig
-from band.adapters.omp_acp import OmpACPAdapterConfig
 from band.core.retention import RoomRetentionConfig
 from band.integrations.acp.client_adapter import ACPClientAdapterConfig
 
@@ -18,7 +17,6 @@ from band.integrations.acp.client_adapter import ACPClientAdapterConfig
         (ACPClientAdapterConfig, "whole-session inactivity"),
         (CopilotACPAdapterConfig, "scheduled prompts"),
         (CursorACPAdapterConfig, "subagent drainage"),
-        (OmpACPAdapterConfig, "suppressed or acknowledged background jobs"),
     ],
 )
 @pytest.mark.parametrize("serialized", [False, True], ids=["python", "json"])

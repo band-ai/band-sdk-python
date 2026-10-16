@@ -55,7 +55,7 @@ async def assert_fyi_decline(
     Adapter.CODEX,
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,
-    Adapter.OMP_ACP,
+    Adapter.OMP,
     features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
 )
 @pytest.mark.asyncio(loop_scope="session")
