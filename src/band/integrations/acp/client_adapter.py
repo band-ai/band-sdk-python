@@ -179,6 +179,13 @@ class ACPTurnTimeoutError(TimeoutError):
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 # What ACP's session/new takes; YAML/JSON entries validate into these.
 SessionMcpServer = HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio
+ResolvedMcpServer: TypeAlias = HttpMcpServer | SseMcpServer | McpServerStdio
+McpServerResolver: TypeAlias = Callable[[str], Awaitable[Sequence[ResolvedMcpServer]]]
+
+
+class ACPMcpServerResolutionError(ValueError):
+    """The room's resolved MCP servers cannot be used by its ACP agent."""
+
 
 # Prefixes the change-triggered roster/contacts updates injected into a
 # prompt, so the model reads them as platform state, not as the requester
@@ -408,6 +415,7 @@ class ACPClientAdapter(
         resolve_session_config: SessionConfigResolver | None = None,
         resolve_permission: PermissionResolver | None = None,
         client_capabilities: ClientCapabilities | None = None,
+        resolve_mcp_servers: McpServerResolver | None = None,
         spawn_process: SpawnProcess | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
@@ -425,6 +433,10 @@ class ACPClientAdapter(
             resolve_permission: Chooses a permission option per tool call;
                 ``None`` approves with the agent's allow option.
             client_capabilities: Capabilities advertised at ``initialize``.
+            resolve_mcp_servers: Returns native MCP descriptors for the room's
+                workspace once per session setup, after initialize. Replaces
+                configured external servers, keeping Band routing. Stdio is
+                always accepted; HTTP/SSE require explicit agent support.
             spawn_process: Rejected: a custom transport cannot guarantee one
                 process per room.
         """
@@ -450,6 +462,7 @@ class ACPClientAdapter(
         self._resolve_session_config = resolve_session_config
         self._resolve_permission = resolve_permission
         self._client_capabilities = client_capabilities
+        self._resolve_mcp_servers = resolve_mcp_servers
         self._workspaces = RoomWorkspaces(self._workspace_for_room)
         self._retention = RoomRetention(
             config.retention, settle_grace_s=config.turn_settle_timeout_s
@@ -748,15 +761,34 @@ class ACPClientAdapter(
                 room.tools = tools
 
         room.retained.require_admission()
-        async with room.reservation, AsyncExitStack() as lease:
-            try:
-                await lease.enter_async_context(room.retained.use(prepare=bind_tools))
-            except TimeoutError as error:
-                await self._report_not_ready(room, tools, error)
-                raise
-            if room.runtime is None:
-                raise RuntimeError(f"Room {room.room_id} has no ACP process")
-            yield room.runtime
+        room.session_waiters += 1
+        try:
+            async with room.reservation, AsyncExitStack() as lease:
+                try:
+                    await lease.enter_async_context(
+                        room.retained.use(prepare=bind_tools)
+                    )
+                except TimeoutError as error:
+                    await self._report_not_ready(room, tools, error)
+                    raise
+                if room.runtime is None:
+                    raise RuntimeError(f"Room {room.room_id} has no ACP process")
+                yield room.runtime
+        finally:
+            room.session_waiters -= 1
+            setup = room.session_setup
+            if (
+                not room.session_waiters
+                and not room.retained.closing
+                and setup is not None
+                and not setup.done()
+                and setup is not room.abandoned_setup
+            ):
+                # A setup already settling its own cancellation is abandoned
+                # too: the callback's timeout may clear that request later.
+                room.abandoned_setup = setup
+                if not setup.cancelling():
+                    setup.cancel()
 
     @staticmethod
     async def _report_not_ready(
@@ -1261,27 +1293,80 @@ class ACPClientAdapter(
         is reloaded when the agent still has it. A fresh session holds no
         conversation context; the caller owes it a transcript replay.
         """
+        self._require_current_runtime(room, runtime)
         mcp = await self._session_mcp_servers(room, runtime)
+        self._require_current_runtime(room, runtime)
         session = room.session
-        restore_id: str | None = None
         if session is not None and session.live:
             if session.band_url == mcp.band_url:
                 return session.session_id
-            # Never restore: the retained id is the one being retired.
             room.session = None
+            history = None
             self._retire_stale_session(room, runtime, session)
-        elif session is not None:
-            restore_id = session.session_id
-        elif history is not None:
-            restore_id = history.room_to_session.get(room.room_id)
-
-        restored = None
-        if restore_id is not None:
-            restored = await self._restore_session(
-                room, runtime, restore_id, mcp, retained=session is not None
+        setup = room.session_setup
+        if setup is not None and (setup is room.abandoned_setup or setup.cancelling()):
+            # A callback may still be settling an abandoned setup. Its lease
+            # holds the process, and no successor resolves beside it.
+            await asyncio.wait((setup,))
+            if room.abandoned_setup is setup:
+                room.abandoned_setup = None
+            self._require_current_runtime(room, runtime)
+            # A setup that was only settling its own cancellation may still
+            # have published a session for the waiters it kept serving.
+            joined = room.session
+            if joined is not None and joined.live and joined.band_url == mcp.band_url:
+                return joined.session_id
+            setup = None
+        if setup is None or setup.done():
+            setup = room.retained.start_owned(
+                partial(self._initialize_session, room, runtime, history, mcp)
             )
-        room.session = restored or await self._create_session(room, runtime, mcp)
-        return room.session.session_id
+            room.session_setup = setup
+        return await asyncio.shield(setup)
+
+    def _require_current_runtime(self, room: ACPRoom, runtime: ACPRuntime) -> None:
+        task = asyncio.current_task()
+        if (
+            self._rooms.get(room.room_id) is not room
+            or room.runtime is not runtime
+            or runtime.closed
+            or not room.retained.has_authority(room.generation)
+            or (
+                task is not None and (task.cancelling() or task is room.abandoned_setup)
+            )
+        ):
+            raise asyncio.CancelledError
+
+    async def _initialize_session(
+        self,
+        room: ACPRoom,
+        runtime: ACPRuntime,
+        history: ACPClientSessionState | None,
+        mcp: SessionMcpServers,
+    ) -> str:
+        # The setup has its own lease: losing a waiter must not close the
+        # process under another waiter or an abandoned callback's settlement.
+        async with room.retained.use():
+            self._require_current_runtime(room, runtime)
+            mcp = await self._with_resolved_mcp_servers(room, runtime, mcp)
+            self._require_current_runtime(room, runtime)
+            session = room.session
+            restore_id = (
+                session.session_id
+                if session is not None
+                else None
+                if history is None
+                else history.room_to_session.get(room.room_id)
+            )
+            restored = None
+            if restore_id is not None:
+                restored = await self._restore_session(
+                    room, runtime, restore_id, mcp, retained=session is not None
+                )
+            initialized = restored or await self._create_session(room, runtime, mcp)
+            self._require_current_runtime(room, runtime)
+            room.session = initialized
+            return initialized.session_id
 
     async def _restore_session(
         self,
@@ -1316,6 +1401,7 @@ class ACPClientAdapter(
 
         try:
             await self._configure_session(runtime, room.room_id, session_id)
+            self._require_setup_result(room)
         except BaseException as error:
             if retained:
                 room.retained.recover(
@@ -1343,6 +1429,8 @@ class ACPClientAdapter(
         back to a new session or a transcript replay.
         """
         mcp = await self._session_mcp_servers(room, runtime)
+        mcp = await self._with_resolved_mcp_servers(room, runtime, mcp)
+        self._require_setup_result(room)
         await runtime.restore_session_response(
             cwd=room.workspace,
             session_id=session.session_id,
@@ -1351,6 +1439,7 @@ class ACPClientAdapter(
         await self._configure_session(
             runtime, room.room_id, session.session_id, keep_refused_selection=True
         )
+        self._require_setup_result(room)
         session.band_url = mcp.band_url
         session.live = True
 
@@ -1360,6 +1449,7 @@ class ACPClientAdapter(
         """Create and configure a session for one room."""
         async with self._fresh_session(room, runtime, mcp.servers) as session:
             await self._configure_session(runtime, room.room_id, session.session_id)
+            self._require_setup_result(room)
 
         logger.info(
             "Created ACP session %s for room %s (mcp_servers=%d)",
@@ -1453,6 +1543,76 @@ class ACPClientAdapter(
         return SessionMcpServers(
             servers=[*servers, band_server], band_url=band_server.url
         )
+
+    @staticmethod
+    def _require_setup_result(room: ACPRoom) -> None:
+        # Callbacks may swallow cancellation or request their own teardown.
+        # Neither result may reach the agent or publish a session afterwards.
+        task = asyncio.current_task()
+        if room.retained.closing or (
+            task is not None and (task.cancelling() or task is room.abandoned_setup)
+        ):
+            raise asyncio.CancelledError
+
+    async def _with_resolved_mcp_servers(
+        self, room: ACPRoom, runtime: ACPRuntime, mcp: SessionMcpServers
+    ) -> SessionMcpServers:
+        resolver = self._resolve_mcp_servers
+        if resolver is None:
+            return mcp
+        resolved = await resolver(room.workspace)
+        self._require_setup_result(room)
+        if isinstance(resolved, str | bytes) or not isinstance(resolved, Sequence):
+            raise TypeError("resolve_mcp_servers must return a sequence of MCP servers")
+        reserved = {BAND_MCP_SERVER_NAME}
+        external: list[object] = []
+        for value in resolved:
+            server = self._resolved_mcp_server(runtime, value, reserved)
+            reserved.add(server.name)
+            # A restore and its new-session fallback share this snapshot even
+            # when the callback's owner mutates its original nested values.
+            external.append(server.model_copy(deep=True))
+        band = [
+            server
+            for server in mcp.servers
+            if getattr(server, "name", None) == BAND_MCP_SERVER_NAME
+        ]
+        return SessionMcpServers(servers=[*external, *band], band_url=mcp.band_url)
+
+    @staticmethod
+    def _resolved_mcp_server(
+        runtime: ACPRuntime, server: object, reserved: set[str]
+    ) -> ResolvedMcpServer:
+        match server:
+            case McpServerStdio():
+                transport, supported = "stdio", True
+            case HttpMcpServer():
+                transport, supported = "http", runtime.agent_mcp_http
+            case SseMcpServer():
+                transport, supported = "sse", runtime.agent_mcp_sse
+            case AcpMcpServer():
+                raise ACPMcpServerResolutionError(
+                    f"MCP server {server.name!r}: resolve_mcp_servers does not "
+                    "accept the acp transport"
+                )
+            case _:
+                raise TypeError(
+                    "resolve_mcp_servers returned a "
+                    f"{type(server).__name__}, not an MCP server descriptor"
+                )
+        # Descriptor values can contain credentials; diagnostics disclose
+        # only the server's name and the refused transport.
+        if not supported:
+            raise ACPMcpServerResolutionError(
+                f"MCP server {server.name!r}: the ACP agent does not advertise "
+                f"{transport} MCP servers"
+            )
+        if server.name in reserved:
+            raise ACPMcpServerResolutionError(
+                f"MCP server {server.name!r} ({transport}) duplicates a server "
+                "name already in this session"
+            )
+        return server
 
     async def _configure_session(
         self,

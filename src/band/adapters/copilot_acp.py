@@ -34,6 +34,7 @@ from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
+    McpServerResolver,
     PermissionResolver,
 )
 from band.integrations.acp.session_config import SessionConfigResolver
@@ -80,6 +81,7 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
         workspace_for_room: WorkspaceResolver | None = None,
         resolve_session_config: SessionConfigResolver | None = None,
         resolve_permission: PermissionResolver | None = None,
+        resolve_mcp_servers: McpServerResolver | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         """Bridge Band rooms to ``copilot --acp``.
@@ -92,6 +94,8 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
             resolve_session_config: Picks session config options; exclusive
                 with ``config.model`` and ``config.reasoning_effort``.
             resolve_permission: Chooses a permission option per tool call.
+            resolve_mcp_servers: Returns native MCP server descriptors once per
+                room session setup; see :class:`ACPClientAdapter`.
         """
         config = config or CopilotACPAdapterConfig()
         super().__init__(
@@ -100,6 +104,7 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
             workspace_for_room=workspace_for_room,
             resolve_session_config=resolve_session_config,
             resolve_permission=resolve_permission,
+            resolve_mcp_servers=resolve_mcp_servers,
             **features,
         )
 

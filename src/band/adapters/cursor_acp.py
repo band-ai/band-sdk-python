@@ -28,6 +28,7 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPClientAdapterConfig,
     ACPPermissionRequest,
+    McpServerResolver,
 )
 from band.integrations.acp.client_profiles import (
     CURSOR_ASK_QUESTION_METHOD,
@@ -207,6 +208,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         additional_tools: list[CustomToolDef] | None = None,
         workspace_for_room: WorkspaceResolver | None = None,
         resolve_session_config: SessionConfigResolver | None = None,
+        resolve_mcp_servers: McpServerResolver | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         """Bridge Band rooms to Cursor's ``agent acp``.
@@ -217,6 +219,8 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             workspace_for_room: Maps a room id to its absolute workspace;
                 exclusive with ``config.cwd``.
             resolve_session_config: Picks session config options.
+            resolve_mcp_servers: Returns native MCP server descriptors once per
+                room session setup; see :class:`ACPClientAdapter`.
         """
         config = config or CursorACPAdapterConfig()
         # Each room's one accepted turn, from acceptance until it actually
@@ -231,6 +235,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             additional_tools=additional_tools,
             workspace_for_room=workspace_for_room,
             resolve_session_config=resolve_session_config,
+            resolve_mcp_servers=resolve_mcp_servers,
             resolve_permission=self._resolve_cursor_permission,
             **features,
         )
