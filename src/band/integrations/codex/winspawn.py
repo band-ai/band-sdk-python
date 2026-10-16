@@ -199,8 +199,6 @@ def _kernel32() -> Any:
     library.CloseHandle.restype = wintypes.BOOL
     library.OpenJobObjectW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
     library.OpenJobObjectW.restype = handle
-    library.AssignProcessToJobObject.argtypes = [handle, handle]
-    library.AssignProcessToJobObject.restype = wintypes.BOOL
     library.CreateProcessW.argtypes = [
         wintypes.LPCWSTR,
         ctypes.POINTER(ctypes.c_wchar),
