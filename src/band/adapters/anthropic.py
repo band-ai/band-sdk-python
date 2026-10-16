@@ -39,6 +39,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +507,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(
                         custom_tool, tool_input, turn=tools.turn
                     )
-                    succeeded = True
+                    succeeded = not is_failed_tool_output(result)
                 else:
                     outcome = await tools.execute_tool_call_structured(
                         tool_name, tool_input

@@ -56,6 +56,7 @@ from tests.toolkit.timeouts import effective_timeout
 # Client libraries log every HTTP request at INFO. Live logging is INFO for
 # the nightly run; these stay quiet so an adapter line is readable.
 _HTTP_CLIENT_LOGGERS = ("httpx", "httpx2", "httpcore", "httpcore2")
+_BASELINE_DIR = Path(__file__).parent
 
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
@@ -77,6 +78,10 @@ __all__ = [
     "second_user_ops",
     "user_ops",
 ]
+
+
+def _is_baseline_item(item: pytest.Item) -> bool:
+    return Path(item.path).is_relative_to(_BASELINE_DIR)
 
 
 def _live_logging(config: pytest.Config) -> bool:
@@ -133,13 +138,14 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> object:
-    # Logger levels are process-global, and this conftest is collected before
-    # the E2E skip. Quiet only while a baseline test actually runs.
+    # pytest calls this on the session hook, so the wrapper runs for every
+    # selected item once this conftest is collected. Quiet HTTP loggers only
+    # while a baseline item actually runs.
     del nextitem
-    if not BaselineSettings().e2e_tests_enabled:
-        return (yield)
-    with quiet_http_client_loggers(item.config):
-        return (yield)
+    if BaselineSettings().e2e_tests_enabled and _is_baseline_item(item):
+        with quiet_http_client_loggers(item.config):
+            return (yield)
+    return (yield)
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
@@ -189,10 +195,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     assert_agent_fixtures_wired(items)
     assert_every_item_is_schedulable(items)
 
-    baseline_dir = Path(__file__).parent
-    baseline_items = [
-        item for item in items if Path(item.path).is_relative_to(baseline_dir)
-    ]
+    baseline_items = [item for item in items if _is_baseline_item(item)]
     assert_flaky_is_classified(baseline_items)
 
     settings = BaselineSettings()
@@ -200,9 +203,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     session_marker = pytest.mark.asyncio(loop_scope="session")
     base = settings.e2e_timeout
-    for item in items:
-        if not Path(item.path).is_relative_to(baseline_dir):
-            continue
+    for item in baseline_items:
         item.add_marker(session_marker)
         timeout = effective_timeout(item, base)
         if timeout is not None:

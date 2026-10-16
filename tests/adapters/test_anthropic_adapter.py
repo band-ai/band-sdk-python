@@ -526,6 +526,46 @@ class TestToolExecution:
         assert "Invalid arguments for band_add_participant" in invalid
         assert "no_reply" in invalid
 
+        returned_dict = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-3",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="echo-2",
+                    name="echo",
+                    input={"message": "x"},
+                ),
+            ],
+            adapter=AnthropicAdapter(additional_tools=[(EchoInput, failed_dict_tool)]),
+        )
+        assert "channel archived" in returned_dict
+
+        returned_string = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-4",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="echo-3",
+                    name="echo",
+                    input={"message": "x"},
+                ),
+            ],
+            adapter=AnthropicAdapter(
+                additional_tools=[(EchoInput, failed_string_tool)]
+            ),
+        )
+        assert "disk full" in returned_string
+
         raised = await follow_up(
             [
                 ToolUseBlock(
@@ -1101,6 +1141,16 @@ def calculate(args: CalculatorInput) -> str:
 async def failing_tool(args: EchoInput) -> str:
     """Tool that always fails."""
     raise ValueError("Service unavailable")
+
+
+async def failed_dict_tool(args: EchoInput) -> dict[str, Any]:
+    """Tool that reports failure as a result instead of raising."""
+    return {"ok": False, "error": "channel archived"}
+
+
+async def failed_string_tool(args: EchoInput) -> str:
+    """Tool that reports failure as an error string."""
+    return "Error: disk full"
 
 
 class TestCustomTools:

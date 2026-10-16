@@ -56,6 +56,7 @@ from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.platform.posting import post_event
 from band.runtime.tools import AgentTools, ToolCallOutcome, TurnEffect
+from band.runtime.tools.schema import is_failed_tool_output
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -281,10 +282,17 @@ class SlackTeeingTools(AgentTools):
                     "non-empty 'content' string."
                 )
                 return ToolCallOutcome(value=message, ok=False, error_message=message)
-            # The dict's ok is whether Slack accepted the post. The tool call
-            # itself finished; the model reads that dict.
             posted = await self.slack_send_message(content)
-            return ToolCallOutcome(value=posted, ok=True)
+            # outcome.ok matches the delivery dict. The Anthropic decline
+            # guard reads ok, so a failed post must stay False or a sibling
+            # band_no_reply ends the turn before the model sees this dict.
+            failed = is_failed_tool_output(posted)
+            error = posted.get("error")
+            return ToolCallOutcome(
+                value=posted,
+                ok=not failed,
+                error_message=error if failed and isinstance(error, str) else None,
+            )
 
         # Mark in_progress before executing, mark completed/error after.
         task: PlanTask | None = None

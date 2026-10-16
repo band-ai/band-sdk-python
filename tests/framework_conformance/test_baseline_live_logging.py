@@ -40,6 +40,41 @@ def _levels() -> dict[str, int]:
     return {name: logging.getLogger(name).level for name in _HTTP_CLIENT_LOGGERS}
 
 
+_BASELINE_LOG_ITEM = (
+    "tests/e2e/baseline/guards/test_logs.py"
+    "::test_scope_restores_the_level_when_the_scenario_fails"
+)
+
+
+def _pytest_with_baseline_collected(
+    probe: Path, *, e2e_enabled: str, select: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["E2E_TESTS_ENABLED"] = e2e_enabled
+    env["BAND_E2E_SCORECARD_JSON"] = ""
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        _BASELINE_LOG_ITEM,
+        str(probe),
+        "--log-cli-level=INFO",
+        "--log-level=INFO",
+        "-q",
+        "--tb=short",
+    ]
+    if select is not None:
+        command.extend(["-k", select])
+    return subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 class TestBaselineLiveLogging:
     def test_http_clients_stay_quiet_only_while_a_baseline_test_runs(self) -> None:
         previous = _levels()
@@ -77,25 +112,24 @@ class TestBaselineLiveLogging:
             "    assert {name: logging.getLogger(name).level for name in names} "
             "== {name: logging.NOTSET for name in names}\n"
         )
-        env = os.environ.copy()
-        env["E2E_TESTS_ENABLED"] = "false"
-        env["BAND_E2E_SCORECARD_JSON"] = ""
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                "tests/e2e/baseline/guards/test_logs.py::test_scope_restores_the_level_when_the_scenario_fails",
-                str(probe),
-                "--log-cli-level=INFO",
-                "--log-level=INFO",
-                "-q",
-                "--tb=short",
-            ],
-            cwd=REPO_ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
+        result = _pytest_with_baseline_collected(probe, e2e_enabled="false")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    @pytest.mark.timeout(60)
+    def test_enabled_run_keeps_http_info_for_a_deselected_baseline_suite(
+        self, tmp_path: Path
+    ) -> None:
+        probe = tmp_path / "test_http_info.py"
+        probe.write_text(
+            "import logging\n"
+            "\n"
+            "def test_unrelated_http_info_is_captured(caplog) -> None:\n"
+            '    logging.getLogger("httpx").info("GET /probe")\n'
+            '    assert "GET /probe" in caplog.text\n'
+        )
+        result = _pytest_with_baseline_collected(
+            probe,
+            e2e_enabled="true",
+            select="test_unrelated_http_info_is_captured",
         )
         assert result.returncode == 0, result.stdout + result.stderr

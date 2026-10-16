@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -129,3 +130,54 @@ class TestAnthropicSlackDispatch:
         assert posted["blocks"]
         updated = slack.chat_update.await_args.kwargs["blocks"]
         assert updated[0]["text"]["text"] == "*⚠️ Done with errors*"
+
+    @pytest.mark.asyncio
+    async def test_failed_slack_delivery_is_sent_back_after_a_successful_no_reply(
+        self,
+    ) -> None:
+        tools, _band, slack = _bound_tools()
+        slack.chat_postMessage.side_effect = RuntimeError("channel_not_found")
+        adapter = AnthropicAdapter(emit=())
+        await adapter.on_started("TestBot", "Test bot")
+        calls: list[list[dict[str, object]]] = []
+        end_turn = SimpleNamespace(stop_reason="end_turn", content=[], usage=_usage())
+
+        async def call_anthropic(
+            *, messages: list[dict[str, object]], tools: list[object]
+        ) -> SimpleNamespace:
+            del tools
+            calls.append(messages)
+            if len(calls) == 1:
+                return SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[
+                        ToolUseBlock(
+                            type="tool_use",
+                            id="tool-1",
+                            name=SLACK_SEND_MESSAGE_TOOL_NAME,
+                            input={"content": "hello from the room"},
+                        ),
+                        ToolUseBlock(
+                            type="tool_use",
+                            id="tool-2",
+                            name=BandTool.NO_REPLY,
+                            input={"reason": "FYI"},
+                        ),
+                    ],
+                    usage=_usage(),
+                )
+            return end_turn
+
+        with patch.object(adapter, "_call_anthropic", side_effect=call_anthropic):
+            await adapter.on_message(
+                _message(),
+                tools,
+                [],
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert len(calls) == 2
+        assert "channel_not_found" in json.dumps(calls[1])
