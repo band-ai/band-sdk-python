@@ -48,6 +48,7 @@ from tests.e2e.baseline.lane_selection import (
 from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.scorecard import ScorecardCollector
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.logs import apply_run_log_level
 from tests.toolkit.timeouts import effective_timeout
 
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
@@ -73,6 +74,7 @@ __all__ = [
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    apply_run_log_level()
     # Register the scorecard plugin only when a path is set (empty = don't emit, the
     # local default), so its hooks own their state instead of module globals.
     scorecard_json = BaselineSettings().run.scorecard_json

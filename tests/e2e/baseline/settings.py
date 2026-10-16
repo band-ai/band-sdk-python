@@ -99,6 +99,9 @@ class BaselineRun(BaseSettings):
     scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
     # Emit content-free approval phase records in focused first-attempt runs.
     first_attempt_diagnostics: bool = False  # BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS
+    # Pytest, Band, and Parlant server log level for a diagnostic run.
+    # Empty leaves each logger at its ordinary level.
+    log_level: str = ""  # BAND_E2E_LOG_LEVEL
 
 
 class LLMCredentials(BaseSettings):
