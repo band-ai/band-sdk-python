@@ -288,7 +288,7 @@ jobs:
         path: ~/.cursor-agent-*
         key: ${{ steps.cursor-cli-cache.outputs.cache-primary-key }}
 
-    - name: Install Bun and OMP (omp_acp)
+    - name: Install Bun and OMP (omp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-omp.sh
 

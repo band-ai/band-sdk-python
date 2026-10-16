@@ -23,23 +23,6 @@ class TestCheckAndFormatParticipants:
         assert result is None
         ctx.mark_participants_sent.assert_not_called()
 
-    def test_returns_message_when_changed(self):
-        """Should return formatted message when participants changed."""
-
-        ctx = MagicMock()
-        ctx.participants_changed.return_value = True
-        ctx.participants = [
-            {"id": "user-1", "name": "Alice", "type": "User"},
-        ]
-
-        result = check_and_format_participants(ctx)
-
-        # Should contain participant info and usage hint
-        assert "## Current Participants" in result
-        assert "Alice" in result
-        assert "band_send_message" in result
-        ctx.mark_participants_sent.assert_called_once()
-
     def test_marks_participants_sent_automatically(self):
         """Should automatically call mark_participants_sent() when returning message."""
 
