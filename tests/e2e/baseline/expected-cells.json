@@ -465,7 +465,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_restores_the_level_when_the_scenario_fails",
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_restores_the_level_when_the_scenario_fails",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -481,7 +481,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[debug-run-keeps-debug]",
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_shows_at_least_the_requested_level[debug-run-keeps-debug]",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -497,7 +497,23 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[inherited-warning-is-raised]",
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_shows_at_least_the_requested_level[inherited-debug-is-preserved]",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_shows_at_least_the_requested_level[inherited-warning-is-raised]",
       "adapter": "suite",
       "lanes": [
         "backends",
