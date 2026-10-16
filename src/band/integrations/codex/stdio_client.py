@@ -8,7 +8,6 @@ import logging
 import os
 import shutil
 import signal
-import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -22,6 +21,8 @@ from band.integrations.codex.winspawn import (
     WindowsProcess,
     await_returncode,
     close_stdin,
+    find_executable,
+    process_image,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,12 @@ def _absolute_command(command: Sequence[str]) -> tuple[str, ...]:
     head, *rest = command
     if Path(head).is_absolute():
         return (head, *rest)
-    found = shutil.which(head)
-    if found is None and Path(head).exists():
-        found = str(Path(head).resolve())
+    if os.name == "nt" and not os.path.dirname(head):
+        found = find_executable(head)
+    else:
+        found = shutil.which(head)
+        if found is None and Path(head).exists():
+            found = str(Path(head).resolve())
     if found is None:
         raise FileNotFoundError(head)
     return (str(Path(found).resolve()), *rest)
@@ -196,7 +200,7 @@ class CodexStdioClient(BaseJsonRpcClient):
 
     def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
         return [
-            sys.executable,
+            str(process_image()),
             "-I",
             "-S",
             str(HELPER_PATH),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -57,7 +58,11 @@ class TestWindowsBootstrap:
         monkeypatch: pytest.MonkeyPatch,
         child_has_binary: bool,
     ) -> None:
-        executable = Path(sys.executable)
+        parent_path = tmp_path / "parent-bin"
+        parent_path.mkdir()
+        executable = parent_path / "codex-test-command.exe"
+        shutil.copyfile(sys.executable, executable)
+        executable.chmod(0o755)
         child_path = tmp_path / "child-bin"
         child_path.mkdir()
         if child_has_binary:

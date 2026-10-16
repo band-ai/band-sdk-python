@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from ctypes import wintypes
+from pathlib import Path
 from typing import Any, NoReturn
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ _JOB_POLL_S = 0.05
 _ERROR_ALREADY_EXISTS = 183
 _ERROR_BROKEN_PIPE = 109
 _STATUS_READ_SIZE = 256
+_PATH_BUFFER_SIZE = 260
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
@@ -258,7 +260,88 @@ def _kernel32() -> Any:
         ctypes.c_void_p,
     ]
     library.PeekNamedPipe.restype = wintypes.BOOL
+    library.GetModuleFileNameW.argtypes = [handle, wintypes.LPWSTR, wintypes.DWORD]
+    library.GetModuleFileNameW.restype = wintypes.DWORD
+    library.GetSystemDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    library.GetSystemDirectoryW.restype = wintypes.UINT
+    library.GetWindowsDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    library.GetWindowsDirectoryW.restype = wintypes.UINT
+    library.GetEnvironmentVariableW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    ]
+    library.GetEnvironmentVariableW.restype = wintypes.DWORD
+    library.NeedCurrentDirectoryForExePathW.argtypes = [wintypes.LPCWSTR]
+    library.NeedCurrentDirectoryForExePathW.restype = wintypes.BOOL
+    library.SearchPathW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.c_void_p,
+    ]
+    library.SearchPathW.restype = wintypes.DWORD
     return library
+
+
+def _native_path(function: Callable[..., int], *prefix: object) -> Path:
+    capacity = _PATH_BUFFER_SIZE
+    while True:
+        buffer = ctypes.create_unicode_buffer(capacity)
+        length = function(*prefix, buffer, capacity)
+        if not length:
+            raise _win_os_error(_last_error())
+        if length < capacity:
+            return Path(buffer.value)
+        capacity = max(capacity * 2, length + 1)
+
+
+def _parent_path() -> str:
+    capacity = _PATH_BUFFER_SIZE
+    while True:
+        buffer = ctypes.create_unicode_buffer(capacity)
+        length = _kernel32().GetEnvironmentVariableW("PATH", buffer, capacity)
+        if length < capacity:
+            return buffer.value
+        capacity = length + 1
+
+
+def process_image() -> Path:
+    """Bypass Windows venv launchers so the retained process is the helper."""
+    if os.name != "nt":
+        return Path(sys.executable)
+    return _native_path(_kernel32().GetModuleFileNameW, None)
+
+
+def find_executable(name: str) -> str | None:
+    """Resolve a bare name using the parent's CreateProcess search order."""
+    library = _kernel32()
+    windows = _native_path(library.GetWindowsDirectoryW)
+    directories = [process_image().parent]
+    if library.NeedCurrentDirectoryForExePathW(name):
+        directories.append(Path.cwd())
+    directories.extend(
+        [
+            _native_path(library.GetSystemDirectoryW),
+            windows / "System",
+            windows,
+        ]
+    )
+    search_path = os.pathsep.join(str(directory) for directory in directories)
+    if parent_path := _parent_path():
+        search_path += os.pathsep + parent_path
+    # An explicit path avoids SearchPath's registry-dependent default order.
+    capacity = _PATH_BUFFER_SIZE
+    while True:
+        buffer = ctypes.create_unicode_buffer(capacity)
+        length = library.SearchPathW(search_path, name, ".exe", capacity, buffer, None)
+        if not length:
+            return None
+        if length < capacity:
+            return buffer.value
+        capacity = length + 1
 
 
 def _winerror(exc: OSError) -> int:

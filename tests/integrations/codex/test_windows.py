@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from band.core.exceptions import BandConnectionError
-from band.integrations.codex.stdio_client import CodexStdioClient
+from band.integrations.codex.stdio_client import HELPER_PATH, CodexStdioClient
+from band.integrations.codex.winspawn import WindowsProcess
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows job objects")
@@ -57,14 +58,19 @@ class TestWindowsJobCleanup:
             cwd=str(workdir),
         )
         command_for = client._windows_command
+        report = tmp_path / "helper-pid"
+        owners: list[WindowsProcess] = []
 
         def rejected_command(job_name: str, status_handle: int) -> list[str]:
             command = command_for(job_name, status_handle)
+            assert client._windows_process is not None
+            owners.append(client._windows_process)
             return [
-                sys.executable,
-                "-P",
+                *command[:3],
                 str(Path(__file__).with_name("windowpeer.py")),
                 stage,
+                str(HELPER_PATH.with_name("winspawn.py")),
+                str(report),
                 *command[4:],
             ]
 
@@ -72,6 +78,10 @@ class TestWindowsJobCleanup:
         try:
             with pytest.raises(BandConnectionError):
                 await client.connect()
+            [owner] = owners
+            assert owner.process is not None
+            assert int(report.read_text()) == owner.process.pid
+            assert owner.process.returncode is not None
             workdir.rmdir()
             assert not workdir.exists()
         finally:

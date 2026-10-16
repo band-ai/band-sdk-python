@@ -368,8 +368,9 @@ class TestSubprocessCleanup:
         assert completed.returncode == 2
 
     def test_windows_command_does_not_resolve_a_binary_in_the_room(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("PATH", str(Path(sys.executable).parent))
         workdir = tmp_path / "room"
         workdir.mkdir()
         (workdir / "definitely-missing-codex").write_text("")
