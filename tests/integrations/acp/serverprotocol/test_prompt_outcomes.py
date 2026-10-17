@@ -34,7 +34,7 @@ class TestPromptOutcomes:
         adapter.set_push_handler(ACPPushHandler(adapter))
         failure = AgentFailure("peer", "Broken", detail={"reason": "upstream"})
 
-        async with protocol_pair(adapter) as (conn, client):
+        async with protocol_pair(adapter) as (conn, client, _server):
             first = asyncio.create_task(
                 conn.prompt(session_id="session-1", prompt=[text_block("First")])
             )
@@ -112,7 +112,7 @@ class TestPromptOutcomes:
             },
         ).to_extension_data()
 
-        async with protocol_pair(adapter) as (conn, client):
+        async with protocol_pair(adapter) as (conn, client, _server):
             first_session = (await conn.new_session(cwd="/workspace/first")).session_id
             second_session = (
                 await conn.new_session(cwd="/workspace/second")
