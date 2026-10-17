@@ -14,7 +14,7 @@ class TestAgentContactSubscription:
     """Tests for Agent contact subscription behavior."""
 
     @pytest.mark.asyncio
-    async def test_agent_subscribes_to_contacts_when_callback(self, mock_adapter):
+    async def test_agent_subscribes_to_contacts_when_callback(self, contact_adapter):
         """Agent with CALLBACK strategy should subscribe to contacts on start."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
@@ -22,7 +22,7 @@ class TestAgentContactSubscription:
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,
@@ -42,14 +42,14 @@ class TestAgentContactSubscription:
             mock_start.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_agent_subscribes_to_contacts_when_hub_room(self, mock_adapter):
+    async def test_agent_subscribes_to_contacts_when_hub_room(self, contact_adapter):
         """Agent with HUB_ROOM strategy should subscribe to contacts."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.HUB_ROOM,
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,
@@ -65,7 +65,7 @@ class TestAgentContactSubscription:
             assert agent.contact_config.strategy == ContactEventStrategy.HUB_ROOM
 
     @pytest.mark.asyncio
-    async def test_agent_no_subscription_when_disabled(self, mock_adapter):
+    async def test_agent_no_subscription_when_disabled(self, contact_adapter):
         """Agent with DISABLED strategy and no broadcast should not subscribe."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.DISABLED,
@@ -73,7 +73,7 @@ class TestAgentContactSubscription:
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,
@@ -94,7 +94,7 @@ class TestAgentContactSubscription:
             assert agent.contact_config.broadcast_changes is False
 
     @pytest.mark.asyncio
-    async def test_agent_unsubscribes_on_stop(self, mock_adapter):
+    async def test_agent_unsubscribes_on_stop(self, contact_adapter):
         """Agent should unsubscribe from contacts on stop()."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
@@ -102,7 +102,7 @@ class TestAgentContactSubscription:
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,

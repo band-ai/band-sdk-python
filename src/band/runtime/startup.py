@@ -112,7 +112,7 @@ async def release_adapter(
     try:
         return await dispose_adapter(adapter, work_settled=work_settled)
     except Exception:
-        logger.exception("Adapter cleanup_all failed")
+        logger.exception("Adapter disposal failed")
         return False
 
 

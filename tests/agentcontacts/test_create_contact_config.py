@@ -11,7 +11,7 @@ from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 class TestAgentCreateContactConfig:
     """Tests for Agent.create() with contact_config parameter."""
 
-    def test_agent_create_accepts_contact_config(self, mock_adapter):
+    def test_agent_create_accepts_contact_config(self, contact_adapter):
         """Agent.create() should accept contact_config parameter."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
@@ -19,7 +19,7 @@ class TestAgentCreateContactConfig:
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,
@@ -28,10 +28,10 @@ class TestAgentCreateContactConfig:
         assert agent is not None
         assert agent.contact_config.strategy == ContactEventStrategy.CALLBACK
 
-    def test_agent_create_default_no_contact_config(self, mock_adapter):
+    def test_agent_create_default_no_contact_config(self, contact_adapter):
         """Agent.create() without contact_config should default to DISABLED."""
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
         )
@@ -39,7 +39,7 @@ class TestAgentCreateContactConfig:
         assert agent.contact_config.strategy == ContactEventStrategy.DISABLED
         assert agent.contact_config.broadcast_changes is False
 
-    def test_agent_passes_config_to_runtime(self, mock_adapter):
+    def test_agent_passes_config_to_runtime(self, contact_adapter):
         """Agent should pass contact_config to PlatformRuntime."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.HUB_ROOM,
@@ -48,7 +48,7 @@ class TestAgentCreateContactConfig:
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,
