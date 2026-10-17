@@ -17,7 +17,7 @@ from tests.adapters.codex.kit import (
     requested_approval_token,
 )
 from tests.adapters.codexturns import final_text, turn_completed
-from tests.integrations.slack.test_wrapping import _make_adapter, _mention_event
+from tests.integrations.slack.wrappingkit import _make_adapter, _mention_event
 
 
 class TestSlackControls:
