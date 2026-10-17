@@ -12,6 +12,7 @@ from typing_extensions import Unpack
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
+from band.core.disposal import AdapterDisposal, CleanupCallback
 from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.model_catalog import (
     ModelCatalog,
@@ -130,12 +131,33 @@ class SimpleAdapter(ABC, Generic[H]):
                      SUPPORTED_CAPABILITIES raise BandConfigError immediately.
         """
         self.history_converter = history_converter
+        self._disposal = AdapterDisposal()
         self.agent_name: str = ""
         self.agent_description: str = ""
         # Injected by the runtime before on_started; adapters needing their own
         # platform access read it via require_platform().
         self.platform: PlatformConnection | None = None
         self.features = self._resolve_features(**features)
+
+    def add_cleanup(self, callback: CleanupCallback) -> None:
+        """Register async resource cleanup before host startup, e.g. client.aclose.
+
+        Host stop/shutdown attempts callbacks in reverse order and retains failures
+        for retry. After disposal, rebuild resources, tools, adapter and host.
+        Resources shared across adapters remain application-owned.
+        Use one host per adapter at a time; callback-free adapters may restart.
+        """
+        self._disposal.register(callback)
+
+    @property
+    def _owns_cleanup(self) -> bool:
+        return self._disposal.requires_ownership
+
+    def _accept_cleanup(self, owner: object, *, exclusive: bool) -> None:
+        """Accept an explicitly composed lifetime, if any."""
+
+    async def _finalize_cleanup(self) -> None:
+        """Finalize explicitly composed resources after host work has settled."""
 
     def _resolve_features(
         self,
@@ -301,13 +323,10 @@ class SimpleAdapter(ABC, Generic[H]):
         """
 
     async def cleanup_all(self) -> None:
-        """Override to release adapter-wide resources (clients, servers).
+        """Override for framework teardown; direct calls leave callbacks pending.
 
-        Called by ``Agent.stop()`` after the runtime has stopped. Rooms are
-        not individually cleaned on shutdown (``on_cleanup`` fires on room
-        removal, not agent stop), so resources that outlive rooms — a CLI
-        runtime subprocess, a self-hosted server, an external registration —
-        release here.
+        Hosts attempt this even after runtime-stop failure. Registered resources
+        are released separately, only after work and framework teardown settle.
         """
 
     @property
@@ -353,6 +372,10 @@ class SimpleAdapter(ABC, Generic[H]):
         The runtime calls this once per start; adapters override the hooks it
         runs, not this.
         """
+        if self._disposal.disposing:
+            raise BandConfigError(
+                "Host disposal has started; retry its cleanup, then build a fresh lifetime for registered resources"
+            )
         self.apply_effective_features(features)
         await self.on_started(agent_name, agent_description)
         selection = self.model_selection

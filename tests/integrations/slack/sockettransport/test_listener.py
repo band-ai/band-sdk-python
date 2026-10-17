@@ -35,7 +35,9 @@ class TestSocketListener:
             return fakes[app.slug]
 
         dispatcher = AsyncMock()
-        listeners = await start_socket_listeners(
+        listeners: list[SlackSocketListener] = []
+        await start_socket_listeners(
+            listeners=listeners,
             apps=apps,
             web_client_factory=lambda a: AsyncMock(),
             dispatcher=dispatcher,
@@ -54,6 +56,7 @@ class TestSocketListener:
         fake = FakeSocketModeClient()
         dispatcher = AsyncMock()
         await start_socket_listeners(
+            listeners=[],
             apps=apps,
             web_client_factory=lambda a: AsyncMock(),
             dispatcher=dispatcher,
@@ -80,6 +83,7 @@ class TestSocketListener:
         fake = FakeSocketModeClient()
         dispatcher = AsyncMock()
         await start_socket_listeners(
+            listeners=[],
             apps=apps,
             web_client_factory=lambda a: AsyncMock(),
             dispatcher=dispatcher,
@@ -102,6 +106,7 @@ class TestSocketListener:
         fake = FakeSocketModeClient()
         boom = AsyncMock(side_effect=RuntimeError("kaboom"))
         await start_socket_listeners(
+            listeners=[],
             apps=apps,
             web_client_factory=lambda a: AsyncMock(),
             dispatcher=boom,
@@ -120,7 +125,7 @@ class TestSocketListener:
         fake = next(iter(socket_clients.values()))
 
         async def fake_start_socket_listeners(
-            *, apps, web_client_factory, dispatcher, client_factory=None
+            *, apps, listeners, web_client_factory, dispatcher, client_factory=None
         ):
 
             for app in apps:
@@ -130,7 +135,9 @@ class TestSocketListener:
                     )
                 )
                 await fake.connect()
-            return [SlackSocketListener(app=adapter.config.apps[0], client=fake)]
+            listeners.append(
+                SlackSocketListener(app=adapter.config.apps[0], client=fake)
+            )
 
         monkeypatch.setattr(
             "band.integrations.slack.socket.start_socket_listeners",
