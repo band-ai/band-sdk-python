@@ -54,7 +54,7 @@ from tests.integrations.acp.acp_toolkit import (
     live_line,
     started_acp_adapter,
 )
-from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.acp.serverkit import make_platform_message
 from tests.mcpbackends import backends_created_by
 from tests.mcpclient import (
     STORE_MEMORY_ARGS,
