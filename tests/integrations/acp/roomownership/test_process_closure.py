@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError
-from band.core.retention import Residency, RoomRetentionConfig
+from band.core.retention import ReleaseCause, Residency
 from band.integrations.acp import client_adapter, client_runtime
 from band.integrations.acp.client_adapter import ACPClientAdapter, ACPTurnTimeoutError
 from tests.adapters.roompeer import CLEANUP_FAILURE
+from tests.adapters.waiting import until
 from tests.integrations.acp.acp_toolkit import DEFAULT_ROOM
 from tests.integrations.acp.acp_toolkit.harness import send_to
 from tests.integrations.acp.acp_toolkit.lifecycle import FailingExits
@@ -38,9 +38,7 @@ class TestProcessClosure:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The agent exits, at close or before it, but a background descendant
-        still holds its stdout, so closure is unconfirmed: the room keeps its
-        process until the descendant is gone and a retry confirms the exit."""
+        """Interrupted cleanup retains the process while a descendant holds stdout."""
         monkeypatch.setattr(client_runtime, "STDOUT_HELD_WARNING_SECONDS", 0.1)
         holder_pid_file = tmp_path / "holder.pid"
         adapter = ACPClientAdapter(
@@ -48,7 +46,6 @@ class TestProcessClosure:
                 stage,
                 [],
                 orphan_pid_file=holder_pid_file,
-                retention=RoomRetentionConfig(transition_timeout_s=2.0),
                 # A held stdout hides the agent's death, so its prompt only ends
                 # at the turn deadline, whose recovery then waits on the pipes.
                 turn_timeout_s=1.0,
@@ -56,6 +53,7 @@ class TestProcessClosure:
             workspace_for_room=lambda room_id: str(REPO_ROOT),
         )
         await adapter.on_started("Stdio peer", "Real subprocess")
+        cleanup: asyncio.Task[None] | None = None
         try:
             with nullcontext() if turn_error is None else pytest.raises(turn_error):
                 await send_to(adapter, DEFAULT_ROOM)
@@ -63,14 +61,27 @@ class TestProcessClosure:
             runtime = room.runtime
             assert runtime is not None
 
-            with pytest.raises(CleanupIncompleteError):
-                await adapter.on_cleanup(DEFAULT_ROOM)
-
-            assert room.runtime is runtime and not runtime.closed
-            assert room.retained.snapshot.state == Residency.SUSPENDING
             process = runtime._transport
             assert isinstance(process, asyncio.subprocess.Process)
             held = f"ACP agent subprocess {process.pid} (exit code"
+            cleanup = asyncio.create_task(adapter.on_cleanup(DEFAULT_ROOM))
+            await until(
+                lambda: (
+                    room.retained.snapshot.pending_release == ReleaseCause.FINAL
+                    and any(
+                        warning.startswith(held) for warning in runtime_warnings(caplog)
+                    )
+                ),
+                failure="The process did not report its held stdout during cleanup",
+            )
+            assert not cleanup.done()
+            cleanup.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cleanup
+
+            assert room.runtime is runtime and not runtime.closed
+            assert runtime._transport is process
+            assert room.retained.snapshot.state == Residency.SUSPENDING
             assert any(warning.startswith(held) for warning in runtime_warnings(caplog))
 
             terminate_pid(int(holder_pid_file.read_text()))
@@ -81,6 +92,9 @@ class TestProcessClosure:
         finally:
             if holder_pid_file.exists():
                 terminate_pid(int(holder_pid_file.read_text()))
+            if cleanup is not None:
+                cleanup.cancel()
+                await asyncio.gather(cleanup, return_exceptions=True)
             await adapter.cleanup_all()
 
     @pytest.mark.asyncio

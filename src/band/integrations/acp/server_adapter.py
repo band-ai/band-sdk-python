@@ -430,6 +430,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         finally:
             await self._finish_pending_prompt(room_id, expected=pending)
             send_task.cancel()
+            children = [send_task]
+            if pending.completion_task is not None:
+                children.append(pending.completion_task)
+            await asyncio.gather(*children, return_exceptions=True)
 
         if pending.outcome is None:
             raise RuntimeError("ACP prompt completed without a terminal outcome")
@@ -449,6 +453,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             )
         finally:
             settled_task.cancel()
+            await asyncio.gather(settled_task, return_exceptions=True)
         if pending.done_event.is_set():
             return
         try:
@@ -622,7 +627,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         logger.debug("Cleaned up ACP server resources for room %s", room_id)
 
     async def cleanup_all(self) -> None:
-        """Fail active prompts when the agent stops without room cleanup."""
+        """Fail active prompts; the embedding owner must first close ACP ingress.
+
+        Await successful connection closure before disposing adapter resources.
+        """
         async with self._state_lock:
             for room_id in list(self._pending_prompts):
                 self._settle_prompt_locked(
@@ -776,11 +784,14 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         async with self._state_lock:
             if self._pending_prompts.get(room_id) is not pending:
                 return
-            if pending.completion_task is not None:
-                pending.completion_task.cancel()
+            previous = pending.completion_task
+            if previous is not None:
+                previous.cancel()
             pending.completion_task = asyncio.create_task(
                 self._complete_prompt_after_grace(room_id, pending)
             )
+        if previous is not None and previous is not asyncio.current_task():
+            await asyncio.gather(previous, return_exceptions=True)
 
     async def _complete_prompt_after_grace(
         self, room_id: str, pending: PendingACPPrompt

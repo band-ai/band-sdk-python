@@ -272,7 +272,6 @@ class PendingACPPrompt:
     def finish(self, outcome: PromptOutcome | None) -> None:
         """Stop the grace timer and mark the prompt as ended."""
         completion_task = self.completion_task
-        self.completion_task = None
         if (
             completion_task is not None
             and completion_task is not asyncio.current_task()
