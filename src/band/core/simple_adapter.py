@@ -147,14 +147,15 @@ class SimpleAdapter(ABC, Generic[H]):
         Host stop/shutdown attempts callbacks in reverse order and retains failures
         for retry. After disposal, rebuild resources, tools, adapter and host.
         Resources shared across adapters remain application-owned.
+        Use one host per adapter at a time; callback-free adapters may restart.
         """
         self._disposal.register(callback)
 
     @property
     def _owns_cleanup(self) -> bool:
-        return bool(self._disposal.registrations)
+        return self._disposal.requires_ownership
 
-    def _accept_cleanup(self, owner: object) -> None:
+    def _accept_cleanup(self, owner: object, *, exclusive: bool) -> None:
         """Accept an explicitly composed lifetime, if any."""
 
     async def _finalize_cleanup(self) -> None:
@@ -337,10 +338,12 @@ class SimpleAdapter(ABC, Generic[H]):
             self.backend_turns.cancel(room_id)
 
     async def cleanup_all(self) -> None:
-        """Override for framework teardown; direct calls leave callbacks pending.
+        """Override to release adapter-wide framework resources (servers, CLI processes).
 
-        Hosts attempt this even after runtime-stop failure. Registered resources
-        are released separately, only after work and framework teardown settle.
+        Hosts attempt this at stop, even after a runtime-stop failure; rooms are not
+        cleaned individually then, so resources that outlive rooms release here.
+        Resources the caller supplies release through ``add_cleanup`` instead, only
+        after work and this teardown settle; a direct call leaves them pending.
         """
 
     @property

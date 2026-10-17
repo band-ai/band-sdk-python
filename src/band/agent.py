@@ -332,6 +332,7 @@ class Agent:
                 await self._runtime.initialize()
 
                 # 2. Initialize adapter with agent metadata BEFORE message processing.
+                accept_adapter(self._adapter, self)
                 # setattr rather than assignment: FrameworkAdapter is a Protocol, so
                 # a duck-typed adapter may not declare the attribute.
                 setattr(self._adapter, "platform", self._runtime.connection)  # noqa: B010
@@ -385,12 +386,13 @@ class Agent:
         ``stop()`` won't run for an agent that never started, so cleanup that
         fails here stays pending, with the guard, for an explicit ``stop()``.
         """
-        if not self._runtime.cleanup_pending:
+        work_settled = not self._runtime.cleanup_pending
+        if work_settled:
             self._cleanup_pending.discard(CleanupPhase.RUNTIME)
         else:
             self._cleanup_pending.add(CleanupPhase.RUNTIME)
         if CleanupPhase.ADAPTER in self._cleanup_pending and await release_adapter(
-            self._adapter, work_settled=not self._runtime.cleanup_pending
+            self._adapter, work_settled=work_settled
         ):
             self._cleanup_pending.discard(CleanupPhase.ADAPTER)
         if not self._cleanup_pending:

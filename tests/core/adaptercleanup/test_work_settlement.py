@@ -10,18 +10,23 @@ from band.agent import Agent
 from band.runtime.oneshot import OneShotInvoker
 from tests.adaptercleanup import HostKind, host_for, resource_peer
 from tests.conftest import make_message_event
-from tests.core.adaptercleanup.work import WorkingAdapter
+from tests.core.adaptercleanup.work import SuppressingWorkingAdapter, WorkingAdapter
 from tests.runtime.helpers import ROOM_ID
 from tests.runtime.oneshot.kit import msg_body
 
 
 class TestWorkSettlement:
     @pytest.mark.parametrize("kind", list(HostKind))
+    @pytest.mark.parametrize(
+        "adapter_type",
+        [WorkingAdapter, SuppressingWorkingAdapter],
+        ids=["propagates-cancellation", "suppresses-cancellation"],
+    )
     async def test_finalizer_keeps_resource_until_accepted_work_settles(
-        self, kind: HostKind
+        self, kind: HostKind, adapter_type: type[WorkingAdapter]
     ) -> None:
         async with resource_peer() as client:
-            adapter = WorkingAdapter(client)
+            adapter = adapter_type(client)
             adapter.add_cleanup(client.aclose)
             async with host_for(adapter, kind) as host:
                 await host.start()

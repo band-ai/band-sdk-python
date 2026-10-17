@@ -8,10 +8,33 @@ from collections.abc import Awaitable
 import pytest
 
 from band.core.exceptions import BandConfigError
-from tests.adaptercleanup import HostKind, PassiveAdapter, host_for
+from tests.adaptercleanup import HostKind, PassiveAdapter, host_for, resource_peer
 
 
 class TestRegistration:
+    @pytest.mark.parametrize("kind", list(HostKind))
+    async def test_duplicate_callback_registrations_each_run(
+        self, kind: HostKind
+    ) -> None:
+        adapter = PassiveAdapter()
+        attempts = 0
+        async with resource_peer() as resource, host_for(adapter, kind) as host:
+
+            async def close() -> None:
+                nonlocal attempts
+                attempts += 1
+                await resource.aclose()
+
+            adapter.add_cleanup(close)
+            adapter.add_cleanup(close)
+            await host.start()
+            assert (await resource.get("/resource")).status_code == 200
+            await host.stop()
+            assert resource.is_closed
+            assert attempts == 2
+            await host.stop()
+            assert attempts == 2
+
     def test_noncallable_is_rejected_without_invocation(self) -> None:
         with pytest.raises(TypeError, match="client.aclose"):
             PassiveAdapter().add_cleanup(None)  # type: ignore[arg-type]

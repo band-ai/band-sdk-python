@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from band.core.exceptions import BandConfigError
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.capabilities import prune_unsupported
@@ -12,23 +13,24 @@ from band.runtime.capabilities import prune_unsupported
 logger = logging.getLogger(__name__)
 
 
-def accept_adapter(adapter: FrameworkAdapter | SimpleAdapter, owner: object) -> bool:
+def accept_adapter(
+    adapter: FrameworkAdapter | SimpleAdapter, owner: object, *, exclusive: bool = False
+) -> bool:
     """Seal registrations and synchronously accept explicit resource ownership."""
     if not isinstance(adapter, SimpleAdapter):
         return False
-    exclusive = adapter._owns_cleanup
+    exclusive = exclusive or adapter._owns_cleanup
     adapter._disposal.check_owner(owner, exclusive=exclusive)
     # Composition validates and claims before this infallible local commit.
-    adapter._accept_cleanup(owner)
-    adapter._disposal.accept(owner)
+    adapter._accept_cleanup(owner, exclusive=exclusive)
+    adapter._disposal.accept(owner, exclusive=exclusive)
     return exclusive
 
 
 def arm_adapter(adapter: FrameworkAdapter | SimpleAdapter) -> None:
     """Make framework teardown eligible immediately before startup is attempted."""
     if isinstance(adapter, SimpleAdapter):
-        adapter._disposal.builtin_started = True
-        adapter._disposal.builtin_done = False
+        adapter._disposal.arm_framework()
 
 
 def refuse_recursive_shutdown(adapter: FrameworkAdapter | SimpleAdapter) -> None:
@@ -64,12 +66,7 @@ async def start_adapter(
 async def dispose_framework(adapter: FrameworkAdapter | SimpleAdapter) -> None:
     """Finish eligible built-ins once; direct hooks never consume registrations."""
     if isinstance(adapter, SimpleAdapter):
-        state = adapter._disposal
-        if state.builtin_done:
-            return
-        if state.builtin_started or not state.sealed:
-            await adapter.cleanup_all()
-        state.builtin_done = True
+        await adapter._disposal.finish_framework(adapter.cleanup_all)
     else:
         cleanup_all = getattr(adapter, "cleanup_all", None)
         if cleanup_all is not None:
@@ -84,6 +81,10 @@ async def dispose_adapter(
         await dispose_framework(adapter)
         return True
     state = adapter._disposal
+    if adapter._owns_cleanup and state.owner is None:
+        raise BandConfigError(
+            "Adapter resource disposal requires ownership; start the host before disposing resources"
+        )
     state.refuse_recursive_shutdown()
     state.disposing = True
     state.task = asyncio.current_task()
@@ -92,10 +93,7 @@ async def dispose_adapter(
         if not work_settled:
             logger.debug("Adapter resource cleanup waits for host work to settle")
             return False
-        if not state.finished:
-            await adapter._finalize_cleanup()
-            await state.run_callbacks()
-            state.finished = True
+        await state.finish_resources(adapter._finalize_cleanup)
         return True
     finally:
         state.task = None
@@ -116,4 +114,12 @@ async def release_adapter(
         return False
 
 
-__all__ = ["dispose_adapter", "release_adapter", "start_adapter"]
+__all__ = [
+    "accept_adapter",
+    "arm_adapter",
+    "dispose_adapter",
+    "dispose_framework",
+    "refuse_recursive_shutdown",
+    "release_adapter",
+    "start_adapter",
+]

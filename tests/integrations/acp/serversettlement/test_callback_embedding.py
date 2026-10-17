@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock
 
+import pytest
 from acp import text_block
 
 from band.integrations.acp.server_adapter import BandACPServerAdapter
@@ -14,13 +15,14 @@ from tests.integrations.acp.serversettlement.kit import held_finalizer
 
 
 class TestCallbackEmbedding:
+    @pytest.mark.parametrize("kind", list(HostKind))
     async def test_completed_external_connection_close_precedes_host_disposal(
-        self, mock_rest_client: MagicMock
+        self, mock_rest_client: MagicMock, kind: HostKind
     ) -> None:
         adapter = BandACPServerAdapter(rest_client=mock_rest_client)
         async with (
             resource_peer() as resource,
-            host_for(adapter, HostKind.ONESHOT) as host,
+            host_for(adapter, kind) as host,
         ):
             adapter.add_cleanup(resource.aclose)
             await host.start()

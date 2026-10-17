@@ -9,12 +9,94 @@ import pytest
 from band.agent import Agent
 from band.core.exceptions import AgentAlreadyRunningError, BandConfigError
 from band.runtime.oneshot import OneShotInvoker
-from tests.adaptercleanup import PassiveAdapter, TeardownAdapter, resource_peer
+from tests.adaptercleanup import (
+    HostKind,
+    PassiveAdapter,
+    TeardownAdapter,
+    host_for,
+    resource_peer,
+)
+from tests.adapters.hold import Hold
 from tests.core.agentlifecycle.kit import make_runtime
 from tests.runtime.conftest import make_link_mock
 
 
 class TestStartupOwnership:
+    @pytest.mark.parametrize("stage", ["metadata", "framework"])
+    async def test_cancelled_agent_start_releases_accepted_resources(
+        self, stage: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = TeardownAdapter()
+        hold = Hold()
+        async with (
+            resource_peer() as client,
+            host_for(adapter, HostKind.AGENT) as host,
+        ):
+            adapter.add_cleanup(client.aclose)
+            assert isinstance(host.owner, Agent)
+            if stage == "metadata":
+                monkeypatch.setattr(host.owner.runtime, "initialize", hold.wait)
+            else:
+
+                async def startup(agent_name: str, agent_description: str) -> None:
+                    await hold.wait()
+
+                monkeypatch.setattr(adapter, "on_started", startup)
+            starting = asyncio.create_task(host.start())
+            try:
+                await hold.arrived()
+                assert (await client.get("/resource")).status_code == 200
+                starting.cancel("startup interrupted")
+                with pytest.raises(asyncio.CancelledError, match="startup interrupted"):
+                    await starting
+                assert client.is_closed
+                assert adapter.cleanup_calls == int(stage == "framework")
+                await host.stop()
+                assert adapter.cleanup_calls == int(stage == "framework")
+            finally:
+                hold.released.set()
+                starting.cancel()
+                await asyncio.gather(starting, return_exceptions=True)
+
+    async def test_oneshot_framework_failure_retains_failed_resource_release(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = TeardownAdapter()
+        original = LookupError("Framework startup failed")
+        failing = True
+        attempts = 0
+
+        async def startup(agent_name: str, agent_description: str) -> None:
+            raise original
+
+        monkeypatch.setattr(adapter, "on_started", startup)
+        async with (
+            resource_peer() as client,
+            host_for(adapter, HostKind.ONESHOT) as host,
+        ):
+
+            async def close() -> None:
+                nonlocal attempts
+                attempts += 1
+                if failing:
+                    raise OSError("Resource close failed")
+                await client.aclose()
+
+            adapter.add_cleanup(close)
+            try:
+                with pytest.raises(LookupError) as raised:
+                    await host.start()
+                assert raised.value is original
+                assert any("retain this host" in note for note in original.__notes__)
+                assert (await client.get("/resource")).status_code == 200
+                assert adapter.cleanup_calls == 1
+            finally:
+                failing = False
+                await host.stop()
+            assert attempts == 2
+            assert client.is_closed
+            assert adapter.cleanup_calls == 1
+
     async def test_concurrent_agent_start_cannot_take_or_release_the_active_claim(
         self,
     ) -> None:

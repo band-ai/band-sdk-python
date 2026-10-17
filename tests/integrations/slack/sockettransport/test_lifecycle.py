@@ -33,16 +33,14 @@ class TestSocketLifecycle:
         captured: dict[str, Any] = {}
 
         async def fake_start_socket_listeners(
-            *, apps, web_client_factory, dispatcher, client_factory=None
+            *, apps, listeners, web_client_factory, dispatcher, client_factory=None
         ):
             captured["dispatcher"] = dispatcher
-            listeners = []
             for app in apps:
                 fake = socket_clients[app.slug]
                 fake.socket_mode_request_listeners.append(lambda *_a, **_kw: None)
                 await fake.connect()
                 listeners.append(SlackSocketListener(app=app, client=fake))
-            return listeners
 
         monkeypatch.setattr(
             "band.integrations.slack.socket.start_socket_listeners",
@@ -57,7 +55,7 @@ class TestSocketLifecycle:
         assert len(adapter._socket_listeners) == 1
 
     @pytest.mark.asyncio
-    async def test_close_disconnects_all_listeners(self):
+    async def test_close_stops_all_listeners(self):
         adapter, _, socket_clients, _, _ = _build_adapter_with_socket(
             apps=[_socket_app("dev"), _socket_app("prod")],
         )
@@ -68,14 +66,14 @@ class TestSocketLifecycle:
 
         await adapter.close()
         for fake in socket_clients.values():
-            assert fake.disconnect.await_count == 1
+            assert fake.close.await_count == 1
         assert adapter._socket_listeners == []
 
     @pytest.mark.asyncio
-    async def test_close_logs_but_does_not_raise_on_disconnect_failure(self, caplog):
+    async def test_close_logs_but_does_not_raise_on_sdk_close_failure(self, caplog):
         adapter, _, socket_clients, _, _ = _build_adapter_with_socket()
         fake = next(iter(socket_clients.values()))
-        fake.disconnect = AsyncMock(side_effect=[RuntimeError("boom"), None])
+        fake.close = AsyncMock(side_effect=[RuntimeError("boom"), None])
         app = adapter.config.apps[0]
         adapter._socket_listeners.append(SlackSocketListener(app=app, client=fake))
 
@@ -84,9 +82,9 @@ class TestSocketLifecycle:
         record = next(r for r in caplog.records if "Failed to stop" in r.message)
         assert record.levelno == logging.ERROR
         await adapter.close()
-        assert fake.disconnect.await_count == 2
+        assert fake.close.await_count == 2
         await adapter.close()
-        assert fake.disconnect.await_count == 2
+        assert fake.close.await_count == 2
 
     @pytest.mark.asyncio
     async def test_close_is_safe_when_no_listeners(self):
@@ -105,9 +103,8 @@ class TestSocketLifecycle:
         fake = next(iter(socket_clients.values()))
 
         async def fake_start_socket_listeners(
-            *, apps, web_client_factory, dispatcher, client_factory=None
+            *, apps, listeners, web_client_factory, dispatcher, client_factory=None
         ):
-            listeners = []
             for app in apps:
                 client = socket_clients[app.slug]
                 # Build the real per-app handler.
@@ -119,7 +116,6 @@ class TestSocketLifecycle:
                 )
                 await client.connect()
                 listeners.append(SlackSocketListener(app=app, client=client))
-            return listeners
 
         monkeypatch.setattr(
             "band.integrations.slack.socket.start_socket_listeners",

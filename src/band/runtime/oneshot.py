@@ -247,6 +247,7 @@ class OneShotInvoker:
                 self._feature_flags,
             ) = await self._fetch_agent_metadata()
             self._refuse_if_shutting_down()
+            accept_adapter(self._adapter, self)
             setattr(  # noqa: B010 -- bare protocol adapters need not declare platform
                 self._adapter,
                 "platform",
