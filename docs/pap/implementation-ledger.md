@@ -1,6 +1,6 @@
 # PAP integration implementation ledger
 
-Date: 2026-10-16. Status: P01–P07 implementation complete with two independent Sol reviews per item. Live deployment checks and the private-core coverage credential remain release gates; no live interoperability or release-readiness claim. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
+Updated: 2026-10-17. Status: P01–P06 implemented with two independent Sol reviews per item. P07 is partial: offline scenarios and deployment guidance exist, but a self-contained runnable example and live acceptance remain outstanding. The private-core coverage credential is also a release gate; no live interoperability or release-readiness claim. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
 
 Worktree: `sdk-worktrees/pap-integration`. Branch: `feat/pap-protocol-integration`. Base: `c73cd9cd` from upstream main. Package: `packages/band-pap` (`bandpap`). Maintained architecture: [design](design.md) and [implementation contract](contract.md). This tracked ledger is authoritative; the earlier local planning copy is not the implementation record.
 
@@ -28,7 +28,7 @@ The target includes both client adapter and server gateway. All conversations oc
 | P04 | Outbound company participant adapter; addressed routing; messages and protocol state; concurrent connections; lifecycle and recovery. | Multiple company participants in one Band room; live/replay filtering; independent progress; loss/duplicate/restart cases. | complete — implementation | approved | approved |
 | P05 | Inbound PAP gateway; service discovery; authorized participant bindings; conversation/event endpoints; human participation, handoff, closing. | Both directions in the same room; client ownership checks; event ordering/reconnect; no implicit room access; roster projection tests. | complete — implementation | approved | approved |
 | P06 | Operations and advertised API/browser channels; trusted approval/execution interfaces, cancellation, uncertainty and deduplication. | Revision-bound confirmation; cross-channel deduplication; scope enforcement; unknown effects remain unresolved; application policy stays outside protocol. | complete — implementation | approved | approved |
-| P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | complete — local implementation; release gates open | approved | approved |
+| P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | active — standalone example and live acceptance outstanding | approved for offline scope | approved for offline scope |
 
 ## P02 implementation breakdown
 
@@ -84,7 +84,7 @@ Discovery fetching follows bounded HTTPS redirects, verifies each connected publ
 
 SQLite stores scoped connections, independent conversation bindings, user-wide message deduplication, original acknowledgments, leased delivery/retry state, events and cursors, and immutable operation revision terms. Tests reopen disk databases, use independent connections/concurrent insertion, and inject both cursor-write and commit failures. Operations are authenticated observations only; recording one never approves or executes an effect. The scope includes tenant, user, client, issuer and direction; neither room nor connection instance partitions message-ID deduplication.
 
-The store takes trusted host inputs; it does not authenticate callers or evaluate grants. Recorded connection revocation fences subsequent claims/replays/settlements, but cannot recall a request already in flight. P03 must implement authenticated authority and token handling. P04/P05 were still required to enforce source grants, original-binding visibility, actual Band handoff and direct-conversation lifecycle. P06 was still required to implement operation execution/approvals and channel clients. These are phase boundaries, not claims of completed integration. At that P02 snapshot no adapter or gateway was usable. P03–P07 below complete those implementations.
+The store takes trusted host inputs; it does not authenticate callers or evaluate grants. Recorded connection revocation fences subsequent claims/replays/settlements, but cannot recall a request already in flight. P03 must implement authenticated authority and token handling. P04/P05 were still required to enforce source grants, original-binding visibility, actual Band handoff and direct-conversation lifecycle. P06 was still required to implement operation execution/approvals and channel clients. These are phase boundaries, not claims of completed integration. At that P02 snapshot no adapter or gateway was usable. P03–P07 below record the implemented runtime and outstanding acceptance work.
 
 ## P02 test ledger
 
@@ -122,13 +122,13 @@ The CI wheel job installs both built wheels into a fresh environment and runs `.
 
 P01–P07 must all be complete with both reviews resolved. Business examples demonstrate collaboration but cannot impose a global coordinator, purchase policy, or one-request-per-room lock on the generic integration. Unsupported draft capabilities and unavailable live counterparties must be disclosed rather than reported as passing.
 
-## P03–P07 completion and independent review ledger
+## P03–P07 implementation and independent review ledger
 
-Final source/test snapshot (same sorted path/content NUL-delimited algorithm as
+Historical source/test snapshot at `b24d33e7` (same sorted path/content NUL-delimited algorithm as
 P02): SHA-256 `2b9f422eb576cc24031a39adc4e115eeaccc2d1bfa05d2292d25f7bd190fcbdb`.
 Documentation-only updates do not change it. Existing Band SDK runtime files are
-unchanged. Public integration exports, deployment composition, and examples are
-included in `band-pap` and its documentation.
+unchanged. Public integration exports, deployment guidance and an ASGI launcher are
+included. The launcher requires a host factory; no self-contained example is bundled.
 
 | Item | Implemented result | Independent reviewers and final evidence |
 |---|---|---|
@@ -136,7 +136,7 @@ included in `band-pap` and its documentation.
 | P04 | Public SDK adapter, grant-bound input, durable per-connection pumps, typed records, account-aware continuation, handoff/direct/close, real generated REST encoding and uncertain-send reconciliation | A (`pap_review_a`) and Operations reviewer; both approved. 36 focused cases passed. A independently reran the final 425-case suite and probed token-wait revocation. |
 | P05 | Authenticated ASGI gateway, discovery, deduplicated durable conversations/events, bounded JSON/SSE, direct/handoff/close, roster projection, operation routes, explicit same-room reply correlation | A and Operations reviewer; both approved. 43 gateway/bridge/operation-route cases passed. B authored the gateway and is not counted as its independent reviewer. |
 | P06 | Application-owned authorization/approval/execution interfaces, durable operation identity and recovery, constrained OpenAPI/MCP/browser clients | A and B; both approved after authority-race and dispatch-fence corrections. 43 focused cases passed. Operations reviewer authored this phase. |
-| P07 | Four offline roundtrip/fault/isolation scenarios, lifespan shutdown/failure coverage, package exports, deployment guide, launcher, rebuilt installed-wheel validation | A and B approved implementation/offline evidence and documents. Six integration/lifespan cases passed. A independently ran the final wheel smoke and matched every installed module against current source. Live checks remain separate release gates. |
+| P07 | Four offline roundtrip/fault/isolation scenarios, lifespan shutdown/failure coverage, package exports, deployment guide, launcher, rebuilt installed-wheel validation | A and B approved implementation/offline evidence and documents. Six integration/lifespan cases passed. A independently ran the final wheel smoke and matched every installed module against current source. Approval covers the offline scope only; the standalone example and live acceptance remain outstanding. |
 
 All three review agents used `gpt-6.1-sol`. No independent approval is attributed to
 an agent for code it authored. The reviewers exchanged findings while root owned
@@ -176,7 +176,7 @@ The final broad-environment and external failures are listed separately below.
 The suggested malformed-`jti` finding was retracted after execution confirmed the
 JWT library already rejects it; it is not counted as a discovered defect.
 
-## Final test and verification ledger
+## Test and verification ledger at `b24d33e7` (historical snapshot)
 
 | Coverage group | Test files / observable behavior | Result |
 |---|---|---|
@@ -195,9 +195,13 @@ JWT library already rejects it; it is not counted as a discovered defect.
 | CI on previous `453136b3` | Main CI lint, packaging and Python/OS matrix | Passed; this is earlier-commit evidence, not a pass for the final implementation |
 | Python Core Coverage on `453136b3` | [Failed private-core checkout](https://github.com/band-ai/band-sdk-python/actions/runs/39004037826/job/117312720592) | Failed **before tests**: `Input required and not supplied: token`. Workflow expects `CORE_SDK_READ_KEY`; this run received none. Not a PAP test assertion or coverage-floor failure. |
 
-## Remaining release gates (not unfinished adapter implementation)
+## Remaining implementation and release gates
 
-- Run the final head through the complete development CI matrix and the
+- Add a self-contained runnable multi-peer example and a worked host-factory
+  tutorial. `examples/pap/serve.py` is a launcher; `myapp.pap:build` is a host-supplied
+  placeholder, not included application code. Offline test scenarios are not a
+  substitute for this onboarding deliverable. P07 remains active.
+- Run each updated head through the complete development CI matrix and the
   instrumented private-core coverage workflow. Its checkout requires an authorized
   credential/context; this integration does not change secret access or bypass
   coverage. Merely rerunning the same credential-less job cannot fix the checkout.
@@ -211,5 +215,31 @@ JWT library already rejects it; it is not counted as a discovered defect.
   credential/key rotation and deployment throughput. These application interfaces
   are deliberately required, not embedded business policy.
 
-The draft PR remains draft for these gates. No broad-suite, live privacy,
-external-counterparty or exactly-once remote Band delivery claim is made.
+The draft PR remains draft for these gates. Remote test-matrix results below
+supersede the earlier unverified CI status. No live privacy, external-counterparty
+or exactly-once remote Band delivery claim is made.
+
+
+## 2026-10-17 completion audit and CI correction
+
+The previous P07 completion label overstated the example/onboarding scope. Both
+Sol reviewers (`pap_review_a`, `pap_review_b`) confirmed their P07 approval covered
+offline code/tests and documentation, not a bundled runnable application or live
+acceptance. The architecture document is now explicitly labeled as the original
+design baseline, with this ledger as the current implementation record.
+
+| Evidence | Result and meaning |
+|---|---|
+| Main CI at `b24d33e7` | Ubuntu/Windows Python 3.11–3.13 and framework test jobs, packaging and wheel checks passed. These results cover that commit, not the subsequent correction. |
+| F06-03: [CI lint failure](https://github.com/band-ai/band-sdk-python/actions/runs/39006479452/job/117319891073) | Pinned Pyrefly 0.61.1 rejected iterating potentially null OpenAPI `servers`. Earlier local Pyrefly 1.4.0 missed this. Explicitly reject non-array server declarations before iteration or authenticated dispatch. |
+| `test_malformed_servers_fail_before_authenticated_dispatch` | Nine regressions: null/object/string at document, path and operation levels. Each asserts a controlled error and no authenticated API request. All 13 OpenAPI tests pass. Both independent Sol reviewers approved this correction and ran the focused cases. |
+| Current PAP suite after correction | **434 passed**, no skips/xfails. P06 now has 52 cases; other group counts above are unchanged. |
+| Current repository Ruff / formatting | Passed across the checkout; 1,695 Python files already formatted. |
+| Current package type check | **Zero errors with CI-pinned Pyrefly 0.61.1**, using the isolated Python 3.12 development environment. |
+| [Core coverage at `b24d33e7`](https://github.com/band-ai/band-sdk-python/actions/runs/39006479506/job/117319891323) | Still fails before tests: private `band-sdk-core-core-v2.8.0` checkout reports `Input required and not supplied: token`. The workflow's `CORE_SDK_READ_KEY` is unavailable in this run. No coverage percentage or coverage pass can be claimed. |
+
+Current source/test fingerprint: `97837ba9115b5a31b2833eb3d0224b39900ca0dec9d7214c9e7b4ec01671a1ae` (same algorithm above).
+The prior installed-wheel evidence applies to `b24d33e7`; remote validation of the
+correction is pending. Architecture, protocol contract, deployment/recovery guidance
+and package documentation exist. A copy-and-run host composition tutorial and live
+Band/PAP interoperability evidence are still missing.

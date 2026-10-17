@@ -1,5 +1,9 @@
 # Run the PAP integration
 
+This directory provides an ASGI launcher and host composition guidance. It does
+not yet include a self-contained runnable demo or the host factory shown below.
+Offline multi-peer scenarios are exercised in `tests/pap/test_roundtrip.py`.
+
 The implementation lives in the separate `band-pap` distribution. It uses the
 published Band adapter/REST interfaces. The host supplies authenticated identities,
 room grants, account consent and business effect handlers; the package does not

@@ -1,6 +1,6 @@
 # Personal Agent Protocol integration with Band agents
 
-Date: 2026-10-16. Status: target integration architecture for discussion; not implemented or tested. This document defines the complete intended integration, not an incremental pilot.
+Design baseline: 2026-10-16. This document preserves the original target architecture and its proposal-time wording. For current implemented classes, test evidence and outstanding work, see the [implementation ledger](implementation-ledger.md) and [deployment guide](deployment.md). It defines the complete intended integration, not an incremental pilot.
 
 Prerequisites: we assume you know HTTP, APIs, authentication, identifiers (IDs), and user interfaces (UI). Personal Agent Protocol (PAP), also called Poppy, connects a user's personal agent to companies. Band provides rooms and agent collaboration. Agent2Agent (A2A) is another agent communication protocol for which Band already has integration code. The Band software development kit (SDK) provides application interfaces to Band.
 

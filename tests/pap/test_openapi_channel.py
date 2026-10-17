@@ -138,3 +138,35 @@ class TestOpenAPIChannel:
             )
         assert len(transport.requests) == 1
         store.close()
+
+    @pytest.mark.parametrize("level", ["document", "path", "operation"])
+    @pytest.mark.parametrize("servers", [None, {}, "https://api.company.example/v1"])
+    async def test_malformed_servers_fail_before_authenticated_dispatch(
+        self, tmp_path: Path, level: str, servers: object
+    ) -> None:
+        oauth, transport, store = connection(tmp_path / "state.db")
+        client = OpenAPIClient(
+            oauth,
+            oauth.discovery.document.apis[0],
+            allowed_servers=frozenset({"https://api.company.example/v1"}),
+            allowed_operations=frozenset({"getOrder"}),
+        )
+        value = schema()
+        target = value
+        if level != "document":
+            target = value["paths"]["/orders/{order}"]
+        if level == "operation":
+            target = target["get"]
+        target["servers"] = servers
+        transport.responses.append(value)
+        try:
+            await client.load()
+            with pytest.raises(ValueError, match="servers must be an array"):
+                await client.call(
+                    "getOrder",
+                    server="https://api.company.example/v1",
+                    path_parameters={"order": "one"},
+                )
+            assert len(transport.requests) == 1
+        finally:
+            store.close()

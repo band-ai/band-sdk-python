@@ -228,6 +228,8 @@ class OpenAPIClient:
         servers = operation.get(
             "servers", item.get("servers", self.schema.get("servers", []))
         )
+        if not isinstance(servers, list):
+            raise ValueError("OpenAPI servers must be an array")
         if server not in self.allowed_servers or not any(
             isinstance(entry, dict)
             and entry.get("url") == server
