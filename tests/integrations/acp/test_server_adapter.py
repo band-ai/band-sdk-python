@@ -19,10 +19,10 @@ from band.testing import FakeAgentTools
 from band.testing.platform import platform_connection_stub
 from tests.content import BLANK_CONTENT_CASES
 from tests.integrations.acp.conftest import (
-    make_platform_message,
     make_tool_call_message,
     release_pending_prompt,
 )
+from tests.integrations.acp.serverkit import make_platform_message
 
 
 class TestBandACPServerAdapterInit:
