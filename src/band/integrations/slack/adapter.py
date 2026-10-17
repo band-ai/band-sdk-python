@@ -456,6 +456,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         self.config = config
         self._router: Router | None = None
         self._socket_listeners: list[SlackSocketListener] = []
+        self._listener_close_lock = asyncio.Lock()
         self._web_client_factory: WebClientFactory = (
             web_client_factory or self._default_web_client_factory
         )
@@ -657,16 +658,17 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     async def _close_listeners(self) -> list[Exception]:
         errors: list[Exception] = []
-        for listener in list(self._socket_listeners):
-            try:
-                await listener.stop()
-            except Exception as exc:  # noqa: BLE001 -- retain failures and close other listeners
-                note = f"Slack listener app: {listener.app.slug}"
-                if note not in getattr(exc, "__notes__", ()):
-                    exc.add_note(note)
-                errors.append(exc)
-            else:
-                self._socket_listeners.remove(listener)
+        async with self._listener_close_lock:
+            for listener in list(self._socket_listeners):
+                try:
+                    await listener.stop()
+                except Exception as exc:  # noqa: BLE001 -- retain failures and close other listeners
+                    note = f"Slack listener app: {listener.app.slug}"
+                    if note not in getattr(exc, "__notes__", ()):
+                        exc.add_note(note)
+                    errors.append(exc)
+                else:
+                    self._socket_listeners.remove(listener)
         return errors
 
     async def cleanup_all(self) -> None:
