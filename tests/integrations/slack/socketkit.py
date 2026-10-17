@@ -34,7 +34,7 @@ def _http_app(slug: str = "dev") -> SlackApp:
 class FakeSocketModeClient:
     """Stand-in for ``slack_sdk.socket_mode.aiohttp.SocketModeClient``.
 
-    Captures registered listeners, exposes ``connect`` / ``disconnect`` /
+    Captures registered listeners, exposes ``connect`` / ``close`` /
     ``send_socket_mode_response`` as AsyncMocks so the test can fire a
     synthetic envelope at the listener and assert what happened.
     """
@@ -42,7 +42,7 @@ class FakeSocketModeClient:
     def __init__(self) -> None:
         self.socket_mode_request_listeners: list[Any] = []
         self.connect = AsyncMock()
-        self.disconnect = AsyncMock()
+        self.close = AsyncMock()
         self.send_socket_mode_response = AsyncMock()
 
 

@@ -13,6 +13,61 @@ from tests.integrations.slack.wrappingkit import _make_adapter
 
 class TestCallbackComposition:
     @pytest.mark.parametrize("kind", list(HostKind))
+    async def test_inner_callback_retry_precedes_outer_lifo_release(
+        self, kind: HostKind
+    ) -> None:
+        inner = TeardownAdapter()
+        wrapper, _, _, _ = _make_adapter(inner=inner)
+        order: list[str] = []
+        failing = True
+        async with resource_peer() as resource, host_for(wrapper, kind) as host:
+
+            async def inner_older() -> None:
+                order.append("inner-older")
+                if failing:
+                    raise OSError("Inner resource release failed")
+                assert (await resource.get("/resource")).status_code == 200
+
+            async def inner_newer() -> None:
+                order.append("inner-newer")
+                assert (await resource.get("/resource")).status_code == 200
+
+            async def outer_older() -> None:
+                order.append("outer-older")
+                await resource.aclose()
+
+            async def outer_newer() -> None:
+                order.append("outer-newer")
+                assert (await resource.get("/resource")).status_code == 200
+
+            inner.add_cleanup(inner_older)
+            inner.add_cleanup(inner_newer)
+            wrapper.add_cleanup(outer_older)
+            wrapper.add_cleanup(outer_newer)
+            await host.start()
+            try:
+                with pytest.raises(ExceptionGroup):
+                    await host.stop()
+                assert order == ["inner-newer", "inner-older"]
+                assert (await resource.get("/resource")).status_code == 200
+                assert inner.cleanup_calls == 1
+            finally:
+                failing = False
+                await host.stop()
+            expected = [
+                "inner-newer",
+                "inner-older",
+                "inner-older",
+                "outer-newer",
+                "outer-older",
+            ]
+            assert order == expected
+            assert resource.is_closed
+            assert inner.cleanup_calls == 1
+            await host.stop()
+            assert order == expected
+
+    @pytest.mark.parametrize("kind", list(HostKind))
     async def test_inner_only_registration_inherits_ownership_and_disposed_reuse(
         self, kind: HostKind
     ) -> None:

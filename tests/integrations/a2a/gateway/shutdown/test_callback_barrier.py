@@ -16,9 +16,10 @@ from tests.integrations.acp.serversettlement.kit import held_finalizer
 
 
 class TestCallbackBarrier:
+    @pytest.mark.parametrize("kind", list(HostKind))
     @pytest.mark.parametrize("stage", ["setup", "send"])
     async def test_host_waits_for_gateway_work_even_before_pending_registration(
-        self, mock_rest_client: MagicMock, stage: str
+        self, mock_rest_client: MagicMock, stage: str, kind: HostKind
     ) -> None:
         mock_rest_client.agent_api_peers.list_agent_peers = AsyncMock(
             return_value=peers_page([make_peer("peer", "Weather Agent")])
@@ -28,7 +29,7 @@ class TestCallbackBarrier:
         )
         async with (
             resource_peer() as resource,
-            host_for(adapter, HostKind.ONESHOT) as host,
+            host_for(adapter, kind) as host,
         ):
             adapter.add_cleanup(resource.aclose)
             await host.start()

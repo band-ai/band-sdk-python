@@ -29,3 +29,11 @@ class WorkingAdapter(TeardownAdapter):
             response = await self.client.get("/resource")
             response.raise_for_status()
             self.finished.set()
+
+
+class SuppressingWorkingAdapter(WorkingAdapter):
+    async def on_message(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            await super().on_message(*args, **kwargs)
+        except asyncio.CancelledError:
+            return

@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AdapterDisposal:
     callbacks: dict[int, CleanupCallback] = field(default_factory=dict)
-    registrations: int = 0
     owner: object | None = None
     sealed: bool = False
     builtin_started: bool = False
@@ -33,30 +32,56 @@ class AdapterDisposal:
             )
         if self.sealed:
             raise BandConfigError("Register cleanup before starting the host")
-        self.registrations += 1
-        self.callbacks[self.registrations] = callback
+        position = max(self.callbacks, default=0) + 1
+        self.callbacks[position] = callback
+
+    @property
+    def requires_ownership(self) -> bool:
+        return bool(self.callbacks) or self.owner is not None
 
     def check_owner(self, owner: object, *, exclusive: bool) -> None:
-        if self.finished and exclusive:
+        if self.finished and self.requires_ownership:
             raise BandConfigError(
                 "Adapter resources are disposed; build fresh resources, tool closures, adapter and host"
             )
-        if exclusive and self.owner is not None and self.owner is not owner:
+        foreign_owner = self.owner is not None and self.owner is not owner
+        unowned_framework = self.owner is None and self.builtin_started
+        if exclusive and not self.finished and (foreign_owner or unowned_framework):
             raise BandConfigError(
-                "Adapter resources belong to another host; use that host or build a separate adapter"
+                "Adapter is already in use by another host; use that host or build a separate adapter"
             )
         if self.disposing and not self.finished:
             raise CleanupIncompleteError(
                 "Adapter cleanup is incomplete; retry stop() or shutdown() on the same host"
             )
 
-    def accept(self, owner: object) -> None:
+    def accept(self, owner: object, *, exclusive: bool) -> None:
         if self.finished:
-            self.builtin_started = self.builtin_done = self.disposing = (
-                self.finished
-            ) = False
-        self.owner = owner
+            self.builtin_started = False
+            self.builtin_done = False
+            self.disposing = False
+            self.finished = False
+        if exclusive:
+            self.owner = owner
         self.sealed = True
+
+    def arm_framework(self) -> None:
+        self.builtin_started = True
+        self.builtin_done = False
+
+    async def finish_framework(self, cleanup: CleanupCallback) -> None:
+        if self.builtin_done:
+            return
+        if self.builtin_started or not self.sealed:
+            await cleanup()
+        self.builtin_done = True
+
+    async def finish_resources(self, finalize: CleanupCallback) -> None:
+        if self.finished:
+            return
+        await finalize()
+        await self.run_callbacks()
+        self.finished = True
 
     def refuse_recursive_shutdown(self) -> None:
         if self.task is not None and self.task is asyncio.current_task():

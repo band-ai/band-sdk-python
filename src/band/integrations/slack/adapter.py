@@ -568,8 +568,8 @@ class SlackAdapter(SimpleAdapter[Any]):
     def _owns_cleanup(self) -> bool:
         return super()._owns_cleanup or self._inner._owns_cleanup
 
-    def _accept_cleanup(self, owner: object) -> None:
-        accept_adapter(self._inner, owner)
+    def _accept_cleanup(self, owner: object, *, exclusive: bool) -> None:
+        accept_adapter(self._inner, owner, exclusive=exclusive)
 
     async def _finalize_cleanup(self) -> None:
         # HTTP ingress may be mounted before framework startup is attempted.
@@ -653,8 +653,9 @@ class SlackAdapter(SimpleAdapter[Any]):
                 start_socket_listeners,
             )
 
-            self._socket_listeners = await start_socket_listeners(
+            await start_socket_listeners(
                 apps=self.config.apps,
+                listeners=self._socket_listeners,
                 web_client_factory=self._get_client,
                 dispatcher=self._dispatch_event,
             )
@@ -669,7 +670,7 @@ class SlackAdapter(SimpleAdapter[Any]):
     async def close(self) -> None:
         """Tear down transport-owned resources.
 
-        For Socket Mode this disconnects each per-app websocket client.
+        For Socket Mode this closes SDK clients and waits for their work to settle.
         For HTTP it's a no-op — the developer's ASGI server owns the
         HTTP lifecycle. Safe to call multiple times.
         """
