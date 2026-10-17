@@ -31,10 +31,10 @@ from band.integrations.slack.adapter import SlackAdapter, SlackAdapterConfig
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
-from tests.integrations.slack.test_wrapping import (
+from tests.integrations.slack.wrappingkit import (
+    SlackReplyBrain,
     _make_rest_mock,
     _mention_event,
-    _SlackReplyBrain,
 )
 
 
@@ -59,7 +59,7 @@ async def test_router_mounts_into_fastapi_with_path_prefix():
     app_config = SlackApp(
         slug="dev", bot_token="xoxb-dev", signing_secret="test-secret"
     )
-    inner = _SlackReplyBrain(reply=None)
+    inner = SlackReplyBrain(reply=None)
     rest = _make_rest_mock(["room-1"])
     adapter = SlackAdapter(
         SlackAdapterConfig(apps=(app_config,)),
@@ -92,7 +92,7 @@ async def test_router_mounts_into_fastapi_with_path_prefix():
 
     # Brain saw the event with the right content, proving the full
     # mounted path delivered.
-    assert isinstance(inner, _SlackReplyBrain)
+    assert isinstance(inner, SlackReplyBrain)
     assert len(inner.invocations) == 1
     assert inner.invocations[0]["msg"].content == "<@U001> hello"
 
@@ -103,7 +103,7 @@ async def test_unsigned_request_to_mounted_fastapi_is_rejected():
     app_config = SlackApp(
         slug="dev", bot_token="xoxb-dev", signing_secret="test-secret"
     )
-    inner = _SlackReplyBrain(reply=None)
+    inner = SlackReplyBrain(reply=None)
     rest = _make_rest_mock(["room-1"])
     adapter = SlackAdapter(
         SlackAdapterConfig(apps=(app_config,)),
