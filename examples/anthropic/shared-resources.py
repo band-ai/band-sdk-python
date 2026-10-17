@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@3bac40a35f58272a7251c8f14197a367b380b9fb"]
+# dependencies = ["band-sdk[anthropic] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@fc85dfe6be7dfce5c2c1e9c80933bfbfe42211d3"]
 # ///
 """Two custom tools share one HTTP client, closed by the adapter's host.
 
@@ -114,12 +114,9 @@ async def serve(agent: Agent) -> None:
         try:
             await agent.stop()
         except Exception:
-            original.add_note(
-                "Cleanup remains incomplete; retain this Agent and retry stop()"
-            )
-            logger.exception(
-                "Cleanup remains incomplete; retain this Agent and retry stop()"
-            )
+            message = "Cleanup remains incomplete; retain this Agent and retry stop()"
+            original.add_note(message)
+            logger.exception("%s", message)
         raise
 
 
