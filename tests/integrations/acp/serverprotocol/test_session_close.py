@@ -23,7 +23,7 @@ class TestSessionClose:
     ) -> None:
         adapter = BandACPServerAdapter(rest_client=mock_rest_client)
 
-        async with protocol_pair(adapter) as (conn, _client):
+        async with protocol_pair(adapter) as (conn, _client, _server):
             initialized = await conn.initialize(protocol_version=1)
             close = initialized.agent_capabilities.session_capabilities.close
             assert close is not None
@@ -49,7 +49,7 @@ class TestSessionClose:
     ) -> None:
         adapter = BandACPServerAdapter(rest_client=mock_rest_client)
 
-        async with protocol_pair(adapter) as (conn, _client):
+        async with protocol_pair(adapter) as (conn, _client, _server):
             initialized = await conn.initialize(protocol_version=1)
             assert initialized.agent_capabilities.session_capabilities.close is not None
             session = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])

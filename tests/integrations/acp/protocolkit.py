@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,7 +43,7 @@ class RecordingClient:
 @asynccontextmanager
 async def protocol_pair(
     adapter: BandACPServerAdapter,
-) -> AsyncIterator[tuple[Any, RecordingClient]]:
+) -> AsyncIterator[tuple[Any, RecordingClient, AgentSideConnection]]:
     client_sock, agent_sock = socket.socketpair()
     reader_c, writer_c = await asyncio.open_connection(sock=client_sock)
     reader_a, writer_a = await asyncio.open_connection(sock=agent_sock)
@@ -53,12 +53,12 @@ async def protocol_pair(
     )
     connection = connect_to_agent(client, writer_c, reader_c)
     try:
-        yield connection, client
+        yield connection, client, server_connection
     finally:
-        for closable in (connection, server_connection):
-            with suppress(Exception):
+        try:
+            for closable in (connection, server_connection):
                 await closable.close()
-        for writer in (writer_c, writer_a):
-            writer.close()
-            with suppress(Exception):
+        finally:
+            for writer in (writer_c, writer_a):
+                writer.close()
                 await writer.wait_closed()
