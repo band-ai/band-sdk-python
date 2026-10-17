@@ -184,7 +184,7 @@ class OneShotInvoker:
         self._agent_description: str = ""
         self._feature_flags: dict[str, bool] | None = None
         self._started = False
-        # Set from the adapter's start until its cleanup_all succeeds.
+        # Accepted disposal stays pending until framework and resource cleanup succeed.
         self._adapter_cleanup_pending = False
         self._startup: asyncio.Task[None] | None = None
         self._shutdown: asyncio.Task[None] | None = None
