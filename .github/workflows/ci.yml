@@ -354,6 +354,7 @@ jobs:
         uv venv /tmp/band-pap-install
         uv pip install dist/*.whl dist-band-pap/*.whl --python /tmp/band-pap-install/bin/python
         /tmp/band-pap-install/bin/python .github/scripts/pap-wheel-smoke.py
+        /tmp/band-pap-install/bin/python -m examples.pap.demo
 
     - name: Start the Desktop room view from a fresh resolve
       # The lockfile says nothing about what a user's `uv tool install` picks:

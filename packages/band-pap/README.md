@@ -23,9 +23,12 @@ verification from live release checks. No live interoperability certification is
 claimed.
 
 From the repository, install with `uv sync --all-packages --extra dev` and run
-`uv run --all-packages pytest tests/pap -q`. The deployment composition guide is
-`examples/pap/README.md`; operational requirements and explicit recovery rules are
-in `docs/pap/deployment.md`.
+`uv run --all-packages pytest tests/pap -q`. A self-contained offline example runs from the checkout with
+`uv run --no-project --with . --with ./packages/band-pap python -m examples.pap.demo`.
+It needs no credentials or model and exercises two peers in one simulated room.
+The deployment composition guide is `examples/pap/README.md`, the worked
+host-factory tutorial is `examples/pap/tutorial.md`, and operational requirements
+and explicit recovery rules are in `docs/pap/deployment.md`.
 
 Persist the database and a separately managed credential encryption key. The
 short synchronous SQLite transactions never span network awaits. Protect the WAL

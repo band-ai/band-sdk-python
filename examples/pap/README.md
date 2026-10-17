@@ -1,19 +1,38 @@
 # Run the PAP integration
 
-This directory provides an ASGI launcher and host composition guidance. It does
-not yet include a self-contained runnable demo or the host factory shown below.
-Offline multi-peer scenarios are exercised in `tests/pap/test_roundtrip.py`.
+Run the included multi-peer example from the repository root:
+
+```sh
+uv run --no-project --with . --with ./packages/band-pap python -m examples.pap.demo
+```
+
+This installs the local SDK and PAP packages with their runtime dependencies;
+it does not require the framework development extras, API keys or an LLM. The
+first run may download dependencies. The scenario itself uses only in-process
+transports. It creates fresh temporary databases and keys and removes them on exit.
+
+The JSON result shows two separately addressed company peers sharing one room,
+each full request/reply path, and checks that forged identities, unregistered
+sessions and cross-peer access are denied. It omits credentials and private record
+contents. The company replies are deterministic example behavior.
+
+Read the [worked host-factory tutorial](tutorial.md) for the call path, the
+included `build()` factory and the production interfaces it demonstrates.
+This proves the composition can run locally; it does not verify a live Band
+server or any public company's PAP endpoint.
+
+## Compose a deployment
 
 The implementation lives in the separate `band-pap` distribution. It uses the
 published Band adapter/REST interfaces. The host supplies authenticated identities,
 room grants, account consent and business effect handlers; the package does not
 invent those authorities or choose a coordinating agent.
 
-During development, install this workspace, then run:
+For a host application with real deployment configuration, install this workspace, then run:
 
 ```sh
 uv sync --all-packages --extra dev
-PAP_APP_FACTORY=myapp.pap:build uv run --all-packages python examples/pap/serve.py
+PAP_APP_FACTORY=myapp.pap:build uv run --all-packages python -m examples.pap.serve
 ```
 
 `myapp.pap:build` is your application's factory, not a bundled permissive service.

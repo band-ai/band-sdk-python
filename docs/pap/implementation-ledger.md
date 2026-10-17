@@ -1,6 +1,6 @@
 # PAP integration implementation ledger
 
-Updated: 2026-10-17. Status: P01–P06 implemented with two independent Sol reviews per item. P07 is partial: offline scenarios and deployment guidance exist, but a self-contained runnable example and live acceptance remain outstanding. The private-core coverage credential is also a release gate; no live interoperability or release-readiness claim. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
+Updated: 2026-10-17. Status: P01–P06 implemented with two independent Sol reviews per item. P07 is partial: the runnable multi-peer example, host-factory tutorial and offline acceptance tests are implemented; live acceptance remains outstanding. The private-core coverage credential is also a release gate; no live interoperability or release-readiness claim. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
 
 Worktree: `sdk-worktrees/pap-integration`. Branch: `feat/pap-protocol-integration`. Base: `c73cd9cd` from upstream main. Package: `packages/band-pap` (`bandpap`). Maintained architecture: [design](design.md) and [implementation contract](contract.md). This tracked ledger is authoritative; the earlier local planning copy is not the implementation record.
 
@@ -28,7 +28,7 @@ The target includes both client adapter and server gateway. All conversations oc
 | P04 | Outbound company participant adapter; addressed routing; messages and protocol state; concurrent connections; lifecycle and recovery. | Multiple company participants in one Band room; live/replay filtering; independent progress; loss/duplicate/restart cases. | complete — implementation | approved | approved |
 | P05 | Inbound PAP gateway; service discovery; authorized participant bindings; conversation/event endpoints; human participation, handoff, closing. | Both directions in the same room; client ownership checks; event ordering/reconnect; no implicit room access; roster projection tests. | complete — implementation | approved | approved |
 | P06 | Operations and advertised API/browser channels; trusted approval/execution interfaces, cancellation, uncertainty and deduplication. | Revision-bound confirmation; cross-channel deduplication; scope enforcement; unknown effects remain unresolved; application policy stays outside protocol. | complete — implementation | approved | approved |
-| P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | active — standalone example and live acceptance outstanding | approved for offline scope | approved for offline scope |
+| P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | active — offline demo complete; live acceptance outstanding | approved for offline scope | approved for offline scope |
 
 ## P02 implementation breakdown
 
@@ -195,12 +195,11 @@ JWT library already rejects it; it is not counted as a discovered defect.
 | CI on previous `453136b3` | Main CI lint, packaging and Python/OS matrix | Passed; this is earlier-commit evidence, not a pass for the final implementation |
 | Python Core Coverage on `453136b3` | [Failed private-core checkout](https://github.com/band-ai/band-sdk-python/actions/runs/39004037826/job/117312720592) | Failed **before tests**: `Input required and not supplied: token`. Workflow expects `CORE_SDK_READ_KEY`; this run received none. Not a PAP test assertion or coverage-floor failure. |
 
-## Remaining implementation and release gates
+## Remaining release gates
 
-- Add a self-contained runnable multi-peer example and a worked host-factory
-  tutorial. `examples/pap/serve.py` is a launcher; `myapp.pap:build` is a host-supplied
-  placeholder, not included application code. Offline test scenarios are not a
-  substitute for this onboarding deliverable. P07 remains active.
+The runnable example and worked tutorial are now implemented; see the P07
+increment below. P07 remains active for live acceptance.
+
 - Run each updated head through the complete development CI matrix and the
   instrumented private-core coverage workflow. Its checkout requires an authorized
   credential/context; this integration does not change secret access or bypass
@@ -220,7 +219,7 @@ supersede the earlier unverified CI status. No live privacy, external-counterpar
 or exactly-once remote Band delivery claim is made.
 
 
-## 2026-10-17 completion audit and CI correction
+## 2026-10-17 completion audit and CI correction at `1bd6771e` (historical snapshot)
 
 The previous P07 completion label overstated the example/onboarding scope. Both
 Sol reviewers (`pap_review_a`, `pap_review_b`) confirmed their P07 approval covered
@@ -243,3 +242,72 @@ The prior installed-wheel evidence applies to `b24d33e7`; remote validation of t
 correction is pending. Architecture, protocol contract, deployment/recovery guidance
 and package documentation exist. A copy-and-run host composition tutorial and live
 Band/PAP interoperability evidence are still missing.
+
+## P07 runnable example and onboarding increment
+
+Status: offline implementation, verification and both independent Sol reviews complete. Scope: a self-contained offline multi-peer example, a worked
+host-factory tutorial, example acceptance tests and two independent Sol reviews.
+Band remains the collaboration layer; deterministic company behavior belongs to
+the example host. No existing SDK runtime files were changed.
+
+| Item | Acceptance | State |
+|---|---|---|
+| P07a | Run without credentials, inference or test-helper imports; real PAP authentication, gateways, adapters and durable stores connect two distinct company peers in one simulated Band room | complete |
+| P07b | Both full request/reply paths, explicit recipients, private records and trusted reply correlation are observable and tested | complete |
+| P07c | Working ASGI factory with cleanup; minimal dependency command; tutorial maps example composition to required production host interfaces | complete |
+| P07d | Two independent Sol reviews of code/tests/docs; record findings, fixes and reruns | complete — A and B approved |
+
+Live PAP/Band acceptance and private-core coverage remain separate release gates.
+
+
+The example lives in `examples/pap/demo.py`, `host.py` and `simulation.py`, with
+its worked factory tutorial in `examples/pap/tutorial.md`. One personal client
+and owner uses two per-company sessions/proxies in one simulated room. Downstream
+company identities are pairwise. Real gateways, both adapters, JWT/DPoP verification,
+SQLite, private-record access and reply correlation run; discovery/token issuance
+are deliberately seeded, and transport is in process. No actual company endpoint,
+model or live Band service is contacted.
+
+### P07 increment failure and review ledger
+
+| ID | Failure / reviewer | Test and disposition |
+|---|---|---|
+| F07-02 | A: an accepted gateway handoff retained authority after its source session was revoked. Initial route checks validated recipients but not the live session. | `test_revoked_source_cannot_flush_an_accepted_handoff`: every route now rechecks its owning live session before send. Passing. |
+| F07-03 | A/B: checking only the downstream company session still allowed reading a prior reply after its central source session was revoked. Root's regression failed before the second authority check was added. | `test_revoked_session_cannot_read_previously_delivered_record`, source and company variants: require both source and remote authority for outbound/private-record access. Both passing. |
+| F07-04 | B: successful demo output hid two uncertain outbox records because the reply handler parsed state events as messages. | `test_success_leaves_no_unsettled_room_deliveries`: handle authenticated state events explicitly; the demo refuses success with pending/uncertain work. Passing with zero ready and zero uncertain deliveries. |
+| F07-05 | A: `asyncio.gather` allowed a sibling to continue after a peer failed, racing database/client cleanup. | `test_failed_peer_is_joined_before_resources_close`, request and exchange variants: TaskGroups cancel and join siblings before teardown. Both passing. Startup and repeated-lifespan failure tests also verify resource removal. |
+| E07-01 | First root example-test run failed on `host.room.id`, an interface mismatch while source/tests were being composed. | Use the explicit demo room constant for record authorization; corrected. No protocol/runtime defect claimed. |
+| E07-02 | Review found the tutorial overstated calls through the outer factory; the driver uses its composed gateways directly. | Corrected the explanation and added `test_factory_serves_demo_and_keeps_protocol_routes_authenticated` for `/demo/run`, repeated calls and unauthenticated PAP rejection. Passing. |
+
+### Current verification
+
+| Check | Evidence |
+|---|---|
+| PAP suite | **448 passed**, no skips/xfails, including **14 example acceptance cases** in `test_demo.py`. |
+| Example scenarios | Both company reply chains, one personal owner with separate company sessions/threads, explicit recipients, denied cross-peer records, no private-note output, no socket connections, CLI subprocess from copied example files. |
+| Lifecycle | Fresh state on repeated factory lifespans; startup and runtime failure cleanup; failed sibling joined before resources close; zero unfinished outbox deliveries. |
+| Minimal setup | Documented `uv run --no-project --with . --with ./packages/band-pap python -m examples.pap.demo` succeeds using runtime dependencies. |
+| Installed wheels | Rebuilt PAP wheel plus SDK wheel in isolated consumer; copied only example files outside checkout. Demo passes without pytest or agent-framework extras; both replies and cleanup verified. CI packaging now runs the same demo. |
+| Static checks | Repository Ruff and formatting pass (1,700 Python files). CI-pinned Pyrefly 0.61.1 checks package and all three new example modules with zero errors. |
+| Prior-head CI `1bd6771e` | Lint correction passed remotely; packaging and other test lanes passed. [Windows Python 3.11](https://github.com/band-ai/band-sdk-python/actions/runs/39048330771/job/117441491434) failed two existing ACP process-closure cases on 2-second cleanup budgets (8,809 passed, 811 skipped). This is not a PAP assertion failure; those SDK files were not changed. New-head CI remains pending. |
+| Core coverage | [Prior-head job](https://github.com/band-ai/band-sdk-python/actions/runs/39048330791/job/117441491536) remains failed; private-core checkout credential is still an outstanding workflow prerequisite. No coverage percentage or pass claimed. |
+
+Both independent Sol reviewers examined the example, test suite, tutorial and
+installed-wheel CI change. Their initial findings were reproduced and fixed;
+both approved after re-review of the final source/tests/tutorial and CI change. Operations authored
+the example and does not count as its own independent reviewer. Root authored the
+acceptance tests and documentation. Existing Band SDK runtime internals are unchanged.
+
+Review snapshot SHA-256: `74b31ed152ba55ec9d41992e81887464c4244b4a67082731a164682211736748`. This increment includes sorted
+`packages/band-pap/src/**/*.py`, `tests/pap/**/*.py` and `examples/pap/*.py`,
+each relative path and content NUL-delimited. Documentation edits do not change it.
+
+
+| Independent reviewer | Final verdict and independently repeated evidence |
+|---|---|
+| A (`pap_review_a`, `gpt-6.1-sol`) | Approved offline increment. Repeated 14 demo tests and the 448-case suite; pinned example type check, Ruff/format and installed-wheel demo pass. Reviewed both authority checks, state projection and failure cleanup. |
+| B (`pap_review_b`, `gpt-6.1-sol`) | Approved offline increment. Repeated all 448 tests including 14 demo cases, minimal runtime-dependency command, Ruff/format; matched the expanded snapshot fingerprint. Reviewed same-owner session isolation, output redaction, tutorial and ledger. |
+
+Local workflow syntax (`actionlint`) and documentation relative-link checks also
+pass. These reviews close the standalone example/tutorial work, not the remaining
+live acceptance, platform visibility or private-core coverage gates.

@@ -129,7 +129,10 @@ stable idempotency key across execute/recover/cancel.
 
 ## Deployment and evidence
 
-See [the launcher and composition guide](../../examples/pap/README.md). Configure
+Start with the [runnable offline multi-peer example](../../examples/pap/README.md)
+and its [worked host-factory tutorial](../../examples/pap/tutorial.md). The example
+uses real protocol components with simulated transports; the same guide also
+covers composing a deployment with real host interfaces. Configure
 HTTPS ingress with the same public origin used for DPoP. Keep secrets, approval
 evidence and private request bodies out of access logs and metrics. Observe
 `ConversationWorker.status`, `RoomOutbox.health`, operation states and gateway
