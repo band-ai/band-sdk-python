@@ -6,7 +6,14 @@ import re
 from typing import Annotated, Self
 from urllib.parse import urlsplit
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    model_validator,
+)
 
 
 def validate_https_url(value: str) -> str:
@@ -31,7 +38,7 @@ def validate_https_url(value: str) -> str:
         or not parts.hostname
         or parts.username is not None
         or parts.password is not None
-        or parts.fragment
+        or "#" in value
         or port == 0
     ):
         raise ValueError(
@@ -50,7 +57,7 @@ def validate_domain(value: str) -> str:
 
 
 def validate_issuer(value: str) -> str:
-    if urlsplit(value).query:
+    if "?" in value:
         raise ValueError("OAuth issuer cannot have a query")
     return value
 
@@ -71,8 +78,27 @@ class Organization(DiscoveryModel):
     domain: Domain
 
 
+class SignIn(DiscoveryModel):
+    scopes: tuple[str, ...]
+
+
+class CredentialField(DiscoveryModel):
+    name: str = Field(min_length=1)
+    label: str
+    secret: bool = Field(strict=True)
+
+
+class MediatedSignIn(SignIn):
+    endpoint: HttpsUrl
+    fields: tuple[CredentialField, ...] = Field(min_length=1)
+
+
 class AuthDiscovery(DiscoveryModel):
     issuer: Issuer
+    direct: SignIn | None = None
+    device: SignIn | None = None
+    mediated: MediatedSignIn | None = None
+    custom_scopes: dict[str, str] = Field(default_factory=dict)
 
 
 class ConversationEndpoint(DiscoveryModel):
@@ -103,6 +129,7 @@ class DiscoveryDocument(DiscoveryModel):
     agent: AgentDiscovery | None = None
     apis: tuple[ApiDiscovery, ...] = ()
     web: WebDiscovery | None = None
+    extensions: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_interfaces(self) -> Self:
@@ -125,6 +152,8 @@ class OAuthMetadata(DiscoveryModel):
     issuer: Issuer
     token_endpoint: HttpsUrl
     revocation_endpoint: HttpsUrl
+    authorization_endpoint: HttpsUrl | None = None
+    device_authorization_endpoint: HttpsUrl | None = None
     poppy_domains: tuple[Domain, ...] = Field(min_length=1)
     dpop_signing_alg_values_supported: tuple[str, ...] = Field(min_length=1)
 
@@ -161,3 +190,49 @@ def verify_discovery_binding(
         raise ValueError("OAuth issuer must exactly match discovery")
     if domain.lower() not in {item.lower() for item in metadata.poppy_domains}:
         raise ValueError("OAuth issuer does not vouch for the discovery domain")
+
+    if document.auth.direct is not None and metadata.authorization_endpoint is None:
+        raise ValueError("Direct sign-in requires an authorization endpoint")
+    if (
+        document.auth.device is not None
+        and metadata.device_authorization_endpoint is None
+    ):
+        raise ValueError("Device sign-in requires a device authorization endpoint")
+
+
+class OperationsDiscovery(DiscoveryModel):
+    version: str = Field(pattern=r"^1$")
+    endpoint: HttpsUrl
+    resource: HttpsUrl | None = None
+
+
+class Capabilities(DiscoveryModel):
+    conversations: tuple[ConversationEndpoint, ...] = ()
+    apis: tuple[ApiDiscovery, ...] = ()
+    operations: OperationsDiscovery | None = None
+    browser: WebDiscovery | None = None
+
+
+def select_capabilities(
+    document: DiscoveryDocument,
+    *,
+    protocols: frozenset[str],
+    api_types: frozenset[str],
+    operations_version: str | None = None,
+    browser_supported: bool = False,
+) -> Capabilities:
+    """Intersect peer advertisements with caller-declared implemented support."""
+    operations = document.extensions.get("operations")
+    selected_operations = None
+    if operations_version == "1" and operations and operations.get("version") == "1":
+        selected_operations = OperationsDiscovery.model_validate(operations)
+    return Capabilities(
+        conversations=tuple(
+            entry
+            for entry in (document.agent.protocols if document.agent else ())
+            if entry.type in protocols
+        ),
+        apis=tuple(entry for entry in document.apis if entry.type in api_types),
+        operations=selected_operations,
+        browser=document.web if browser_supported else None,
+    )

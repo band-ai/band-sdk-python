@@ -1,6 +1,6 @@
 # PAP integration implementation ledger
 
-Date: 2026-10-16. Status: foundation and initial discovery validation implemented; no completed PAP integration is claimed. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
+Date: 2026-10-16. Status: P01 and P02 complete with both adversarial reviews resolved; no completed PAP integration is claimed. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
 
 Worktree: `sdk-worktrees/pap-integration`. Branch: `feat/pap-protocol-integration`. Base: `c73cd9cd` from upstream main. Package: `packages/band-pap` (`bandpap`). Maintained architecture: [design](design.md) and [implementation contract](contract.md). This tracked ledger is authoritative; the earlier local planning copy is not the implementation record.
 
@@ -23,12 +23,24 @@ The target includes both client adapter and server gateway. All conversations oc
 | ID | Item and full scope | Acceptance evidence | State | Review A | Review B |
 |---|---|---|---|---|---|
 | P01 | Isolated worktree/branch/draft PR; integration contract; package and public extension boundaries; protocol revision and test plan. | Clean base without unrelated reproduction tests; runtime-neutral architecture; version provenance; reviewable ledger and contract. | complete | approved | approved |
-| P02 | Protocol models, discovery/capability rules, errors, durable scoped connections/conversations/delivery/cursor/operation storage. | Wire fixtures and invalid-input cases; collision/ownership isolation; restart and transaction failure tests. | active — discovery increment only | increment approved; remainder pending | increment approved; remainder pending |
+| P02 | Protocol models, discovery/capability rules, errors, durable scoped connections/conversations/delivery/cursor/operation storage. | Wire fixtures and invalid-input cases; collision/ownership isolation; restart and transaction failure tests. | complete — protocol/state primitives | approved | approved |
 | P03 | Identity, signing, account linking, session renewal/revocation, DPoP/Bearer handling, credential isolation. | Wrong issuer/user/client/resource rejection; proof replay/nonce tests; expiry and revocation; secrets excluded from agent views. | pending | pending | pending |
 | P04 | Outbound company participant adapter; addressed routing; messages and protocol state; concurrent connections; lifecycle and recovery. | Multiple company participants in one Band room; live/replay filtering; independent progress; loss/duplicate/restart cases. | pending | pending | pending |
 | P05 | Inbound PAP gateway; service discovery; authorized participant bindings; conversation/event endpoints; human participation, handoff, closing. | Both directions in the same room; client ownership checks; event ordering/reconnect; no implicit room access; roster projection tests. | pending | pending | pending |
 | P06 | Operations and advertised API/browser channels; trusted approval/execution interfaces, cancellation, uncertainty and deduplication. | Revision-bound confirmation; cross-channel deduplication; scope enforcement; unknown effects remain unresolved; application policy stays outside protocol. | pending | pending | pending |
 | P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | pending | pending | pending |
+
+## P02 implementation breakdown
+
+| Subitem | Scope | State |
+|---|---|---|
+| P02a | Conversation/event/error and Operations wire models; preserve structured data and skip unknown events | complete |
+| P02b | Complete discovery fields, explicit capability selection, bounded HTTPS fetching with connected-address validation | complete |
+| P02c | Durable connection/conversation/message/event/cursor storage; distinct conversation/operation ownership | complete |
+| P02d | Atomic delivery leases, uncertain-result recovery, restart/isolation/transaction-failure tests | complete |
+| P02e | Two Sol adversarial reviews of the combined implementation; resolve findings and record evidence | complete — both approved |
+
+These are implementation dependencies, not reduced product scope. Authentication enforcement and token/JWT handling remain P03; actual Band forwarding P04/P05; operation execution/approval and channel clients P06. Storage inputs are trusted integration inputs and do not themselves authenticate a caller.
 
 ## Evidence and review log
 
@@ -48,13 +60,50 @@ The target includes both client adapter and server gateway. All conversations oc
 | E005 | P01/P02 | After review fixes: **137 PAP tests passed** (8 binding, 15 schema, 99 control-character, 15 import-boundary cases). Focused Ruff/format and PAP Pyrefly checks passed. Rebuilt and reinstalled the PAP wheel in the isolated consumer environment; smoke passed. Both reviewers independently ran all 137 tests; B also ran the isolated wheel smoke. | Current focused evidence. Broad failures in E004 remain unresolved/unverified; no full-suite or live-interoperability pass claimed. |
 | E006 | P01/P02 | Initial PR CI at `242ebf40`: lint and packaging passed. [Core coverage job](https://github.com/band-ai/band-sdk-python/actions/runs/38975805849/job/117224846160) failed before tests during the separate core-repository checkout: `Input required and not supplied: token`. Other jobs were still running when inspected. | CI is not fully green. Checkout credentials are an external workflow prerequisite; no secrets or workflow permissions were changed. |
 
-Reviewed implementation snapshot: foundation commit `242ebf40`, followed by the URL-controls and import-guard corrections. SHA-256 of sorted `packages/band-pap/src/**/*.py` and `tests/pap/**/*.py` paths/content (each path and content NUL-delimited): `fbdb3e7c1def04f1bd9651201b423e920c5958213439f47a67d81e427edecc4d`. Reviewer A (`pap_review_a`) and reviewer B (`pap_review_b`), both `gpt-6.1-sol`, approved the reviewed discovery increment after fixes on 2026-10-16. P01 architecture/package review is approved by both; P02 approval covers only this increment. Ledger-only status updates do not change this snapshot.
+Initial discovery review snapshot: foundation commit `242ebf40`, followed by the URL-controls and import-guard corrections. SHA-256 of sorted `packages/band-pap/src/**/*.py` and `tests/pap/**/*.py` paths/content (each path and content NUL-delimited): `fbdb3e7c1def04f1bd9651201b423e920c5958213439f47a67d81e427edecc4d`. Reviewer A (`pap_review_a`) and reviewer B (`pap_review_b`), both `gpt-6.1-sol`, approved the reviewed discovery increment after fixes on 2026-10-16. P01 architecture/package review is approved by both; P02 approval covers only this increment. Ledger-only status updates do not change this snapshot.
+
+## P02 adversarial review and failure ledger
+
+Both reviewers read the pinned protocol before reviewing the implementation. They reviewed the combined P02a–P02d code and tests; P02e records their final verdicts. Findings below were reproduced against the work-in-progress implementation, not against the earlier discovery-only commit.
+
+| ID | Reviewer / severity | What failed | Regression and disposition |
+|---|---|---|---|
+| A04/B08 | A and B / medium | An in-progress operation snapshot omitting optional proposal expiry was rejected as changed terms. The first full P02 test run failed this case. | `test_confirmed_snapshot_may_omit_proposal_expiry_and_uncertainty_stays_in_progress`: retain recorded expiry for comparison when the later non-proposal snapshot omits it; fixed and passing. |
+| A05 | A / high | A 429/503 response could mark an outbound message delivered and remove retry work. Reviewer probe reproduced it. | `test_retryable_response_keeps_work_and_retry_time_across_restart`: accepted settlement requires valid 201/202 acknowledgment; `RetryFailure` preserves refusal and retry time on disk; uncertain acceptance retains the same message ID. Fixed and passing for 429 and 503. |
+| A06/B07 | A and B / medium | A succeeded action with no confirmation, or expired action with confirmation, was accepted as a valid wire snapshot. | `test_executed_outcome_requires_confirmation` and `test_expired_proposal_cannot_have_confirmation`: contradictory states rejected. Fixed and passing. |
+| A07 | A / medium | Known context fields accepted malformed language tags, nonexistent timezones and explicit null availability. | `test_invalid_known_context_does_not_cross_wire` and `test_valid_context_retains_original_values`: validate with langcodes and zoneinfo/tzdata, preserve original valid tags and unknown JSON context. Fixed and passing. |
+| B06 | B / medium | Waiting for TLS socket shutdown could outlast the total discovery deadline. Reviewer reproduced the delay through httpcore. | `test_stalled_tls_shutdown_is_aborted_without_waiting`: abort transport without a peer handshake; also abort failed/cancelled TLS upgrades. Fixed and passing. |
+| E007 | Test run / error normalization | A NUL redirect header was rejected by h11 before application validation, producing `RemoteProtocolError` instead of the documented discovery failure. The first full P02 test run failed this case. | Normalize HTTP protocol failures to `DiscoveryFailure`; the forbidden location is never dialed. Fixed and passing. |
+| A08 | A / medium | The first final-state guard froze the entire operation snapshot, rejecting a legal later URL addition or optional expiry omission. | `test_final_snapshot_can_refresh_optional_metadata_not_state_or_terms`: freeze terminal state, revision terms and confirmation, while accepting optional metadata refresh. Fixed; both reviewers approved the final correction. |
 
 ## Current implementation coverage
 
-Only the package scaffold and discovery validation are implemented. The parser preserves exact issuer spelling and verifies final discovery host, exact issuer equality, and issuer-authorized company domains. It validates required interfaces and basic HTTPS metadata shape. It does not fetch endpoints, validate network destinations, authenticate, or authorize an action. Partial discovery models are not a complete protocol implementation.
+P02 implements conversation requests/responses, typed known events and skippable unknown events, structured errors, context and Operations wire models. Arbitrary `data`, context extensions and operation terms survive JSON and durable roundtrips. It includes conditional sign-in discovery metadata and explicit capability intersection; advertisement alone never selects an unsupported feature.
 
-P02 still requires the remaining wire/extension models, network discovery behavior, structured errors, and durable scoped state with fault tests. P03–P07 are pending. No gateway or adapter class is advertised as usable.
+Discovery fetching follows bounded HTTPS redirects, verifies each connected public numeric address and the original TLS hostname, rejects oversized/compressed/non-JSON responses, and verifies final host, exact issuer and issuer-authorized domains. RFC 8414 issuer-path placement is covered. It deliberately has no ambient proxy, cookies or authorization headers. HTTP caching remains unimplemented; this draft does not claim the protocol's SHOULD-cache optimization.
+
+SQLite stores scoped connections, independent conversation bindings, user-wide message deduplication, original acknowledgments, leased delivery/retry state, events and cursors, and immutable operation revision terms. Tests reopen disk databases, use independent connections/concurrent insertion, and inject both cursor-write and commit failures. Operations are authenticated observations only; recording one never approves or executes an effect. The scope includes tenant, user, client, issuer and direction; neither room nor connection instance partitions message-ID deduplication.
+
+The store takes trusted host inputs; it does not authenticate callers or evaluate grants. Recorded connection revocation fences subsequent claims/replays/settlements, but cannot recall a request already in flight. P03 must implement authenticated authority and token handling. P04/P05 must enforce source grants, original-binding visibility, actual Band handoff and direct-conversation lifecycle. P06 must implement operation execution/approvals and channel clients. These are phase boundaries, not claims of completed integration. No adapter or gateway is usable yet.
+
+## P02 test ledger
+
+| Test file | What it establishes | Latest result |
+|---|---|---|
+| `test_capabilities.py` | Unknown protocol/extension isolation; scopes/resources retained; conditional OAuth endpoints required | 4 passed |
+| `test_delivery_store.py` | Lost first-response recovery; user-wide deduplication; independent queues; multi-handle insertion; lease fencing; retry timing; revocation; owner/account isolation; failed-commit rollback | 16 passed |
+| `test_event_store.py` | Ordered opaque cursors; replay dedupe; unknown events; expiry gaps; cursor/event atomicity; concurrent cursor fencing | 4 passed |
+| `test_fetch.py` | Actual HTTP parsing with deterministic network doubles: redirects, OAuth chain, RFC 8414 path, size/encoding/status limits, timeouts and host mismatch | 18 passed |
+| `test_network.py` | Nonpublic/mixed DNS rejection; numeric dial without re-resolution; original TLS hostname; failed TLS and nonblocking shutdown | 17 passed |
+| `test_operation_store.py` | Session-only versus account-bound ownership; restart; revision CAS; terms immutability; legal optional metadata updates; terminal-state protection | 5 passed |
+| `test_wire.py` | IDs, sender provenance, structured/context-only messages, event types, wait/cursor rules, Operations states and context formats | 35 passed |
+| Existing discovery/binding/control/import-boundary tests | Earlier discovery guarantees and runtime independence; import allowlist extended for declared HTTP/validation libraries | 137 passed |
+
+**Total: 236 passed.** Focused package Pyrefly reports zero diagnostics. Repository Ruff and formatting checks passed (1,647 Python files). The final rebuilt wheel installed without agent-framework extras passed module/dependency imports, domain-mismatch rejection and disk-reopen smoke. Reviewer B independently repeated the installed-wheel smoke.
+
+Broad checks were rerun: the minimal local environment still has **152 repository Pyrefly errors**, and unit collection still stops with **94 errors, 12 skips**. These include missing optional frameworks and existing type diagnostics; no full-suite pass is claimed. An additional attempt to run shared MCP source-boundary guards stopped in their conftest because the minimal environment lacks `mcp`; PAP’s dedicated import-boundary cases passed. Live HTTPS counterparty interoperability and full remote CI remain unverified. The deterministic fetch tests do not claim a live service was contacted.
+
+Final P02 reviewed source/test snapshot: SHA-256 `f8ffb465074765fa003c6ab13cad041d2550f19aae24339668fb51a88a58870e`, using sorted `packages/band-pap/src/**/*.py` and `tests/pap/**/*.py` paths and contents, each NUL-delimited. Reviewer A (`pap_review_a`) and reviewer B (`pap_review_b`), both `gpt-6.1-sol`, independently ran all 236 tests and approved this snapshot after re-review. No unresolved P02 findings remain. Approval does not cover P03–P07 or release readiness. Subsequent ledger/PR status edits do not change this fingerprint.
 
 ## Reproducing focused checks
 

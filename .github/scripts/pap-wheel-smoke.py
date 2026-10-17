@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from bandpap.discovery import DiscoveryDocument, verify_discovery_binding
+from bandpap.fetch import DiscoveryFetcher
+from bandpap.storage import Route, Scope, Session, StateStore
+from bandpap.wire import Context, Message, SendMessage
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,44 @@ def main() -> None:
         logger.info("Installed PAP wheel rejects another domain's discovery")
     else:
         raise AssertionError("Installed PAP wheel accepted a mismatched domain")
+
+    DiscoveryFetcher()
+    Context(locale="en-US", time_zone="America/Los_Angeles")
+    session = Session(
+        scope=Scope(
+            tenant="smoke",
+            user="user",
+            client="client",
+            issuer="https://shop.example",
+            direction="outbound",
+        ),
+        session_id="session",
+    )
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "pap.db"
+        store = StateStore(path)
+        store.connect(
+            session,
+            "company",
+            Route(
+                room="room",
+                proxy="proxy",
+                source="source",
+                recipient="source",
+                grant="grant",
+            ),
+        )
+        store.create_conversation(session, binding="conversation", connection="company")
+        store.enqueue(
+            session,
+            "conversation",
+            SendMessage(message=Message(id="msg_smoke", sender="agent", text="hello")),
+        )
+        store.close()
+        store = StateStore(path)
+        assert store.get_delivery(session, "msg_smoke").state == "ready"
+        store.close()
+    logger.info("Installed PAP wheel preserves queued messages across reopen")
 
 
 if __name__ == "__main__":
