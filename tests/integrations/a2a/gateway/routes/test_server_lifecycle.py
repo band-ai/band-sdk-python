@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 
 import httpx
 import pytest
@@ -89,14 +88,13 @@ class TestServerLifecycle:
         Measures wall-clock time around a bare ``server.stop()`` (wrapping it
         in ``asyncio.wait_for`` would cancel it externally and mask a real hang).
         """
-        server = build_server(
-            port=0, executor_factory=lambda _slug: NeverFinishingExecutor()
-        )
+        executor = NeverFinishingExecutor()
+        server = build_server(port=0, executor_factory=lambda _slug: executor)
         async with running(server):
             port = server.bound_port
 
             async def connect(ready: asyncio.Event) -> None:
-                with suppress(Exception):
+                try:
                     # timeout=None: httpx's default 5s read timeout would otherwise
                     # give up waiting for the next chunk and disconnect on its own
                     # around the same mark as SERVER_STOP_TIMEOUT_S -- masking a
@@ -112,8 +110,12 @@ class TestServerLifecycle:
                             json=hello_message_body(),
                         ) as response,
                     ):
+                        response.raise_for_status()
                         async for _ in response.aiter_bytes():
                             ready.set()
+                except (httpx.ReadError, httpx.RemoteProtocolError):
+                    if not ready.is_set():
+                        raise
 
             async with held_open(connect):
                 stop_elapsed = await elapsed(server.stop())
@@ -122,3 +124,4 @@ class TestServerLifecycle:
                 f"stop() took {stop_elapsed:.1f}s -- graceful shutdown is not "
                 "bounded by SERVER_STOP_TIMEOUT_S"
             )
+            assert executor.finished.is_set()

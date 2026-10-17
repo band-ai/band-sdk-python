@@ -123,6 +123,9 @@ class NeverFinishingExecutor(AgentExecutor):
     """Enqueues one event, then never returns -- holding the SSE response
     open indefinitely, the way a real long-running agent task would."""
 
+    def __init__(self) -> None:
+        self.finished = asyncio.Event()
+
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task = context.current_task
         if task is None:
@@ -131,7 +134,10 @@ class NeverFinishingExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
         if context.current_task is None:
             await event_queue.enqueue_event(task)
-        await asyncio.sleep(3600)  # never closes on its own
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.finished.set()
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise NotImplementedError
