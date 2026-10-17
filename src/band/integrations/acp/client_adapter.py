@@ -1676,7 +1676,7 @@ class ACPClientAdapter(
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:
-        """Tear down every room and the MCP server, as ``cleanup_all`` does."""
+        """Framework teardown only; registered cleanup waits for host stop/shutdown."""
         await self.cleanup_all()
 
     async def _fetch_replay(

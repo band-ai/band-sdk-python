@@ -86,7 +86,13 @@ from band.runtime.formatters import (
 # same-named one that _build_platform_message below constructs.
 from band.runtime.messages import PlatformMessage as RestPlatformMessage
 from band.runtime.participants import participant_snapshot
-from band.runtime.startup import dispose_adapter, release_adapter, start_adapter
+from band.runtime.startup import (
+    accept_adapter,
+    dispose_adapter,
+    refuse_recursive_shutdown,
+    release_adapter,
+    start_adapter,
+)
 from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
@@ -210,6 +216,9 @@ class OneShotInvoker:
         WebSocket connect and room subscriptions. Idempotent: concurrent
         callers join one owned startup.
 
+        Startup accepts registered resources, even on failure; retain this host
+        and call shutdown() to complete any pending cleanup.
+
         Raises:
             CleanupIncompleteError: A shutdown is running or has not finished
                 adapter cleanup; call ``shutdown()`` to retry it first.
@@ -229,32 +238,35 @@ class OneShotInvoker:
         await asyncio.shield(startup)
 
     async def _run_startup(self) -> None:
-        """Start the adapter unless shutdown was requested; a failed start
-        releases it here, so shutdown never overlaps that cleanup."""
-        (
-            self._agent_name,
-            self._agent_description,
-            self._feature_flags,
-        ) = await self._fetch_agent_metadata()
-        self._refuse_if_shutting_down()
-        # Parity with Agent.start(): adapters read their identity and platform
-        # coordinates from the injected connection.
-        setattr(  # noqa: B010
-            self._adapter,
-            "platform",
-            self._link.to_platform_connection(self._agent_id),
-        )
-        self._adapter_cleanup_pending = True
+        """Accept resources before metadata; retain failed cleanup on this host."""
+        self._adapter_cleanup_pending = accept_adapter(self._adapter, self)
         try:
+            (
+                self._agent_name,
+                self._agent_description,
+                self._feature_flags,
+            ) = await self._fetch_agent_metadata()
+            self._refuse_if_shutting_down()
+            setattr(  # noqa: B010 -- bare protocol adapters need not declare platform
+                self._adapter,
+                "platform",
+                self._link.to_platform_connection(self._agent_id),
+            )
+            self._adapter_cleanup_pending = True
             await start_adapter(
                 self._adapter,
                 agent_name=self._agent_name,
                 agent_description=self._agent_description,
                 feature_flags=self._feature_flags,
             )
-        except BaseException:
-            if await release_adapter(self._adapter):
-                self._adapter_cleanup_pending = False
+        except BaseException as error:
+            if self._adapter_cleanup_pending:
+                if await release_adapter(self._adapter):
+                    self._adapter_cleanup_pending = False
+                else:
+                    error.add_note(
+                        "OneShotInvoker cleanup is incomplete; retain this host and call shutdown() to retry"
+                    )
             raise
         self._refuse_if_shutting_down()
         self._started = True
@@ -277,6 +289,9 @@ class OneShotInvoker:
         one owned shutdown, and a cancelled caller leaves it running. Only a
         settled shutdown is retried.
 
+        Resources close after accepted work and framework teardown settle. After
+        disposal, start a fresh host with fresh adapter, tools and resources.
+
         The wait has no time bound, so a hung event holds it open. A host with
         a deadline wraps the call in ``asyncio.timeout``; the shutdown keeps
         running, and a later call joins it.
@@ -287,6 +302,7 @@ class OneShotInvoker:
             Exception: The adapter's ``cleanup_all`` failed. The link is still
                 disconnected, and the next ``shutdown()`` retries the cleanup.
         """
+        refuse_recursive_shutdown(self._adapter)
         self._started = False
         shutdown = self._shutdown
         if not self._running(shutdown):
