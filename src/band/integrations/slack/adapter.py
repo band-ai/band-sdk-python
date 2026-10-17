@@ -55,7 +55,12 @@ from band.integrations.slack.block_kit import (
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.platform.posting import post_event
-from band.runtime.startup import dispose_adapter
+from band.runtime.startup import (
+    accept_adapter,
+    arm_adapter,
+    dispose_adapter,
+    dispose_framework,
+)
 from band.runtime.tools import AgentTools, TurnEffect
 
 if TYPE_CHECKING:
@@ -463,8 +468,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         self._web_clients: dict[str, AsyncWebClient] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._accepting_events = True
-        self._inner_started = False
-        self._inner_disposed = False
 
         # Band-side state.
         self._rest: AsyncRestClient | None = rest_client
@@ -562,6 +565,16 @@ class SlackAdapter(SimpleAdapter[Any]):
         return self._inner
 
     @property
+    def _owns_cleanup(self) -> bool:
+        return super()._owns_cleanup or self._inner._owns_cleanup
+
+    def _accept_cleanup(self, owner: object) -> None:
+        accept_adapter(self._inner, owner)
+
+    async def _finalize_cleanup(self) -> None:
+        await dispose_adapter(self._inner)
+
+    @property
     def judges_turns(self) -> bool:
         """The brain answers each turn, so whether it is judged is the brain's."""
         return self._inner.judges_turns
@@ -622,8 +635,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             setattr(self._inner, "platform", self.platform)  # noqa: B010
 
         self._accepting_events = True
-        self._inner_started = True
-        self._inner_disposed = False
+        arm_adapter(self._inner)
         await self._inner.on_started(agent_name, agent_description)
 
         if self.config.transport == "socket":
@@ -678,13 +690,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         for task in self._background_tasks:
             task.cancel()
         await self.wait_idle()
-        if self._inner_started and not self._inner_disposed:
+        if self._inner._disposal.builtin_started:
             try:
-                await dispose_adapter(self._inner)
+                await dispose_framework(self._inner)
             except Exception as exc:  # noqa: BLE001 -- preserve listener and inner failures
                 errors.append(exc)
-            else:
-                self._inner_disposed = True
         if errors:
             raise ExceptionGroup("Slack cleanup failed; retry host shutdown", errors)
 

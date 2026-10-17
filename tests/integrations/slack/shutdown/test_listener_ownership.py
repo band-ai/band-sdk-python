@@ -19,7 +19,7 @@ class TestListenerOwnership:
         adapter, _, clients, _, _ = _build_adapter_with_socket(
             inner=brain, apps=[_socket_app("first"), _socket_app("second")]
         )
-        adapter._inner_started = True
+        brain._disposal.builtin_started = True
         clients["second"].disconnect = AsyncMock(
             side_effect=[OSError("Try again"), None]
         )

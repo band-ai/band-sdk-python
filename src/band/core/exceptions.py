@@ -10,7 +10,7 @@ class BandError(Exception):
 
 
 class BandConfigError(BandError):
-    """Configuration or setup problems. Actionable by developer.
+    """Configuration, setup or lifecycle misuse. Actionable by developer.
 
     Use ``with_suggestion`` to attach a "did you mean?" hint when the
     user likely typoed a known parameter or capability name.

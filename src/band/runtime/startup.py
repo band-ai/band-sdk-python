@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from band.core.protocols import FrameworkAdapter
@@ -9,6 +10,30 @@ from band.core.simple_adapter import SimpleAdapter
 from band.runtime.capabilities import prune_unsupported
 
 logger = logging.getLogger(__name__)
+
+
+def accept_adapter(adapter: FrameworkAdapter | SimpleAdapter, owner: object) -> bool:
+    """Seal registrations and synchronously accept explicit resource ownership."""
+    if not isinstance(adapter, SimpleAdapter):
+        return False
+    exclusive = adapter._owns_cleanup
+    adapter._disposal.check_owner(owner, exclusive=exclusive)
+    # Composition validates and claims before this infallible local commit.
+    adapter._accept_cleanup(owner)
+    adapter._disposal.accept(owner)
+    return exclusive
+
+
+def arm_adapter(adapter: FrameworkAdapter | SimpleAdapter) -> None:
+    """Make framework teardown eligible immediately before startup is attempted."""
+    if isinstance(adapter, SimpleAdapter):
+        adapter._disposal.builtin_started = True
+        adapter._disposal.builtin_done = False
+
+
+def refuse_recursive_shutdown(adapter: FrameworkAdapter | SimpleAdapter) -> None:
+    if isinstance(adapter, SimpleAdapter):
+        adapter._disposal.refuse_recursive_shutdown()
 
 
 async def start_adapter(
@@ -25,6 +50,7 @@ async def start_adapter(
     caller owns cleanup from the moment this is called, a failed start
     included, so it can keep that cleanup pending when release fails.
     """
+    arm_adapter(adapter)
     if isinstance(adapter, SimpleAdapter):
         await adapter.startup(
             agent_name,
@@ -35,25 +61,59 @@ async def start_adapter(
         await adapter.on_started(agent_name, agent_description)
 
 
-async def dispose_adapter(adapter: FrameworkAdapter | SimpleAdapter) -> None:
-    """Run the adapter's ``cleanup_all``; a failure raises to the caller."""
-    cleanup_all = getattr(adapter, "cleanup_all", None)
-    if cleanup_all is not None:
-        await cleanup_all()
+async def dispose_framework(adapter: FrameworkAdapter | SimpleAdapter) -> None:
+    """Finish eligible built-ins once; direct hooks never consume registrations."""
+    if isinstance(adapter, SimpleAdapter):
+        state = adapter._disposal
+        if state.builtin_done:
+            return
+        if state.builtin_started or not state.sealed:
+            await adapter.cleanup_all()
+        state.builtin_done = True
+    else:
+        cleanup_all = getattr(adapter, "cleanup_all", None)
+        if cleanup_all is not None:
+            await cleanup_all()
 
 
-async def release_adapter(adapter: FrameworkAdapter | SimpleAdapter) -> bool:
+async def dispose_adapter(
+    adapter: FrameworkAdapter | SimpleAdapter, *, work_settled: bool = True
+) -> bool:
+    """Attempt framework teardown, then resources once host work has settled."""
+    if not isinstance(adapter, SimpleAdapter):
+        await dispose_framework(adapter)
+        return True
+    state = adapter._disposal
+    state.refuse_recursive_shutdown()
+    state.disposing = True
+    state.task = asyncio.current_task()
+    try:
+        await dispose_framework(adapter)
+        if not work_settled:
+            logger.debug("Adapter resource cleanup waits for host work to settle")
+            return False
+        if not state.finished:
+            await adapter._finalize_cleanup()
+            await state.run_callbacks()
+            state.finished = True
+        return True
+    finally:
+        state.task = None
+
+
+async def release_adapter(
+    adapter: FrameworkAdapter | SimpleAdapter, *, work_settled: bool = True
+) -> bool:
     """Best-effort ``dispose_adapter`` for error unwind: a failure is logged,
     never raised, so it cannot replace the error that made the caller release.
 
     Returns whether cleanup succeeded, so the caller can keep it pending.
     """
     try:
-        await dispose_adapter(adapter)
+        return await dispose_adapter(adapter, work_settled=work_settled)
     except Exception:
         logger.exception("Adapter cleanup_all failed")
         return False
-    return True
 
 
 __all__ = ["dispose_adapter", "release_adapter", "start_adapter"]
