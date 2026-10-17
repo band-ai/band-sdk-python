@@ -704,6 +704,8 @@ dependencies = [
     { name = "httpcore" },
     { name = "langcodes" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "starlette" },
     { name = "tzdata" },
 ]
 
@@ -713,6 +715,8 @@ requires-dist = [
     { name = "httpcore", specifier = ">=1,<2" },
     { name = "langcodes", specifier = ">=3.5,<4" },
     { name = "pydantic", specifier = ">=2,<3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
+    { name = "starlette", specifier = ">=0.49,<2" },
     { name = "tzdata", specifier = ">=2026.1" },
 ]
 

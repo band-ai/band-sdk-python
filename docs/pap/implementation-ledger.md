@@ -1,6 +1,6 @@
 # PAP integration implementation ledger
 
-Date: 2026-10-16. Status: P01 and P02 complete with both adversarial reviews resolved; no completed PAP integration is claimed. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
+Date: 2026-10-16. Status: P01–P07 implementation complete with two independent Sol reviews per item. Live deployment checks and the private-core coverage credential remain release gates; no live interoperability or release-readiness claim. Draft PR: [#820](https://github.com/band-ai/band-sdk-python/pull/820).
 
 Worktree: `sdk-worktrees/pap-integration`. Branch: `feat/pap-protocol-integration`. Base: `c73cd9cd` from upstream main. Package: `packages/band-pap` (`bandpap`). Maintained architecture: [design](design.md) and [implementation contract](contract.md). This tracked ledger is authoritative; the earlier local planning copy is not the implementation record.
 
@@ -13,7 +13,7 @@ The target includes both client adapter and server gateway. All conversations oc
 ## Completion and review rules
 
 - States: pending, active, review, complete. An implementation phase is complete only when its acceptance evidence exists and both adversarial reviews have been resolved. A completed phase is not a claim that the integration is ready to release.
-- Every item P01–P07 receives two independent `gpt-6.1-sol` adversarial reviews: A attacks protocol/identity/isolation/recovery correctness; B attacks Band product fit, architecture, integration boundaries, and test sufficiency. Both may challenge any issue they find.
+- Every item P01–P07 receives two independent `gpt-6.1-sol` adversarial reviews covering protocol/identity/isolation/recovery and product fit/architecture/test sufficiency. An author never counts as their own independent reviewer. Reviewer assignments below reflect authorship changes during implementation.
 - Record reviewed revision/files, reviewer names, findings, dispositions, and rerun evidence. Re-review material changes; do not count an earlier review as approval of later implementation.
 - Tests must exercise observable behavior. Record failed, skipped, and unavailable validation explicitly. Live interoperability and participant-visibility enforcement remain unverified until tested.
 - Open a draft PR early and keep it draft until the complete target contract passes. Keep PR prose concise; store progress and evidence here.
@@ -24,11 +24,11 @@ The target includes both client adapter and server gateway. All conversations oc
 |---|---|---|---|---|---|
 | P01 | Isolated worktree/branch/draft PR; integration contract; package and public extension boundaries; protocol revision and test plan. | Clean base without unrelated reproduction tests; runtime-neutral architecture; version provenance; reviewable ledger and contract. | complete | approved | approved |
 | P02 | Protocol models, discovery/capability rules, errors, durable scoped connections/conversations/delivery/cursor/operation storage. | Wire fixtures and invalid-input cases; collision/ownership isolation; restart and transaction failure tests. | complete — protocol/state primitives | approved | approved |
-| P03 | Identity, signing, account linking, session renewal/revocation, DPoP/Bearer handling, credential isolation. | Wrong issuer/user/client/resource rejection; proof replay/nonce tests; expiry and revocation; secrets excluded from agent views. | pending | pending | pending |
-| P04 | Outbound company participant adapter; addressed routing; messages and protocol state; concurrent connections; lifecycle and recovery. | Multiple company participants in one Band room; live/replay filtering; independent progress; loss/duplicate/restart cases. | pending | pending | pending |
-| P05 | Inbound PAP gateway; service discovery; authorized participant bindings; conversation/event endpoints; human participation, handoff, closing. | Both directions in the same room; client ownership checks; event ordering/reconnect; no implicit room access; roster projection tests. | pending | pending | pending |
-| P06 | Operations and advertised API/browser channels; trusted approval/execution interfaces, cancellation, uncertainty and deduplication. | Revision-bound confirmation; cross-channel deduplication; scope enforcement; unknown effects remain unresolved; application policy stays outside protocol. | pending | pending | pending |
-| P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | pending | pending | pending |
+| P03 | Identity, signing, account linking, session renewal/revocation, DPoP/Bearer handling, credential isolation. | Wrong issuer/user/client/resource rejection; proof replay/nonce tests; expiry and revocation; secrets excluded from agent views. | complete — implementation | approved | approved |
+| P04 | Outbound company participant adapter; addressed routing; messages and protocol state; concurrent connections; lifecycle and recovery. | Multiple company participants in one Band room; live/replay filtering; independent progress; loss/duplicate/restart cases. | complete — implementation | approved | approved |
+| P05 | Inbound PAP gateway; service discovery; authorized participant bindings; conversation/event endpoints; human participation, handoff, closing. | Both directions in the same room; client ownership checks; event ordering/reconnect; no implicit room access; roster projection tests. | complete — implementation | approved | approved |
+| P06 | Operations and advertised API/browser channels; trusted approval/execution interfaces, cancellation, uncertainty and deduplication. | Revision-bound confirmation; cross-channel deduplication; scope enforcement; unknown effects remain unresolved; application policy stays outside protocol. | complete — implementation | approved | approved |
+| P07 | Complete conformance, integration/fault testing, live interoperability, observability, deployment/examples, compatibility. | Entire acceptance matrix including lifecycle and visibility; recorded live results or explicit release blockers; no runtime coupling. | complete — local implementation; release gates open | approved | approved |
 
 ## P02 implementation breakdown
 
@@ -76,7 +76,7 @@ Both reviewers read the pinned protocol before reviewing the implementation. The
 | E007 | Test run / error normalization | A NUL redirect header was rejected by h11 before application validation, producing `RemoteProtocolError` instead of the documented discovery failure. The first full P02 test run failed this case. | Normalize HTTP protocol failures to `DiscoveryFailure`; the forbidden location is never dialed. Fixed and passing. |
 | A08 | A / medium | The first final-state guard froze the entire operation snapshot, rejecting a legal later URL addition or optional expiry omission. | `test_final_snapshot_can_refresh_optional_metadata_not_state_or_terms`: freeze terminal state, revision terms and confirmation, while accepting optional metadata refresh. Fixed; both reviewers approved the final correction. |
 
-## Current implementation coverage
+## P02 implementation coverage at `453136b3` (historical snapshot)
 
 P02 implements conversation requests/responses, typed known events and skippable unknown events, structured errors, context and Operations wire models. Arbitrary `data`, context extensions and operation terms survive JSON and durable roundtrips. It includes conditional sign-in discovery metadata and explicit capability intersection; advertisement alone never selects an unsupported feature.
 
@@ -84,7 +84,7 @@ Discovery fetching follows bounded HTTPS redirects, verifies each connected publ
 
 SQLite stores scoped connections, independent conversation bindings, user-wide message deduplication, original acknowledgments, leased delivery/retry state, events and cursors, and immutable operation revision terms. Tests reopen disk databases, use independent connections/concurrent insertion, and inject both cursor-write and commit failures. Operations are authenticated observations only; recording one never approves or executes an effect. The scope includes tenant, user, client, issuer and direction; neither room nor connection instance partitions message-ID deduplication.
 
-The store takes trusted host inputs; it does not authenticate callers or evaluate grants. Recorded connection revocation fences subsequent claims/replays/settlements, but cannot recall a request already in flight. P03 must implement authenticated authority and token handling. P04/P05 must enforce source grants, original-binding visibility, actual Band handoff and direct-conversation lifecycle. P06 must implement operation execution/approvals and channel clients. These are phase boundaries, not claims of completed integration. No adapter or gateway is usable yet.
+The store takes trusted host inputs; it does not authenticate callers or evaluate grants. Recorded connection revocation fences subsequent claims/replays/settlements, but cannot recall a request already in flight. P03 must implement authenticated authority and token handling. P04/P05 were still required to enforce source grants, original-binding visibility, actual Band handoff and direct-conversation lifecycle. P06 was still required to implement operation execution/approvals and channel clients. These are phase boundaries, not claims of completed integration. At that P02 snapshot no adapter or gateway was usable. P03–P07 below complete those implementations.
 
 ## P02 test ledger
 
@@ -121,3 +121,95 @@ The CI wheel job installs both built wheels into a fresh environment and runs `.
 ## Release gate
 
 P01–P07 must all be complete with both reviews resolved. Business examples demonstrate collaboration but cannot impose a global coordinator, purchase policy, or one-request-per-room lock on the generic integration. Unsupported draft capabilities and unavailable live counterparties must be disclosed rather than reported as passing.
+
+## P03–P07 completion and independent review ledger
+
+Final source/test snapshot (same sorted path/content NUL-delimited algorithm as
+P02): SHA-256 `2b9f422eb576cc24031a39adc4e115eeaccc2d1bfa05d2292d25f7bd190fcbdb`.
+Documentation-only updates do not change it. Existing Band SDK runtime files are
+unchanged. Public integration exports, deployment composition, and examples are
+included in `band-pap` and its documentation.
+
+| Item | Implemented result | Independent reviewers and final evidence |
+|---|---|---|
+| P03 | Encrypted credential store, pairwise identity, assertions/DPoP, gateway JWT verification with live resolver, direct/device/mediated sign-in, scoped refresh claims and revocation recovery | B (`pap_review_b`) and Operations reviewer (`pap_operations`); both approved after fixes. 61 focused cases passed. A authored this phase and is not counted as its independent reviewer. |
+| P04 | Public SDK adapter, grant-bound input, durable per-connection pumps, typed records, account-aware continuation, handoff/direct/close, real generated REST encoding and uncertain-send reconciliation | A (`pap_review_a`) and Operations reviewer; both approved. 36 focused cases passed. A independently reran the final 425-case suite and probed token-wait revocation. |
+| P05 | Authenticated ASGI gateway, discovery, deduplicated durable conversations/events, bounded JSON/SSE, direct/handoff/close, roster projection, operation routes, explicit same-room reply correlation | A and Operations reviewer; both approved. 43 gateway/bridge/operation-route cases passed. B authored the gateway and is not counted as its independent reviewer. |
+| P06 | Application-owned authorization/approval/execution interfaces, durable operation identity and recovery, constrained OpenAPI/MCP/browser clients | A and B; both approved after authority-race and dispatch-fence corrections. 43 focused cases passed. Operations reviewer authored this phase. |
+| P07 | Four offline roundtrip/fault/isolation scenarios, lifespan shutdown/failure coverage, package exports, deployment guide, launcher, rebuilt installed-wheel validation | A and B approved implementation/offline evidence and documents. Six integration/lifespan cases passed. A independently ran the final wheel smoke and matched every installed module against current source. Live checks remain separate release gates. |
+
+All three review agents used `gpt-6.1-sol`. No independent approval is attributed to
+an agent for code it authored. The reviewers exchanged findings while root owned
+the adapter, durable room bridge and final integration. Final approvals follow
+fixes and regressions, not just initial source inspection.
+
+## P03–P07 discovered-failure ledger
+
+These failures describe work-in-progress implementations or reviewer probes.
+**Every regression below now passes; no failing PAP test is being hidden by xfail.**
+The final broad-environment and external failures are listed separately below.
+
+| ID / phase | What failed and why it matters | Regression / final disposition |
+|---|---|---|
+| F03-01 / P03 | Revocation deleted the refresh token before remote success; reconstructing a client could revive locally revoked access. | `test_failed_revocation_remains_disabled_and_retryable_after_restart`: preserve disabled encrypted retry material; constructors never revive tombstones. Fixed. |
+| F03-02 / P03 | Independent OAuth clients could rotate one refresh token concurrently; post-network CAS alone could lose the surviving token. | `test_independent_clients_cannot_rotate_the_same_refresh_concurrently`, `test_lost_refresh_response_is_not_replayed_after_restart`, `test_expired_exchange_claim_never_reuses_refresh`: durable scoped ownership and uncertain-refresh fencing. Fixed. |
+| F03-03 / P03 | Direct/device sign-in forgot requested scopes and accepted elevated returned scopes. | `test_direct_state_issuer_and_scope_cannot_be_swapped`, `test_device_timing_slowdown_and_completion_scope`: consent scopes persist through completion. Fixed. |
+| F03-04 / P03 | Malformed embedded JWK/cnf could escape as runtime errors; ordinary assertions without optional `typ` and mixed public JWKS were rejected. | `test_malformed_public_key_is_an_authentication_error`, assertion/public-key cases and gateway claim matrix: fail closed and accept the supported compatible assertion shape. Fixed. |
+| F03-05 / P03 | Endpoint prefix checks accepted dot-segment traversal; device links were not validated before display. | Path-traversal/credential-header/resource negatives in `test_oauth_requests.py`; device-link cases in `test_oauth_signin.py`. Fixed. |
+| F03-06 / P03 | Cached invalid tokens kept being reused; mediated sign-in racing revocation could discard a newly issued refresh credential. | `test_invalid_token_renews_and_mcp_headers_remain_available`, `test_late_mediated_refresh_is_retained_only_for_revocation`: bounded renewal and late-response fencing. Fixed. |
+| F03-07 / P03 | A successful direct/device response could be signed out or omit the account refresh credential, replacing valid prior consent. | Four `test_signin_completion_requires_signed_in_refresh_credential_without_replacing_existing` cases reject malformed completion before commit. Fixed. |
+| F04-01 / P04 | Grant provisioning could point at another connection's existing conversation, and fail after leaving orphan state. | `test_existing_binding_cannot_select_another_downstream_connection`: transactional grant/connection/conversation checks. Fixed. |
+| F04-02 / P04 | Original anonymous grant sessions were reused after account binding; old account history could remain anonymously available or legitimate renewal fail. | `test_account_use_binds_history_and_signed_out_cannot_replay`, current-account direct cases: resolve live session and bind local history before use. Fixed. |
+| F04-03 / P04 | Revocation during token renewal or Band identity lookup could still be followed by a message POST. | `test_revocation_while_request_acquires_token_prevents_company_post`, actual generated REST identity/authority tests: recheck immediately before dispatch. Fixed. |
+| F04-04 / P04 | Empty reconciliation IDs could authorize blind resend; denied grants could exhaust the outbox budget and starve another owner. | `test_uncertain_band_send_is_not_automatically_repeated_after_restart`, `test_denied_grants_cannot_exhaust_budget_before_valid_owner`: explicit evidence and per-grant progress. Fixed. |
+| F04-05 / P04 | Control acknowledgments wrongly required repeated conversation IDs; direct conversations used stale account sessions. | Four `test_pap_controls.py` cases cover optional IDs, current-account human direct conversations and permanent refusal recovery. Fixed. |
+| F04-06 / P04 | Serializing a staged context with unset fields emitted nulls rejected on durable reread. | `test_typed_input_uses_trusted_original_message_binding`: persist the wire projection, retaining valid data/context. Initial test failed, now fixed. |
+| F05-01 / P05 | Company-initiated parent closure left a direct child open; fresh-create authority was unnecessarily required to recover an existing first message. | `test_company_closing_parent_also_closes_direct_child`, original-authority retry and direct lifecycle tests. Fixed. |
+| F05-02 / P05 | Account binding could leave stale anonymous pending work that crashed the whole dispatcher and blocked another owner. | `test_account_transition_reauthorizes_pending_work_without_blocking_other_owner`, explicit fresh-authority resume test: migrate/revalidate continuation and isolate blocked work. Fixed. |
+| F05-03 / P05 | Scope errors omitted required metadata; sign-in advertisement omitted conditional endpoints; decoded paths broke DPoP for native operation IDs. | Gateway authentication/configuration matrix and `test_native_operation_id_uses_exact_encoded_request_target`. Fixed. |
+| F05-04 / P05 | An unexpected host exception during SSE could escape after response start with a private diagnostic. | `test_midstream_host_diagnostic_does_not_escape_to_asgi_logging`: terminate the stream without exposing the host exception. Fixed. |
+| F05-05 / P05 | An intermediate middleware registration used an API absent from the installed Starlette release. | Whole-suite constructor failures reproduced; supported middleware registration restored. Final suite passes. |
+| F06-01 / P06 | Authorization for revision 1 could read, cancel or recover revision 2 after an asynchronous race. | Two-store gated `test_changed_snapshot_requires_new_authority_before_projection_or_mutation` cases reauthorize changed snapshots before use. Fixed. |
+| F06-02 / P06 | Approval could be withdrawn during final authorization/token renewal and still dispatch; cancel omitted its JSON body. | `test_withdrawn_approval_during_final_authorization_blocks_claim`, `test_withdrawn_approval_during_refresh_blocks_confirm_dispatch`, cancellation wire assertion. Fixed. |
+| F07-01 / P07 | Initial roundtrip evidence exercised each direction but did not chain an inbound client through the outbound adapter and back through the reply adapter. | Fourth `test_roundtrip.py` scenario uses both actual adapters, gateway, DPoP and durable outboxes in one room. Added and passing. |
+
+The suggested malformed-`jti` finding was retracted after execution confirmed the
+JWT library already rejects it; it is not counted as a discovered defect.
+
+## Final test and verification ledger
+
+| Coverage group | Test files / observable behavior | Result |
+|---|---|---|
+| P02 existing foundation | Discovery, destination validation, wire data, connection/delivery/event/operation storage and imports | 236 passed |
+| P03 | `test_auth_gateway`, `test_auth_proofs`, `test_auth_storage`, `test_oauth_lifecycle`, `test_oauth_requests`, `test_oauth_signin`: cryptographic identity, replay/claim isolation, consent, lifecycle/race recovery | 61 passed |
+| P04 | `test_pap_adapter`, `test_pap_worker`, `test_pap_grants`, `test_pap_controls`, `test_room_outbox`, `test_room_rest`: public SDK inputs, typed routing, account privacy, lifecycle, exact generated REST projection, uncertainty | 36 passed |
+| P05 | `test_gateway_auth`, `test_gateway_conversations`, `test_gateway_recovery`, `test_gateway_views`, `test_gateway_operations`, `test_gateway_bridge`: authorization, persistent protocol endpoints, visibility and reply correlation | 43 passed |
+| P06 | `test_operations_engine`, `test_operations_client`, `test_openapi_channel`, `test_mcp_channel`, `test_browser_channel`: trusted approvals, uncertain effects and advertised channels | 43 passed |
+| P07 | `test_roundtrip` and `test_pap_service`: two companies, independent progress, lost response/reopen, complete inbound-to-outbound return path, shutdown and participant failure | 6 passed |
+| Total PAP | Normal root pytest collection; no skipped/xfail PAP cases | **425 passed** |
+| Repository Ruff / formatting | Entire checkout, including new examples/tests | Passed; 1,695 Python files formatted |
+| Package Pyrefly | Entire `packages/band-pap/src`, warnings included | Zero diagnostics |
+| Installed wheel | Rebuilt PAP wheel plus SDK wheel in isolated Python 3.12 environment, without agent-framework extras | Passed; reviewer A repeated smoke and matched installed modules to source |
+| Broad repository Pyrefly | Minimal local environment | **139 errors**; optional frameworks and existing repository diagnostics remain. Earlier P02 run had 152 before auth/web dependencies were installed. No clean broad type claim. |
+| Broad unit suite | Full non-live suite attempted in the same minimal environment | Collection stopped: **85 errors, 12 skipped**, including absent optional frameworks. Earlier P02 environment had 94 collection errors. No full local suite pass claimed. |
+| CI on previous `453136b3` | Main CI lint, packaging and Python/OS matrix | Passed; this is earlier-commit evidence, not a pass for the final implementation |
+| Python Core Coverage on `453136b3` | [Failed private-core checkout](https://github.com/band-ai/band-sdk-python/actions/runs/39004037826/job/117312720592) | Failed **before tests**: `Input required and not supplied: token`. Workflow expects `CORE_SDK_READ_KEY`; this run received none. Not a PAP test assertion or coverage-floor failure. |
+
+## Remaining release gates (not unfinished adapter implementation)
+
+- Run the final head through the complete development CI matrix and the
+  instrumented private-core coverage workflow. Its checkout requires an authorized
+  credential/context; this integration does not change secret access or bypass
+  coverage. Merely rerunning the same credential-less job cannot fix the checkout.
+- Configure an authorized public PAP counterparty and actual issuer/client metadata,
+  HTTPS ingress, signing keys and account test identities for live interoperability.
+- Supply the worktree's required `.env.test` / agent configuration and verify actual
+  Band participant delivery, roster/history visibility and removal across peers.
+  Neither file exists here; deterministic transport tests do not stand in for that
+  deployment evidence.
+- Exercise host-specific account UI, approval policy, effect recovery, retention,
+  credential/key rotation and deployment throughput. These application interfaces
+  are deliberately required, not embedded business policy.
+
+The draft PR remains draft for these gates. No broad-suite, live privacy,
+external-counterparty or exactly-once remote Band delivery claim is made.

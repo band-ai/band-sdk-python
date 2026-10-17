@@ -1,43 +1,39 @@
 # Band PAP integration
 
-Development package for a generic Personal Agent Protocol bridge into Band's
-agent collaboration and communication layer. The target includes outbound
-company participants and an inbound gateway, with independent connections in
-one Band room. It has no agent-framework dependency or business-policy engine.
+`band-pap` connects Personal Agent Protocol participants to Band's collaboration
+and communication layer. It provides outbound company adapters and an inbound
+company gateway, independent participants in one room, explicit addressed routing,
+private structured records and durable protocol work. It has no model-framework
+dependency and does not choose a coordinator or business policy.
 
-This is not a usable PAP adapter or server yet. Current primitives include conversation/event/Operations wire models,
-capability selection, bounded HTTPS discovery with domain/issuer verification,
-and SQLite connection, conversation, message, event, cursor and operation state.
-Authentication, forwarding, gateway endpoints and operation execution remain
-unimplemented. Discovery and storage inputs do not grant authorization.
+Implemented interfaces include `PAPAdapter`, `PAPGateway`, `PAPGatewayAdapter`,
+OAuth/DPoP and account-linking clients, Operations, constrained OpenAPI/MCP/browser
+channels, SQLite state, independently credentialed Band outboxes and an ASGI
+lifespan composition helper. No existing Band SDK runtime internals are modified.
 
-The discovery client connects only to validated public numeric addresses and
-verifies TLS against the requested hostname. Redirects are revalidated; no
-ambient proxy, cookies or credentials are used. Compressed discovery responses
-are rejected, and caching is not yet implemented. An authenticated endpoint
-client must enforce its own destination and credential rules in later phases.
+The host supplies actual account authentication/token issuance, current
+identity/grant/visibility checks, independent proxy credentials and trusted
+approval/business execution interfaces. These are required application boundaries,
+not permission inferred from a message or room ID. A fresh install does not expose
+an anonymously authorized room or a default account identity provider.
 
-The store is synchronous: keep its short local transactions off latency-sensitive
-async execution paths, and never hold a transaction across network I/O. Use one
-handle per serialized execution context; independent handles/processes coordinate
-through SQLite. Protect the database and its WAL/backups as private data. It holds
-protocol content and grant references, not tokens. Durable inbox/outbox state
-alone does not establish exactly-once delivery into Band.
+This development version targets PAP draft 0.1 / Operations 1 at the pinned
+revision in `docs/pap/contract.md`. The implementation ledger distinguishes local
+verification from live release checks. No live interoperability certification is
+claimed.
 
-Scope comprises tenant, client, company issuer, user and direction. A room is
-routing data, never the owner or deduplication boundary. Hosts must resolve these
-inputs from authenticated grants, revalidate authority before network dispatch,
-and verify the original binding before exposing a deduplicated response to a
-participant. A revocation recorded in this store fences subsequent claims and
-settlements; it cannot recall a request already in flight.
+From the repository, install with `uv sync --all-packages --extra dev` and run
+`uv run --all-packages pytest tests/pap -q`. The deployment composition guide is
+`examples/pap/README.md`; operational requirements and explicit recovery rules are
+in `docs/pap/deployment.md`.
 
-`settle` accepts only valid 201/202 message acknowledgments. Use `RetryFailure`
-with the resolved retry time for a known retryable refusal; use settlement without
-a response for uncertain acceptance. Both retain the same message ID. Workers
-must supply a consistent wall-clock time across processes and act only while
-their lease is current. Operation snapshots are authenticated observations;
-recording one never authorizes or executes an effect.
+Persist the database and a separately managed credential encryption key. The
+short synchronous SQLite transactions never span network awaits. Protect the WAL
+and backups as private data. Restoring the database with a different encryption
+key does not restore its credentials.
 
-The maintained contract and completion ledger are in the repository's
-`docs/pap/contract.md` and `docs/pap/implementation-ledger.md`. Both independent
-Sol reviews must be resolved for every ledger item before it is complete.
+PAP retries preserve message identity. Band POSTs with uncertain acceptance are
+fenced for authenticated reconciliation because the current Band API does not
+expose message idempotency. An accepted message or settled SDK turn is not evidence
+that a business action completed. Unknown effects retain their original operation
+identity and require host recovery.

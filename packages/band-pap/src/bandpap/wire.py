@@ -101,6 +101,12 @@ class DirectConversation(SendMessage):
     parent_conversation_id: Identifier
 
 
+class ControlResponse(WireModel):
+    status: Status
+    responder: Speaker
+    conversation_id: Identifier | None = None
+
+
 class ConversationResponse(WireModel):
     conversation_id: Identifier
     status: Status

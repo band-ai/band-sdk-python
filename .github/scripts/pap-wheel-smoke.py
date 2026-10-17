@@ -6,6 +6,9 @@ import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from bandpap import PAPAdapterConfig, PAPGatewayAdapterConfig, application
+from bandpap.auth import SecurityStore, SigningKey
+from bandpap.channels import BrowserClient, MCPClient, OpenAPIClient, OperationsClient
 from bandpap.discovery import DiscoveryDocument, verify_discovery_binding
 from bandpap.fetch import DiscoveryFetcher
 from bandpap.storage import Route, Scope, Session, StateStore
@@ -32,6 +35,21 @@ def main() -> None:
     else:
         raise AssertionError("Installed PAP wheel accepted a mismatched domain")
 
+    assert PAPAdapterConfig(proxy_id="proxy").proxy_id == "proxy"
+    assert PAPGatewayAdapterConfig(proxy_id="proxy").proxy_id == "proxy"
+    assert callable(application)
+    assert all(
+        callable(channel)
+        for channel in (
+            BrowserClient,
+            MCPClient,
+            OpenAPIClient,
+            OperationsClient,
+            SecurityStore,
+        )
+    )
+    key = SigningKey.generate()
+    assert key.public_jwk()["kty"] == "EC"
     DiscoveryFetcher()
     Context(locale="en-US", time_zone="America/Los_Angeles")
     session = Session(
