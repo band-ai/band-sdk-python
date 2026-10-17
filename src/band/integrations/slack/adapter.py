@@ -473,14 +473,14 @@ class SlackAdapter(SimpleAdapter[Any]):
         self.config = config
         self._router: Router | None = None
         self._socket_listeners: list[SlackSocketListener] = []
+        self._listener_close_lock = asyncio.Lock()
         self._web_client_factory: WebClientFactory = (
             web_client_factory or self._default_web_client_factory
         )
         self._web_clients: dict[str, AsyncWebClient] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._accepting_events = True
-        self._inner_started = False
-        self._inner_disposed = False
+        self._inner_live = False
 
         # Band-side state.
         self._rest: AsyncRestClient | None = rest_client
@@ -638,8 +638,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             setattr(self._inner, "platform", self.platform)  # noqa: B010
 
         self._accepting_events = True
-        self._inner_started = True
-        self._inner_disposed = False
+        self._inner_live = True
         await self._inner.on_started(agent_name, agent_description)
 
         if self.config.transport == "socket":
@@ -674,16 +673,15 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     async def _close_listeners(self) -> list[Exception]:
         errors: list[Exception] = []
-        for listener in list(self._socket_listeners):
-            try:
-                await listener.stop()
-            except Exception as exc:  # noqa: BLE001 -- retain failures and close other listeners
-                note = f"Slack listener app: {listener.app.slug}"
-                if note not in getattr(exc, "__notes__", ()):
-                    exc.add_note(note)
-                errors.append(exc)
-            else:
-                self._socket_listeners.remove(listener)
+        async with self._listener_close_lock:
+            for listener in list(self._socket_listeners):
+                try:
+                    await listener.stop()
+                except Exception as exc:  # noqa: BLE001 -- retain failures and close other listeners
+                    exc.add_note(f"Slack listener app: {listener.app.slug}")
+                    errors.append(exc)
+                else:
+                    self._socket_listeners.remove(listener)
         return errors
 
     async def cleanup_all(self) -> None:
@@ -693,13 +691,13 @@ class SlackAdapter(SimpleAdapter[Any]):
         for task in self._background_tasks:
             task.cancel()
         await self.wait_idle()
-        if self._inner_started and not self._inner_disposed:
+        if self._inner_live:
             try:
                 await dispose_adapter(self._inner)
             except Exception as exc:  # noqa: BLE001 -- preserve listener and inner failures
                 errors.append(exc)
             else:
-                self._inner_disposed = True
+                self._inner_live = False
         if errors:
             raise ExceptionGroup("Slack cleanup failed; retry host shutdown", errors)
 
@@ -832,6 +830,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         work into a task so the route handler can ack immediately.
         """
         if not self._accepting_events:
+            logger.warning("Dropping Slack event for app %s: shutting down", app.slug)
             return
         task = asyncio.create_task(self._handle_event(app, payload))
         self._background_tasks.add(task)
