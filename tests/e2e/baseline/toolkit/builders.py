@@ -59,6 +59,19 @@ _EVERY_CAPABILITY = (
 )
 
 
+def _own_sandbox(
+    adapter: SimpleAdapter[Any], sandbox: tempfile.TemporaryDirectory[str]
+) -> None:
+    """Release after SDK teardown, with a fallback for never-started adapters."""
+    fallback = weakref.finalize(adapter, sandbox.cleanup)
+
+    async def cleanup() -> None:
+        sandbox.cleanup()
+        fallback.detach()
+
+    adapter.add_cleanup(cleanup)
+
+
 @adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)
 def _build_anthropic(
     s: BaselineSettings,
@@ -108,7 +121,7 @@ def _build_claude_sdk(
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
-    weakref.finalize(adapter, sandbox.cleanup)
+    _own_sandbox(adapter, sandbox)
     return adapter
 
 
@@ -134,7 +147,7 @@ def _build_copilot_sdk(
         features=features,
         tools=tools,
     )
-    weakref.finalize(adapter, sandbox.cleanup)
+    _own_sandbox(adapter, sandbox)
     return adapter
 
 
@@ -505,14 +518,20 @@ def _build_codex(
         CodexAdapterConfig,
     )
 
+    sandbox = tempfile.TemporaryDirectory(
+        prefix="band-e2e-codex-", dir=s.backends.codex_cwd or None
+    )
     config_kwargs = codex_config_kwargs(s, prompt=prompt)
-    if workspace_for_room is not None:
-        config_kwargs["workspace_for_room"] = workspace_for_room
-    return CodexAdapter(
+    config_kwargs["workspace_for_room"] = (
+        workspace_for_room or create_room_workspace_resolver(sandbox.name)
+    )
+    adapter = CodexAdapter(
         config=CodexAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+    _own_sandbox(adapter, sandbox)
+    return adapter
 
 
 @adapter(
@@ -623,24 +642,26 @@ def _build_copilot_acp(
     # working directory — the repo's own .claude/ skills would otherwise leak
     # into the agent under test) and a per-cell COPILOT_HOME.
     # COPILOT_COMMAND overrides the binary + args.
-    sandbox = tempfile.mkdtemp(prefix="band-e2e-copilot-acp-")
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-copilot-acp-")
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
-        "cwd": sandbox,
-        "env": copilot_acp_env(s, copilot_home_dir(sandbox)),
+        "cwd": sandbox.name,
+        "env": copilot_acp_env(s, copilot_home_dir(sandbox.name)),
     }
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
     if workspace_for_room is not None:
         config_kwargs.pop("cwd")
-    return CopilotACPAdapter(
+    adapter = CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
         workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+    _own_sandbox(adapter, sandbox)
+    return adapter
 
 
 def omp_agent_home_dir(work_dir: str) -> str:
@@ -676,23 +697,25 @@ def _build_omp_acp(
         OmpACPAdapterConfig,
     )
 
-    sandbox = tempfile.mkdtemp(prefix="band-e2e-omp-acp-")
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-omp-acp-")
     config_kwargs: dict[str, Any] = {
         "command": omp_command(s),
         "custom_section": prompt or "",
-        "cwd": sandbox,
+        "cwd": sandbox.name,
         "model": omp_model(s),
-        "env": omp_acp_env(s, omp_agent_home_dir(sandbox)),
+        "env": omp_acp_env(s, omp_agent_home_dir(sandbox.name)),
     }
 
     if workspace_for_room is not None:
         config_kwargs.pop("cwd")
-    return OmpACPAdapter(
+    adapter = OmpACPAdapter(
         config=OmpACPAdapterConfig(**config_kwargs),
         workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+    _own_sandbox(adapter, sandbox)
+    return adapter
 
 
 def cursor_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str, Any]:
@@ -728,10 +751,10 @@ def _build_cursor_acp(
         CursorACPAdapterConfig,
     )
 
-    sandbox = tempfile.mkdtemp(prefix="band-e2e-cursor-acp-")
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-cursor-acp-")
     config_kwargs = {
         **cursor_config_kwargs(s, prompt=prompt),
-        "cwd": sandbox,
+        "cwd": sandbox.name,
         # Nothing in the baseline matrix answers /cursor prompts, so a
         # decision request must resolve on its own or the cell stalls for
         # decision_timeout_s and then fails or denies.
@@ -740,12 +763,14 @@ def _build_cursor_acp(
     }
     if workspace_for_room is not None:
         config_kwargs.pop("cwd")
-    return CursorACPAdapter(
+    adapter = CursorACPAdapter(
         config=CursorACPAdapterConfig(**config_kwargs),
         workspace_for_room=workspace_for_room,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+    _own_sandbox(adapter, sandbox)
+    return adapter
 
 
 @adapter(
