@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -74,14 +75,18 @@ class TestSocketLifecycle:
     async def test_close_logs_but_does_not_raise_on_disconnect_failure(self, caplog):
         adapter, _, socket_clients, _, _ = _build_adapter_with_socket()
         fake = next(iter(socket_clients.values()))
-        fake.disconnect = AsyncMock(side_effect=RuntimeError("boom"))
+        fake.disconnect = AsyncMock(side_effect=[RuntimeError("boom"), None])
         app = adapter.config.apps[0]
         adapter._socket_listeners.append(SlackSocketListener(app=app, client=fake))
 
         with caplog.at_level("ERROR"):
             await adapter.close()
-        assert any("Failed to stop" in r.message for r in caplog.records)
-        assert adapter._socket_listeners == []
+        record = next(r for r in caplog.records if "Failed to stop" in r.message)
+        assert record.levelno == logging.ERROR
+        await adapter.close()
+        assert fake.disconnect.await_count == 2
+        await adapter.close()
+        assert fake.disconnect.await_count == 2
 
     @pytest.mark.asyncio
     async def test_close_is_safe_when_no_listeners(self):
