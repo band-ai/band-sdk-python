@@ -770,6 +770,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_agno.py::test_agno_executes_native_tool",
       "adapter": "suite",
       "lanes": [

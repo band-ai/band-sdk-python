@@ -12,7 +12,7 @@ derived from the model, so prompts and assertions can't drift.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,10 +28,10 @@ from band.runtime.custom_tools import (
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """A custom tool: a Pydantic input ``model`` plus a ``handler(model) -> str``."""
+    """A Pydantic input model plus a sync or async string-returning handler."""
 
     model: type[BaseModel]
-    handler: Callable[[BaseModel], str]
+    handler: Callable[[BaseModel], str | Awaitable[str]]
 
     @property
     def name(self) -> str:
