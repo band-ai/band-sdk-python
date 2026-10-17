@@ -66,7 +66,10 @@ class TestDeferredWork:
     async def test_approval_beyond_first_page_releases_ordered_work(
         self, recovery: str
     ) -> None:
-        peer = LifecyclePlatform()
+        peer = LifecyclePlatform(page_size=3)
+        deferred = [f"D{i}" for i in range(7)]
+        # The rest are reachable only through the paginated /next scan.
+        live_deferred = deferred[:3]
         peer.add_message("A")
         adapter = ApprovalAdapter()
         async with rest_client_over(peer.answer) as rest:
@@ -90,7 +93,9 @@ class TestDeferredWork:
 
             async def ordinary_traffic() -> None:
                 while not traffic.is_set():
-                    await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="D0"))
+                    await ctx.on_event(
+                        make_message_event(room_id=ROOM_ID, msg_id=deferred[0])
+                    )
                     await asyncio.sleep(0.001)
 
             traffic_task: asyncio.Task[None] | None = None
@@ -104,8 +109,8 @@ class TestDeferredWork:
                 assert peer.marked("processed") == ["A"]
                 assert peer.marked("failed") == []
                 # More than one chronological page hides a missed approval from /next.
-                for i in range(100):
-                    peer.add_message(f"D{i}")
+                for message_id in deferred:
+                    peer.add_message(message_id)
                 peer.add_message("C")
                 peer.messages[-1]["content"] = "approve"
                 if recovery == "live":
@@ -118,21 +123,21 @@ class TestDeferredWork:
                     await ctx.on_event(ReconnectedEvent())
                 # Sustained ordinary delivery cannot rewind an in-progress scan.
                 traffic_task = asyncio.create_task(ordinary_traffic())
-                for i in range(5):
+                for message_id in live_deferred:
                     await ctx.on_event(
-                        make_message_event(room_id=ROOM_ID, msg_id=f"D{i}")
+                        make_message_event(room_id=ROOM_ID, msg_id=message_id)
                     )
                 await wait_for_condition(
-                    lambda: "D99" in peer.marked("processed"), timeout=3
+                    lambda: deferred[-1] in peer.marked("processed"), timeout=3
                 )
                 assert original_tools.turn.complete
-                assert adapter.completed == ["A", "B", *[f"D{i}" for i in range(100)]]
+                assert adapter.completed == ["A", "B", *deferred]
                 assert adapter.controls == ["C"]
                 assert peer.marked("processed") == [
                     "A",
                     "C",
                     "B",
-                    *[f"D{i}" for i in range(100)],
+                    *deferred,
                 ]
                 assert peer.marked("failed") == []
                 assert any(cursor is not None for cursor in peer.actionable_cursors)
