@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
+
 from tests.integrations.slack.wrappingkit import SlackReplyBrain
 
 
 class GatedBrain(SlackReplyBrain):
-    def __init__(self) -> None:
+    def __init__(self, resource: httpx.AsyncClient | None = None) -> None:
         super().__init__(reply=None)
+        self.resource = resource
         self.entered = asyncio.Event()
         self.finalizing = asyncio.Event()
         self.release = asyncio.Event()
@@ -30,6 +33,8 @@ class GatedBrain(SlackReplyBrain):
         finally:
             self.finalizing.set()
             await self.release.wait()
+            if self.resource is not None:
+                (await self.resource.get("/resource")).raise_for_status()
             self.finished.set()
 
     async def cleanup_all(self) -> None:

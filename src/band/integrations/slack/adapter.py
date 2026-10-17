@@ -572,6 +572,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         accept_adapter(self._inner, owner)
 
     async def _finalize_cleanup(self) -> None:
+        # HTTP ingress may be mounted before framework startup is attempted.
+        self._accepting_events = False
+        await self._settle_handlers()
         await dispose_adapter(self._inner)
 
     @property
@@ -613,6 +616,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         while self._background_tasks:
             tasks = list(self._background_tasks)
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _settle_handlers(self) -> None:
+        for task in self._background_tasks:
+            task.cancel()
+        await self.wait_idle()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Build the REST client and start the inner adapter."""
@@ -687,9 +695,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         """Close ingress and join accepted handlers before inner framework teardown."""
         self._accepting_events = False
         errors = await self._close_listeners()
-        for task in self._background_tasks:
-            task.cancel()
-        await self.wait_idle()
+        await self._settle_handlers()
         if self._inner._disposal.builtin_started:
             try:
                 await dispose_framework(self._inner)
