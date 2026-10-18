@@ -1030,7 +1030,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # The timeout abort stays inside running(), so a STOP during that
         # HTTP call still finds the turn and the abort keeps running in the
         # owned stop task after this watcher is cancelled.
-        completed = False
         try:
             async with self.backend_turns.running(room_id, turn):
                 try:
@@ -1044,19 +1043,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     turn.reports_timeout = True
                     await self.backend_turns.stop(room_id)
                     await self._report_timeout(room_id, turn)
-                else:
-                    completed = True
-            if completed:
-                try:
-                    await self._deliver_fallback_text(room_state.room_id, turn)
-                    await judge_detached_turn(turn.tools, room_id=room_state.room_id)
-                    await self._emit_turn_usage(room_id, turn)
-                except Exception:
-                    logger.exception(
-                        "Failed to deliver the OpenCode turn result for room %s",
-                        room_id,
-                    )
-                    await self._report_delivery_failure(turn)
+                    return
+            try:
+                await self._deliver_fallback_text(room_state.room_id, turn)
+                await judge_detached_turn(turn.tools, room_id=room_state.room_id)
+                await self._emit_turn_usage(room_id, turn)
+            except Exception:
+                logger.exception(
+                    "Failed to deliver the OpenCode turn result for room %s",
+                    room_id,
+                )
+                await self._report_delivery_failure(turn)
         finally:
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
