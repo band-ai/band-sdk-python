@@ -431,6 +431,8 @@ class Peer:
                     {"protocolVersion": 1 if self.scenario == "bad-negotiation" else 2},
                 )
                 PROTOCOL_VERSION = 2
+            case "set_ask_dialog":
+                self.respond(frame, {"enabled": True})
             case "prompt":
                 self.prompt(frame)
             case "get_state":

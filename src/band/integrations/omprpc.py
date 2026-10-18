@@ -661,6 +661,11 @@ class OmpRpcClient:
         request_id: str,
         callback: Coroutine[object, object, None],
     ) -> None:
+        if self._closing:
+            # Cleanup already collected the callbacks it will cancel; a later one
+            # could otherwise post after its room's turn has ended.
+            callback.close()
+            return
         key = (kind, request_id)
         task = asyncio.create_task(callback)
         if key in turn.callbacks:
@@ -722,6 +727,10 @@ class OmpRpcClient:
             frame["value"] = response.value
         elif response.confirmed is not None:
             frame["confirmed"] = response.confirmed
+        elif response.answers is not None:
+            frame["answers"] = [
+                answer.model_dump(exclude_none=True) for answer in response.answers
+            ]
         else:
             frame["cancelled"] = True
         await self._write_frame(frame)

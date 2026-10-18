@@ -50,6 +50,8 @@ class PendingRuntime:
                 "sessionFile": None,
                 "isSettled": True,
             }
+        if command == "set_ask_dialog":
+            return {"enabled": True}
         return {}
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):

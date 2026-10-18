@@ -205,6 +205,32 @@ class OmpHostToolCancel(OmpWireModel):
     targetId: str
 
 
+class OmpAskOption(OmpWireModel):
+    label: str
+    description: str | None = None
+    preview: str | None = None
+
+
+class OmpAskQuestion(OmpWireModel):
+    """A structured native ask question, enabled by ``set_ask_dialog``."""
+
+    id: str
+    question: str
+    header: str | None = None
+    options: list[OmpAskOption] = Field(default_factory=list)
+    multi: bool = False
+    # The tool schema accepts any number and forwards the recommendation unchanged.
+    recommended: float | None = None
+
+
+class OmpAskAnswer(OmpWireModel):
+    """One answer per question, in question order, using offered option labels."""
+
+    id: str
+    selectedOptions: list[str] = Field(default_factory=list)
+    customInput: str | None = None
+
+
 class OmpUIRequest(OmpWireModel):
     type: Literal["extension_ui_request"] = "extension_ui_request"
     id: str
@@ -213,19 +239,24 @@ class OmpUIRequest(OmpWireModel):
     options: list[str] = Field(default_factory=list)
     message: str | None = None
     targetId: str | None = None
+    questions: list[OmpAskQuestion] = Field(default_factory=list)
 
 
 class OmpUIResponse(OmpWireModel):
     value: str | None = None
     confirmed: bool | None = None
+    answers: list[OmpAskAnswer] | None = None
     cancelled: bool = False
 
     @model_validator(mode="after")
     def validate_answer(self) -> OmpUIResponse:
-        if (
-            sum((self.value is not None, self.confirmed is not None, self.cancelled))
-            > 1
-        ):
+        given = (
+            self.value is not None,
+            self.confirmed is not None,
+            self.answers is not None,
+            self.cancelled,
+        )
+        if sum(given) > 1:
             raise ValueError("OMP UI response must contain only one answer")
         return self
 
