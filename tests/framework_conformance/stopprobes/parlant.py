@@ -11,7 +11,7 @@ case skips outside the dev-parlant venv.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import patch
@@ -29,17 +29,16 @@ from tests.framework_conformance.stopprobes import (
     stop_room,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
+from tests.toolkit.clock import binary_clock_resolution
 
 LOOPBACK = "127.0.0.1"
-# Real engine work (startup aside) settles well within this, and it stays
-# under the suite's 30s test timeout so a turn that never stops fails here.
+# Bound virtual waiting when the engine never reaches the model barrier.
 ENGINE_WAIT_SECONDS = 15.0
 ENGINE_STOPPED = "engine stopped processing the session"
 PREAMBLE_STOPPED = "preamble generation stopped"
 TAG_IS_LIVE = "process_session_tag names the engine's running task"
+# Parlant's exact-zero expiry check needs an integral binary-clock budget.
 RESPONSE_TIMEOUT_SECONDS = 5.0
-# Binary ticks keep Parlant's exact-zero expiry check free of float residuals.
-VIRTUAL_CLOCK_RESOLUTION_SECONDS = 2**-20
 
 
 @asynccontextmanager
@@ -59,8 +58,8 @@ async def started(
         nlp_service=nlp.factory,
         server_options={"host": LOOPBACK, "log_level": p.LogLevel.WARNING},
     )
-    await adapter.on_started("Agent", "A Parlant agent")
     try:
+        await adapter.on_started("Agent", "A Parlant agent")
         yield adapter, nlp
     finally:
         await adapter.cleanup_all()
@@ -74,26 +73,31 @@ def background_tasks(adapter: ParlantAdapter) -> Any:
     return adapter.server.container[BackgroundTaskService]
 
 
+@asynccontextmanager
 async def processing_turn(
     adapter: ParlantAdapter, nlp: Any, tools: FakeAgentTools
-) -> tuple[asyncio.Task[None], str]:
+) -> AsyncIterator[tuple[asyncio.Task[None], str]]:
     """A turn the engine is generating for, and its session id."""
     turn = asyncio.create_task(adapter.on_event(turn_input(tools)))
-    await asyncio.wait_for(nlp.entered.wait(), ENGINE_WAIT_SECONDS)
-    assert adapter._rooms is not None
-    session_id = await adapter._rooms.session_for(ROOM_ID, customer_name="")
-    return turn, str(session_id)
+    try:
+        await asyncio.wait_for(nlp.entered.wait(), ENGINE_WAIT_SECONDS)
+        assert adapter._rooms is not None
+        session_id = await adapter._rooms.session_for(ROOM_ID, customer_name="")
+        yield turn, str(session_id)
+    finally:
+        turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
 
 
 async def end_running_turn(mode: ControlMode) -> list[str]:
     async with started() as (adapter, nlp), captured_preambles() as (created, preamble):
         tools = FakeAgentTools()
-        turn, session_id = await processing_turn(adapter, nlp, tools)
-        engine = background_tasks(adapter)._tasks[process_session_tag(session_id)]
-        await created.wait()
-        await nlp.generation_started(preamble[0]).wait()
-        await end_turn(adapter, turn, ROOM_ID, mode)
-        return stopped_work(engine, preamble, tools)
+        async with processing_turn(adapter, nlp, tools) as (turn, session_id):
+            engine = background_tasks(adapter)._tasks[process_session_tag(session_id)]
+            await created.wait()
+            await nlp.generation_started(preamble[0]).wait()
+            await end_turn(adapter, turn, ROOM_ID, mode)
+            return stopped_work(engine, preamble, tools)
 
 
 @asynccontextmanager
@@ -175,8 +179,10 @@ async def response_timeout() -> list[str]:
 
 
 async def tag_parity() -> list[str]:
-    async with started() as (adapter, nlp):
-        turn, session_id = await processing_turn(adapter, nlp, FakeAgentTools())
+    async with (
+        started() as (adapter, nlp),
+        processing_turn(adapter, nlp, FakeAgentTools()) as (turn, session_id),
+    ):
         live = process_session_tag(session_id) in background_tasks(adapter)._tasks
         await end_turn(adapter, turn, ROOM_ID, ControlMode.STOP)
         return [TAG_IS_LIVE] if live else []
@@ -203,19 +209,28 @@ async def idle() -> list[str]:
         return cancelled
 
 
+def engine_case(
+    run: Callable[[], Awaitable[list[str]]], expected: list[str]
+) -> StopCase:
+    return StopCase(
+        run=run,
+        expected=expected,
+        marks=(pytest.mark.looptime(resolution=binary_clock_resolution()),),
+    )
+
+
 CASES: dict[str, StopCase] = {
     **{
-        f"{mode}-mid-turn": StopCase(
+        f"{mode}-mid-turn": engine_case(
             run=lambda mode=mode: end_running_turn(mode),
             expected=[ENGINE_STOPPED, PREAMBLE_STOPPED],
         )
         for mode in ENDING_CONTROLS
     },
-    "tag-matches-the-engine": StopCase(run=tag_parity, expected=[TAG_IS_LIVE]),
-    "response-timeout": StopCase(
+    "tag-matches-the-engine": engine_case(run=tag_parity, expected=[TAG_IS_LIVE]),
+    "response-timeout": engine_case(
         run=response_timeout,
         expected=[ENGINE_STOPPED, PREAMBLE_STOPPED],
-        marks=(pytest.mark.looptime(resolution=VIRTUAL_CLOCK_RESOLUTION_SECONDS),),
     ),
-    "idle-room": StopCase(run=idle, expected=[]),
+    "idle-room": engine_case(run=idle, expected=[]),
 }
