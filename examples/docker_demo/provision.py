@@ -119,10 +119,24 @@ def replace_record(path: Path, content: str) -> None:
     temporary.replace(path)
 
 
+def _has_platform_recovery_ledgers() -> bool:
+    agent_ids = (
+        AGENT_IDS.read_text(encoding="utf-8").split() if AGENT_IDS.exists() else []
+    )
+    room_ids = ROOM_IDS.read_text(encoding="utf-8").split() if ROOM_IDS.exists() else []
+    return bool(agent_ids or room_ids)
+
+
 def require_same_deployment() -> None:
     """Refuse cleanup when this process points at another deployment."""
     path = deployment_path()
     if not path.exists():
+        if _has_platform_recovery_ledgers():
+            raise RuntimeError(
+                "These resources have no recorded deployment binding; cleanup cannot "
+                "treat 404 responses as confirmed absence. Write the originating REST "
+                f"URL to {path} and retry. Ledgers retained in {DEMO_DIR}."
+            )
         return
     origin = deployment_binding(path.read_text(encoding="utf-8").strip())
     current = deployment_binding(ProvisionSettings().band_rest_url)

@@ -32,6 +32,32 @@ def rest_url_of(argv: list[str]) -> str:
 class TestCleanupDeploymentBinding:
     """A 404 from another deployment is not evidence the resource is gone."""
 
+    async def test_legacy_ledger_without_binding_blocks_cleanup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        name = "band-selfreg-demo-legacy"
+        monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+        monkeypatch.setattr(
+            self_registration,
+            "_require_settings",
+            Mock(return_value=settings_for(REPLACEMENT)),
+        )
+        monkeypatch.setattr(self_registration, "user_rest_client", Mock())
+        monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+        manager = SimpleNamespace(reap_room=AsyncMock(), reap_agent=AsyncMock())
+        monkeypatch.setattr(
+            self_registration, "ResourceManager", Mock(return_value=manager)
+        )
+        self_registration.record_resource(name, "agents", "agent-1")
+
+        with pytest.raises(RuntimeError, match="no recorded deployment binding"):
+            await self_registration.cleanup_by_name(name)
+
+        manager.reap_agent.assert_not_awaited()
+        manager.reap_room.assert_not_awaited()
+        assert self_registration.recorded_resources(name, "agents") == ["agent-1"]
+        assert (tmp_path / name).exists()
+
     async def test_foreign_deployment_keeps_recorded_ids(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

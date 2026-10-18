@@ -65,6 +65,36 @@ class TestProvisionDeploymentBinding:
 
         rest.human_api_agents.register_my_agent.assert_not_called()
 
+    async def test_legacy_agent_ledger_without_binding_blocks_cleanup(
+        self, demo_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        del demo_dir
+        provision.AGENT_IDS.write_text("agent-1\n")
+        monkeypatch.setenv("BAND_REST_URL", REPLACEMENT)
+        rest = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="no recorded deployment binding"):
+            await provision.delete(rest)
+
+        rest.human_api_agents.delete_my_agent.assert_not_awaited()
+        assert provision.AGENT_IDS.read_text(encoding="utf-8").splitlines() == [
+            "agent-1"
+        ]
+
+    async def test_legacy_room_ledger_without_binding_blocks_cleanup(
+        self, demo_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        del demo_dir
+        provision.record_room("room-1")
+        monkeypatch.setenv("BAND_REST_URL", REPLACEMENT)
+        client = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="no recorded deployment binding"):
+            await provision.delete_rooms(client)
+
+        client.human_api_bulk_deletions.bulk_delete_my_chats.assert_not_called()
+        assert provision.ROOM_IDS.read_text(encoding="utf-8").split() == ["room-1"]
+
     async def test_delete_on_another_deployment_keeps_recorded_ids(
         self, demo_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
