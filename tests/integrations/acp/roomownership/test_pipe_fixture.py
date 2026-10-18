@@ -16,11 +16,10 @@ class TestPipeFixture:
         async with pipe_process() as peer:
             await peer.start()
             await peer.exit_agent()
-            assert peer.transport is not None
-            assert peer.transport.get_returncode() is not None
+            assert peer.returncode is not None
             assert not peer.stdout_closed.is_set()
 
-            peer.holder_released.set()
+            peer.release_holder()
             await peer.stdout_closed.wait()
 
     @pytest.mark.parametrize(
@@ -31,7 +30,7 @@ class TestPipeFixture:
     ) -> None:
         with pytest.raises(RuntimeError, match="test interrupted"):
             async with pipe_process() as peer:
-                peer.spawn_allowed.clear()
+                peer.hold_startup()
                 starting = peer.begin_start()
                 await peer.agent_connected.wait()
                 assert not peer.holder_ready.is_set()

@@ -15,6 +15,7 @@ from tests.integrations.acp.acp_toolkit import (
     fake_agent_config,
 )
 from tests.integrations.acp.acp_toolkit.agent import AGENT_EXIT_FAILURE
+from tests.integrations.acp.roomownership.kit import restart_waiting_for_cleanup
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 from tests.mcpclient import crash_backend
 
@@ -76,7 +77,7 @@ class TestFinalCleanup:
 
     @pytest.mark.asyncio
     async def test_a_held_room_keeps_the_shared_mcp_server_until_a_retry(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         config = fake_agent_config(inject_band_tools=True)
@@ -98,25 +99,9 @@ class TestFinalCleanup:
                     with pytest.raises(RoomClosingError):
                         await session.send("while closing")
 
-                    joined = asyncio.Event()
-                    stop_retention = session.adapter._retention.stop
-
-                    async def join_retention() -> None:
-                        joined.set()
-                        await stop_retention()
-
-                    monkeypatch.setattr(
-                        session.adapter._retention, "stop", join_retention
-                    )
-                    restarting = asyncio.create_task(
-                        session.adapter.on_started("Fake Agent", "while closing")
-                    )
-                    await joined.wait()
-                    restarting.cancel()
-                    with pytest.raises(asyncio.CancelledError):
-                        await restarting
-                    assert session.adapter._mcp.current is not None
-                    assert not runtime.closed
+                    async with restart_waiting_for_cleanup(session):
+                        assert session.adapter._mcp.current is not None
+                        assert not runtime.closed
                 finally:
                     exiting.release.set()
                 await session.adapter.cleanup_all()

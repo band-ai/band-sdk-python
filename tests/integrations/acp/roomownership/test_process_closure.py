@@ -52,7 +52,7 @@ class TestProcessClosure:
             assert room.runtime is runtime and not runtime.closed
             assert room.retained.snapshot.state is Residency.SUSPENDING
 
-            peer.holder_released.set()
+            peer.release_holder()
             await peer.adapter.on_cleanup(DEFAULT_ROOM)
             await peer.stdout_closed.wait()
 

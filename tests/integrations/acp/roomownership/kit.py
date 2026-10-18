@@ -202,6 +202,28 @@ async def restart(session: AcpSession) -> None:
     await session.adapter.on_started("Fake Agent", "in-process fake")
 
 
+@asynccontextmanager
+async def restart_waiting_for_cleanup(session: AcpSession) -> AsyncIterator[None]:
+    """Observe the restart joining real cleanup; cancel its caller on exit."""
+    joined = asyncio.Event()
+    stop_retention = session.adapter._retention.stop
+
+    async def join_retention() -> None:
+        joined.set()
+        await stop_retention()
+
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(session.adapter._retention, "stop", join_retention)
+        restarting = asyncio.create_task(restart(session))
+        try:
+            await joined.wait()
+            yield
+        finally:
+            restarting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await restarting
+
+
 def answered(option: str) -> dict[str, object]:
     return {
         "outcome": {

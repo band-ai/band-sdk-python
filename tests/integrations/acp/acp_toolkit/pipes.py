@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from typing import Any
 
@@ -34,20 +34,30 @@ class PipeProcess:
         self.stdout_closed = asyncio.Event()
         self.stdout_read = asyncio.Event()
         self.stderr_closed = asyncio.Event()
-        self.spawn_allowed = asyncio.Event()
-        self.spawn_allowed.set()
-        self.exit_requested = asyncio.Event()
-        self.holder_released = asyncio.Event()
-        self.transport: asyncio.SubprocessTransport | None = None
+        self._spawn_allowed = asyncio.Event()
+        self._spawn_allowed.set()
+        self._exit_requested = asyncio.Event()
+        self._holder_released = asyncio.Event()
+        self._transport: asyncio.SubprocessTransport | None = None
         self.adapter: ACPClientAdapter[Any]
-        self.connections: list[asyncio.Task[None]] = []
-        self.operations: list[asyncio.Task[None]] = []
+        self._connections: list[asyncio.Task[None]] = []
+        self._operations: list[asyncio.Task[None]] = []
         self._monkeypatch = monkeypatch
+
+    @property
+    def returncode(self) -> int | None:
+        return self._transport.get_returncode() if self._transport is not None else None
+
+    def hold_startup(self) -> None:
+        self._spawn_allowed.clear()
+
+    def release_holder(self) -> None:
+        self._holder_released.set()
 
     def connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        self.connections.append(asyncio.create_task(self._serve(reader, writer)))
+        self._connections.append(asyncio.create_task(self._serve(reader, writer)))
 
     async def _serve(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -57,13 +67,13 @@ class PipeProcess:
             match role:
                 case PipeRole.AGENT:
                     self.agent_connected.set()
-                    await self.spawn_allowed.wait()
+                    await self._spawn_allowed.wait()
                     await self._send(writer, PipeCommand.START)
-                    await self.exit_requested.wait()
+                    await self._exit_requested.wait()
                     await self._send(writer, PipeCommand.EXIT)
                 case PipeRole.HOLDER:
                     self.holder_ready.set()
-                    await self.holder_released.wait()
+                    await self._holder_released.wait()
                     await self._send(writer, PipeCommand.RELEASE)
             await reader.read()
         except ConnectionError:
@@ -89,7 +99,7 @@ class PipeProcess:
         on_pipe = protocol.pipe_connection_lost
 
         def connected(transport: asyncio.SubprocessTransport) -> None:
-            self.transport = transport
+            self._transport = transport
             on_connect(transport)
 
         def exited() -> None:
@@ -128,21 +138,22 @@ class PipeProcess:
                 self.closing.set()
 
     def begin_start(self) -> asyncio.Task[None]:
-        task = asyncio.create_task(send_to(self.adapter, DEFAULT_ROOM))
-        self.operations.append(task)
-        return task
+        return self._start(send_to(self.adapter, DEFAULT_ROOM))
 
     async def start(self) -> None:
         await self.begin_start()
         await self.holder_ready.wait()
 
     def begin_cleanup(self) -> asyncio.Task[None]:
-        task = asyncio.create_task(self.adapter.on_cleanup(DEFAULT_ROOM))
-        self.operations.append(task)
+        return self._start(self.adapter.on_cleanup(DEFAULT_ROOM))
+
+    def _start(self, operation: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        task = asyncio.create_task(operation)
+        self._operations.append(task)
         return task
 
     async def exit_agent(self) -> None:
-        self.exit_requested.set()
+        self._exit_requested.set()
         await self.exited.wait()
 
     async def wait_for_stdout_cleanup(self, cleanup: asyncio.Task[None]) -> None:
@@ -157,17 +168,17 @@ class PipeProcess:
 
     def release(self) -> None:
         """Release current and future connections before waiting for cleanup."""
-        self.spawn_allowed.set()
-        self.holder_released.set()
-        self.exit_requested.set()
+        self._spawn_allowed.set()
+        self.release_holder()
+        self._exit_requested.set()
 
     async def finish(self) -> None:
         self.release()
         try:
             await self.adapter.cleanup_all()
         finally:
-            await asyncio.gather(*self.operations, return_exceptions=True)
-            if self.transport is not None:
+            await asyncio.gather(*self._operations, return_exceptions=True)
+            if self._transport is not None:
                 await self.exited.wait()
                 await self.stdout_closed.wait()
                 await self.stderr_closed.wait()
@@ -207,4 +218,4 @@ async def controlled_pipes(
             finally:
                 server.close()
                 await server.wait_closed()
-                await asyncio.gather(*peer.connections)
+                await asyncio.gather(*peer._connections)
