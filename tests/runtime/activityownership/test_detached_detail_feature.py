@@ -146,6 +146,14 @@ class TestDetachedActivityFeature:
                 release.set()
                 await asyncio.gather(*(worker.task for worker in workers))
                 await ctx._join_activity_completion()
+                if variant in {"disabled", "hub"}:
+                    assert not activity_platform.activity_bodies
+                    assert not httpx_mock.get_requests()
+                else:
+                    assert activity_platform.activity_bodies[-1] == {"working": False}
+                    assert (
+                        activity_platform.activity_bodies.count({"working": False}) == 1
+                    )
                 assert not client.aborted_sessions
                 assert "private-argument" not in json.dumps(
                     activity_platform.activity_bodies

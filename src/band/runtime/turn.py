@@ -65,11 +65,11 @@ def _observing(
 ) -> Callable[..., Awaitable[Any]]:
     @functools.wraps(method)
     async def observe(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if tool_name in MEMORY_SAVE_TOOLS:
-            await report_memory_activity(self)
-        else:
-            await report_tool_activity(self, tool_name)
         try:
+            if tool_name in MEMORY_SAVE_TOOLS:
+                await report_memory_activity(self)
+            else:
+                await report_tool_activity(self, tool_name)
             return await method(self, *args, **kwargs)
         finally:
             await end_tool_activity(self)

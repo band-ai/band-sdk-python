@@ -18,6 +18,7 @@ class TurnScope:
     observer_task: asyncio.Task[None] | None = None
     handler: TurnTask | None = None
     admitted: bool = False
+    activity_allowed: bool = False
     settled: bool = False
     kind: ControlMode | None = None
     deadline: float | None = None

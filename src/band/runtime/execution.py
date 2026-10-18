@@ -1901,6 +1901,7 @@ class ExecutionContext:
     ) -> None:
         scope = self.current_scope
         if scope is not None:
+            scope.activity_allowed = True
             await self._acquire_activity(scope)
         if scope is not None and scope.terminating:
             raise asyncio.CancelledError
@@ -1921,6 +1922,8 @@ class ExecutionContext:
         await self._start_activity(scope)
 
     async def _start_activity(self, scope: TurnScope) -> None:
+        if not scope.activity_allowed:
+            return
         previous = self._activity_owner
         if previous is not None and previous is not scope:
             if not previous.aborted and any(
@@ -1937,7 +1940,11 @@ class ExecutionContext:
         await self._working_reporter.start(owner=scope)
 
     def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
-        return ScopeActivityObserver(self, scope) if scope is not None else None
+        return (
+            ScopeActivityObserver(self, scope)
+            if scope is not None and scope.activity_allowed
+            else None
+        )
 
     def owns_activity(self, scope: TurnScope) -> bool:
         return self._activity_owner is scope and not scope.aborted and not self._closing
@@ -1949,6 +1956,8 @@ class ExecutionContext:
         activity: AgentActivityDetail | None = None,
         waiting: bool | None = None,
     ) -> None:
+        if not scope.activity_allowed:
+            return
         if (
             self._activity_owner is None
             and scope is self.current_scope
@@ -1972,7 +1981,11 @@ class ExecutionContext:
         """Bind completion to the same owner that delivers worker cancellation."""
         scope.bind(owner)
         owner.task.add_done_callback(lambda _: self._finish_activity(scope))
-        if scope is self.current_scope and self._activity_owner is None:
+        if (
+            scope.activity_allowed
+            and scope is self.current_scope
+            and self._activity_owner is None
+        ):
             previous = self._activity_completion
 
             async def acquire() -> None:

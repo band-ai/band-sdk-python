@@ -17,6 +17,7 @@ class ActivityPlatform(PostingPlatform):
         self.hold_next_activity = False
         self.activity_entered = asyncio.Event()
         self.activity_release = asyncio.Event()
+        self.activity_cancelled = asyncio.Event()
         self.reject_detail = False
         self.event_bodies: list[dict[str, Any]] = []
 
@@ -32,7 +33,11 @@ class ActivityPlatform(PostingPlatform):
         if self.hold_next_activity and request.url.path.endswith("/activity"):
             self.hold_next_activity = False
             self.activity_entered.set()
-            await self.activity_release.wait()
+            try:
+                await self.activity_release.wait()
+            except asyncio.CancelledError:
+                self.activity_cancelled.set()
+                raise
         return response
 
     def answer(self, request: httpx.Request) -> httpx.Response:
