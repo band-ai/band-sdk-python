@@ -296,13 +296,16 @@ class PostingPlatform(LifecyclePlatform):
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "participants":
-            return page([ALICE])
+            return page([{**ALICE, "role": "member", "status": "active"}])
         if request.method == "POST" and tail == "events":
             return httpx.Response(
-                201, json={"data": {"id": "e-1", "message_type": "event"}}
+                201,
+                json={"data": {"id": "e-1", "message_type": "event", "success": True}},
             )
         if request.method == "POST" and tail == "messages":
-            return httpx.Response(201, json={"data": {"id": "m-1", "recipients": []}})
+            return httpx.Response(
+                201, json={"data": {"id": "m-1", "recipients": [], "success": True}}
+            )
         return super().answer(request)
 
 
