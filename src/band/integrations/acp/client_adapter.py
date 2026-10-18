@@ -917,7 +917,6 @@ class ACPClientAdapter(
                             asyncio.create_task(
                                 self._handle_turn_timeout(
                                     room,
-                                    runtime,
                                     generation=generation,
                                     session_id=session_id,
                                     tools=tools,
@@ -965,7 +964,6 @@ class ACPClientAdapter(
     async def _handle_turn_timeout(
         self,
         room: ACPRoom,
-        runtime: ACPRuntime,
         *,
         generation: int,
         session_id: str,
