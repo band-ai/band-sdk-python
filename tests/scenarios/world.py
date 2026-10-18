@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from band.client.streaming import ControlMode, WireEvent
+from band.core.exceptions import AgentDisconnectedError
 from band.platform.link import BandLink
 from band.runtime.execution import Execution, ExecutionContext
 from band.runtime.runtime import AgentRuntime
@@ -122,10 +123,17 @@ class BandWorld:
 
     @asynccontextmanager
     async def running(self) -> AsyncIterator[None]:
-        """The host blocked on ``run_forever``, journaled when it returns."""
+        """The host blocked on ``run_forever``, journaled when it returns or
+        when a terminal platform disconnect ends it with its reason."""
 
         async def run() -> None:
-            await self.runtime.link.run_forever(install_signal_handlers=False)
+            try:
+                await self.runtime.link.run_forever(install_signal_handlers=False)
+            except AgentDisconnectedError as disconnected:
+                self.observations.record(
+                    f"{SESSION_SUBJECT}: ended by {disconnected.reason.reason}"
+                )
+                return
             self.observations.record(f"{SESSION_SUBJECT}: ended")
 
         task = asyncio.create_task(run())

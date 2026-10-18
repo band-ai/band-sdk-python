@@ -6,7 +6,11 @@ from __future__ import annotations
 from websockets.frames import CloseCode
 
 from band.client.streaming import ControlMode
+from tests.conftest import TERMINAL_SUPERSEDE
 from tests.scenarios.world import SESSION_SUBJECT, BandWorld
+
+# A terminal supersede ends ``run_forever`` by raising its typed reason.
+ENDED_BY_SUPERSEDE = f"ended by {TERMINAL_SUPERSEDE['reason']}"
 
 
 class TestSessionEndDuringControl:
@@ -31,14 +35,14 @@ class TestSessionEndDuringControl:
             await world.supersede()
             await world.until_told(SESSION_SUBJECT, "disconnected")
             await world.close_connection(CloseCode.GOING_AWAY)
-            await world.until_told(SESSION_SUBJECT, "ended")
+            await world.until_told(SESSION_SUBJECT, ENDED_BY_SUPERSEDE)
 
             world.script.release_controls()
             await world.until_told("r2", "control stop")
             await world.until_told("r2", "turn b cancelled")
 
         assert world.server.connection_count == 1
-        assert world.story(SESSION_SUBJECT) == ["disconnected", "ended"]
+        assert world.story(SESSION_SUBJECT) == ["disconnected", ENDED_BY_SUPERSEDE]
         assert world.story("r1") == [
             f"processing {a}",
             "turn a",

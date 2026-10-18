@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from websockets.frames import CloseCode
 
 from band.client.streaming.client import AgentControlPayload, ControlMode, WireEvent
+from band.core.exceptions import AgentDisconnectedError
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
 from tests.conftest import TERMINAL_SUPERSEDE
@@ -56,7 +58,9 @@ class TestSupersedeDuringControl:
                 )
                 event = await asyncio.wait_for(anext(link), HANG_GUARD_S)
                 await server.close_connection(code=CloseCode.GOING_AWAY)
-                await asyncio.wait_for(run, HANG_GUARD_S)
+                with pytest.raises(AgentDisconnectedError) as disconnected:
+                    await asyncio.wait_for(run, HANG_GUARD_S)
 
                 assert event == WebSocketDisconnectedEvent(payload=SUPERSEDED)
+                assert disconnected.value.reason == SUPERSEDED
                 assert server.connection_count == 1

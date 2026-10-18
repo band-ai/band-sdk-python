@@ -396,6 +396,7 @@ class WebSocketClient:
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
         session_policy: SessionPolicy | None = None,
         conflict_policy: ConflictPolicy = ConflictPolicy.SUPERSEDE,
+        on_transport_stopped: Callable[[WebSocketClient], None] | None = None,
     ):
         self.ws_url = ws_url
         self.api_key = api_key
@@ -404,6 +405,7 @@ class WebSocketClient:
         self.client: PHXChannelsClient | None = None
         self._on_reconnect = on_reconnect
         self._on_disconnect = on_disconnect
+        self._on_transport_stopped = on_transport_stopped
         self._validation_error_count: int = 0
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
         self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
@@ -617,6 +619,29 @@ class WebSocketClient:
         )
         client.auto_reconnect = True
         self._watchdog.start(client)
+        if self._on_transport_stopped is not None:
+            # Phoenix owns this task across transient reconnects. Its end,
+            # not a public waiter's cancellation, ends the transport lifetime.
+            supervisor = client._supervisor_task
+            if supervisor is None:
+                self._publish_transport_stopped(client)
+            else:
+                supervisor.add_done_callback(
+                    lambda _: self._publish_transport_stopped(client)
+                )
+
+    def _publish_transport_stopped(self, client: PHXChannelsClient) -> None:
+        if self.client is not client or self._on_transport_stopped is None:
+            return
+        # Signal shutdown cancels the supervisor before closing its socket.
+        # Join that existing lifetime by notification; never create a new stop.
+        shutdown = client._shutdown_task
+        if shutdown is not None and not shutdown.done():
+            shutdown.add_done_callback(
+                lambda _: self._publish_transport_stopped(client)
+            )
+            return
+        self._on_transport_stopped(self)
 
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context.

@@ -220,6 +220,7 @@ class AgentRuntime:
         2. Stops RoomPresence
         3. Disconnects the link (wakes ``run(install_signal_handlers=False)``)
         """
+        self.link.request_disconnect()
         self.rooms.close(timeout=timeout)
         logger.info("Stopping AgentRuntime for agent %s", self.agent_id)
 

@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from band_rest.core.api_error import ApiError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.client.streaming import ControlMode
+from band.client.streaming import ControlMode, WebSocketDisconnectReason
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import CleanupIncompleteError
 from band.core.types import PlatformConnection
@@ -119,6 +119,11 @@ class PlatformRuntime:
         return self._feature_flags
 
     @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """The current connection's terminal cause, retained after stopping."""
+        return self._link.last_disconnect_reason if self._link is not None else None
+
+    @property
     def link(self) -> BandLink:
         if not self._link:
             raise RuntimeError("Runtime not started")
@@ -169,6 +174,7 @@ class PlatformRuntime:
             rest_url=self._rest_url,
             conflict_policy=self._config.conflict_policy,
         )
+        self._link.on_transport_stopped = self._mark_stopped
 
         await self._fetch_agent_metadata()
         logger.debug("Platform runtime initialized for agent: %s", self._agent_name)
@@ -277,6 +283,18 @@ class PlatformRuntime:
             self._instance_guard.release()
             self._instance_guard = None
 
+    def _mark_stopped(self, link: BandLink | None = None) -> None:
+        """Observe non-serving state without recording a host stop request."""
+        if link is not None and self._link is not link:
+            return
+        self._running = False
+
+    def request_stop(self) -> None:
+        """Record host intent synchronously, before any shutdown awaits."""
+        self._mark_stopped()
+        if self._link is not None:
+            self._link.request_disconnect()
+
     async def stop(self, timeout: float | None = None) -> bool:
         """
         Stop platform runtime with optional graceful timeout.
@@ -295,7 +313,7 @@ class PlatformRuntime:
                 guard stays held, since the socket may still be up, until a
                 retried ``stop()`` disconnects.
         """
-        self._running = False
+        self.request_stop()
         graceful = True
         try:
             # Unsubscribe while the socket is still up; AgentRuntime.stop

@@ -213,12 +213,37 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 ### Process Signals
 
-`agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) passes `install_signal_handlers=False` and calls `agent.stop()` from its own handler; `run_forever` then returns. `GracefulShutdown` is a ready-made handler that does this, and `run_with_graceful_shutdown(agent)` wraps it. Put `GracefulShutdown` outside `agent` so its handlers are registered before `start()` and a mid-initialize SIGTERM can still tear down:
+`agent.run()` and `agent.run_forever()` install SIGTERM/SIGINT handlers by default (`install_signal_handlers=True`) and restore the process's previous handlers when they return. `BandLink.run_forever()` has the same default. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) passes `install_signal_handlers=False` and calls `agent.stop()` from its own handler; `run_forever` then returns normally. `GracefulShutdown` is a ready-made handler that does this, and `run_with_graceful_shutdown(agent)` wraps it. Put `GracefulShutdown` outside `agent` so its handlers are registered before `start()` and a mid-initialize SIGTERM can still tear down:
 
 ```python notest
 async with GracefulShutdown(agent), agent:
     await agent.run_forever(install_signal_handlers=False)
 ```
+
+Cancelling a `run_forever()` waiter does not stop a live agent or close its transport; another waiter can take over. Transport completion is observed independently of that waiter: a terminal transport error, a normal close with no waiter, or signal shutdown finishing after its waiter was cancelled still marks the runtime as no longer serving. Cancellation cannot undo a transport shutdown already confirmed by the SDK. A normal return after a shutdown signal reflects a closed transport, but a manually started agent still needs `stop()` to settle room, adapter, and single-instance-lock cleanup before restarting.
+
+### Managed Hosts and Disconnects
+
+Managed hosts project their profiles into each adapter's configuration, rather than mutating a running adapter. The adapter guides describe the supported values:
+
+| Adapter | Configuration | Custom instructions | Model | Reasoning / thinking |
+|---|---|---|---|---|
+| [Claude SDK](docs/adapters/claude_sdk.md) | `ClaudeSDKAdapterConfig` | `custom_section` | `model` | `effort`, `max_thinking_tokens` |
+| [Codex](docs/adapters/codex.md) | `CodexAdapterConfig` | `custom_section` | `model` | `reasoning_effort` |
+| Copilot SDK | `CopilotSDKAdapterConfig` | `custom_section` | `model` | `reasoning_effort` |
+| [OpenCode](docs/adapters/opencode.md#opencode-variants) | `OpencodeAdapterConfig` | `custom_section` | `provider_id`, `model_id` | `variant` |
+
+`run_forever()` returns normally for a host-requested stop, even if a terminal platform event arrives while rooms are still draining. A terminal platform disconnect instead raises `AgentDisconnectedError` immediately, without waiting for the server to close the socket. For example, a newer connection using the same agent key can supersede this one. Catch the error rather than blindly restarting and fighting the other connection over one identity.
+
+`error.reason`, `agent.last_disconnect_reason`, and `agent.runtime.last_disconnect_reason` expose the same typed `WebSocketDisconnectReason`. The reason survives `stop()` and resets on a fresh connection attempt. An ordinary transport loss does not set a terminal reason: the run stays alive while the transport reconnects. Use `async with agent:` or `agent.run()` to retain normal cleanup on either outcome.
+
+```python
+from band import AgentDisconnectedError, BandConnectionError
+
+assert issubclass(AgentDisconnectedError, BandConnectionError)
+```
+
+Compatibility: a terminal supersede no longer looks like a successful return from `run_forever()`. Hosts that previously polled the link's private state can catch the public exception instead.
 
 ### Logging
 
