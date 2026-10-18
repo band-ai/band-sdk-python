@@ -11,6 +11,7 @@ def make_runtime() -> AsyncMock:
     runtime = AsyncMock()
     runtime.stop.return_value = True
     runtime.cleanup_pending = False
+    runtime.request_stop = MagicMock()
     runtime.claim_single_instance = MagicMock()
     runtime.release_single_instance = MagicMock()
     return runtime
