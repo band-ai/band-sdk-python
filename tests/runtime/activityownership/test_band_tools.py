@@ -13,7 +13,9 @@ from tests.runtime.activityownership.kit import ActivityPlatform
 
 class TestBandToolActivity:
     async def test_direct_registered_method_and_model_event_are_observed_but_telemetry_is_quiet(
-        self, execution: Callable[..., ExecutionContext], activity_platform: ActivityPlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
     ) -> None:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)

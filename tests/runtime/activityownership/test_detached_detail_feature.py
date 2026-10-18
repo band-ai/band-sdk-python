@@ -36,11 +36,11 @@ class TestDetachedActivityFeature:
     async def test_parked_approval_owns_detail_until_native_completion(
         self,
         execution: Callable[..., ExecutionContext],
-        peer: ActivityPlatform,
+        activity_platform: ActivityPlatform,
         httpx_mock: HTTPXMock,
         variant: str,
     ) -> None:
-        peer.reject_detail = variant == "downgrade"
+        activity_platform.reject_detail = variant == "downgrade"
         resumed, release = asyncio.Event(), asyncio.Event()
         captured: list[AgentTools] = []
 
@@ -107,7 +107,7 @@ class TestDetachedActivityFeature:
                 workers = tuple(owner.workers)
                 await ctx._process_event(make_message_event(msg_id="busy"))
                 await asyncio.sleep(9.1)
-                parked = list(peer.activity_bodies)
+                parked = list(activity_platform.activity_bodies)
                 match variant:
                     case "disabled" | "hub":
                         assert not parked
@@ -128,7 +128,7 @@ class TestDetachedActivityFeature:
                             == [{"working": True, "activity": {"kind": "permission"}}]
                             * 3
                         )
-                assert peer.marked("processed") == ["original"]
+                assert activity_platform.marked("processed") == ["original"]
                 assert await adapter.try_handle_control(
                     make_platform_message(
                         room_id=ROOM_ID, content="approve ask", sender_id="user-456"
@@ -137,25 +137,29 @@ class TestDetachedActivityFeature:
                 )
                 await resumed.wait()
                 if variant in {"normal", "silent"}:
-                    assert peer.activity_bodies[-1] == {
+                    assert activity_platform.activity_bodies[-1] == {
                         "working": True,
                         "activity": {"kind": "tool_call", "name": "bash"},
                     }
                 if variant == "cap":
-                    assert peer.activity_bodies == parked
+                    assert activity_platform.activity_bodies == parked
                 release.set()
                 await asyncio.gather(*(worker.task for worker in workers))
                 await ctx._join_activity_completion()
                 assert not client.aborted_sessions
-                assert "private-argument" not in json.dumps(peer.activity_bodies)
-                assert "private-result" not in json.dumps(peer.activity_bodies)
-                before = list(peer.activity_bodies)
+                assert "private-argument" not in json.dumps(
+                    activity_platform.activity_bodies
+                )
+                assert "private-result" not in json.dumps(
+                    activity_platform.activity_bodies
+                )
+                before = list(activity_platform.activity_bodies)
                 await report_tool_activity(captured[0], "late-old-callback")
-                assert peer.activity_bodies == before
+                assert activity_platform.activity_bodies == before
                 if variant == "silent":
                     assert not any(
                         event.get("message_type") in {"tool_call", "tool_result"}
-                        for event in peer.event_bodies
+                        for event in activity_platform.event_bodies
                     )
             finally:
                 release.set()

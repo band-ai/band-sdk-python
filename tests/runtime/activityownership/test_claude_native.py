@@ -22,7 +22,9 @@ from tests.runtime.helpers import ROOM_ID
 class TestClaudeNativeWireActivity:
     @pytest.mark.httpx_mock(should_mock=lambda request: request.url.host != "127.0.0.1")
     async def test_real_context_observes_native_tool_without_tool_narration(
-        self, execution: Callable[..., ExecutionContext], peer: ActivityPlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
     ) -> None:
         with scripted_claude() as cli:
             cli.script(
@@ -57,13 +59,17 @@ class TestClaudeNativeWireActivity:
                 assert {
                     "working": True,
                     "activity": {"kind": "tool_call", "name": "Bash"},
-                } in peer.activity_bodies
-                assert peer.activity_bodies[-1] == {"working": False}
+                } in activity_platform.activity_bodies
+                assert activity_platform.activity_bodies[-1] == {"working": False}
                 assert not any(
                     body.get("message_type") in {"tool_call", "tool_result"}
-                    for body in peer.event_bodies
+                    for body in activity_platform.event_bodies
                 )
-                assert "private-argument" not in json.dumps(peer.activity_bodies)
-                assert "private-result" not in json.dumps(peer.activity_bodies)
+                assert "private-argument" not in json.dumps(
+                    activity_platform.activity_bodies
+                )
+                assert "private-result" not in json.dumps(
+                    activity_platform.activity_bodies
+                )
             finally:
                 await adapter.cleanup_all()
