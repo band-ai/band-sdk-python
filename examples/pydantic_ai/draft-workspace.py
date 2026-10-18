@@ -77,9 +77,9 @@ def build_adapter(workspace: TemporaryDirectory[str]) -> PydanticAIAdapter:
     adapter = PydanticAIAdapter(
         PydanticAIAdapterConfig(
             model=f"openai:{OPENAI_MODEL}",
-            custom_section="Use save_draft and read_draft for the team's temporary draft.",
+            custom_section="Save and read the team's temporary draft.",
         ),
-        additional_tools=[*shared_tools(Path(workspace.name))],
+        additional_tools=shared_tools(Path(workspace.name)),
     )
     adapter.add_cleanup(remove_workspace)
     return adapter

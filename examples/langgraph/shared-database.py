@@ -21,7 +21,6 @@ from pathlib import Path
 
 import aiosqlite
 from dotenv import load_dotenv
-from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +33,10 @@ from band.runtime.custom_tools import CustomToolDef
 
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+NOTE_LIMIT = 20
+NOTES_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)"
+)
 
 
 class Settings(BaseSettings):
@@ -52,7 +55,7 @@ class SaveNoteInput(BaseModel):
 
 
 class ListNotesInput(BaseModel):
-    """List the twenty most recent team notes."""
+    """List the most recent team notes."""
 
 
 def shared_tools(database: aiosqlite.Connection) -> list[CustomToolDef]:
@@ -67,22 +70,20 @@ def shared_tools(database: aiosqlite.Connection) -> list[CustomToolDef]:
 
     async def list_notes(args: ListNotesInput) -> str:
         async with database.execute(
-            "SELECT text FROM notes ORDER BY id DESC LIMIT 20"
+            "SELECT text FROM notes ORDER BY id DESC LIMIT ?", (NOTE_LIMIT,)
         ) as cursor:
             return json.dumps([row[0] for row in await cursor.fetchall()])
 
     return [(SaveNoteInput, save_note), (ListNotesInput, list_notes)]
 
 
-def build_adapter(
-    database: aiosqlite.Connection, *, llm: BaseChatModel | None = None
-) -> LangGraphAdapter:
+def build_adapter(database: aiosqlite.Connection) -> LangGraphAdapter:
     """Register connection cleanup before constructing its host."""
     adapter = LangGraphAdapter(
         LangGraphAdapterConfig(
-            custom_section="Use save_note and list_notes for the team's shared notebook."
+            custom_section="Save and list notes in the team's shared notebook."
         ),
-        llm=llm if llm is not None else ChatOpenAI(model=OPENAI_MODEL),
+        llm=ChatOpenAI(model=OPENAI_MODEL),
         additional_tools=shared_tools(database),
     )
     adapter.add_cleanup(database.close)
@@ -96,9 +97,7 @@ async def build_agent(settings: Settings) -> Agent:
         database = await pending.enter_async_context(
             aiosqlite.connect(settings.NOTES_DATABASE, isolation_level=None)
         )
-        async with database.execute(
-            "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)"
-        ):
+        async with database.execute(NOTES_SCHEMA):
             pass
         agent = Agent.from_config(
             settings.NOTES_AGENT,
@@ -113,8 +112,8 @@ async def main() -> None:
     load_dotenv(PROJECT_ROOT / ".env.test", override=True)
     configure_logging(logging.INFO)
     settings = Settings()
-    agent = await build_agent(settings)
     logger.info("Team notes persist in %s", settings.NOTES_DATABASE.resolve())
+    agent = await build_agent(settings)
     async with agent:
         await agent.run_forever()
 

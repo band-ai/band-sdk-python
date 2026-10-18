@@ -23,15 +23,13 @@ class TestSharedDatabase:
         self, kind: HostKind, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-        path = tmp_path / f"{uuid4().hex}.sqlite3"
+        path = tmp_path / "notes.sqlite3"
         note = f"Team decision {uuid4().hex}: use 'parameterized' queries"
         async with EXAMPLE["aiosqlite"].connect(path, isolation_level=None) as database:
-            async with database.execute(
-                "CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)"
-            ):
+            async with database.execute(EXAMPLE["NOTES_SCHEMA"]):
                 pass
             adapter = EXAMPLE["build_adapter"](database)
-            save, read = EXAMPLE["shared_tools"](database)
+            save, read = adapter.additional_tools
             async with host_for(adapter, kind) as host:
                 await host.start()
                 await save[1](save[0](text=note))
@@ -47,7 +45,7 @@ class TestSharedDatabase:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-        config = tmp_path / f"{uuid4().hex}.yaml"
+        config = tmp_path / "agent_config.yaml"
         config.write_text(
             "langgraph_agent:\n  agent_id: test-agent\n  api_key: test-key\n"
         )
@@ -59,7 +57,7 @@ class TestSharedDatabase:
 
         monkeypatch.setattr(EXAMPLE["Agent"], "from_config", refuse)
         settings = EXAMPLE["Settings"](
-            NOTES_CONFIG=config, NOTES_DATABASE=tmp_path / f"{uuid4().hex}.sqlite3"
+            NOTES_CONFIG=config, NOTES_DATABASE=tmp_path / "notes.sqlite3"
         )
         with pytest.raises(ValueError, match="Host construction failed"):
             await EXAMPLE["build_agent"](settings)
