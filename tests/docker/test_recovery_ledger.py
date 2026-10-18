@@ -16,6 +16,9 @@ self_registration = load_script_module(
 )
 
 
+REST_URL = "https://band.test"
+
+
 def interrupt_uncommitted_write(monkeypatch: pytest.MonkeyPatch) -> None:
     original = Path.write_text
 
@@ -42,7 +45,15 @@ class TestInterruptedLedgerRewrite:
     ) -> None:
         name = "band-selfreg-demo-rewrite"
         monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
-        monkeypatch.setattr(self_registration, "_require_settings", Mock())
+        monkeypatch.setattr(
+            self_registration,
+            "_require_settings",
+            Mock(
+                return_value=SimpleNamespace(
+                    endpoints=SimpleNamespace(rest_url=REST_URL)
+                )
+            ),
+        )
         monkeypatch.setattr(self_registration, "user_rest_client", Mock())
         monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
         manager = SimpleNamespace(
@@ -52,6 +63,7 @@ class TestInterruptedLedgerRewrite:
         monkeypatch.setattr(
             self_registration, "ResourceManager", Mock(return_value=manager)
         )
+        self_registration.record_deployment(name, REST_URL)
         self_registration.record_resource(name, "agents", "agent-1")
         interrupt_uncommitted_write(monkeypatch)
 

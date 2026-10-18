@@ -31,6 +31,8 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(provision, "DEMO_DIR", tmp_path)
     monkeypatch.setattr(provision, "ROOM_IDS", tmp_path / "room_ids.txt")
     monkeypatch.setattr(provision, "ROOM_DELETION_POLL_S", 0)
+    monkeypatch.setenv("BAND_REST_URL", REST_URL)
+    provision.deployment_path().write_text(f"{REST_URL}\n")
     return provision.ROOM_IDS
 
 
@@ -215,7 +217,10 @@ async def test_partial_registration_keeps_created_agent_in_cleanup_ledger(
 
 async def test_cleanup_continues_after_failed_agent_and_retains_only_unresolved(
     provision_files: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("BAND_REST_URL", REST_URL)
+    provision.deployment_path().write_text(f"{REST_URL}\n")
     provision.AGENT_IDS.write_text("agent-blocked\nagent-deleted\n")
     rest = AsyncMock()
     rest.human_api_agents.delete_my_agent.side_effect = [

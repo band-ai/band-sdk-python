@@ -16,6 +16,9 @@ provision = load_script_module(
 )
 
 
+REST_URL = "https://band.test"
+
+
 def interrupt_uncommitted_write(monkeypatch: pytest.MonkeyPatch) -> None:
     original = Path.write_text
 
@@ -42,6 +45,8 @@ def demo_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(provision, "CONFIG_PATH", tmp_path / "agent_config.yaml")
     monkeypatch.setattr(provision, "AGENTS_ENV", tmp_path / "agents.env")
     monkeypatch.setattr(provision, "ROOM_DELETION_POLL_S", 0)
+    monkeypatch.setenv("BAND_REST_URL", REST_URL)
+    provision.deployment_path().write_text(f"{REST_URL}\n")
     return tmp_path
 
 

@@ -199,7 +199,11 @@ def require_origin_deployment(name: str, rest_url: str) -> None:
     """Refuse platform cleanup when this process points at another deployment."""
     path = ledger_path(name) / DEPLOYMENT_RECORD
     if not path.exists():
-        if recorded_resources(name, "agents") or recorded_resources(name, "rooms"):
+        if (
+            not (ledger_path(name) / "agents").exists()
+            or recorded_resources(name, "agents")
+            or recorded_resources(name, "rooms")
+        ):
             raise RuntimeError(
                 "This run has no recorded deployment binding; cleanup cannot treat "
                 "404 responses as confirmed absence. Write the originating REST URL "

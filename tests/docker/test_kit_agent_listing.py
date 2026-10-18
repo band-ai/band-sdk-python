@@ -23,6 +23,20 @@ self_registration = load_script_module(
 )
 
 
+REST_URL = "https://band.test"
+
+
+@pytest.fixture
+def cleanup_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        self_registration,
+        "_require_settings",
+        Mock(
+            return_value=SimpleNamespace(endpoints=SimpleNamespace(rest_url=REST_URL))
+        ),
+    )
+
+
 async def test_docker_demo_registers_when_agent_listing_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -49,19 +63,22 @@ async def test_docker_demo_registers_when_agent_listing_is_unavailable(
     client.human_api_agents.list_my_agents.assert_not_called()
 
 
+@pytest.mark.usefixtures("cleanup_settings")
 async def test_self_registration_cleans_sandbox_when_agent_listing_is_unavailable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = AsyncMock()
     client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
     teardown = Mock(return_value=True)
-    monkeypatch.setattr(self_registration, "_require_settings", Mock())
     monkeypatch.setattr(
         self_registration, "user_rest_client", Mock(return_value=client)
     )
     monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
     monkeypatch.setattr(self_registration, "_teardown_sbx", teardown)
 
+    self_registration.record_deployment("band-selfreg-demo-test", REST_URL)
     with (
         caplog.at_level(logging.ERROR),
         pytest.raises(RuntimeError, match="Cleanup incomplete"),
@@ -72,13 +89,13 @@ async def test_self_registration_cleans_sandbox_when_agent_listing_is_unavailabl
     assert "Could not list agents; continuing sandbox cleanup" in caplog.text
 
 
+@pytest.mark.usefixtures("cleanup_settings")
 async def test_self_registration_cleanup_attempts_every_resource_and_keeps_unresolved_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     name = "band-selfreg-demo-recovery"
     monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
-    monkeypatch.setattr(self_registration, "_require_settings", Mock())
     monkeypatch.setattr(self_registration, "user_rest_client", Mock())
     manager = SimpleNamespace(
         reap_room=AsyncMock(side_effect=RuntimeError("room blocked")),
@@ -88,6 +105,7 @@ async def test_self_registration_cleanup_attempts_every_resource_and_keeps_unres
         self_registration, "ResourceManager", Mock(return_value=manager)
     )
     monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=False))
+    self_registration.record_deployment(name, REST_URL)
     self_registration.record_resource(name, "rooms", "room-1")
     self_registration.record_resource(name, "agents", "agent-1")
 
@@ -183,6 +201,7 @@ def test_docker_live_settings_accept_endpoint_alias_from_file(
         ),
     ],
 )
+@pytest.mark.usefixtures("cleanup_settings")
 async def test_self_registration_recovery_accepts_confirmed_absence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -191,7 +210,6 @@ async def test_self_registration_recovery_accepts_confirmed_absence(
 ) -> None:
     name = "band-selfreg-demo-absence"
     monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
-    monkeypatch.setattr(self_registration, "_require_settings", Mock())
     client = AsyncMock()
     client.human_api_agents.list_my_agents.return_value = SimpleNamespace(data=[])
     monkeypatch.setattr(
@@ -205,6 +223,7 @@ async def test_self_registration_recovery_accepts_confirmed_absence(
         self_registration, "ResourceManager", Mock(return_value=manager)
     )
     monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    self_registration.record_deployment(name, REST_URL)
     self_registration.record_resource(name, kind, "already-gone")
 
     await self_registration.cleanup_by_name(name)
@@ -212,12 +231,12 @@ async def test_self_registration_recovery_accepts_confirmed_absence(
     assert not (tmp_path / name).exists()
 
 
+@pytest.mark.usefixtures("cleanup_settings")
 async def test_self_registration_retries_only_unresolved_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     name = "band-selfreg-demo-retry"
     monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
-    monkeypatch.setattr(self_registration, "_require_settings", Mock())
     client = AsyncMock()
     client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
     monkeypatch.setattr(
@@ -231,6 +250,7 @@ async def test_self_registration_retries_only_unresolved_resources(
         self_registration, "ResourceManager", Mock(return_value=manager)
     )
     monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    self_registration.record_deployment(name, REST_URL)
     self_registration.record_resource(name, "rooms", "room-1")
     self_registration.record_resource(name, "agents", "agent-1")
 
@@ -244,18 +264,19 @@ async def test_self_registration_retries_only_unresolved_resources(
     assert not self_registration.ledger_path(name).exists()
 
 
+@pytest.mark.usefixtures("cleanup_settings")
 async def test_failed_discovery_remains_unknown_on_cleanup_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     name = "band-selfreg-demo-unknown"
     monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
-    monkeypatch.setattr(self_registration, "_require_settings", Mock())
     client = AsyncMock()
     client.human_api_agents.list_my_agents.side_effect = ApiError(status_code=403)
     monkeypatch.setattr(
         self_registration, "user_rest_client", Mock(return_value=client)
     )
     monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+    self_registration.record_deployment(name, REST_URL)
     for _ in range(2):
         with pytest.raises(RuntimeError, match="Cleanup incomplete"):
             await self_registration.cleanup_by_name(name)

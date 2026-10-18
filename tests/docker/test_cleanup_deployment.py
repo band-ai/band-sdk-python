@@ -58,6 +58,45 @@ class TestCleanupDeploymentBinding:
         assert self_registration.recorded_resources(name, "agents") == ["agent-1"]
         assert (tmp_path / name).exists()
 
+    @pytest.mark.parametrize("registration_completed", [False, True])
+    async def test_unbound_registration_only_allows_known_completion(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        registration_completed: bool,
+    ) -> None:
+        name = "band-selfreg-demo-unknown-origin"
+        monkeypatch.setattr(self_registration, "LEDGER_DIR", tmp_path)
+        monkeypatch.setattr(self_registration, "_teardown_sbx", Mock(return_value=True))
+        client = AsyncMock()
+        client.human_api_agents.list_my_agents.return_value = SimpleNamespace(data=[])
+        monkeypatch.setattr(
+            self_registration, "user_rest_client", Mock(return_value=client)
+        )
+        manager = SimpleNamespace(reap_room=AsyncMock(), reap_agent=AsyncMock())
+        monkeypatch.setattr(
+            self_registration, "ResourceManager", Mock(return_value=manager)
+        )
+        self_registration.record_resource(name, "sandbox", name)
+        if registration_completed:
+            (self_registration.ledger_path(name) / "agents").write_text("")
+
+        if registration_completed:
+            await self_registration.cleanup_by_name(
+                name, settings=settings_for(REPLACEMENT)
+            )
+            assert not self_registration.ledger_path(name).exists()
+        else:
+            with pytest.raises(RuntimeError, match="no recorded deployment binding"):
+                await self_registration.cleanup_by_name(
+                    name, settings=settings_for(REPLACEMENT)
+                )
+            assert name in self_registration.recorded_resources(name, "sandbox")
+            assert not (self_registration.ledger_path(name) / "agents").exists()
+        client.human_api_agents.list_my_agents.assert_not_awaited()
+        manager.reap_agent.assert_not_awaited()
+        manager.reap_room.assert_not_awaited()
+
     async def test_foreign_deployment_keeps_recorded_ids(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
