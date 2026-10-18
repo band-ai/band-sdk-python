@@ -58,6 +58,8 @@ try:
         ToolPermissionContext,
     )
 
+    from band.integrations.claude_sdk.transport import create_transport
+
     _CLAUDE_SDK_AVAILABLE = True
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
@@ -129,7 +131,6 @@ from band.integrations.claude_sdk.session_manager import (
     TurnStream,
     default_claude_retention,
 )
-from band.integrations.claude_sdk.transport import create_transport
 from band.integrations.mcp import (
     BandMCPBackendSettings,
     BandMCPTransport,
