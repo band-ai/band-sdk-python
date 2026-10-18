@@ -31,7 +31,6 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PromptResponse,
-    RequestPermissionResponse,
     SessionCapabilities,
     SessionCloseCapabilities,
     SessionConfigOptionSelect,
@@ -137,7 +136,6 @@ class FakeACPAgent:
         self.prompts: list[dict[str, Any]] = []
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
-        self.sent_permission_responses: list[RequestPermissionResponse] = []
         self.auth_methods: list[str] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
         self.closed_sessions: list[str] = []
@@ -782,17 +780,12 @@ class FakeACPAgent:
         return option.current_value if option is not None else None
 
     def record_client_send(self, event: StreamEvent) -> None:
-        """Record cancellations and permission replies before peer teardown."""
+        """Record cancellation sends in order with connection teardown."""
         message = event.message
         if event.direction is not StreamDirection.OUTGOING:
             return
         if message.get("method") == CANCEL_RECORD:
             self.lifecycle.append(f"{CANCEL_RECORD} {message['params']['sessionId']}")
-        result = message.get("result")
-        if isinstance(result, dict) and "outcome" in result:
-            self.sent_permission_responses.append(
-                RequestPermissionResponse.model_validate(result)
-            )
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""

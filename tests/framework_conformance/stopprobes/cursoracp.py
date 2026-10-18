@@ -56,11 +56,11 @@ async def stop_parked_on_decision() -> list[str]:
     async with started_acp_adapter(adapter, agent):
         await adapter.on_event(turn_input(FakeAgentTools()))
         await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
-        await wait_until(lambda: bool(agent.sent_permission_responses))
+        await wait_until(lambda: bool(agent.permission_responses))
         await adapter.backend_turns.drain()
         decisions = [
             DECISION_CANCELLED
-            for response in agent.sent_permission_responses
+            for response in agent.permission_responses
             if isinstance(response.outcome, DeniedOutcome)
         ]
         return [*decisions, *cancels(agent)]
