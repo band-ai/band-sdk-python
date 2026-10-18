@@ -71,6 +71,7 @@ class TestCrewAIJobCoverage:
             Path("tests/adapters/test_crewai_flow_phase3.py"),
             Path("tests/adapters/crewaiworker/test_native_settlement.py"),
             Path("tests/adapters/crewaiworker/test_flow_admission.py"),
+            Path("tests/adapters/crewaiworker/test_parallel_settlement.py"),
             Path("tests/integrations/test_crewai_flow_real_sdk.py"),
             Path("tests/integrations/test_crewai_real_tools.py"),
             Path("tests/integrations/test_crewai_completion.py"),

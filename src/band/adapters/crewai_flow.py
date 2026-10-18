@@ -69,6 +69,7 @@ from band.core.types import (
     PlatformMessage,
     metadata_to_dict,
 )
+from band.integrations.crewai.flow import kickoff_flow
 from band.integrations.crewai.turn import ToolTurn, settle_tool_turns, tool_turn
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -2030,7 +2031,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         token = _current_flow_runtime.set(runtime)
         try:
             try:
-                result = await tool_turn.execute(lambda: flow.kickoff_async(inputs))
+                result = await tool_turn.execute(lambda: kickoff_flow(flow, inputs))
             except Exception as exc:
                 logger.exception("kickoff_async raised")
                 await self._safe_record_failed(
