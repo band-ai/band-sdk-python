@@ -7,11 +7,57 @@ import asyncio
 import pytest
 
 from band.core.exceptions import InputNotAccepted
+from tests.adapters.crewaiworker.adapters import AdapterKind, adapter_case
 from tests.adapters.crewaiworker.kit import native_case
 from tests.adapters.waiting import UNTIL_TIMEOUT_S
 
 
 class TestNativeSettlement:
+    @pytest.mark.parametrize("kind", ["crewai", "flow"])
+    async def test_adapter_cleanup_retains_native_work_across_waiter_cancellation(
+        self, kind: AdapterKind
+    ) -> None:
+        async with asyncio.timeout(UNTIL_TIMEOUT_S), adapter_case(kind) as case:
+            case.consumer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await case.consumer
+            await case.work.native_entered.wait()
+            assert case.work.tool_settled.is_set()
+            assert case.work.resource_open_at_settlement
+
+            started = asyncio.Event()
+
+            async def cleanup() -> None:
+                started.set()
+                await case.adapter.cleanup_all()
+
+            closing = asyncio.create_task(cleanup())
+            try:
+                await started.wait()
+                assert not closing.done()
+                assert not case.work.client.is_closed
+                closing.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await closing
+
+                started.clear()
+                closing = asyncio.create_task(cleanup())
+                await started.wait()
+                assert not closing.done()
+                assert not case.work.client.is_closed
+                case.work.native_release.set()
+                await closing
+            finally:
+                case.work.native_release.set()
+                await asyncio.gather(closing, return_exceptions=True)
+
+            assert isinstance(case.work.late_error, InputNotAccepted)
+            assert case.work.tool_calls == 1
+            assert case.work.native_reply == case.expected
+            assert case.work.native_finished.is_set()
+            await case.work.client.aclose()
+            assert case.work.client.is_closed
+
     async def test_cancelled_consumer_retains_sdk_and_rejects_late_tools(self) -> None:
         async with asyncio.timeout(UNTIL_TIMEOUT_S), native_case() as case:
             case.consumer.cancel()

@@ -39,6 +39,7 @@ class NativeWork:
     release: asyncio.Event = field(default_factory=asyncio.Event)
     tool_settled: asyncio.Event = field(default_factory=asyncio.Event)
     native_entered: asyncio.Event = field(default_factory=asyncio.Event)
+    native_finished: asyncio.Event = field(default_factory=asyncio.Event)
     native_release: threading.Event = field(default_factory=threading.Event)
     tool_calls: int = 0
     resource_open_at_settlement: bool = False
@@ -80,18 +81,21 @@ class NativeLLM(BaseLLM):
                 }
             ]
         self.work.loop.call_soon_threadsafe(self.work.native_entered.set)
-        if not self.work.native_release.wait(UNTIL_TIMEOUT_S):
-            raise TimeoutError("Native model work was not released")
         try:
-            self.late_tool.run(resource_id=1)
-        except InputNotAccepted as error:
-            self.work.late_error = error
-        response = run_async(
-            self.work.client.get("/resource"), fallback_loop=self.work.loop
-        )
-        response.raise_for_status()
-        self.work.native_reply = response.json()
-        return "Finished"
+            if not self.work.native_release.wait(UNTIL_TIMEOUT_S):
+                raise TimeoutError("Native model work was not released")
+            try:
+                self.late_tool.run(resource_id=1)
+            except InputNotAccepted as error:
+                self.work.late_error = error
+            response = run_async(
+                self.work.client.get("/resource"), fallback_loop=self.work.loop
+            )
+            response.raise_for_status()
+            self.work.native_reply = response.json()
+            return "Finished"
+        finally:
+            self.work.loop.call_soon_threadsafe(self.work.native_finished.set)
 
     async def acall(self, messages: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(self.call, messages, **kwargs)
@@ -105,6 +109,21 @@ class NativeCase:
     consumer: asyncio.Task[Any]
     native: asyncio.Task[Any]
     expected: dict[str, str]
+
+
+def native_agent(work: NativeWork, tools: list[Any]) -> Agent:
+    model = NativeLLM(work)
+    model.late_tool = next(
+        tool for tool in tools if tool.name == get_custom_tool_name(ReadResource)
+    )
+    return Agent(
+        role=uuid4().hex,
+        goal="Read the resource",
+        backstory="Read the resource using the provided tool.",
+        llm=model,
+        tools=tools,
+        verbose=False,
+    )
 
 
 @asynccontextmanager
@@ -121,20 +140,7 @@ async def native_case() -> AsyncIterator[NativeCase]:
             custom_tools=[(ReadResource, work.read)],
             fallback_loop=loop,
         )
-        llm = NativeLLM(work)
-        llm.late_tool = next(
-            tool
-            for tool in native_tools
-            if tool.name == get_custom_tool_name(ReadResource)
-        )
-        agent = Agent(
-            role="Resource reader",
-            goal="Read the resource",
-            backstory="Read the resource using the provided tool.",
-            llm=llm,
-            tools=native_tools,
-            verbose=False,
-        )
+        agent = native_agent(work, native_tools)
         started: asyncio.Future[asyncio.Task[Any]] = loop.create_future()
 
         async def execute() -> Any:
