@@ -32,12 +32,16 @@ _SPAWN_ACK_S = 30.0
 _JOB_POLL_S = 0.05
 _ERROR_ALREADY_EXISTS = 183
 _ERROR_BROKEN_PIPE = 109
+_ERROR_INVALID_PARAMETER = 87
+_ERROR_MORE_DATA = 234
 _STATUS_READ_SIZE = 256
 _PATH_BUFFER_SIZE = 260
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+_JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+_JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
 _JOB_OBJECT_ASSIGN_PROCESS = 0x0001
 
 _CREATE_SUSPENDED = 0x00000004
@@ -46,7 +50,11 @@ _STARTF_USESTDHANDLES = 0x00000100
 _HANDLE_FLAG_INHERIT = 0x00000001
 _PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
 _PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+_SYNCHRONIZE = 0x00100000
 _INFINITE = 0xFFFFFFFF
+_WAIT_OBJECT_0 = 0
+_WAIT_TIMEOUT = 0x00000102
 _WAIT_FAILED = 0xFFFFFFFF
 
 
@@ -60,7 +68,7 @@ class SpawnFailure(Exception):
 
 
 class JobNotDrained(Exception):
-    """Termination was requested and members were still active afterwards."""
+    """Termination has not established that every process exited."""
 
     def __init__(self, active: int | None) -> None:
         self.active = active
@@ -113,6 +121,14 @@ class BasicAccountingInformation(ctypes.Structure):
         ("TotalProcesses", wintypes.DWORD),
         ("ActiveProcesses", wintypes.DWORD),
         ("TotalTerminatedProcesses", wintypes.DWORD),
+    )
+
+
+class BasicProcessIdList(ctypes.Structure):
+    _fields_ = (
+        ("NumberOfAssignedProcesses", wintypes.DWORD),
+        ("NumberOfProcessIdsInList", wintypes.DWORD),
+        ("ProcessIdList", ctypes.c_size_t * 1),
     )
 
 
@@ -201,6 +217,10 @@ def _kernel32() -> Any:
     library.CloseHandle.restype = wintypes.BOOL
     library.OpenJobObjectW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
     library.OpenJobObjectW.restype = handle
+    library.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    library.OpenProcess.restype = handle
+    library.IsProcessInJob.argtypes = [handle, handle, ctypes.POINTER(wintypes.BOOL)]
+    library.IsProcessInJob.restype = wintypes.BOOL
     library.CreateProcessW.argtypes = [
         wintypes.LPCWSTR,
         ctypes.POINTER(ctypes.c_wchar),
@@ -363,8 +383,12 @@ class Job:
     def __init__(self, handle: ctypes.c_void_p, name: str) -> None:
         self._handle: ctypes.c_void_p | None = handle
         self.name = name
+        self._processes: dict[int, ctypes.c_void_p] = {}
+        self._members_captured = False
 
     def close(self) -> None:
+        if self._processes:
+            raise JobNotDrained(None)
         handle = self._handle
         if handle is not None and not _kernel32().CloseHandle(handle):
             raise _win_os_error(_last_error())
@@ -394,26 +418,118 @@ class Job:
             return None
         return int(info.ActiveProcesses)
 
+    def _seal_membership(self) -> None:
+        # A zero limit denies late children without terminating existing members.
+        limits = ExtendedLimitInformation()
+        limits.BasicLimitInformation.LimitFlags = (
+            _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | _JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        )
+        limits.BasicLimitInformation.ActiveProcessLimit = 0
+        if not _kernel32().SetInformationJobObject(
+            self._open_handle(),
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
+        ):
+            raise _win_os_error(_last_error())
+
+    def _member_pids(self) -> tuple[int, ...]:
+        capacity = 1
+        while True:
+            buffer = ctypes.create_string_buffer(
+                ctypes.sizeof(BasicProcessIdList)
+                + (capacity - 1) * ctypes.sizeof(ctypes.c_size_t)
+            )
+            info = ctypes.cast(buffer, ctypes.POINTER(BasicProcessIdList)).contents
+            complete = _kernel32().QueryInformationJobObject(
+                self._open_handle(),
+                _JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+                buffer,
+                ctypes.sizeof(buffer),
+                None,
+            )
+            if not complete and (code := _last_error()) != _ERROR_MORE_DATA:
+                raise _win_os_error(code)
+            assigned = int(info.NumberOfAssignedProcesses)
+            count = int(info.NumberOfProcessIdsInList)
+            if not complete or count < assigned:
+                capacity = max(capacity * 2, assigned)
+                continue
+            values = ctypes.cast(
+                ctypes.byref(buffer, BasicProcessIdList.ProcessIdList.offset),
+                ctypes.POINTER(ctypes.c_size_t),
+            )
+            return tuple(int(values[index]) for index in range(count))
+
+    def _capture_members(self) -> None:
+        for pid in self._member_pids():
+            if pid in self._processes:
+                continue
+            process = _kernel32().OpenProcess(
+                _SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+            )
+            if not process:
+                code = _last_error()
+                if code == _ERROR_INVALID_PARAMETER and pid not in self._member_pids():
+                    continue
+                raise _win_os_error(code)
+            self._processes[pid] = process
+        # Retained handles keep object identity stable across PID reuse. Failed
+        # membership checks keep the handles owned, but cannot authorize termination.
+        for pid, process in tuple(self._processes.items()):
+            member = wintypes.BOOL()
+            if not _kernel32().IsProcessInJob(
+                process, self._open_handle(), ctypes.byref(member)
+            ):
+                raise _win_os_error(_last_error())
+            if not member.value:
+                self._close_process_handle(pid)
+
+    def _close_process_handle(self, pid: int) -> None:
+        if not _kernel32().CloseHandle(self._processes[pid]):
+            raise _win_os_error(_last_error())
+        del self._processes[pid]
+
+    def _reap_members(self) -> None:
+        for pid, process in tuple(self._processes.items()):
+            state = _kernel32().WaitForSingleObject(process, 0)
+            if state == _WAIT_TIMEOUT:
+                continue
+            if state != _WAIT_OBJECT_0:
+                raise _win_os_error(_last_error())
+            self._close_process_handle(pid)
+
     def terminate(self) -> None:
-        """Mark every member for termination.
+        """Retain physical-exit evidence before marking members for termination.
 
         Members blocked in a synchronous pipe read stay inside that call until
         the other end closes. Wait only after that end is closed.
         """
+        if not self._members_captured:
+            self._seal_membership()
+            self._capture_members()
+            self._members_captured = True
         if not _kernel32().TerminateJobObject(self._open_handle(), 1):
             raise _win_os_error(_last_error())
 
     async def wait_until_idle(self, timeout: float) -> None:
-        """Observe tree exit without releasing ownership of the job."""
+        """Observe physical exit and job accounting without releasing the job."""
+        if self._processes and not self._members_captured:
+            raise JobNotDrained(None)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
+            self._reap_members()
             active = self.active_processes()
-            if active == 0:
+            if active == 0 and not self._processes:
                 return
             remaining = deadline - loop.time()
             if active is None or remaining <= 0:
-                logger.warning("Codex job still has %s active processes", active)
+                logger.warning(
+                    "Codex job still has %s active processes and %s pending exits",
+                    active,
+                    len(self._processes),
+                )
                 raise JobNotDrained(active)
             await asyncio.sleep(min(_JOB_POLL_S, remaining))
 

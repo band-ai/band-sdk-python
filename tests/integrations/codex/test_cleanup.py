@@ -4,6 +4,7 @@ stops everything the launched process spawned."""
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
 import os
 import shutil
@@ -311,9 +312,7 @@ class TestSubprocessCleanup:
     async def test_idle_wait_preserves_ownership_until_explicit_release(
         self, active: int | None, drained: bool
     ) -> None:
-        job = Job.__new__(Job)
-        job._handle = object()  # type: ignore[assignment]
-        job.name = "test"
+        job = Job(ctypes.c_void_p(1), "test")
         closed = False
 
         def active_processes() -> int | None:

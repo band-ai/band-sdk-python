@@ -12,8 +12,18 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import stdio_client, winspawn
+from tests.integrations.codex.jobpeer import NativeJobPeer
 from tests.integrations.codex.lifecycle import WindowsLifecycle
 from tests.integrations.codex.lookup import WindowsLookup
+
+
+@pytest.fixture
+def native_job(monkeypatch: pytest.MonkeyPatch) -> NativeJobPeer:
+    peer = NativeJobPeer()
+    monkeypatch.setattr(winspawn, "_kernel32", lambda: peer.kernel)
+    monkeypatch.setattr(winspawn, "_last_error", lambda: peer.error)
+    monkeypatch.setattr(winspawn, "_win_os_error", lambda code: OSError(code))
+    return peer
 
 
 @pytest.fixture
