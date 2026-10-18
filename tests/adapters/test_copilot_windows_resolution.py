@@ -70,7 +70,8 @@ def windows_sdk_children(
                         break
                 else:
                     raise FileNotFoundError(command[0])
-        child = subprocess.Popen([str(image), *command[1:]], **options)
+        # Fixture images contain Python even when their Windows suffix is native.
+        child = subprocess.Popen([sys.executable, str(image), *command[1:]], **options)
         children.append(child)
         return child
 

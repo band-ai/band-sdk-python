@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import os
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -143,7 +144,7 @@ class TestCopilotModelProbe:
     async def test_uses_the_configured_executable_args_and_root_directory(
         self, copilot_probe_sdk: CopilotProbeSDK, tmp_path: Path
     ) -> None:
-        executable = str(tmp_path / "copilot-custom")
+        executable = str(Path(sys.executable).resolve())
         adapter = CopilotACPAdapter(
             CopilotACPAdapterConfig(
                 command=(executable, "--custom-flag", "--acp", "--another-flag"),
