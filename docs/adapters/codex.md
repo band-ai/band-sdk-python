@@ -126,6 +126,11 @@ an unsupported or refused `account/read` is not proof that login is missing.
 A passed handshake is not proof of provider authentication, subscription or
 inference entitlement.
 
+Standalone probes emit metadata-only diagnostics: raw app-server stdout, stderr,
+and exception text are not logged, including cleanup that finishes after caller
+cancellation. Original cleanup errors remain available to callers and retries.
+Ordinary room transports keep their existing diagnostic policy.
+
 ```python notest
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
@@ -138,5 +143,7 @@ propagates. Cleanup failures raise `CleanupIncompleteError` instead of reporting
 a successful or ordinary failed preflight, and the adapter retains the client,
 including a partially created process or Windows job. Keep that adapter and
 retry `await adapter.cleanup_all()` to join or retry cleanup. Shutdown attempts
-both probe and room cleanup even when either fails. Successful calls close their
+both probe and room cleanup even when either fails. A custom-tool callback
+requesting shutdown can receive a retryable pending-cleanup error while its own
+turn unwinds; it is not cancelled by that stop. Successful calls close their
 throwaway process before returning; a second preflight starts a fresh one.

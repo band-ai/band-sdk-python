@@ -23,7 +23,9 @@ class TestProbeOwnership:
         return_process = asyncio.Event()
         processes: list[asyncio.subprocess.Process] = []
 
-        async def late_creation(*args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+        async def late_creation(
+            *args: str, **kwargs: Any
+        ) -> asyncio.subprocess.Process:
             process = await create_process(*args, **kwargs)
             processes.append(process)
             created.set()

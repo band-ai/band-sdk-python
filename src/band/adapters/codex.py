@@ -1910,11 +1910,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """
         for room_id in list(self._room_clients):
             self._clear_pending_approvals_for_room(room_id)
-        results = await asyncio.gather(
-            self._retention.stop(), super().cleanup_all(), return_exceptions=True
-        )
+        failures: list[BaseException] = []
+        # Retention must see an enrolled callback as the stop requester.
+        for cleanup in (self._retention.stop, super().cleanup_all):
+            try:
+                await cleanup()
+            except BaseException as error:  # noqa: BLE001 -- attempt both cleanups before propagating cancellation or failures
+                failures.append(error)
         await self.backend_turns.drain()
-        failures = [result for result in results if isinstance(result, BaseException)]
         if len(failures) == 1:
             raise failures[0]
         if failures:
@@ -2200,8 +2203,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         except BandConnectionError as error:
             cause = error.__cause__
             if isinstance(cause, FileNotFoundError) or (
-                isinstance(cause, SpawnFailure)
-                and cause.winerror in MISSING_EXECUTABLE
+                isinstance(cause, SpawnFailure) and cause.winerror in MISSING_EXECUTABLE
             ):
                 return PreflightResult.failed(
                     "Codex CLI binary not found.",
@@ -2272,6 +2274,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             command=self.config.codex_command,
             cwd=workspace,
             env=self.config.codex_env,
+            diagnostic_details=workspace is not None,
         )
 
     async def _select_model(self, client: CodexClientProtocol) -> str:

@@ -82,9 +82,11 @@ class BaseJsonRpcClient:
         *,
         retry_policy: OverloadRetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        diagnostic_details: bool = True,
     ) -> None:
         self.retry_policy = retry_policy or OverloadRetryPolicy()
         self._sleep = sleep
+        self.diagnostic_details = diagnostic_details
 
         self._pending: dict[JsonRpcId, asyncio.Future[dict[str, Any]]] = {}
         self._events: asyncio.Queue[RpcEvent] = asyncio.Queue(maxsize=10_000)
@@ -263,11 +265,18 @@ class BaseJsonRpcClient:
         try:
             message = json.loads(text)
         except json.JSONDecodeError:
-            logger.warning("Skipping non-JSON %s: %s", self._transport_label, text)
+            logger.warning(
+                "Skipping non-JSON %s: %s",
+                self._transport_label,
+                text if self.diagnostic_details else "<omitted>",
+            )
             return
 
         if not isinstance(message, dict):
-            logger.warning("Skipping non-object JSON-RPC payload: %s", message)
+            logger.warning(
+                "Skipping non-object JSON-RPC payload: %s",
+                message if self.diagnostic_details else "<omitted>",
+            )
             return
 
         msg_id = message.get("id")
@@ -285,7 +294,10 @@ class BaseJsonRpcClient:
                     )
                 )
             except asyncio.QueueFull:
-                logger.warning("Event queue full; dropping server request %s", method)
+                logger.warning(
+                    "Event queue full; dropping server request %s",
+                    method if self.diagnostic_details else "<omitted>",
+                )
             return
 
         if method:
@@ -300,7 +312,10 @@ class BaseJsonRpcClient:
                     )
                 )
             except asyncio.QueueFull:
-                logger.warning("Event queue full; dropping notification %s", method)
+                logger.warning(
+                    "Event queue full; dropping notification %s",
+                    method if self.diagnostic_details else "<omitted>",
+                )
             return
 
         if msg_id is not None:
@@ -309,7 +324,10 @@ class BaseJsonRpcClient:
                 future.set_result(message)
             return
 
-        logger.debug("Ignoring unknown JSON-RPC payload: %s", message)
+        logger.debug(
+            "Ignoring unknown JSON-RPC payload: %s",
+            message if self.diagnostic_details else "<omitted>",
+        )
 
     def _next_request_id(self) -> int:
         self._request_id += 1

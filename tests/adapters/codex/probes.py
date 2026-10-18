@@ -40,8 +40,14 @@ class ProbeHost:
             command: Sequence[str] | None = None,
             cwd: str | None = None,
             env: Mapping[str, str] | None = None,
+            diagnostic_details: bool = True,
         ) -> ProbeClient:
-            client = ProbeClient(command=command, cwd=cwd, env=env)
+            client = ProbeClient(
+                command=command,
+                cwd=cwd,
+                env=env,
+                diagnostic_details=diagnostic_details,
+            )
             self.clients.append(client)
             return client
 
@@ -53,11 +59,13 @@ class ProbeHost:
         replies: dict[str, Any] | None = None,
         pages: dict[str, Any] | None = None,
         endless_pages: bool = False,
+        diagnostic: str | None = None,
         **config: Any,
     ) -> CodexAdapter:
         settings = {
             "replies": replies or {},
             "endless_pages": endless_pages,
+            "diagnostic": diagnostic,
         }
         if pages is not None:
             settings["pages"] = pages

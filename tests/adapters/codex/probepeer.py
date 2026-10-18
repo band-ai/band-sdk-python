@@ -18,6 +18,18 @@ def emit(message: dict[str, Any]) -> None:
 def main() -> None:
     record = Path(sys.argv[1])
     settings = json.loads(sys.argv[2])
+    if diagnostic := settings.get("diagnostic"):
+        sys.stdout.write(
+            diagnostic
+            + "\n"
+            + json.dumps([diagnostic])
+            + "\n"
+            + json.dumps({"diagnostic": diagnostic})
+            + "\n"
+        )
+        sys.stdout.flush()
+        sys.stderr.write(diagnostic + "\n")
+        sys.stderr.flush()
     for line in sys.stdin:
         message = json.loads(line)
         with record.open("a", encoding="utf-8") as stream:

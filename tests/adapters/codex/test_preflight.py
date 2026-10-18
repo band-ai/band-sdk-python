@@ -60,7 +60,13 @@ class TestPreflight:
             ({"error": {"code": -32601, "message": "unsupported"}}, True),
             ({"error": {"code": -32000, "message": "refused"}}, True),
         ],
-        ids=["missing-required-login", "custom-provider", "api-key", "unsupported", "refused"],
+        ids=[
+            "missing-required-login",
+            "custom-provider",
+            "api-key",
+            "unsupported",
+            "refused",
+        ],
     )
     async def test_only_positively_missing_required_auth_fails(
         self, probe_host: ProbeHost, account: dict, ok: bool
@@ -75,7 +81,9 @@ class TestPreflight:
             assert "codex login" in result.remedy
         probe_host.assert_exited()
 
-    async def test_missing_executable_names_install_remedy(self, tmp_path: Path) -> None:
+    async def test_missing_executable_names_install_remedy(
+        self, tmp_path: Path
+    ) -> None:
         adapter = CodexAdapter(
             CodexAdapterConfig(codex_command=(str(tmp_path / "absent-codex"),))
         )
