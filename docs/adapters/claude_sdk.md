@@ -134,6 +134,8 @@ or inference access.
 The adapter retains both the SDK client and its transport before connection.
 The transport retains an unconfirmed child even if the SDK's own close call
 returns; cleanup succeeds only after that child's exit is confirmed.
+The preliminary SDK version check also stays owned after cancellation; a CLI
+that ignores its shutdown signal can keep cleanup incomplete until it exits.
 If a timed-out or failed startup cannot finish closing within the reporting
 budget, `CleanupIncompleteError` propagates instead of an ordinary failed
 result. Call `await adapter.cleanup_all()` again to join or retry that cleanup;

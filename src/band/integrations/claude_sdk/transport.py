@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport import Transport
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
@@ -13,7 +15,17 @@ from band.core.exceptions import CleanupIncompleteError
 class _RetainedCLITransport(SubprocessCLITransport):
     """Retain an unconfirmed SDK child for the next close attempt."""
 
+    _version_check: asyncio.Task[None] | None = None
+
+    async def _check_claude_version(self) -> None:
+        # The SDK's version child exists only inside this coroutine. Cancelling
+        # its final wait would abandon that child before the main process starts.
+        self._version_check = asyncio.create_task(super()._check_claude_version())
+        await asyncio.shield(self._version_check)
+
     async def close(self) -> None:
+        if self._version_check is not None:
+            await asyncio.shield(self._version_check)
         process = self._process
         try:
             await super().close()

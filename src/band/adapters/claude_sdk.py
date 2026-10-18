@@ -1694,26 +1694,25 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         Room sessions and MCP share one retention transition budget. An unfinished
         or failed cleanup step stays owned for a retry.
         """
-        probe_failure: BaseException | None = None
-        try:
-            await super().cleanup_all()
-        except BaseException as error:  # noqa: BLE001 -- cancellation must not skip the adapter's other owned resources
-            probe_failure = error
-        try:
-            for room_id in list(self._pending_approvals):
-                self._clear_pending_approvals_for_room(room_id)
-            await self._mcp.close_after(
+        for room_id in list(self._pending_approvals):
+            self._clear_pending_approvals_for_room(room_id)
+        failures: list[BaseException] = []
+        # Fence rooms in the requester task before an unrelated probe can wait.
+        for cleanup in (
+            self._mcp.close_after(
                 self._stop_sessions(), retention=self.config.retention
-            )
-            await self.backend_turns.drain()
-        except BaseException as error:
-            if probe_failure is not None:
-                raise BaseExceptionGroup(
-                    "Claude probe and room cleanup failed", [probe_failure, error]
-                ) from None
-            raise
-        if probe_failure is not None:
-            raise probe_failure
+            ),
+            self.backend_turns.drain(),
+            super().cleanup_all(),
+        ):
+            try:
+                await cleanup
+            except BaseException as error:  # noqa: BLE001 -- attempt every cleanup without discarding cancellation
+                failures.append(error)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("Claude adapter cleanup failed", failures)
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
