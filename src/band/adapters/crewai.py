@@ -448,12 +448,11 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         prompt: str,
         reply_tracker: ReplyTracker,
         room_id: str,
-        tool_turn: ToolTurn | None = None,
+        tool_turn: ToolTurn,
     ) -> Any:
         """Retry an empty kickoff once only when no tool activity was recorded."""
         for attempt in range(2):
-            if tool_turn is not None:
-                tool_turn.check_active()
+            tool_turn.check_active()
             try:
                 result = await agent.kickoff_async(prompt)
             except Exception as exc:

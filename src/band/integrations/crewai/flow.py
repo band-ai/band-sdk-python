@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from crewai.hooks.contexts import StepContext
 
 
 async def kickoff_flow(flow: Any, inputs: dict[str, Any]) -> Any:
@@ -17,12 +20,12 @@ async def kickoff_flow(flow: Any, inputs: dict[str, Any]) -> Any:
     if not isinstance(flow, Flow):
         return await flow.kickoff_async(inputs)
 
-    from crewai.hooks import (  # noqa: PLC0415 -- optional crewai extra
+    from crewai.hooks.dispatch import (  # noqa: PLC0415 -- optional crewai extra
         InterceptionPoint,
-        register_hook,
-        unregister_hook,
+        get_scoped_hooks,
+        register_scoped,
+        scoped_hooks,
     )
-    from crewai.hooks.contexts import StepContext  # noqa: PLC0415 -- optional crewai extra
 
     driver = asyncio.current_task()
     pending: set[asyncio.Task[Any]] = set()
@@ -33,20 +36,19 @@ async def kickoff_flow(flow: Any, inputs: dict[str, Any]) -> Any:
             task.exception()
 
     def retain(context: StepContext) -> None:
-        if context.flow is not flow:
+        if context.flow is None:
             return
         task = asyncio.current_task()
         if task is not None and task is not driver and task not in pending:
             pending.add(task)
             task.add_done_callback(forget)
 
-    register_hook(InterceptionPoint.PRE_STEP, retain)
-    try:
+    inherited_hooks = {point: get_scoped_hooks(point) for point in InterceptionPoint}
+    with scoped_hooks(inherited_hooks):
+        register_scoped(InterceptionPoint.PRE_STEP, retain)
         try:
             return await flow.kickoff_async(inputs)
         finally:
             # SDK gather can finish on one branch's cancellation before its siblings.
             while pending:
                 await asyncio.wait(pending)
-    finally:
-        unregister_hook(InterceptionPoint.PRE_STEP, retain)

@@ -24,7 +24,7 @@ from tests.adapters.crewaiworker.kit import ReadResource
 from tests.adapters.crewaiworker.peer import resource_peer
 from tests.framework_conformance.turnprobes import turn_input, turn_tools, user_message
 
-BranchKind = Literal["starts", "listeners"]
+BranchKind = Literal["starts", "listeners", "nested"]
 
 
 @dataclass
@@ -91,6 +91,16 @@ class ParallelListeners(ParallelFlow):
         return await self.read_sibling()
 
 
+class NestedFlow(Flow):
+    def __init__(self, work: ParallelWork) -> None:
+        super().__init__()
+        self.work = work
+
+    @start()
+    async def child(self) -> WaitingDecision:
+        return await ParallelStarts(self.work).kickoff_async()
+
+
 class UnrelatedFlow(Flow):
     def __init__(self) -> None:
         super().__init__()
@@ -115,7 +125,11 @@ class ParallelCase:
 async def parallel_case(kind: BranchKind) -> AsyncIterator[ParallelCase]:
     async with resource_peer() as (client, expected):
         work = ParallelWork(client)
-        flow_type = ParallelStarts if kind == "starts" else ParallelListeners
+        flow_type = {
+            "starts": ParallelStarts,
+            "listeners": ParallelListeners,
+            "nested": NestedFlow,
+        }[kind]
         adapter = CrewAIFlowAdapter(
             CrewAIFlowAdapterConfig(metadata_namespace=uuid4().hex),
             flow_factory=lambda: flow_type(work),
