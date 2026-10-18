@@ -20,17 +20,19 @@ def support(monkeypatch: pytest.MonkeyPatch) -> ActivitySupport:
 
 
 @pytest.fixture
-async def peer(httpx_mock: HTTPXMock, support: ActivitySupport) -> ActivityPeer:
-    peer = ActivityPeer()
+async def activity_peer(
+    httpx_mock: HTTPXMock, support: ActivitySupport
+) -> ActivityPeer:
+    activity_peer = ActivityPeer()
     httpx_mock.add_callback(
-        peer.discover, url=VERSION_URL, is_optional=True, is_reusable=True
+        activity_peer.discover, url=VERSION_URL, is_optional=True, is_reusable=True
     )
-    return peer
+    return activity_peer
 
 
 @pytest.fixture
-async def link(peer: ActivityPeer) -> AsyncIterator[BandLink]:
-    async with rest_client_over(peer.respond) as rest:
+async def link(activity_peer: ActivityPeer) -> AsyncIterator[BandLink]:
+    async with rest_client_over(activity_peer.respond) as rest:
         link = BandLink(
             agent_id="agent", api_key="test-key", rest_url="https://platform.test"
         )

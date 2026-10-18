@@ -15,9 +15,9 @@ class TestActivityFallback:
         "body", [b'{"errors":{"activity":["unknown"]}}', b"not json", b""]
     )
     async def test_422_retries_without_detail_and_latches_across_links(
-        self, link: BandLink, peer: ActivityPeer, body: bytes
+        self, link: BandLink, activity_peer: ActivityPeer, body: bytes
     ) -> None:
-        peer.responses.append(httpx.Response(422, content=body))
+        activity_peer.responses.append(httpx.Response(422, content=body))
         detail = AgentActivityDetail(kind="tool_call", name="Read")
         assert await link.report_activity("first", True, activity=detail)
         other = BandLink(
@@ -25,29 +25,32 @@ class TestActivityFallback:
         )
         other.rest = link.rest
         assert await other.report_activity("second", True, activity=detail)
-        assert peer.reports == [
+        assert activity_peer.reports == [
             {"working": True, "activity": {"kind": "tool_call", "name": "Read"}},
             {"working": True},
             {"working": True},
         ]
-        assert len(peer.version_requests) == 1
+        assert len(activity_peer.version_requests) == 1
 
     @pytest.mark.parametrize("status", [400, 403, 500])
     async def test_other_errors_do_not_retry_or_disable(
-        self, link: BandLink, peer: ActivityPeer, status: int
+        self, link: BandLink, activity_peer: ActivityPeer, status: int
     ) -> None:
-        peer.responses.append(httpx.Response(status, json={"error": "failure"}))
+        activity_peer.responses.append(
+            httpx.Response(status, json={"error": "failure"})
+        )
         detail = AgentActivityDetail(kind="reasoning")
         assert not await link.report_activity("room", True, activity=detail)
         assert await link.report_activity("room", True, activity=detail)
         assert (
-            peer.reports == [{"working": True, "activity": {"kind": "reasoning"}}] * 2
+            activity_peer.reports
+            == [{"working": True, "activity": {"kind": "reasoning"}}] * 2
         )
 
     async def test_fallback_echoed_false_keeps_stop_notification(
-        self, link: BandLink, peer: ActivityPeer
+        self, link: BandLink, activity_peer: ActivityPeer
     ) -> None:
-        peer.responses.extend(
+        activity_peer.responses.extend(
             [
                 httpx.Response(422),
                 httpx.Response(200, json={"data": {"working": False}}),
@@ -61,4 +64,4 @@ class TestActivityFallback:
             on_stopped=stopped,
         )
         stopped.assert_called_once_with()
-        assert peer.reports[-1] == {"working": True}
+        assert activity_peer.reports[-1] == {"working": True}
