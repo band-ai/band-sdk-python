@@ -213,12 +213,12 @@ def test_default_write_tool_names_includes_known_mutators():
 
 # ── SlackTeeingTools tool-execution hook ───────────────────────────────────
 #
-# The plan-rendering hook now lives in ``execute_tool_call`` (not
+# The plan-rendering hook lives in ``execute_tool_call_structured`` (not
 # ``send_event``) so Slack progress is independent of the brain's
-# ``Emit.TOOL_CALLS`` setting. Tests patch the parent class's
-# ``execute_tool_call_structured`` to return controlled outcomes — the
-# Slack hook derives task success/failure from the structured ``ok``
-# flag, not from the returned string.
+# ``Emit.TOOL_CALLS`` setting and of which dispatch entry an adapter calls.
+# Tests patch the parent class's ``execute_tool_call_structured`` to return
+# controlled outcomes — the Slack hook derives task success/failure from the
+# structured ``ok`` flag, not from the returned string.
 
 
 def _make_tools(
