@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from band.core.exceptions import CleanupIncompleteError
 from band.integrations.codex import CodexStdioClient, stdio_client
 from band.integrations.codex.stdio_client import HELPER_PATH, kill_process_tree
 from band.integrations.codex.winspawn import (
@@ -421,3 +422,27 @@ class TestSubprocessCleanup:
             timeout=CLOSE_BOUND_S,
         )
         assert live.returncode is None
+
+    @pytest.mark.skipif(os.name == "nt", reason="session-group teardown is Unix")
+    async def test_unknown_leader_pid_probe_keeps_cleanup_retryable(
+        self,
+        child: tuple[CodexStdioClient, asyncio.subprocess.Process],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        client, process = child
+        process.kill()
+        await process.wait()
+        native_kill = os.kill
+
+        def unknown_pid(pid: int, signum: int) -> None:
+            if pid == process.pid and signum == 0:
+                raise PermissionError("owned PID observation unavailable")
+            native_kill(pid, signum)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(stdio_client.os, "kill", unknown_pid)
+            with pytest.raises(CleanupIncompleteError):
+                await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
+
+        await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
+        assert process.returncode is not None
