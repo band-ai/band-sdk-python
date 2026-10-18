@@ -71,6 +71,7 @@ class CodexRequestMethod(StrEnum):
     """Client-to-server request methods the SDK sends to ``codex app-server``."""
 
     INITIALIZE = "initialize"
+    ACCOUNT_READ = "account/read"
     MODEL_LIST = "model/list"
     SKILLS_EXTRA_ROOTS_SET = "skills/extraRoots/set"
     THREAD_RESUME = "thread/resume"

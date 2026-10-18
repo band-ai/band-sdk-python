@@ -7,7 +7,7 @@ import json
 import logging
 import time as _time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
@@ -15,7 +15,7 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar
 
 from band_sdk_core import AgentFailure
 from pydantic import (
@@ -43,7 +43,12 @@ from band.core.delivery import (
     deliver_notice,
     reraise_delivery_cause,
 )
-from band.core.exceptions import InputNotAccepted
+from band.core.exceptions import (
+    BandConnectionError,
+    CleanupIncompleteError,
+    InputNotAccepted,
+)
+from band.core.harness import PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -101,6 +106,7 @@ from band.integrations.codex.types import (
     build_agent_failure,
     parse_plan_steps,
 )
+from band.integrations.codex.winspawn import MISSING_EXECUTABLE, SpawnFailure
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_openai_schema,
@@ -129,6 +135,8 @@ from band.workspaces import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ProbeResult = TypeVar("_ProbeResult")
 
 
 def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1891,9 +1899,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         await room.retained.dispose()
 
     async def cleanup_all(self) -> None:
-        """Stop the residency owner: admission closes at once, every room's
-        turn gets ``turn_settle_timeout_s`` to wind down, then its process
-        closes, all reported within one ``retention.transition_timeout_s``.
+        """Stop every room and any standalone probe, attempting both on failure.
+
+        Rooms share ``retention.transition_timeout_s``; probe cleanup keeps its
+        independent budget and custody until the transport physically exits.
 
         Callers join the same stop, and a failed one is retried. An unfinished
         or failed stop keeps every room fenced with its process, thread and
@@ -1901,8 +1910,15 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """
         for room_id in list(self._room_clients):
             self._clear_pending_approvals_for_room(room_id)
-        await self._retention.stop()
+        results = await asyncio.gather(
+            self._retention.stop(), super().cleanup_all(), return_exceptions=True
+        )
         await self.backend_turns.drain()
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("Codex adapter cleanup failed", failures)
 
     async def _acquire(
         self, room: RoomCodexClient, generation: int, resume: bool
@@ -1919,13 +1935,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             self._read_native_events(room, client, generation),
             label=f"Room {room.room_id} Codex event reader",
         )
-        await client.initialize(
-            client_name=self.config.client_name,
-            client_title=self.config.client_title,
-            client_version=self.config.client_version,
-            experimental_api=self.config.experimental_api,
-        )
-        await self._register_skill_roots(client)
+        await self._initialize_client(client)
         if room.selected_model is None:
             room.selected_model = await self._select_model(client)
             logger.info(
@@ -2181,6 +2191,71 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         self._raw_history_by_room.pop(room_id, None)
         return thread_id
 
+    async def preflight(self, *, timeout_s: float = 60.0) -> PreflightResult:
+        """Check the configured app-server and its reported login without a turn."""
+        try:
+            return await self._probe_harness(self._login_state, timeout_s=timeout_s)
+        except CleanupIncompleteError:
+            raise
+        except BandConnectionError as error:
+            cause = error.__cause__
+            if isinstance(cause, FileNotFoundError) or (
+                isinstance(cause, SpawnFailure)
+                and cause.winerror in MISSING_EXECUTABLE
+            ):
+                return PreflightResult.failed(
+                    "Codex CLI binary not found.",
+                    "Install Codex (`npm install -g @openai/codex`) or set "
+                    "CodexAdapterConfig.codex_command.",
+                )
+            return self._handshake_failed()
+        except Exception:  # noqa: BLE001 -- ordinary probe failures are safe host-facing results
+            return self._handshake_failed()
+
+    @staticmethod
+    def _handshake_failed() -> PreflightResult:
+        return PreflightResult.failed(
+            "Codex app-server did not complete its handshake.",
+            "Run `codex app-server` in a terminal to check the install, then retry.",
+        )
+
+    @staticmethod
+    async def _login_state(client: CodexClientProtocol) -> PreflightResult:
+        try:
+            account = await client.request(CodexRequestMethod.ACCOUNT_READ, {})
+        except CodexJsonRpcError:
+            # Unsupported or refused metadata is not evidence of a missing login.
+            return PreflightResult.passed()
+        if account.get("account") is None and account.get("requiresOpenaiAuth") is True:
+            return PreflightResult.failed(
+                "Codex is not logged in.", "Run `codex login`, then retry."
+            )
+        return PreflightResult.passed()
+
+    async def _probe_harness(
+        self,
+        operation: Callable[[CodexClientProtocol], Awaitable[_ProbeResult]],
+        *,
+        timeout_s: float,
+    ) -> _ProbeResult:
+        async def inspect() -> _ProbeResult:
+            client = self._build_client(None)
+            self._harness_probe.own(client.close)
+            await client.connect()
+            await self._initialize_client(client)
+            return await operation(client)
+
+        return await self._harness_probe.run(inspect, timeout_s=timeout_s)
+
+    async def _initialize_client(self, client: CodexClientProtocol) -> None:
+        await client.initialize(
+            client_name=self.config.client_name,
+            client_title=self.config.client_title,
+            client_version=self.config.client_version,
+            experimental_api=self.config.experimental_api,
+        )
+        await self._register_skill_roots(client)
+
     async def _register_skill_roots(self, client: CodexClientProtocol) -> None:
         roots = self.config.skill_roots
         if not roots:
@@ -2192,7 +2267,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         except CodexJsonRpcError as exc:
             raise RuntimeError(f"Codex rejected skill_roots {roots}: {exc}") from exc
 
-    def _build_client(self, workspace: str) -> CodexClientProtocol:
+    def _build_client(self, workspace: str | None) -> CodexClientProtocol:
         return CodexStdioClient(
             command=self.config.codex_command,
             cwd=workspace,

@@ -111,3 +111,32 @@ Approval commands use the token displayed in the room prompt. Native Codex
 request and approval IDs stay internal; a fresh request gets a new chat token
 after completion or room cleanup, even when Codex reuses its native ID. A
 redelivery of a still-pending request keeps its displayed token.
+
+## Host preflight
+
+`await adapter.preflight(timeout_s=60.0)` launches a throwaway app-server using
+the adapter's `codex_command`, `codex_env`, client name/title/version,
+`experimental_api` and `skill_roots`. It sends `initialize` and `account/read`
+without creating a Codex thread, spending a model turn, or claiming a Band room
+or workspace.
+
+The result is a `PreflightResult` with `ok`, `reason` and `remedy`. A missing
+account fails only when Codex explicitly reports `requiresOpenaiAuth=true`;
+an unsupported or refused `account/read` is not proof that login is missing.
+A passed handshake is not proof of provider authentication, subscription or
+inference entitlement.
+
+```python notest
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+adapter = CodexAdapter(CodexAdapterConfig())
+result = await adapter.preflight(timeout_s=30)
+```
+
+The timeout bounds handshake/RPC work and a separate cleanup wait. Cancellation
+propagates. Cleanup failures raise `CleanupIncompleteError` instead of reporting
+a successful or ordinary failed preflight, and the adapter retains the client,
+including a partially created process or Windows job. Keep that adapter and
+retry `await adapter.cleanup_all()` to join or retry cleanup. Shutdown attempts
+both probe and room cleanup even when either fails. Successful calls close their
+throwaway process before returning; a second preflight starts a fresh one.

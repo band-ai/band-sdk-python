@@ -95,7 +95,7 @@ async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
         return
     _done, pending = await asyncio.wait(readers, timeout=_EXIT_OBSERVE_S)
     if pending:
-        logger.warning("Codex stdio readers still pending after tree kill")
+        raise TimeoutError("Codex stdio readers still pending after tree kill")
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
@@ -137,6 +137,7 @@ class CodexStdioClient(BaseJsonRpcClient):
 
         self._proc: asyncio.subprocess.Process | None = None
         self._windows_process: WindowsProcess | None = None
+        self._creation_task: asyncio.Task[None] | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -158,6 +159,7 @@ class CodexStdioClient(BaseJsonRpcClient):
         if self._close_task is not None:
             await self.close()
             self._close_task = None
+            self._creation_task = None
         if self._connected:
             return
 
@@ -186,8 +188,24 @@ class CodexStdioClient(BaseJsonRpcClient):
             except BaseException:
                 await self.close()
                 raise
+        if self._creation_task is not None:
+            raise BandConnectionError("Codex process is already starting")
+        self._creation_task = asyncio.create_task(self._create_process())
+        try:
+            # A cancelled caller cannot discard a child created before the
+            # subprocess coroutine returns its Process handle.
+            await asyncio.shield(self._creation_task)
+            if self._close_task is not None:
+                raise BandConnectionError("Codex process closed during startup")
+            assert self._proc is not None
+            return self._proc
+        except BaseException:
+            await self.close()
+            raise
+
+    async def _create_process(self) -> None:
         # The child leads its own session, so its pid is the group id.
-        return await asyncio.create_subprocess_exec(
+        self._proc = await asyncio.create_subprocess_exec(
             *self.command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -224,7 +242,11 @@ class CodexStdioClient(BaseJsonRpcClient):
 
     async def close(self) -> None:
         """Share retryable cleanup that survives a cancelled or timed-out caller."""
-        if self._windows_process is None and self._proc is None:
+        if (
+            self._windows_process is None
+            and self._proc is None
+            and self._creation_task is None
+        ):
             return
         if self._windows_process is not None:
             self._windows_process.closing = True
@@ -251,6 +273,14 @@ class CodexStdioClient(BaseJsonRpcClient):
         for task in readers:
             task.cancel()
         try:
+            if self._creation_task is not None:
+                done, _pending = await asyncio.wait(
+                    [self._creation_task], timeout=_EXIT_OBSERVE_S
+                )
+                if not done:
+                    raise TimeoutError("Codex process creation is still pending")
+                if not self._creation_task.cancelled():
+                    self._creation_task.exception()
             # A cancelled pipe read on Windows stays pending while the child is
             # blocked in a synchronous stdin read, and awaiting that read never
             # times out. Terminate the tree and close our write end first.
@@ -261,8 +291,8 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await kill_process_tree(process)
                 await close_stdin(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
-                    logger.warning(
-                        "Codex process %s still alive after tree kill", process.pid
+                    raise TimeoutError(
+                        f"Codex process {process.pid} still alive after tree kill"
                     )
             self._fail_pending("Codex stdio client closed")
         finally:

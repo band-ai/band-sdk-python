@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import looptime
@@ -28,6 +29,7 @@ from tests.adapters.codex.kit import (  # noqa: F401
     patch_codex_clients_by_room,
     send_bootstrap,
 )
+from tests.adapters.codex.probes import ProbeHost
 from tests.adapters.codexturns import (
     FakeCodexClient,
     make_codex_adapter,
@@ -129,3 +131,14 @@ async def started_codex() -> AsyncIterator[Callable[..., Awaitable[CodexAdapter]
     yield start
     for adapter in adapters:
         await adapter.cleanup_all()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def probe_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[ProbeHost]:
+    host = ProbeHost(tmp_path, monkeypatch)
+    try:
+        yield host
+    finally:
+        await host.close()
