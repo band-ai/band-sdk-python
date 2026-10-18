@@ -670,7 +670,7 @@ class ACPClientAdapter(
             async def close() -> None:
                 try:
                     await runtime.stop()
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- retain every failed transport close without exposing its diagnostics
                     raise CleanupIncompleteError(
                         f"ACP probe process cleanup failed ({type(error).__name__})."
                     ) from None
@@ -685,7 +685,7 @@ class ACPClientAdapter(
                     "The configured ACP executable was not found.",
                     "Install the ACP agent or correct command and env['PATH'], then retry.",
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- ACP agents report arbitrary handshake errors; sanitize before cleanup
                 return PreflightResult.failed(
                     f"ACP initialize/authenticate failed ({type(error).__name__}).",
                     "Check the configured command, environment and auth_method, then retry.",
@@ -701,7 +701,7 @@ class ACPClientAdapter(
                 "ACP initialize/authenticate timed out.",
                 "Check the configured agent and auth_method, or increase timeout_s.",
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- launcher/configuration failures must remain safe host-facing results
             return PreflightResult.failed(
                 f"ACP initialize/authenticate failed ({type(error).__name__}).",
                 "Check the configured command, environment and auth_method, then retry.",

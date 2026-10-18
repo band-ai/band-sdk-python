@@ -90,7 +90,9 @@ class ProbeProcess:
 class ProbeProcesses:
     """Spawn real ACP children with reproducible partial-creation and exit failures."""
 
-    def __init__(self, *, refuse_close: bool = False, hold_creation: bool = False) -> None:
+    def __init__(
+        self, *, refuse_close: bool = False, hold_creation: bool = False
+    ) -> None:
         self.children: list[ProbeProcess] = []
         self.refuse_close = refuse_close
         self.hold_creation = hold_creation
