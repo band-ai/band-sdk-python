@@ -932,6 +932,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_nooa.py::TestNooaValidationAliases::test_aliased_payload_round_trips",
+      "adapter": "suite",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_omp_acp.py::test_omp_acp_band_tool_call_is_narrated",
       "adapter": "suite",
       "lanes": [

@@ -144,7 +144,9 @@ async def _probe_anthropic() -> bool:
 
     adapter = AnthropicAdapter(emit=())
     tools = MagicMock()
-    tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
+    tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
+    )
     response = MagicMock()
     response.content = [
         ToolUseBlock(
@@ -155,7 +157,7 @@ async def _probe_anthropic() -> bool:
         )
     ]
 
-    results = await adapter._process_tool_calls(response, tools)
+    results, _declined = await adapter._process_tool_calls(response, tools)
 
     content = results[0]["content"]
     if not isinstance(content, list) or len(content) != 1:
@@ -299,13 +301,16 @@ async def _probe_nooa() -> bool:
     from band.adapters.nooa.tools import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         RoomToolSpec,
         room_tools_class,
+        tool_method,
     )
 
     async def read(tools: Any, arguments: dict[str, Any]) -> object:
         return _IMAGE_RESULT
 
     spec = RoomToolSpec(
-        BandTool.READ_ROOM_FILE, TOOL_MODELS[BandTool.READ_ROOM_FILE], read
+        BandTool.READ_ROOM_FILE,
+        read,
+        tool_method(BandTool.READ_ROOM_FILE, TOOL_MODELS[BandTool.READ_ROOM_FILE]),
     )
     room = room_tools_class([spec])(emit_tool_calls=False)
     async with room.bound_to(MagicMock()):

@@ -7,13 +7,14 @@ NOOA agent with a portable custom tool.
 
 The adapter turns each ``(InputModel, handler)`` pair passed as
 ``additional_tools`` into an async method on ``self.room``, next to the Band
-tools, with its signature and docstring rendered from the input model. Here
-``OrderStatusInput`` becomes ``await self.room.orderstatus(order_id=...)``.
+tools. Custom methods accept the original Pydantic validation payload through
+``arguments``. Here ``OrderStatusInput`` becomes
+``await self.room.orderstatus(arguments={"order_id": "ORD-1234"})``.
 
 Arguments are validated against the input model. A call such as
-``order_id="1234"`` raises ``BandToolError`` naming the broken rule, so the
-model can read it, retry with ``order_id="ORD-1234"`` and send the result to
-the room.
+``arguments={"order_id": "1234"}`` raises ``BandToolError`` naming the broken
+rule, so the model can read it, retry with
+``arguments={"order_id": "ORD-1234"}`` and send the result to the room.
 
 The model writes and runs Python inside this process, so run it in a container
 or VM (see README.md). NOOA routes models through LiteLLM; this one reads
@@ -59,8 +60,8 @@ def order_status(args: OrderStatusInput) -> dict[str, str]:
 class OrderDesk(NooaRoomAgent, llm=get_llm_client("anthropic/claude-sonnet-5-5")):
     """You are OrderDesk, a concise order-support assistant.
 
-    Look orders up with `self.room.orderstatus(...)` before answering. If a
-    call raises `BandToolError`, read the message, fix the arguments and try
+    Look up the requested order with `self.room.orderstatus(arguments={...})`
+    before answering. If a call raises `BandToolError`, read the message, fix the arguments and try
     again. Reply in the room with what you found.
     """
 

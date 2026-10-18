@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter, AnthropicAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.turn import Turn
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -32,6 +33,9 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
+from band.runtime.tools.agent import AgentTools
+from band.runtime.tools.schema import ToolCallOutcome
+from band.runtime.tools.types import BandTool, TurnEffect
 from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_conformance.turnprobes import CUSTOM_TOOL_DECLARATIONS
@@ -76,6 +80,14 @@ def mock_tools():
     tools.send_event = AsyncMock(return_value={"status": "sent"})
     tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
+
+    async def execute_structured(
+        tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        value = await tools.execute_tool_call(tool_name, arguments)
+        return ToolCallOutcome(value=value, ok=True)
+
+    tools.execute_tool_call_structured = AsyncMock(side_effect=execute_structured)
     return tools
 
 
@@ -290,6 +302,290 @@ class TestToolExecution:
     """Tests for tool execution."""
 
     @pytest.mark.asyncio
+    async def test_no_reply_ends_the_turn_without_a_follow_up_model_call(
+        self, sample_message, mock_tools, caplog
+    ):
+        """A successful band_no_reply settles the turn; no second request is sent."""
+        adapter = AnthropicAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        mock_tools.turn = Turn()
+
+        async def execute(name: str, arguments: dict[str, Any]) -> dict[str, str]:
+            if name == BandTool.NO_REPLY:
+                mock_tools.turn.record(TurnEffect.DECLINE)
+            return {"status": "no_reply"}
+
+        mock_tools.execute_tool_call = AsyncMock(side_effect=execute)
+        declined = SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool-1",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                )
+            ],
+            usage=make_usage(10, 4),
+        )
+        follow_up = SimpleNamespace(
+            stop_reason="end_turn",
+            content=[TextBlock(type="text", text="should not be requested")],
+            usage=make_usage(1, 1),
+        )
+        call_anthropic = AsyncMock(side_effect=[declined, follow_up])
+        with (
+            caplog.at_level(logging.INFO, logger="band.adapters.anthropic"),
+            patch.object(adapter, "_call_anthropic", new=call_anthropic),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert call_anthropic.call_count == 1
+        assert mock_tools.turn.replied is True
+        logged = [record.getMessage() for record in caplog.records]
+        assert [line for line in logged if "request 1 starting" in line] == [
+            "Room room-123: Anthropic request 1 starting (1 messages)"
+        ]
+        assert any(
+            "request 1 finished" in line
+            and "stop_reason=tool_use" in line
+            and "tools=band_no_reply" in line
+            for line in logged
+        )
+        assert any("not sending a follow-up" in line for line in logged)
+        assert not any("request 2 starting" in line for line in logged)
+
+    @pytest.mark.asyncio
+    async def test_failed_no_reply_is_sent_back_to_the_model(self, sample_message):
+        """A validation failure is not a decline, even after a successful send."""
+        error = "Invalid arguments for band_no_reply"
+
+        def agent_tools() -> AgentTools:
+            async def create_agent_chat_message(**_kwargs: object) -> SimpleNamespace:
+                return SimpleNamespace(data=SimpleNamespace(id="posted-1"))
+
+            async def create_agent_chat_event(**_kwargs: object) -> SimpleNamespace:
+                return SimpleNamespace(data=SimpleNamespace(id="event-1"))
+
+            rest = SimpleNamespace(
+                agent_api_messages=SimpleNamespace(
+                    create_agent_chat_message=create_agent_chat_message
+                ),
+                agent_api_events=SimpleNamespace(
+                    create_agent_chat_event=create_agent_chat_event
+                ),
+            )
+            return AgentTools(
+                "room-123",
+                rest,
+                participants=[{"id": "user-456", "handle": "alice", "name": "Alice"}],
+            )
+
+        def tool_block(
+            tool_id: str, name: str, payload: dict[str, Any]
+        ) -> ToolUseBlock:
+            return ToolUseBlock(type="tool_use", id=tool_id, name=name, input=payload)
+
+        def send_block(tool_id: str) -> ToolUseBlock:
+            return tool_block(
+                tool_id,
+                BandTool.SEND_MESSAGE,
+                {"content": "hello", "mentions": ["@alice"]},
+            )
+
+        def bad_no_reply(tool_id: str) -> ToolUseBlock:
+            return tool_block(tool_id, BandTool.NO_REPLY, {"reason": 1})
+
+        end_turn = SimpleNamespace(
+            stop_reason="end_turn",
+            content=[TextBlock(type="text", text="done")],
+            usage=make_usage(1, 1),
+        )
+
+        async def drive(responses: list[SimpleNamespace]) -> list[list[dict[str, Any]]]:
+            adapter = AnthropicAdapter()
+            await adapter.on_started("TestBot", "Test bot")
+            calls: list[list[dict[str, Any]]] = []
+
+            async def call_anthropic(
+                *, messages: list[dict[str, Any]], tools: list[Any]
+            ) -> SimpleNamespace:
+                calls.append(messages)
+                index = len(calls) - 1
+                if index < len(responses):
+                    return responses[index]
+                return end_turn
+
+            with patch.object(adapter, "_call_anthropic", side_effect=call_anthropic):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=agent_tools(),
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+            return calls
+
+        sibling = await drive(
+            [
+                SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[send_block("send-1"), bad_no_reply("decline-1")],
+                    usage=make_usage(3, 2),
+                )
+            ]
+        )
+        later = await drive(
+            [
+                SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[send_block("send-2")],
+                    usage=make_usage(3, 2),
+                ),
+                SimpleNamespace(
+                    stop_reason="tool_use",
+                    content=[bad_no_reply("decline-2")],
+                    usage=make_usage(3, 2),
+                ),
+            ]
+        )
+
+        assert error in json.dumps(sibling[1], default=str)
+        assert error in json.dumps(later[2], default=str)
+
+    @pytest.mark.asyncio
+    async def test_failed_sibling_is_sent_back_after_a_successful_no_reply(
+        self, sample_message
+    ):
+        """A successful decline still returns a failed sibling to the model."""
+
+        async def follow_up(
+            content: list[ToolUseBlock], *, adapter: AnthropicAdapter
+        ) -> str:
+            await adapter.on_started("TestBot", "Test bot")
+            calls: list[list[dict[str, Any]]] = []
+            end_turn = SimpleNamespace(
+                stop_reason="end_turn",
+                content=[TextBlock(type="text", text="done")],
+                usage=make_usage(1, 1),
+            )
+
+            async def call_anthropic(
+                *, messages: list[dict[str, Any]], tools: list[Any]
+            ) -> SimpleNamespace:
+                del tools
+                calls.append(messages)
+                if len(calls) == 1:
+                    return SimpleNamespace(
+                        stop_reason="tool_use",
+                        content=content,
+                        usage=make_usage(3, 2),
+                    )
+                return end_turn
+
+            with patch.object(adapter, "_call_anthropic", side_effect=call_anthropic):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=AgentTools("room-123", MagicMock(), participants=[]),
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+            assert len(calls) == 2
+            return json.dumps(calls[1], default=str)
+
+        invalid = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-1",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="add-1",
+                    name=BandTool.ADD_PARTICIPANT,
+                    input={},
+                ),
+            ],
+            adapter=AnthropicAdapter(),
+        )
+        assert "Invalid arguments for band_add_participant" in invalid
+        assert "no_reply" in invalid
+
+        returned_dict = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-3",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="echo-2",
+                    name="echo",
+                    input={"message": "x"},
+                ),
+            ],
+            adapter=AnthropicAdapter(additional_tools=[(EchoInput, failed_dict_tool)]),
+        )
+        assert "channel archived" in returned_dict
+
+        returned_string = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-4",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="echo-3",
+                    name="echo",
+                    input={"message": "x"},
+                ),
+            ],
+            adapter=AnthropicAdapter(
+                additional_tools=[(EchoInput, failed_string_tool)]
+            ),
+        )
+        assert "disk full" in returned_string
+
+        raised = await follow_up(
+            [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="decline-2",
+                    name=BandTool.NO_REPLY,
+                    input={"reason": "FYI"},
+                ),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="echo-1",
+                    name="echo",
+                    input={"message": "x"},
+                ),
+            ],
+            adapter=AnthropicAdapter(additional_tools=[(EchoInput, failing_tool)]),
+        )
+        assert "Service unavailable" in raised
+
+    @pytest.mark.asyncio
     async def test_reports_tool_calls_when_enabled(self, mock_tools):
         """Should send events when execution reporting is enabled."""
 
@@ -335,7 +631,9 @@ class TestToolExecution:
             "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
         }
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert len(results) == 1
         assert results[0]["is_error"] is False
@@ -434,7 +732,9 @@ class TestToolExecution:
             "description": "File not shown inline: too large.",
         }
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert len(results) == 1
         assert isinstance(results[0]["content"], str)
@@ -460,7 +760,9 @@ class TestToolExecution:
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
         mock_tools.execute_tool_call.return_value = {"status": "sent"}
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         # Tool should still have executed successfully
         assert len(results) == 1
@@ -720,7 +1022,9 @@ class TestToolExecution:
 
         mock_tools.execute_tool_call.side_effect = Exception("Tool failed!")
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert len(results) == 1
         assert results[0]["is_error"] is True
@@ -738,12 +1042,17 @@ class TestErrorHandling:
     """Tests for error handling."""
 
     @pytest.mark.asyncio
-    async def test_reports_error_on_api_failure(self, sample_message, mock_tools):
+    async def test_reports_error_on_api_failure(
+        self, sample_message, mock_tools, caplog
+    ):
         """Should report error when Anthropic API fails."""
         adapter = AnthropicAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(adapter, "_call_anthropic") as mock_call:
+        with (
+            caplog.at_level(logging.INFO, logger="band.adapters.anthropic"),
+            patch.object(adapter, "_call_anthropic") as mock_call,
+        ):
             mock_call.side_effect = Exception("API Error")
 
             with pytest.raises(Exception, match="API Error"):
@@ -759,6 +1068,10 @@ class TestErrorHandling:
 
             # Should have tried to report error
             mock_tools.send_failure.assert_called_once()
+            logged = [record.getMessage() for record in caplog.records]
+            assert any("request 1 starting" in line for line in logged)
+            assert any("request 1 failed after" in line for line in logged)
+            assert not any("finished in" in line for line in logged)
             failure = mock_tools.send_failure.call_args.args[0]
             assert failure.provider == "anthropic"
             assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
@@ -828,6 +1141,16 @@ def calculate(args: CalculatorInput) -> str:
 async def failing_tool(args: EchoInput) -> str:
     """Tool that always fails."""
     raise ValueError("Service unavailable")
+
+
+async def failed_dict_tool(args: EchoInput) -> dict[str, Any]:
+    """Tool that reports failure as a result instead of raising."""
+    return {"ok": False, "error": "channel archived"}
+
+
+async def failed_string_tool(args: EchoInput) -> str:
+    """Tool that reports failure as an error string."""
+    return "Error: disk full"
 
 
 class TestCustomTools:
@@ -960,7 +1283,9 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         # Should NOT have called platform execute_tool_call
         mock_tools.execute_tool_call.assert_not_called()
@@ -990,7 +1315,9 @@ class TestCustomTools:
 
         mock_tools.execute_tool_call.return_value = {"status": "sent"}
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         # Should have called platform execute_tool_call
         mock_tools.execute_tool_call.assert_called_once_with(
@@ -1018,7 +1345,9 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert len(results) == 1
         assert results[0]["is_error"] is True
@@ -1042,7 +1371,9 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert results[0]["tool_use_id"] == "tool-abc-123"
 
@@ -1073,7 +1404,9 @@ class TestCustomTools:
             ),
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert len(results) == 2
         assert "Echo: Hello" in results[0]["content"]
@@ -1097,7 +1430,9 @@ class TestCustomTools:
             )
         ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+        results, _declined = await adapter._process_tool_calls(
+            mock_response, mock_tools
+        )
 
         assert len(results) == 1
         assert results[0]["is_error"] is True

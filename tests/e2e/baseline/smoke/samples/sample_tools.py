@@ -19,7 +19,7 @@ bespoke per-agent build); ``EXECUTION_REPORTING`` is what surfaces tool calls.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from band.core.types import AdapterFeatures, Emit
 from band.runtime.custom_tools import get_custom_tool_name
@@ -35,6 +35,12 @@ class LookupInput(BaseModel):
 
     key: str
     note: str | None = None
+
+
+class AliasedLookupInput(LookupInput):
+    """Look up the secret access code using a projectKey validation payload."""
+
+    key: str = Field(validation_alias="projectKey")
 
 
 def _lookup(args: LookupInput) -> str:
@@ -56,13 +62,21 @@ LOOKUP = get_custom_tool_name(LookupInput)
 WEATHER = get_custom_tool_name(WeatherInput)
 
 LOOKUP_TOOL = ToolSpec(LookupInput, _lookup)
+ALIASED_LOOKUP_TOOL = ToolSpec(AliasedLookupInput, _lookup)
 WEATHER_TOOL = ToolSpec(WeatherInput, _weather)
 
-LOOKUP_PROMPT = (
-    f"You have a tool `{LOOKUP}` that returns the secret access code for a key. "
-    f"You do NOT know these codes yourself, so you MUST call `{LOOKUP}` to get "
-    "one. Then report the code in one short sentence using band_send_message."
-)
+
+def lookup_prompt(tool_name: str) -> str:
+    """Instructions for obtaining a code through the named lookup tool."""
+    return (
+        f"You have a tool `{tool_name}` that returns the secret access code for a key. "
+        f"You do NOT know these codes yourself, so you MUST call `{tool_name}` to get "
+        "one. Then report the code in one short sentence using band_send_message."
+    )
+
+
+LOOKUP_PROMPT = lookup_prompt(LOOKUP)
+ALIASED_LOOKUP_PROMPT = lookup_prompt(ALIASED_LOOKUP_TOOL.name)
 WEATHER_PROMPT = (
     f"You have a tool `{WEATHER}` that returns the forecast for a place. You do "
     f"NOT know these forecasts, so you MUST call `{WEATHER}`. Then report it in "
