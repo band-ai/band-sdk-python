@@ -17,7 +17,9 @@ from tests.runtime.helpers import IDLE, KEEP_ALIVE, LifecyclePlatform
 class TestProviderLifetime:
     @pytest.mark.looptime
     async def test_detached_worker_keeps_heartbeat_across_busy_delivery(
-        self, execution: Callable[..., ExecutionContext], activity_platform: LifecyclePlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: LifecyclePlatform,
     ) -> None:
         release = asyncio.Event()
         workers: list[TurnTask] = []
@@ -41,7 +43,9 @@ class TestProviderLifetime:
         assert activity_platform.activity_reports[-1] == IDLE
 
     async def test_worker_completion_does_not_clear_running_handler(
-        self, execution: Callable[..., ExecutionContext], activity_platform: LifecyclePlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: LifecyclePlatform,
     ) -> None:
         finished, release = asyncio.Event(), asyncio.Event()
 
@@ -88,7 +92,9 @@ class TestProviderLifetime:
 
     @pytest.mark.looptime
     async def test_detached_heartbeat_stop_preserves_ack(
-        self, execution: Callable[..., ExecutionContext], activity_platform: LifecyclePlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: LifecyclePlatform,
     ) -> None:
         workers: list[TurnTask] = []
 
@@ -112,7 +118,9 @@ class TestProviderLifetime:
 
     @pytest.mark.looptime
     async def test_busy_delivery_keeps_original_cap_deadline(
-        self, execution: Callable[..., ExecutionContext], activity_platform: LifecyclePlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: LifecyclePlatform,
     ) -> None:
         release = asyncio.Event()
         workers: list[TurnTask] = []
@@ -140,7 +148,9 @@ class TestProviderLifetime:
         assert activity_platform.activity_reports[-1] == IDLE
 
     async def test_shutdown_clears_reporting_without_cancelling_detached_worker(
-        self, execution: Callable[..., ExecutionContext], activity_platform: LifecyclePlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: LifecyclePlatform,
     ) -> None:
         release = asyncio.Event()
         workers: list[TurnTask] = []
@@ -162,7 +172,9 @@ class TestProviderLifetime:
         assert activity_platform.activity_reports == [KEEP_ALIVE, IDLE]
 
     async def test_new_worker_admitted_after_previous_completion_gets_own_indicator(
-        self, execution: Callable[..., ExecutionContext], activity_platform: LifecyclePlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: LifecyclePlatform,
     ) -> None:
         releases = [asyncio.Event(), asyncio.Event()]
         entered, admitted = asyncio.Event(), asyncio.Event()
@@ -195,4 +207,9 @@ class TestProviderLifetime:
         await workers[1].task
         await asyncio.sleep(0)
         await ctx._join_activity_completion()
-        assert activity_platform.activity_reports == [KEEP_ALIVE, IDLE, KEEP_ALIVE, IDLE]
+        assert activity_platform.activity_reports == [
+            KEEP_ALIVE,
+            IDLE,
+            KEEP_ALIVE,
+            IDLE,
+        ]
