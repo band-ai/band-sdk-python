@@ -43,7 +43,7 @@ class LettaActivityStream(httpx.AsyncByteStream):
         await self.release.wait()
         result = make_tool_return_message("shell", "private-result")
         yield f"data: {result.model_dump_json()}\n\n".encode()
-        yield b'data: {"message_type":"usage_statistics","prompt_tokens":17,"completion_tokens":5}\n\n'
+        yield b'data: {"message_type":"usage_statistics","prompt_tokens":17,"completion_tokens":5,"cached_input_tokens":3,"cache_write_tokens":2}\n\n'
         yield b"data: [DONE]\n\n"
 
     async def aclose(self) -> None:

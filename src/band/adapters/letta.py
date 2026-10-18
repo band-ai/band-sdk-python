@@ -1210,22 +1210,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _usage_from_response(response: Any) -> TurnUsage:
-        """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
-
-        Field names verified against letta-client: ``prompt_tokens`` /
-        ``completion_tokens`` / ``cached_input_tokens`` / ``cache_write_tokens``.
-        A missing ``usage`` yields empty usage.
-        """
-        return TurnUsage.from_object(
-            getattr(response, "usage", None),
-            input="prompt_tokens",
-            output="completion_tokens",
-            cache_read="cached_input_tokens",
-            cache_write="cache_write_tokens",
-        )
-
-    @staticmethod
     def _format_time_ago(dt: datetime) -> str:
         """Format a datetime as a human-readable time-ago string."""
         now = datetime.now(UTC)

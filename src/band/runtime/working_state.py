@@ -138,8 +138,7 @@ class WorkingStateReporter:
             self._active = True
             cycle = owner if owner is not None else object()
             self._cycle = cycle
-            self._ordinary = AgentActivityDetail(kind="reasoning")
-            self._manual_wait = False
+            self._reset_detail()
             self._started_at = asyncio.get_running_loop().time()
             await self._report_locked(True)
             if self._cycle is cycle and self._active:
@@ -177,8 +176,7 @@ class WorkingStateReporter:
     async def clear_detail(self, *, current: Callable[[], bool]) -> None:
         async with self._lock:
             if current():
-                self._ordinary = AgentActivityDetail(kind="reasoning")
-                self._manual_wait = False
+                self._reset_detail()
 
     def defer_false_report(self) -> None:
         """Start ``working: false`` and return without waiting for it.
@@ -221,11 +219,14 @@ class WorkingStateReporter:
             task.exception()
         await self._finish_false_send()
 
+    def _reset_detail(self) -> None:
+        self._ordinary = AgentActivityDetail(kind="reasoning")
+        self._manual_wait = False
+
     def _arm_false_report(self) -> asyncio.Task[None] | None:
         self._active = False
         self._cycle = None
-        self._ordinary = AgentActivityDetail(kind="reasoning")
-        self._manual_wait = False
+        self._reset_detail()
         task, self._task = self._task, None
         if task is not None:
             task.cancel()

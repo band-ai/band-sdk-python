@@ -63,7 +63,12 @@ class TestLettaStreamActivity:
                         "tool_call_message",
                         "tool_return_message",
                     ]
-                    assert (usage.input_tokens, usage.output_tokens) == (17, 5)
+                    assert (
+                        usage.input_tokens,
+                        usage.output_tokens,
+                        usage.cache_read_tokens,
+                        usage.cache_write_tokens,
+                    ) == (17, 5, 3, 2)
                     assert recorder.events[-1] == {"kind": "reasoning"}
             finally:
                 stream.release.set()
