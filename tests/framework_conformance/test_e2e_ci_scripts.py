@@ -116,8 +116,8 @@ def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
         ),
         (
             {"BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS": "true"},
+            ("--log-cli-level=INFO", "--log-level=INFO"),
             ("--log-cli-level=WARNING",),
-            ("--log-level",),
         ),
     ],
     ids=["level-only", "level-and-diagnostics", "diagnostics-only"],
