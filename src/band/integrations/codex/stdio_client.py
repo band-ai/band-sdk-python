@@ -72,12 +72,10 @@ def _session_pid_reused(process: asyncio.subprocess.Process) -> bool:
         os.kill(process.pid, 0)
     except ProcessLookupError:
         return False
-    except OSError:
-        logger.warning(
-            "Codex process %s pid is not signalable; leaving its session",
-            process.pid,
-        )
-        return True
+    except OSError as error:
+        raise CleanupIncompleteError(
+            "Codex owned process identity could not be confirmed"
+        ) from error
     logger.warning(
         "Codex process %s pid was reused; not signaling that session",
         process.pid,

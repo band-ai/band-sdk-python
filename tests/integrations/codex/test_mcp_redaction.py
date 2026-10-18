@@ -174,13 +174,15 @@ class TestMcpRedaction:
         async def drain() -> None:
             await consume.wait()
 
-        async def wait() -> None:
-            return None
-
         client._proc = SimpleNamespace(
             pid=exited_process_group,
-            stdin=SimpleNamespace(write=write_request, drain=drain, close=lambda: None),
-            wait=wait,
+            returncode=0,
+            stdin=SimpleNamespace(
+                write=write_request,
+                drain=drain,
+                close=lambda: None,
+                is_closing=lambda: False,
+            ),
         )
         request = asyncio.create_task(client.request("thread/start", {}))
         try:
@@ -228,8 +230,9 @@ class TestMcpRedaction:
             pid = exited_process_group
             stdin = None
 
-            async def wait(self) -> None:
-                await exited.wait()
+            @property
+            def returncode(self) -> int | None:
+                return 0 if exited.is_set() else None
 
         client._proc = Process()
         closing = asyncio.create_task(client.close())
