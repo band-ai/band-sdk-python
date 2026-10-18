@@ -358,8 +358,27 @@ class AgentRunner:
         marks it processed. The container's own drain loop pulls the rest.
         """
         # Rooms are independent; nudge concurrently. Per-room locks and dedup
-        # still serialize each nudge against any live event for that room.
-        await asyncio.gather(*(self._nudge_room(rid) for rid in room_ids))
+        # still serialize each nudge against any live event for that room. A
+        # control cancels only its room's nudge, so results are collected
+        # rather than letting one cancellation abandon the others.
+        results = await asyncio.gather(
+            *(self._nudge_room(rid) for rid in room_ids), return_exceptions=True
+        )
+        for room_id, result in zip(room_ids, results, strict=True):
+            match result:
+                case asyncio.CancelledError():
+                    logger.info(
+                        "Agent %s: rehydration nudge for room %s stopped by a control",
+                        self._config.agent_id,
+                        room_id,
+                    )
+                case BaseException():
+                    logger.error(
+                        "Agent %s: rehydration nudge for room %s failed",
+                        self._config.agent_id,
+                        room_id,
+                        exc_info=result,
+                    )
 
     async def _nudge_room(self, room_id: str) -> None:
         """Forward one backlog message for a room, if ``/next`` has one.
