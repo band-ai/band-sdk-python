@@ -357,10 +357,7 @@ class OmpModelListing:
             if current is None:
                 continue
             try:
-                if (
-                    current.create_time() == identity.create_time()
-                    and current.status() != psutil.STATUS_ZOMBIE
-                ):
+                if current == identity and current.status() != psutil.STATUS_ZOMBIE:
                     remaining.add(identity)
             except psutil.NoSuchProcess:
                 continue

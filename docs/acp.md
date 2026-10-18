@@ -255,9 +255,11 @@ CLI probes own an isolated POSIX process group or a Windows Job from launch,
 including descendants that inherit it after their launcher exits. Cleanup waits
 until no member is running before releasing probe custody or provider credentials.
 An empty PID snapshot or successful kill does not by itself settle POSIX custody.
-The CLI owner retains observed process identities (PID and creation time) across
-failed cleanup and retries, checking their current identities and status before
-release. A known zombie has exited and need not be reaped to finish its cleanup.
+The CLI owner retains psutil process identities across failed cleanup and retries,
+checking each identity and its current status before release. Identity comparison
+uses the library's PID-reuse guard, not wall-clock timestamps that can change after
+clock synchronization. A known zombie has exited and need not be reaped to finish
+its cleanup.
 Unavailable identity, group or status inspection keeps cleanup retryable rather
 than being treated as successful exit.
 

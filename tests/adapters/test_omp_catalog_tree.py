@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import signal
 import sys
@@ -268,8 +269,12 @@ class TestOmpCatalogTree:
                 await adapter.cleanup_all()
 
     @pytest.mark.skipif(os.name == "nt", reason="Windows custody uses Job accounting")
-    async def test_retry_does_not_release_a_group_missing_from_pid_snapshot(
-        self, tmp_path: Path, monkeypatch
+    @pytest.mark.parametrize("observation", ["missing-pid", "clock-adjustment"])
+    async def test_retry_keeps_live_members_after_census_or_clock_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        observation: Literal["missing-pid", "clock-adjustment"],
     ) -> None:
         async with CatalogTreeGate() as gate:
             adapter, _receipts = catalog_adapter(
@@ -285,6 +290,14 @@ class TestOmpCatalogTree:
             original_signal = os.killpg
             original_group = os.getpgid
             original_pids = psutil.pids
+            process_class = type(psutil.Process()._proc)
+            original_creation_time = process_class.create_time
+            if (
+                observation == "clock-adjustment"
+                and "monotonic"
+                not in inspect.signature(original_creation_time).parameters
+            ):
+                pytest.skip("The psutil backend has no separate wall-clock projection")
             inspection_allowed = False
             acknowledged = False
             child_pid = 0
@@ -317,9 +330,19 @@ class TestOmpCatalogTree:
 
             def process_snapshot() -> list[int]:
                 pids = original_pids()
-                if acknowledged and not release_signal.is_set():
+                if (
+                    observation == "missing-pid"
+                    and acknowledged
+                    and not release_signal.is_set()
+                ):
                     return [pid for pid in pids if pid != child_pid]
                 return pids
+
+            def creation_time(process, monotonic: bool = False) -> float:
+                value = original_creation_time(process, monotonic=monotonic)
+                if observation == "clock-adjustment" and acknowledged and not monotonic:
+                    return value + 3600
+                return value
 
             monkeypatch.setattr(OmpModelListing, "close", close)
             running = asyncio.create_task(adapter.probe_models(timeout_s=10))
@@ -330,26 +353,38 @@ class TestOmpCatalogTree:
                     await gate.connected()
                     observed = gate.receipts[0]
                     child_pid = observed.pid
+                    physical = psutil.Process(child_pid)
                     monkeypatch.setattr(os, "killpg", signal_group)
                     monkeypatch.setattr(os, "getpgid", inspect_group)
                     monkeypatch.setattr(psutil, "pids", process_snapshot)
+                    if observation == "clock-adjustment":
+                        monkeypatch.setattr(process_class, "create_time", creation_time)
                     configured.set()
                     with pytest.raises(CleanupIncompleteError):
                         await running
-                    assert gate._alive(observed) is not None
+                    assert (
+                        physical.is_running()
+                        and physical.status() != psutil.STATUS_ZOMBIE
+                    )
                     inspection_allowed = True
                     cleanup = asyncio.create_task(adapter.cleanup_all())
                     await asyncio.wait(
                         (cleanup, retried), return_when=asyncio.FIRST_COMPLETED
                     )
-                    assert gate._alive(observed) is not None
+                    assert (
+                        physical.is_running()
+                        and physical.status() != psutil.STATUS_ZOMBIE
+                    )
                     if cleanup.done():
                         error = cleanup.exception()
                         assert isinstance(error, CleanupIncompleteError), (
                             f"Cleanup released live PID {observed.pid}; "
-                            f"post-signal snapshot omitted it: {acknowledged}"
+                            f"after {observation}; signal acknowledged: {acknowledged}"
                         )
                     release_signal.set()
+                    monkeypatch.setattr(
+                        process_class, "create_time", original_creation_time
+                    )
                     if not cleanup.done():
                         await cleanup
                     await adapter.cleanup_all()
@@ -358,6 +393,9 @@ class TestOmpCatalogTree:
                 inspection_allowed = True
                 configured.set()
                 release_signal.set()
+                monkeypatch.setattr(
+                    process_class, "create_time", original_creation_time
+                )
                 running.cancel()
                 retried.cancel()
                 await asyncio.gather(running, retried, return_exceptions=True)
