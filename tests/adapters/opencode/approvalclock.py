@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import cast
 
 from band.adapters.opencode import OpencodeAdapterConfig
 from band.integrations.opencode.types import OpencodeSessionState
@@ -93,16 +92,12 @@ async def pending_approval() -> AsyncIterator[ApprovalTurn]:
         },
     )
     async with controlled_clock() as clock, AdapterOwner() as adapters:
-        adapter = cast(
-            ObservedOpencodeAdapter,
-            adapters.create(
-                client,
-                adapter_type=ObservedOpencodeAdapter,
-                config=OpencodeAdapterConfig(
-                    approval_mode="manual",
-                    turn_timeout_s=COMPUTE_BUDGET_S,
-                    approval_wait_timeout_s=64.0,
-                ),
+        adapter = adapters.create(
+            client,
+            config=OpencodeAdapterConfig(
+                approval_mode="manual",
+                turn_timeout_s=COMPUTE_BUDGET_S,
+                approval_wait_timeout_s=64.0,
             ),
         )
         tools = FakeAgentTools()

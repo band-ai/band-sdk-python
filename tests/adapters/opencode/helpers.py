@@ -246,8 +246,19 @@ class ObservedOpencodeAdapter(OpencodeAdapter):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.watcher_started = asyncio.Event()
+        self.background_tasks: set[asyncio.Task[Any]] = set()
+
+    def record_background_task(self) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        self.background_tasks.add(task)
+
+    async def _run_event_loop(self) -> None:
+        self.record_background_task()
+        await super()._run_event_loop()
 
     async def _await_turn(self, turn: TurnState) -> None:
+        self.record_background_task()
         self.watcher_started.set()
         await super()._await_turn(turn)
 

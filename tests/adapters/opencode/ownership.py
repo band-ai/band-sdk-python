@@ -8,14 +8,14 @@ from contextlib import AsyncExitStack, nullcontext
 import looptime
 from typing_extensions import Unpack
 
-from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.opencode import OpencodeAdapterConfig
 from band.core.types import FeatureKwargs
 from band.runtime.custom_tools import CustomToolDef
-from tests.adapters.opencode.helpers import FakeOpencodeClient
+from tests.adapters.opencode.helpers import FakeOpencodeClient, ObservedOpencodeAdapter
 
 
 async def close_adapter(
-    adapter: OpencodeAdapter, client: FakeOpencodeClient, *, virtual: bool
+    adapter: ObservedOpencodeAdapter, client: FakeOpencodeClient, *, virtual: bool
 ) -> None:
     loop = asyncio.get_running_loop()
     mode = (
@@ -26,9 +26,11 @@ async def close_adapter(
         else nullcontext()
     )
     with mode:
-        tasks = [room.turn_task for room in adapter._rooms.values() if room.turn_task]
+        tasks = adapter.background_tasks | {
+            room.turn_task for room in adapter._rooms.values() if room.turn_task
+        }
         if adapter._event_task is not None:
-            tasks.append(adapter._event_task)
+            tasks.add(adapter._event_task)
         try:
             async with AsyncExitStack() as rooms:
                 for room_id in list(adapter._rooms):
@@ -54,10 +56,9 @@ class AdapterOwner(AsyncExitStack):
         *,
         config: OpencodeAdapterConfig | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        adapter_type: type[OpencodeAdapter] = OpencodeAdapter,
         **features: Unpack[FeatureKwargs],
-    ) -> OpencodeAdapter:
-        adapter = adapter_type(
+    ) -> ObservedOpencodeAdapter:
+        adapter = ObservedOpencodeAdapter(
             config=config,
             additional_tools=additional_tools,
             client_factory=lambda _: client,

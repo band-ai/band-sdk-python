@@ -56,3 +56,22 @@ class TestFixtureCleanup:
                 await run_single_turn(adapters.create(independent), FakeAgentTools())
             assert independent.closed
             assert asyncio.all_tasks() == before
+
+    async def test_a_failed_explicit_close_keeps_its_reader_owned(self) -> None:
+        async with controlled_clock():
+            before = asyncio.all_tasks()
+            client = FakeOpencodeClient(
+                prompt_event_sequences=[[event_session_idle("sess-1")]]
+            )
+            backend = FakeBandMCPBackend()
+            with backends_created_by(backend):
+                async with AdapterOwner() as adapters:
+                    adapter = adapters.create(client)
+                    await run_single_turn(adapter, FakeAgentTools())
+                    backend.fail_stops = 1
+                    with pytest.raises(OSError, match="stop failed"):
+                        await adapter.on_cleanup("room-1")
+
+            assert client.closed
+            assert client.serve_registrations == {}
+            assert asyncio.all_tasks() == before
