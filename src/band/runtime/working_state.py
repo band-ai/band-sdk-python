@@ -109,8 +109,7 @@ class WorkingStateReporter:
 
         self._active = False
         self._cycle: object | None = None
-        self._ordinary = AgentActivityDetail(kind="reasoning")
-        self._manual_wait = False
+        self._reset_detail()
         self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
         self._false_send: asyncio.Future[None] | None = None

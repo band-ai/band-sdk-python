@@ -630,12 +630,13 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         return kwargs
 
     def _activity_user_input_handler(self, room_id: str) -> UserInputHandler:
-        handler = (
-            self._ask_user
-            if callable(self._ask_user)
-            else self._make_room_ask_user_handler(room_id)
-        )
-        manual = callable(self._ask_user)
+        ask_user = self._ask_user
+        if callable(ask_user):
+            handler: UserInputHandler = ask_user
+            manual = True
+        else:
+            handler = self._make_room_ask_user_handler(room_id)
+            manual = False
         pending = 0
 
         async def handle(
@@ -647,16 +648,15 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 result = handler(request, context)
                 if not inspect.isawaitable(result):
                     return result
-                if manual:
-                    pending += 1
+                if not manual:
+                    return await result
+                pending += 1
                 try:
-                    if manual:
-                        await set_permission_wait(tools, True)
+                    await set_permission_wait(tools, True)
                     return await result
                 finally:
-                    if manual:
-                        pending -= 1
-                        await set_permission_wait(tools, pending > 0)
+                    pending -= 1
+                    await set_permission_wait(tools, pending > 0)
 
         return handle
 

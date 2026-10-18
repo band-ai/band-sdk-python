@@ -43,10 +43,7 @@ class TestACPActivity:
                 sessionUpdate="tool_call_update", toolCallId="call", status="completed"
             ),
         )
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "unknown"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("unknown")
         client.set_activity_tools("session", None)
         await client.session_update(
             "session",

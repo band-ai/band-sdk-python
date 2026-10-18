@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable
 from typing import Any
 
@@ -155,20 +154,12 @@ class TestDetachedActivityFeature:
                         activity_platform.activity_bodies.count({"working": False}) == 1
                     )
                 assert not client.aborted_sessions
-                assert "private-argument" not in json.dumps(
-                    activity_platform.activity_bodies
-                )
-                assert "private-result" not in json.dumps(
-                    activity_platform.activity_bodies
-                )
+                activity_platform.assert_hides("private-argument", "private-result")
                 before = list(activity_platform.activity_bodies)
                 await report_tool_activity(captured[0], "late-old-callback")
                 assert activity_platform.activity_bodies == before
                 if variant == "silent":
-                    assert not any(
-                        event.get("message_type") in {"tool_call", "tool_result"}
-                        for event in activity_platform.event_bodies
-                    )
+                    activity_platform.assert_no_tool_narration()
             finally:
                 release.set()
                 await adapter.on_cleanup(ROOM_ID)

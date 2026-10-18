@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 
 import pytest
@@ -61,15 +60,7 @@ class TestClaudeNativeWireActivity:
                     "activity": {"kind": "tool_call", "name": "Bash"},
                 } in activity_platform.activity_bodies
                 assert activity_platform.activity_bodies[-1] == {"working": False}
-                assert not any(
-                    body.get("message_type") in {"tool_call", "tool_result"}
-                    for body in activity_platform.event_bodies
-                )
-                assert "private-argument" not in json.dumps(
-                    activity_platform.activity_bodies
-                )
-                assert "private-result" not in json.dumps(
-                    activity_platform.activity_bodies
-                )
+                activity_platform.assert_no_tool_narration()
+                activity_platform.assert_hides("private-argument", "private-result")
             finally:
                 await adapter.cleanup_all()

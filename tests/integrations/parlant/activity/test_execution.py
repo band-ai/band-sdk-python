@@ -57,10 +57,7 @@ class TestParlantActivity:
         assert result == (
             "Error running lookup: private-error" if failed else "private-result"
         )
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "lookup"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("lookup")
         assert not tools.events_sent
 
     async def test_custom_handler_cancellation_ends_activity(self) -> None:
@@ -88,7 +85,4 @@ class TestParlantActivity:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "lookup"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("lookup")

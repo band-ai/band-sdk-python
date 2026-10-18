@@ -40,6 +40,17 @@ class ActivityPlatform(PostingPlatform):
                 raise
         return response
 
+    def assert_hides(self, *private: str) -> None:
+        serialized = json.dumps(self.activity_bodies)
+        for value in private:
+            assert value not in serialized
+
+    def assert_no_tool_narration(self) -> None:
+        assert not any(
+            body.get("message_type") in {"tool_call", "tool_result"}
+            for body in self.event_bodies
+        )
+
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "events" and request.method == "POST":

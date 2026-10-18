@@ -66,5 +66,4 @@ class TestOpenCodePermissionActivity:
                 await first
                 approvals.cancel()
         assert not approvals.awaiting_human()
-        assert not recorder.waiting
         assert recorder.events[-1] == {"waiting": False}

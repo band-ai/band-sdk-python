@@ -74,6 +74,10 @@ from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 logger = logging.getLogger(__name__)
 
+_ENDED_TOOL_ACTIVITY = frozenset(
+    {OpencodeToolStatus.COMPLETED, OpencodeToolStatus.ERROR}
+)
+
 _PROVIDER = "opencode"
 
 _OPENCODE_SYSTEM_NOTE = """\
@@ -893,33 +897,35 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             case "tool":
                 await self._report_tool_part(room_state, part)
 
+    async def _observe_tool_activity(
+        self, room_state: RoomState, part: OpencodePart
+    ) -> None:
+        turn = room_state.turn
+        state = part.state
+        if turn is None or part.id is None or state is None:
+            return
+        call_id = part.call_id or part.id
+        previous = turn.activity_tool_status.get(call_id)
+        status = state.status
+        turn.activity_tool_status[call_id] = status
+        if (
+            status in {OpencodeToolStatus.PENDING, OpencodeToolStatus.RUNNING}
+            and previous is None
+        ):
+            await report_tool_activity(
+                turn.tools, self._canonical_tool_name(part.tool or "")
+            )
+            return
+        if status in _ENDED_TOOL_ACTIVITY and previous not in _ENDED_TOOL_ACTIVITY:
+            await end_tool_activity(turn.tools)
+
     async def _report_tool_part(
         self, room_state: RoomState, part: OpencodePart
     ) -> None:
         """Report the tool's call/result."""
         if part.state is None:
             return
-        turn = room_state.turn
-        if turn is not None and part.id is not None:
-            call_id = part.call_id or part.id
-            previous = turn.activity_tool_status.get(call_id)
-            status = part.state.status
-            turn.activity_tool_status[call_id] = status
-            if (
-                status in {OpencodeToolStatus.PENDING, OpencodeToolStatus.RUNNING}
-                and previous is None
-            ):
-                await report_tool_activity(
-                    turn.tools, self._canonical_tool_name(part.tool or "")
-                )
-            elif status in {
-                OpencodeToolStatus.COMPLETED,
-                OpencodeToolStatus.ERROR,
-            } and previous not in {
-                OpencodeToolStatus.COMPLETED,
-                OpencodeToolStatus.ERROR,
-            }:
-                await end_tool_activity(turn.tools)
+        await self._observe_tool_activity(room_state, part)
         if Emit.TOOL_CALLS not in self.features.emit:
             return
 

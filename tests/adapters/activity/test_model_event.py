@@ -32,7 +32,4 @@ class TestModelEventActivity:
             await dispatch(
                 RunContext(deps=tools, model=TestModel(), usage=RunUsage()), **arguments
             )
-        assert recorder.events == [
-            {"kind": "tool_call", "name": BandTool.SEND_EVENT},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool(BandTool.SEND_EVENT)

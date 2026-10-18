@@ -23,3 +23,9 @@ class ActivityRecorder:
 
     async def set_manual_wait(self, waiting: bool) -> None:
         self.events.append({"waiting": waiting})
+
+    def assert_completed_tool(self, name: str) -> None:
+        assert self.events == [
+            {"kind": "tool_call", "name": name},
+            {"kind": "reasoning"},
+        ]

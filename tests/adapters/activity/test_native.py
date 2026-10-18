@@ -91,8 +91,5 @@ class TestNativeActivity:
                     ),
                     tools,
                 )
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "Bash"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("Bash")
         assert not tools.events_sent

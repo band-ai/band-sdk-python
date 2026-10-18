@@ -40,8 +40,5 @@ class TestCrewAIActivity:
         lookup_tool = next(tool for tool in built if tool.name == "lookup")
         result = json.loads(lookup_tool.run(note="private-argument"))
         assert result["status"] == ("error" if failed else "success")
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "lookup"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("lookup")
         assert not tools.events_sent

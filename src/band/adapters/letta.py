@@ -532,14 +532,16 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         room_ctx: RoomContext,
         tools: AgentToolsProtocol,
     ) -> tuple[list[Any], TurnUsage]:
-        """Round-trip to the Letta API -- no response processing or delivery."""
+        """Stream the provider response and return its messages and usage.
+
+        Records tool activity as events arrive. Does not narrate or deliver.
+        """
         # Use Conversations API in shared mode, direct agent API in per_room mode
         if self.config.mode == "shared" and room_ctx.conversation_id:
-            conversation_stream = await self._client.conversations.messages.create(
+            stream = await self._client.conversations.messages.create(
                 conversation_id=room_ctx.conversation_id,
                 messages=messages,
             )
-            stream = conversation_stream
             per_room = False
         else:
             stream = await self._client.agents.messages.create(

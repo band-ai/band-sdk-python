@@ -42,8 +42,5 @@ class TestStrandsActivity:
                 },
             )
         )
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "shell"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("shell")
         assert not tools.events_sent

@@ -40,10 +40,7 @@ class TestAgnoStreamActivity:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "shell"},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool("shell")
         assert not tools.messages_sent
         assert adapter._message_history["room-1"][-1].content == "final reply"
         assert bool(tools.events_sent) is narrated

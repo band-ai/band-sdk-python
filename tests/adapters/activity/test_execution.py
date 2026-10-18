@@ -60,8 +60,5 @@ class TestExecutedToolActivity:
         else:
             release.set()
             await task
-        assert recorder.events == [
-            {"kind": "tool_call", "name": name},
-            {"kind": "reasoning"},
-        ]
+        recorder.assert_completed_tool(name)
         assert not tools.events_sent

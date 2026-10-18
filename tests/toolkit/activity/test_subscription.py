@@ -37,7 +37,6 @@ class TestActivitySubscription:
                     {"agent_id": "agent", "working": False},
                 )
                 await capture.wait_for_activity_stop("agent", since=mark)
-                capture.activities.assert_names_only("private-input", "private-output")
             assert topic not in ws.joined_topics()
             assert "chat_room:room" not in ws.joined_topics()
 

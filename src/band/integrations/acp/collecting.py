@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from typing import NamedTuple
 
 from acp.interfaces import Client
 from acp.schema import ConfigOptionUpdate, DeclineElicitationResponse
@@ -35,6 +36,17 @@ from band.runtime.working_state import (
 logger = logging.getLogger(__name__)
 
 
+class _ActivityCall(NamedTuple):
+    name: str
+    ended: bool
+
+
+def _recorded_activity_name(call: _ActivityCall | None) -> str:
+    if call is None:
+        return UNKNOWN_ACTIVITY_TOOL_NAME
+    return call.name
+
+
 class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP Client has optional methods treated as abstract by pyrefly
     """Generic ACP client that buffers session updates by session_id.
 
@@ -56,7 +68,7 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
         self._permission_handlers: dict[str, PermissionHandler] = {}
         self._elicitation_handlers: dict[str, ElicitationHandler] = {}
         self._activity_tools: dict[str, AgentToolsProtocol] = {}
-        self._activity_calls: dict[str, dict[str, tuple[str, bool]]] = {}
+        self._activity_calls: dict[str, dict[str, _ActivityCall]] = {}
         # Retain locks while a straggler can still hold one.
         self._session_locks: dict[str, asyncio.Lock] = {}
         # Each session's latest advertised config catalog; like the locks,
@@ -116,21 +128,18 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
         previous = calls.get(call_id)
         status = getattr(update, "status", None)
         if status in {ToolStatus.COMPLETED, ToolStatus.FAILED}:
-            if previous is None or not previous[1]:
-                calls[call_id] = (
-                    previous[0] if previous else UNKNOWN_ACTIVITY_TOOL_NAME,
-                    True,
-                )
+            if previous is None or not previous.ended:
+                calls[call_id] = _ActivityCall(_recorded_activity_name(previous), True)
                 await end_tool_activity(tools)
             return
-        if previous is not None and previous[1]:
+        if previous is not None and previous.ended:
             return
-        name = previous[0] if previous else UNKNOWN_ACTIVITY_TOOL_NAME
+        name = _recorded_activity_name(previous)
         call = chunk.tool
         if isinstance(call, ACPToolCall) and call.mcp_server is not None:
             name = call.name
-        if previous is None or previous[0] != name:
-            calls[call_id] = (name, False)
+        if previous is None or previous.name != name:
+            calls[call_id] = _ActivityCall(name, False)
             await report_tool_activity(tools, name)
 
     async def request_permission(  # type: ignore[override]  # ACP Client uses specific types; we widen to object
