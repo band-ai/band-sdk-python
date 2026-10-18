@@ -20,16 +20,25 @@ logger = logging.getLogger(__name__)
 _reporters: Counter[asyncio.Task[Any]] = Counter()
 # Finished tasks whose failure a caller re-raised or this module logged.
 _reported: weakref.WeakSet[asyncio.Task[Any]] = weakref.WeakSet()
-_labels: weakref.WeakKeyDictionary[asyncio.Task[Any], str] = weakref.WeakKeyDictionary()
+_labels: weakref.WeakKeyDictionary[asyncio.Task[Any], tuple[str, bool]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def spawn_owned(
-    operation: Coroutine[object, object, None], *, label: str
+    operation: Coroutine[object, object, None],
+    *,
+    label: str,
+    diagnostic_details: bool = True,
 ) -> asyncio.Task[None]:
     """Run work that outlives a cancelled caller; log its failure only when
-    no caller is waiting to report it."""
+    no caller is waiting to report it.
+
+    Disable diagnostic details when transport errors may contain credentials;
+    the original exception remains on the owned task for callers and retries.
+    """
     task = asyncio.create_task(operation)
-    _labels[task] = label
+    _labels[task] = (label, diagnostic_details)
     task.add_done_callback(_log_unreported)
     return task
 
@@ -39,23 +48,30 @@ def rejoin_owned(
     operation: Callable[[], Coroutine[object, object, None]],
     *,
     label: str,
+    diagnostic_details: bool = True,
 ) -> asyncio.Task[None]:
     """Join the running or settled owned task; start a new one only after it
     failed, so concurrent callers share one attempt and a retry follows a
     settled failure."""
     if current is None or (current.done() and task_failure(current) is not None):
-        return spawn_owned(operation(), label=label)
+        return spawn_owned(
+            operation(), label=label, diagnostic_details=diagnostic_details
+        )
     return current
 
 
 def _log_unreported(task: asyncio.Task[Any]) -> None:
     if task in _reporters or task in _reported or task.cancelled():
         return
-    if (label := _labels.get(task)) is None:
+    if (metadata := _labels.get(task)) is None:
         return
     _reported.add(task)
     if (error := task.exception()) is not None:
-        logger.warning("%s failed: %s", label, error, exc_info=error)
+        label, diagnostic_details = metadata
+        if diagnostic_details:
+            logger.warning("%s failed: %s", label, error, exc_info=error)
+        else:
+            logger.warning("%s failed (%s)", label, type(error).__name__)
 
 
 def task_failure(task: asyncio.Task[Any]) -> BaseException | None:

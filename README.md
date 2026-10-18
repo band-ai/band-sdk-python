@@ -211,6 +211,28 @@ adapter = GeminiAdapter(GeminiAdapterConfig(model="gemini-3.8-flash"))
 
 Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
 
+### Host-side Harness Probes
+
+`await adapter.preflight(timeout_s=60)` reports a harness handshake as a
+`PreflightResult` (`ok`, `reason`, `remedy`). A successful handshake does not prove
+that the account can run inference. Adapters without a standalone handshake
+implementation explicitly report that it is unsupported.
+
+`await adapter.probe_models(timeout_s=60)` discovers a canonical `ModelCatalog`
+without creating or selecting a Band room. Unsupported adapters raise
+`BandConfigError`; an empty catalog is not a substitute for unsupported discovery.
+The existing room-facing `list_models` hook remains separate.
+
+Catalog entries preserve advertised provider and default metadata. An entry's
+`efforts=None` means the harness did not report effort support; `efforts=()` means
+it explicitly offers none. `current_model` is populated only when the harness
+reports an actual selection.
+
+Timeouts bound how long a caller waits, not ownership of a partially started
+transport. Always call `await adapter.cleanup_all()` when disposing of an adapter.
+An incomplete close raises `CleanupIncompleteError` and retains its resources for
+a later cleanup attempt rather than reporting successful disposal.
+
 ### Process Signals
 
 `agent.run()` and `agent.run_forever()` stop the agent on SIGTERM/SIGINT and restore the process's previous handlers when they return. A host that owns its process signals (a launchd/systemd service, a desktop app, a test runner) passes `install_signal_handlers=False` and calls `agent.stop()` from its own handler; `run_forever` then returns. `GracefulShutdown` is a ready-made handler that does this, and `run_with_graceful_shutdown(agent)` wraps it. Put `GracefulShutdown` outside `agent` so its handlers are registered before `start()` and a mid-initialize SIGTERM can still tear down:

@@ -90,7 +90,10 @@ class HarnessProbe:
         if self._operation is None and not self._closers:
             return
         self._cleanup = rejoin_owned(
-            self._cleanup, self._finish, label="Harness probe cleanup"
+            self._cleanup,
+            self._finish,
+            label="Harness probe cleanup",
+            diagnostic_details=False,
         )
         await report_owned(self._cleanup, timeout_s)
 
