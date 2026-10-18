@@ -228,9 +228,12 @@ same `OmpAdapter` instance they retain for cleanup. It returns the canonical
 `ModelCatalog`: provider-qualified `ModelChoice.id` selectors, labels, providers
 and advertised efforts. The probe first reads `omp models --json`, preserving
 launcher arguments, configuration flags, the configured working directory and
-provider environment, including `OmpAdapterConfig.api_key`. If the CLI command
-fails or supplies no valid listing, it uses a temporary native RPC connection's
-`get_available_models`, not ACP or an inferred catalog.
+provider environment, including `OmpAdapterConfig.api_key`. Native options follow
+`models --json`, so [native command routing](https://unpkg.com/@oh-my-pi/pi-coding-agent@18.12.1/src/cli-commands.ts)
+does not discard configuration overlays or extensions. If the launcher boundary
+is ambiguous, or the CLI fails or supplies no valid listing, the probe uses a
+temporary native RPC connection's `get_available_models`, not ACP or an inferred
+catalog.
 
 Missing effort metadata remains `None` (unknown); an explicit empty list or no
 thinking support yields `()` (none). Native RPC supplies the live model's
@@ -247,6 +250,9 @@ may refresh native provider metadata; it does not prove authentication or
 inference entitlement. Cancellation propagates. Failed physical cleanup raises
 `CleanupIncompleteError` and stays owned by the adapter; retain the instance and
 retry `await adapter.cleanup_all()` before discarding it.
+CLI probes own an isolated POSIX process group or a Windows Job from launch,
+including descendants that inherit it after their launcher exits. Cleanup waits
+until no member is running before releasing probe custody or provider credentials.
 
 From a source checkout with the `omp` extra and a configured native OMP executable,
 exercise the installed CLI route and actual native catalog RPC without a Band
@@ -254,6 +260,13 @@ room or model turn:
 
 ```bash
 PYTHONPATH=src:packages/band-mcp/src:. python -m tests.integrations.ompcatalogsmoke --executable omp
+```
+
+The installed-executable regression also loads a receipt-writing extension through
+both `--extension` and `--config`, before and after either RPC mode spelling:
+
+```bash
+PYTHONPATH=src:packages/band-mcp/src:. python -m pytest tests/adapters/test_omp_catalog_native_flags.py -q --no-cov
 ```
 
 Native startup must support RPC v2 and permit the installation's provider/model
@@ -310,6 +323,9 @@ used here are present in OMP 18.8.9 and 18.12.1.
   Successful close proves the root was waited for and captured descendants
   settled; it does not guarantee exit status zero. Caller cancellation still
   waits for shared cleanup, and cleanup failures propagate.
+  A failed close leaves the room retiring, not available for prompts or model
+  changes. The next message retries that close before opening a fresh native
+  session; a new model selection is held for the replacement session.
 - **Isolation and state.** Each room owns a native process, persistent session
   and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
   starts without a supplied cwd. Session state carries `omp_session_id`,

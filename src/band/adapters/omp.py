@@ -159,6 +159,7 @@ class OmpRoom:
     session_id: str = ""
     session_file: str | None = None
     bootstrapped: bool = False
+    retiring: bool = False
 
 
 @dataclass
@@ -280,11 +281,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         owner = self._harness_probe
 
         async def discover() -> ModelCatalog:
-            listing = OmpModelListing(
-                model_listing_command(self.config.command),
-                env=self._spawn_env(),
-                cwd=self.config.cwd,
-            )
+            listing: OmpModelListing | None = None
             runtime: OmpRpcClient | None = None
             directory: tempfile.TemporaryDirectory[str] | None = None
 
@@ -295,10 +292,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         await runtime.close()
                     except Exception as error:  # noqa: BLE001 -- retain native failure while still closing the CLI transport
                         errors.append(error)
-                try:
-                    await listing.close()
-                except Exception as error:  # noqa: BLE001 -- preserve every failed resource for the shared owner's retry
-                    errors.append(error)
+                if listing is not None:
+                    try:
+                        await listing.close()
+                    except Exception as error:  # noqa: BLE001 -- preserve every failed resource for the shared owner's retry
+                        errors.append(error)
                 if errors:
                     raise ExceptionGroup("OMP catalog cleanup failed", errors)
                 if directory is not None:
@@ -306,10 +304,16 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
 
             owner.own(close)
             try:
+                listing = OmpModelListing(
+                    model_listing_command(self.config.command),
+                    env=self._spawn_env(),
+                    cwd=self.config.cwd,
+                )
                 return await listing.read()
             except OmpListingUnavailable:
                 # A failed/older CLI route is not evidence of an empty catalog.
-                await listing.close()
+                if listing is not None:
+                    await listing.close()
             directory = tempfile.TemporaryDirectory(prefix="band-omp-probe-")
             workspace = self.config.cwd or directory.name
             runtime = OmpRpcClient(
@@ -420,7 +424,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     ) -> None:
         async with self._locks.setdefault(room_id, asyncio.Lock()):
             room = self._rooms.get(room_id)
-            if room is not None:
+            if room is not None and not room.retiring:
                 await self._select_model(room, selection)
             self._room_selections[room_id] = selection
 
@@ -508,7 +512,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             deadline = asyncio.timeout(self.config.turn_timeout_s)
             try:
                 async with deadline:
-                    room = self._rooms.get(room_id) or await self._open_room(
+                    room = self._rooms.get(room_id)
+                    if room is not None and room.retiring:
+                        await self._close_room(room_id)
+                        room = None
+                    room = room or await self._open_room(
                         room_id, history if is_session_bootstrap else OmpSessionState()
                     )
                     prompt = await self._prompt_text(
@@ -860,6 +868,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     async def _close_room(self, room_id: str) -> None:
         room = self._rooms.get(room_id)
         if room is not None:
+            room.retiring = True
             # A failed close still owns the process, startup files and workspace.
             await room.runtime.close()
             room.resources.close()

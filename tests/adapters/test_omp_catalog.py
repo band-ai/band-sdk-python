@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -13,6 +14,7 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.core.exceptions import BandConfigError, CleanupIncompleteError
+from band.integrations.codex.winspawn import Job
 from band.integrations.ompcatalog import OmpModelListing
 from band.integrations.omprpc import OmpRpcClient
 
@@ -23,6 +25,7 @@ def catalog_adapter(
     *,
     explicit_key: bool = False,
     mode_equals: bool = False,
+    env: dict[str, str] | None = None,
 ) -> tuple[OmpAdapter, Path]:
     receipts = tmp_path / "catalog-receipts.jsonl"
     config_file = tmp_path / "catalog.yml"
@@ -46,6 +49,7 @@ def catalog_adapter(
                 "OMP_CATALOG_RECEIPTS": str(receipts),
                 "OMP_CATALOG_SCENARIO": scenario,
                 **({"OPENAI_API_KEY": "explicit-provider-key"} if explicit_key else {}),
+                **(env or {}),
             },
         )
     )
@@ -304,7 +308,7 @@ class TestOmpCatalog:
         finally:
             await adapter.cleanup_all()
 
-    async def test_cancelled_fallback_cannot_finish_cleanup_while_kill_is_blocked(
+    async def test_cancelled_fallback_cannot_finish_while_process_cleanup_is_blocked(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         adapter, receipts = catalog_adapter(tmp_path, "huge-cli")
@@ -313,14 +317,14 @@ class TestOmpCatalog:
         rejoined = asyncio.Event()
         release_kill = threading.Event()
         first_worker_done = threading.Event()
-        kill_attempts: list[int] = []
+        release_job = asyncio.Event()
         close_calls = 0
-        original_kill = psutil.Process.kill
+        original_kill = os.killpg if os.name != "nt" else None
+        original_job_wait = Job.wait_until_idle
         original_close = OmpModelListing.close
 
-        def gated_kill(process: psutil.Process) -> None:
-            first_attempt = not kill_attempts
-            kill_attempts.append(process.pid)
+        def gated_kill(group_id: int, sig: int) -> None:
+            first_attempt = not killing.is_set()
             try:
                 if first_attempt:
                     loop.call_soon_threadsafe(killing.set)
@@ -328,7 +332,19 @@ class TestOmpCatalog:
                         raise RuntimeError(
                             "The test did not release the process-kill barrier"
                         )
-                original_kill(process)
+                assert original_kill is not None
+                original_kill(group_id, sig)
+            finally:
+                if first_attempt:
+                    first_worker_done.set()
+
+        async def gated_job_wait(job: Job, timeout: float) -> None:
+            first_attempt = not killing.is_set()
+            try:
+                if first_attempt:
+                    killing.set()
+                    await release_job.wait()
+                await original_job_wait(job, timeout)
             finally:
                 if first_attempt:
                     first_worker_done.set()
@@ -340,7 +356,10 @@ class TestOmpCatalog:
                 rejoined.set()
             await original_close(listing)
 
-        monkeypatch.setattr(psutil.Process, "kill", gated_kill)
+        if os.name == "nt":
+            monkeypatch.setattr(Job, "wait_until_idle", gated_job_wait)
+        else:
+            monkeypatch.setattr(os, "killpg", gated_kill)
         monkeypatch.setattr(OmpModelListing, "close", observed_close)
         running = asyncio.create_task(adapter.probe_models(timeout_s=15))
         cleanup: asyncio.Task[None] | None = None
@@ -355,6 +374,7 @@ class TestOmpCatalog:
                 assert not cleanup.done()
                 assert not running.done()
                 release_kill.set()
+                release_job.set()
                 with pytest.raises(asyncio.CancelledError):
                     await running
                 await cleanup
@@ -362,6 +382,7 @@ class TestOmpCatalog:
             assert not adapter._rooms
         finally:
             release_kill.set()
+            release_job.set()
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
             if cleanup is not None:

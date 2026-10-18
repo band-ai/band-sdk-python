@@ -4,14 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+import shutil
+import signal
 import time
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import psutil
 from pydantic import Field, ValidationError
 
 from band.core.model_catalog import ModelCatalog, ModelChoice
 from band.core.retention.cleanup import rejoin_owned, report_owned
+from band.integrations.codex.stdio_client import HELPER_PATH
+from band.integrations.codex.winspawn import (
+    JobNotDrained,
+    SpawnFailure,
+    WindowsProcess,
+    find_executable,
+    process_image,
+)
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import OMP_REASSEMBLED_BYTES, OmpState, OmpWireModel
 
@@ -113,15 +125,89 @@ async def native_catalog(runtime: OmpRpcClient) -> ModelCatalog:
     return ModelCatalog(models=choices, current_model=current)
 
 
+def _launcher_length(tokens: Sequence[str]) -> int | None:
+    executable = Path(tokens[0]).name.casefold().removesuffix(".exe")
+    if executable == "omp":
+        return 1
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?w?", executable):
+        index = 1
+        while index < len(tokens):
+            token = tokens[index]
+            if token in {"-m", "-c"}:
+                return index + 2 if index + 1 < len(tokens) else None
+            if token in {"-W", "-X"}:
+                index += 2
+            elif token in {
+                "-b",
+                "-bb",
+                "-B",
+                "-d",
+                "-E",
+                "-i",
+                "-I",
+                "-O",
+                "-OO",
+                "-P",
+                "-q",
+                "-s",
+                "-S",
+                "-u",
+                "-v",
+                "-vv",
+                "-x",
+            } or token.startswith(("-W", "-X")):
+                index += 1
+            elif not token.startswith("-"):
+                return index + 1
+            else:
+                return None
+        return None
+    if executable in {"node", "bun", "bunx"}:
+        index = 1
+        if (
+            executable == "bun"
+            and index < len(tokens)
+            and tokens[index] in {"x", "run"}
+        ):
+            index += 1
+        if executable in {"bun", "bunx"}:
+            while index < len(tokens) and tokens[index] == "--bun":
+                index += 1
+        if index < len(tokens) and not tokens[index].startswith("-"):
+            return index + 1
+        return None
+    for index, token in enumerate(tokens[1:], 1):
+        if not token.startswith("-"):
+            continue
+        if token == "--mode=rpc" or (
+            token == "--mode" and index + 1 < len(tokens) and tokens[index + 1] == "rpc"
+        ):
+            return index
+        return None
+    return len(tokens)
+
+
 def model_listing_command(command: Sequence[str]) -> tuple[str, ...]:
-    """Replace native mode in place, preserving executable and launcher arguments."""
-    tokens = list(command)
-    for index, token in enumerate(tokens):
-        if token == "--mode" and index + 1 < len(tokens) and tokens[index + 1] == "rpc":
-            return (*tokens[:index], "models", "--json", *tokens[index + 2 :])
-        if token == "--mode=rpc":
-            return (*tokens[:index], "models", "--json", *tokens[index + 1 :])
-    return (*tokens, "models", "--json")
+    """Keep runtime prefixes intact and native options after the models command."""
+    length = _launcher_length(command)
+    if length is None:
+        raise OmpListingUnavailable("OMP CLI launcher boundary is ambiguous")
+    arguments: list[str] = []
+    index = length
+    while index < len(command):
+        token = command[index]
+        if (
+            token == "--mode"
+            and index + 1 < len(command)
+            and command[index + 1] == "rpc"
+        ):
+            index += 2
+        elif token == "--mode=rpc":
+            index += 1
+        else:
+            arguments.append(token)
+            index += 1
+    return (*command[:length], "models", "--json", *arguments)
 
 
 class OmpModelListing:
@@ -141,11 +227,22 @@ class OmpModelListing:
         self._process: asyncio.subprocess.Process | None = None
         self._identity: psutil.Process | None = None
         self._readers: list[asyncio.Task[bytes] | asyncio.Task[None]] = []
-        self._descendants: set[psutil.Process] = set()
+        self._windows_process: WindowsProcess | None = None
         self._exit: asyncio.Task[int] | None = None
         self._closing: asyncio.Task[None] | None = None
 
     async def _start(self) -> asyncio.subprocess.Process:
+        if os.name == "nt":
+            self._windows_process = owner = WindowsProcess()
+            try:
+                return await owner.start(
+                    self._windows_command,
+                    cwd=self.cwd,
+                    env=self.env,
+                    limit=READ_BYTES,
+                )
+            finally:
+                self._process = owner.process
         process = await asyncio.create_subprocess_exec(
             *self.command,
             stdin=asyncio.subprocess.DEVNULL,
@@ -153,10 +250,35 @@ class OmpModelListing:
             stderr=asyncio.subprocess.PIPE,
             env=self.env,
             cwd=self.cwd,
+            start_new_session=True,
         )
         self._process = process
         self._identity = await asyncio.to_thread(self._capture_identity, process.pid)
         return process
+
+    def _windows_command(self, job_name: str, status_handle: int) -> tuple[str, ...]:
+        head, *rest = self.command
+        if not Path(head).is_absolute():
+            if os.path.dirname(head):
+                found = shutil.which(head)
+                if found is None and Path(head).exists():
+                    found = str(Path(head).resolve())
+            else:
+                found = find_executable(head)
+            if found is None:
+                raise FileNotFoundError(head)
+            head = str(Path(found).resolve())
+        return (
+            str(process_image()),
+            "-I",
+            "-S",
+            str(HELPER_PATH),
+            job_name,
+            str(status_handle),
+            "--",
+            head,
+            *rest,
+        )
 
     @staticmethod
     def _capture_identity(pid: int) -> psutil.Process | None:
@@ -171,7 +293,7 @@ class OmpModelListing:
         self._spawn = asyncio.create_task(self._start())
         try:
             process = await asyncio.shield(self._spawn)
-        except (OSError, psutil.Error):
+        except (OSError, psutil.Error, SpawnFailure):
             raise OmpListingUnavailable(
                 "OMP CLI model command is unavailable"
             ) from None
@@ -207,56 +329,43 @@ class OmpModelListing:
         while await stream.read(READ_BYTES):
             pass
 
-    @staticmethod
-    def _process_is_alive(process: psutil.Process) -> bool:
-        try:
-            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            return False
 
-    def _kill_tree(self) -> None:
-        root = self._identity
-        errors: list[Exception] = []
-        try:
-            if root is not None and self._process_is_alive(root):
-                for child in root.children(recursive=True):
-                    child.create_time()
-                    self._descendants.add(child)
-        except psutil.NoSuchProcess:
-            pass
-        except psutil.Error as error:
-            errors.append(error)
-        # Stop the launcher before waiting on children, so it cannot keep
-        # creating work or prevent their physical exit from settling cleanup.
-        processes = [*self._descendants]
-        if root is not None:
-            processes.insert(0, root)
-        for process in processes:
-            try:
-                process.kill()
-            except psutil.NoSuchProcess:
-                pass
-            except psutil.Error as error:
-                errors.append(error)
+    def _kill_group(self) -> None:
+        process = self._process
+        if process is None:
+            return
         deadline = time.monotonic() + PROCESS_EXIT_TIMEOUT_S
-        alive = set(self._descendants)
-        while alive:
-            remaining: set[psutil.Process] = set()
-            for process in alive:
+        while True:
+            root = self._identity
+            if process.returncode is not None or root is None or not root.is_running():
+                # A reaped leader's id is reusable only once its old session is
+                # empty. Never signal a new process group that inherited that id.
                 try:
-                    if self._process_is_alive(process):
-                        remaining.add(process)
-                except psutil.Error as error:
-                    errors.append(error)
-                    remaining.add(process)
-            alive = remaining
-            if not alive or errors or time.monotonic() >= deadline:
-                break
+                    os.kill(process.pid, 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    return
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return
+            alive = False
+            for pid in psutil.pids():
+                try:
+                    if (
+                        os.getpgid(pid) == process.pid
+                        and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+                    ):
+                        alive = True
+                        break
+                except (ProcessLookupError, psutil.NoSuchProcess):
+                    continue
+            if not alive:
+                return
+            if time.monotonic() >= deadline:
+                raise OSError("OMP CLI process group did not exit")
             time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
-        if alive:
-            errors.append(OSError("OMP CLI descendants did not exit"))
-        if errors:
-            raise ExceptionGroup("OMP CLI process-tree cleanup failed", errors)
 
     async def close(self) -> None:
         self._closing = rejoin_owned(
@@ -272,30 +381,31 @@ class OmpModelListing:
             return
         try:
             process = await asyncio.shield(self._spawn)
-        except (OSError, psutil.Error):
+        except (OSError, psutil.Error, SpawnFailure):
             process = self._process
-        if process is None:
-            return
         for reader in self._readers:
             reader.cancel()
         await asyncio.gather(*self._readers, return_exceptions=True)
         self._readers = [
             asyncio.create_task(self._drain(stream))
-            for stream in (process.stdout, process.stderr)
+            for stream in ((process.stdout, process.stderr) if process else ())
             if stream is not None
         ]
         errors: list[Exception] = []
-        try:
-            await asyncio.to_thread(self._kill_tree)
-        except (psutil.Error, ExceptionGroup) as error:
-            errors.append(error)
-        if process.returncode is None:
+        if self._windows_process is not None:
             try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-            except OSError as error:
+                await self._windows_process.close(PROCESS_EXIT_TIMEOUT_S)
+            except (OSError, SpawnFailure, JobNotDrained) as error:
                 errors.append(error)
+        elif process is not None:
+            try:
+                await asyncio.to_thread(self._kill_group)
+            except (OSError, psutil.Error) as error:
+                errors.append(error)
+        if process is None:
+            if errors:
+                raise ExceptionGroup("OMP CLI cleanup failed", errors)
+            return
         if self._exit is None:
             self._exit = asyncio.create_task(process.wait())
         try:

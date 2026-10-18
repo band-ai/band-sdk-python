@@ -11,6 +11,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
+from tests.integrations.ompcatalogtree import start_tree_child
 from tests.integrations.omppeer import Frame, Peer, send
 
 CLI_MODELS: list[dict[str, JsonValue]] = [
@@ -64,7 +65,20 @@ class CatalogPeer(Peer):
         super().__init__(scenario)
 
     def handle(self, frame: Frame) -> None:
-        record("rpc", command=frame.type)
+        record(
+            "rpc",
+            command=frame.type,
+            parameters=cast(dict[str, JsonValue], frame.model_dump(exclude_none=True)),
+        )
+        if self.scenario == "room-recovery":
+            super().handle(frame)
+            if frame.type == "host_tool_result":
+                if frame.isError:
+                    raise AssertionError("The room reply tool failed")
+                self.end("Room recovery completed")
+                self.result(settled=True)
+                self.settle()
+            return
         match frame.type:
             case "prompt" | "new_session" | "switch_session" | "set_host_tools":
                 raise AssertionError(
@@ -106,6 +120,28 @@ class CatalogPeer(Peer):
             case _:
                 super().handle(frame)
 
+    def prompt(self, frame: Frame) -> None:
+        if self.scenario != "room-recovery":
+            super().prompt(frame)
+            return
+        self.prompt_id = frame.id
+        self.prompt_count += 1
+        self.settled = False
+        self.respond(frame)
+        send({"type": "agent_start"})
+        send(
+            {
+                "type": "host_tool_call",
+                "id": "room-recovery-reply",
+                "toolCallId": "room-recovery-reply",
+                "toolName": "band_send_message",
+                "arguments": {
+                    "content": "Room reply delivered",
+                    "mentions": ["requester"],
+                },
+            }
+        )
+
 
 def main() -> None:
     scenario = os.environ.get("OMP_CATALOG_SCENARIO", "cli")
@@ -122,6 +158,12 @@ def main() -> None:
         if scenario == "cli":
             sys.stdout.write(json.dumps({"models": CLI_MODELS}) + "\n")
         elif scenario == "empty-cli":
+            sys.stdout.write('{"models": []}\n')
+        elif scenario in {"exited-cli-tree", "late-cli-tree"}:
+            _child, observed = start_tree_child(
+                "controller", int(os.environ["OMP_CATALOG_GATE_PORT"])
+            )
+            record("descendant", pid=observed.pid, created=observed.created)
             sys.stdout.write('{"models": []}\n')
         elif scenario == "invalid-cli":
             sys.stdout.write("Native RPC mode required\n")
