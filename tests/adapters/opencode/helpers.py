@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter
-from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
+from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
 from band.adapters.opencode.approvals import DECLINED_QUESTION_ANSWER
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
@@ -238,6 +238,18 @@ def agent_input(content: str, tools: FakeAgentTools) -> AgentInput:
         is_session_bootstrap=False,
         room_id="room-1",
     )
+
+
+class ObservedOpencodeAdapter(OpencodeAdapter):
+    """Expose watcher readiness without replacing its deadline logic."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.watcher_started = asyncio.Event()
+
+    async def _await_turn(self, turn: TurnState) -> None:
+        self.watcher_started.set()
+        await super()._await_turn(turn)
 
 
 class RaisingSendTools(FakeAgentTools):
