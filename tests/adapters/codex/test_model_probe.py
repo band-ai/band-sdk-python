@@ -33,7 +33,10 @@ class TestModelProbe:
                             "isDefault": True,
                             "defaultReasoningEffort": "medium",
                             "supportedReasoningEfforts": [
-                                {"reasoningEffort": "medium", "description": "Balanced"},
+                                {
+                                    "reasoningEffort": "medium",
+                                    "description": "Balanced",
+                                },
                                 {"reasoningEffort": "max", "description": "Thorough"},
                             ],
                         },
@@ -53,9 +56,9 @@ class TestModelProbe:
         assert catalog.current_model is None
         model = catalog.choice("gpt-6-sol")
         assert model is not None
-        assert (model.label, model.provider, model.is_default) == (
-            "GPT-6 Sol", "openai", True
-        )
+        assert model.label == "GPT-6 Sol"
+        assert model.provider is None
+        assert model.is_default
         assert model.efforts == ("medium", "max")
         assert model.default_effort == "medium"
         assert catalog.choice("no-effort").efforts == ()
@@ -65,7 +68,12 @@ class TestModelProbe:
             for message in probe_host.messages
             if message["method"] == "model/list"
         ] == [{}, {"cursor": "page-two"}]
-        assert probe_host.methods == ["initialize", "initialized", "model/list", "model/list"]
+        assert probe_host.methods == [
+            "initialize",
+            "initialized",
+            "model/list",
+            "model/list",
+        ]
         assert adapter._room_clients == {}
         assert adapter._workspaces.rooms == ()
         assert adapter.config.model == "configured-room-model"

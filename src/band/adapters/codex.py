@@ -4601,7 +4601,6 @@ def _codex_model_choices(result: dict[str, Any]) -> list[model_catalog.ModelChoi
             model_catalog.ModelChoice(
                 id=model_id,
                 label=label if isinstance(label, str) and label else model_id,
-                provider="openai",
                 efforts=efforts,
                 default_effort=(
                     default_effort if isinstance(default_effort, str) else None

@@ -61,9 +61,11 @@ selected models and their workspace claims unchanged.
 
 The result is the canonical `band.core.model_catalog.ModelCatalog`. Its visible
 `ModelChoice` entries preserve Codex IDs, display names, default-model flags,
-advertised reasoning efforts and default efforts. Unknown efforts remain `None`;
-an explicitly empty effort list becomes `()`. A default-model flag does not
-invent `current_model`: a standalone app-server has no selected room model.
+advertised reasoning efforts and default efforts. Provider identity is not
+reported by `model/list`, so `provider` remains `None`, including with custom
+providers. Unknown efforts remain `None`; an explicitly empty effort list becomes
+`()`. A default-model flag does not invent `current_model`: a standalone app-server
+has no selected room model.
 
 ```python notest
 catalog = await adapter.probe_models(timeout_s=30)
