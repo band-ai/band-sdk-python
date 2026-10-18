@@ -223,6 +223,45 @@ to 18.8.9 and requires Bun 1.3.14 or later. The `omp` extra does not require the
 runtime. Native sessions negotiate RPC protocol v2 to preserve structured
 text/image tool results.
 
+Hosts can explicitly call `await adapter.probe_models(timeout_s=60.0)` on the
+same `OmpAdapter` instance they retain for cleanup. It returns the canonical
+`ModelCatalog`: provider-qualified `ModelChoice.id` selectors, labels, providers
+and advertised efforts. The probe first reads `omp models --json`, preserving
+launcher arguments, configuration flags, the configured working directory and
+provider environment, including `OmpAdapterConfig.api_key`. If the CLI command
+fails or supplies no valid listing, it uses a temporary native RPC connection's
+`get_available_models`, not ACP or an inferred catalog.
+
+Missing effort metadata remains `None` (unknown); an explicit empty list or no
+thinking support yields `()` (none). Native RPC supplies the live model's
+`get_available_thinking_levels`, including `off`, only for that model.
+`default_effort` comes from native `thinking.defaultLevel`, not the live effective
+level. The CLI reports no selected model; `current_model` is set only when native
+`get_state` reports it. A selected model is not assumed to be a default.
+An advertised empty catalog succeeds; an unavailable or malformed native catalog
+raises `BandConfigError`. This explicit host operation does not replace the
+startup `list_models` hook or run automatically on adapter startup.
+
+Neither route claims a Band room/workspace nor runs inference. Catalog discovery
+may refresh native provider metadata; it does not prove authentication or
+inference entitlement. Cancellation propagates. Failed physical cleanup raises
+`CleanupIncompleteError` and stays owned by the adapter; retain the instance and
+retry `await adapter.cleanup_all()` before discarding it.
+
+From a source checkout with the `omp` extra and a configured native OMP executable,
+exercise the installed CLI route and actual native catalog RPC without a Band
+room or model turn:
+
+```bash
+PYTHONPATH=src:packages/band-mcp/src:. python -m tests.integrations.ompcatalogsmoke --executable omp
+```
+
+Native startup must support RPC v2 and permit the installation's provider/model
+configuration to load. No Band credentials are used. The released
+[CLI JSON schema](https://unpkg.com/@oh-my-pi/pi-coding-agent@18.12.1/src/cli/models-cli.ts)
+and [native RPC commands](https://unpkg.com/@oh-my-pi/pi-coding-agent@18.12.1/src/modes/rpc/wire/commands.ts)
+used here are present in OMP 18.8.9 and 18.12.1.
+
 - **Configuration.** Pass `OmpAdapterConfig` to the adapter. `model` selects
   `provider/model`, and `reasoning_effort` selects the native thinking level,
   including `"auto"`. Automatic effort stays automatic rather than being replaced
