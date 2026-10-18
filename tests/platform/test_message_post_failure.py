@@ -11,6 +11,7 @@ import logging
 import traceback
 from typing import Any
 
+import httpx
 import pytest
 from band_rest.agent_api_messages.types.create_agent_chat_message_response import (
     CreateAgentChatMessageResponse,
@@ -21,7 +22,10 @@ from pydantic import ValidationError
 
 from band.client.rest import ChatMessageRequest
 from band.core.exceptions import MessagePostError, MessagePostKind
+from band.integrations.mcp.engine import dispatch_tool
 from band.platform.posting import post_message
+from band.runtime.tools import TOOL_DEFINITIONS, AgentTools
+from tests.runtime.helpers import rest_client_over
 
 _HANDLE_LESS = {
     "data": {
@@ -80,7 +84,9 @@ class TestMessagePostFailure:
 
         error = caught.value
         assert error.kind is MessagePostKind.UNCONFIRMED_RECIPIENT
-        assert error.detail == ("message msg-1 was created; id=recip-1 name=Unknown")
+        assert error.detail == (
+            "message msg-1 was delivered; do not resend; id=recip-1 name=Unknown"
+        )
         assert _HEADER_SECRET not in error.detail
         posted = _post_records(caplog)
         assert [record.levelno for record in posted] == [logging.ERROR]
@@ -90,7 +96,7 @@ class TestMessagePostFailure:
         assert _post_logs(caplog) == [
             (
                 "message post in room room-1 failed: "
-                "unconfirmed_recipient: message msg-1 was created; "
+                "unconfirmed_recipient: message msg-1 was delivered; do not resend; "
                 "id=recip-1 name=Unknown"
             )
         ]
@@ -220,7 +226,7 @@ class TestMessagePostFailure:
             )
 
         assert caught.value.detail == (
-            "message msg-1 was created; id=recip-1 name=Unknown, id=recip-3 name=Also"
+            "message msg-1 was delivered; do not resend; id=recip-1 name=Unknown, id=recip-3 name=Also"
         )
 
     async def test_an_omitted_name_is_left_out_of_the_detail(
@@ -244,7 +250,10 @@ class TestMessagePostFailure:
                 request=ChatMessageRequest(content="hello", mentions=[]),
             )
 
-        assert caught.value.detail == "message msg-1 was created; id=recip-1"
+        assert (
+            caught.value.detail
+            == "message msg-1 was delivered; do not resend; id=recip-1"
+        )
 
     async def test_a_body_without_a_message_id_stays_a_parse_error(
         self, mock_rest_client, caplog: pytest.LogCaptureFixture
@@ -322,7 +331,10 @@ class TestMessagePostFailure:
                 request=ChatMessageRequest(content="hello", mentions=[]),
             )
 
-        assert caught.value.detail == "message msg-1 was created; id=gone name=Gone"
+        assert (
+            caught.value.detail
+            == "message msg-1 was delivered; do not resend; id=gone name=Gone"
+        )
 
     @pytest.mark.parametrize("present_handle", [None, 0])
     async def test_a_present_non_string_handle_keeps_an_omitted_sibling_unclassified(
@@ -412,13 +424,62 @@ class TestMessagePostFailure:
     def test_rebuilt_from_its_message_keeps_the_classified_text(self) -> None:
         error = MessagePostError.classified(
             MessagePostKind.UNCONFIRMED_RECIPIENT,
-            "message msg-1 was created; id=recip-1 name=Unknown",
+            "message msg-1 was delivered; do not resend; id=recip-1 name=Unknown",
         )
 
         rebuilt = type(error)(f"{error}; mentions=@peer")
 
         assert isinstance(rebuilt, MessagePostError)
         assert str(rebuilt) == (
-            "unconfirmed_recipient: message msg-1 was created; "
+            "unconfirmed_recipient: message msg-1 was delivered; do not resend; "
             "id=recip-1 name=Unknown; mentions=@peer"
         )
+
+
+@pytest.mark.parametrize(
+    ("status", "payload", "kind"),
+    [
+        (201, _HANDLE_LESS, MessagePostKind.UNCONFIRMED_RECIPIENT),
+        (
+            422,
+            {
+                "error": {
+                    "code": "validation_error",
+                    "message": "mentioned_participant_not_in_room",
+                }
+            },
+            MessagePostKind.MENTION_NOT_IN_ROOM,
+        ),
+    ],
+)
+async def test_mcp_keeps_post_classification_without_inviting_a_duplicate(
+    status: int, payload: dict[str, Any], kind: MessagePostKind
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(status, json=payload)
+
+    async with rest_client_over(respond) as rest:
+        tools = AgentTools(
+            room_id="room-1",
+            rest=rest,
+            participants=[{"id": "recip-1", "name": "Peer", "handle": "peer"}],
+        )
+        with pytest.raises(MessagePostError) as caught:
+            await dispatch_tool(
+                tools,
+                TOOL_DEFINITIONS["band_send_message"],
+                {"content": "hello", "mentions": ["@peer"]},
+            )
+
+    error = caught.value
+    assert error.kind is kind
+    assert error.detail is not None
+    assert len(requests) == 1
+    if kind is MessagePostKind.UNCONFIRMED_RECIPIENT:
+        assert "was delivered; do not resend" in str(error)
+        assert "Available handles" not in str(error)
+    else:
+        assert "Available handles: ['peer']" in str(error)

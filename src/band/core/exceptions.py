@@ -56,12 +56,12 @@ class BandToolError(BandError):
 
 
 class MessagePostKind(StrEnum):
-    """A chat-message post that did not confirm delivery to a recipient.
+    """A chat-message post or delivery-receipt failure.
 
     ``unconfirmed_recipient`` is an HTTP 2xx whose recipient has no handle:
-    the message row may already exist, and the mention is not a confirmed
-    participant. ``mentioned_participant_not_in_room`` is the platform's own
-    refusal token for a mention that is not in the room.
+    the message was delivered, but its receipt could not be parsed.
+    ``mentioned_participant_not_in_room`` is the platform's own refusal token
+    for a mention that is not in the room.
     """
 
     UNCONFIRMED_RECIPIENT = "unconfirmed_recipient"

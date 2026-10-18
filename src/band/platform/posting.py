@@ -96,8 +96,8 @@ def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoRet
 class PostedRecipient(BaseModel):
     """A recipient on a 2xx body, with the handle optional.
 
-    A missing handle is an unconfirmed mention. A present handle that is not a
-    string is a different parse failure, so the whole body stays unclassified.
+    A missing handle prevents parsing the delivery receipt. A present non-string
+    handle is a different parse failure, so the whole body stays unclassified.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -145,9 +145,9 @@ def _recipient_phrase(recipient: PostedRecipient) -> str:
 def _unconfirmed_recipient(error: ParsingError) -> str | None:
     """Origin text when a 2xx body omits a recipient handle, else None.
 
-    A handle-less recipient is not a confirmed mention. The message id in the
-    body means the row may already exist, so the failure names that. Any other
-    body shape stays a parse error.
+    The platform validates recipient membership before creating the message.
+    A handle-less receipt still means delivery succeeded; retrying would duplicate
+    the message. Any other body shape stays a parse error.
     """
     status = error.status_code
     if status is None or not 200 <= status < 300:
@@ -163,7 +163,7 @@ def _unconfirmed_recipient(error: ParsingError) -> str | None:
     if not omitted:
         return None
     who = ", ".join(_recipient_phrase(recipient) for recipient in omitted)
-    return f"message {message.id} was created; {who}"
+    return f"message {message.id} was delivered; do not resend; {who}"
 
 
 async def post_message(
