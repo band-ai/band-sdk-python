@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import looptime
+
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.client.streaming import ControlMode
 from band.integrations.opencode.types import OpencodeSessionState
@@ -34,8 +36,8 @@ SESSION_ID = "sess-1"
 ABORT_FIRST_SESSION = f"abort {SESSION_ID}"
 CLIENT_CLOSED = "client closed"
 TIMEOUT_REPORTED = "timeout reported"
-# Short enough that the timeout case ends at once.
-PROBE_TURN_TIMEOUT_S = 0.05
+# Advanced by looptime; provider cancellation retains its own shorter bound.
+PROBE_TURN_TIMEOUT_S = 60.0
 # What the server streams once an aborted turn winds down; a watcher still
 # running would post it as the turn's fallback reply.
 LATE_TEXT = "text from the stopped turn"
@@ -172,6 +174,7 @@ def reported_timeout(tools: FakeAgentTools) -> list[str]:
     ]
 
 
+@looptime.enabled(strict=True)
 async def timeout_reports() -> list[str]:
     """A timed-out turn aborts the session and still posts the timeout."""
     client = JournalingOpencodeClient(prompt_event_sequences=[[]])
@@ -185,6 +188,7 @@ async def timeout_reports() -> list[str]:
     return recorded
 
 
+@looptime.enabled(strict=True)
 async def stop_during_timeout_abort(mode: ControlMode) -> list[str]:
     """A STOP while the timeout abort is in flight still finishes that abort."""
     client = HoldingAbortClient(prompt_event_sequences=[[]])
@@ -192,7 +196,7 @@ async def stop_during_timeout_abort(mode: ControlMode) -> list[str]:
         client, OpencodeAdapterConfig(turn_timeout_s=PROBE_TURN_TIMEOUT_S)
     )
     turn = deliver(adapter, FakeAgentTools())
-    await asyncio.wait_for(client.entered.wait(), STARTUP_TIMEOUT_SECONDS)
+    await client.entered.wait()
     await cancel_turn(turn)
     await adapter.on_interrupt(ROOM_ID, mode)
     client.release.set()

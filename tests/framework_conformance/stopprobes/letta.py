@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 import band_sdk_core
+import looptime
 import pytest
 
 from band.client.streaming import ControlMode
@@ -29,8 +30,8 @@ CANCEL_CONVERSATION_RUNS = f"cancel conversation {CONVERSATION_ID}"
 FAILURE_POSTED = "failure posted"
 NEXT_TURN_ANSWERED = "next turn answered"
 CANCEL_FAILED_WARNING = "cancel failure logged at WARNING"
-# Short enough that the held turn times out within the probe.
-PROBE_TURN_TIMEOUT_S = 0.05
+# Advanced by looptime; provider cancellation retains its own shorter bound.
+PROBE_TURN_TIMEOUT_S = 60.0
 
 
 class JournaledTools(FakeAgentTools):
@@ -112,6 +113,7 @@ async def server_rejects_cancel() -> list[str]:
     ]
 
 
+@looptime.enabled(strict=True)
 async def timeout() -> list[str]:
     """The cancel is sent once, before the timeout is reported."""
     adapter, client = held_adapter(timeout_s=PROBE_TURN_TIMEOUT_S)

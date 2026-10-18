@@ -7,6 +7,7 @@ the session usable, so each probe reports what the room's sessions saw.
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import patch
 
 from band.adapters.copilot_sdk import CopilotSDKAdapter
 from band.client.streaming import ControlMode
@@ -18,7 +19,6 @@ from tests.adapters.copilot_sdk.fakes import (
 )
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
-    STARTUP_POLL_SECONDS,
     StopCase,
     cancel_turn,
     end_turn,
@@ -87,11 +87,24 @@ async def shutdown_right_after_stop() -> list[str]:
     session.abort_released.clear()
     await cancel_turn(turn)
     await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
-    shutdown = asyncio.create_task(adapter.cleanup_all())
-    # Shutdown gets a window to disconnect early; then the abort completes.
-    await asyncio.wait({shutdown}, timeout=STARTUP_POLL_SECONDS * 50)
-    session.abort_released.set()
-    await shutdown
+    drain_entered = asyncio.Event()
+    drain = adapter.backend_turns.drain
+
+    async def record_drain() -> None:
+        drain_entered.set()
+        await drain()
+
+    with patch.object(adapter.backend_turns, "drain", record_drain):
+        async with asyncio.TaskGroup() as tasks:
+            shutdown = tasks.create_task(adapter.cleanup_all())
+            entering = tasks.create_task(drain_entered.wait())
+            try:
+                await asyncio.wait(
+                    {shutdown, entering}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                session.abort_released.set()
+                entering.cancel()
     return journal(client)
 
 
