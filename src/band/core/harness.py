@@ -64,14 +64,17 @@ class HarnessProbe:
         """Run metadata discovery with separate operation and cleanup budgets."""
         async with self._lock:
             await self.close(timeout_s=timeout_s)
+            enrolled = asyncio.get_running_loop().create_future()
 
             async def invoke() -> _T:
+                await enrolled
                 return await operation()
 
             task = asyncio.create_task(invoke())
             self._operation = task
             self._cleanup = None
             self._cancel_requested = False
+            enrolled.set_result(None)
             try:
                 result = await asyncio.wait_for(asyncio.shield(task), timeout_s)
             except BaseException as primary:

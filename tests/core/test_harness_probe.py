@@ -11,6 +11,7 @@ import pytest
 from band.core.exceptions import BandConfigError, CleanupIncompleteError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
+from tests.conftest import eager_tasks, requires_eager_tasks
 
 
 class ProbeAdapter(SimpleAdapter[None]):
@@ -188,4 +189,28 @@ async def test_cancelled_cleanup_reports_no_raw_error_but_retains_retry(
         refuse_close = False
         release.set()
         await asyncio.gather(running, return_exceptions=True)
+        await adapter.cleanup_all()
+
+
+@requires_eager_tasks
+async def test_eager_execution_enrolls_resources_before_operation_start(
+    tmp_path: Path,
+) -> None:
+    adapter = ProbeAdapter()
+    resource = tmp_path / "owned"
+    closed = tmp_path / "closed"
+
+    async def close() -> None:
+        resource.rename(closed)
+
+    async def operation() -> None:
+        adapter._harness_probe.own(close)
+        resource.write_text("owned payload", encoding="utf-8")
+
+    try:
+        with eager_tasks():
+            await adapter._harness_probe.run(operation, timeout_s=1)
+        assert closed.read_text(encoding="utf-8") == "owned payload"
+        assert not resource.exists()
+    finally:
         await adapter.cleanup_all()
