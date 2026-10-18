@@ -39,3 +39,13 @@ def agent_event(
     event.offset = offset
     event.data = {"message": message, "tags": tags or []}
     return event
+
+
+class RecordingBackgroundTasks:
+    """Parlant's background-task service, recording each cancelled tag."""
+
+    def __init__(self) -> None:
+        self.cancelled: list[str] = []
+
+    async def cancel(self, *, tag: str, reason: str = "(not given)") -> None:
+        self.cancelled.append(tag)
