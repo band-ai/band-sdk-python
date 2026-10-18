@@ -28,6 +28,7 @@ from band.core.protocols import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -104,6 +105,11 @@ class TurnState:
     # since message.updated streams repeatedly). Summed across messages at turn
     # end — a tool loop produces several assistant messages.
     usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
+    # The task that waits out this turn and posts its result.
+    watcher: asyncio.Task[None] | None = None
+    # Set while that watcher reports a timeout, so the stop it requested
+    # aborts the session without cancelling the task that still posts the report.
+    reports_timeout: bool = False
 
 
 # Resolves to the TurnState an ApprovalPorts bundle acts on -- either pinned
@@ -293,6 +299,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._event_task: asyncio.Task[None] | None = None
         self._mcp = SharedBandMCPBackend(self._mcp_settings)
         self._rooms: dict[str, RoomState] = {}
+        self._backend_turns = BackendTurns[TurnState](
+            self._stop_turn, provider=_PROVIDER
+        )
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._mcp_lifecycle_lock = asyncio.Lock()
@@ -424,6 +433,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         tools.turn.settle()
         return True
 
+    @property
+    def backend_turns(self) -> BackendTurns[TurnState]:
+        return self._backend_turns
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -469,6 +482,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     status="created" if created else "resumed",
                 )
 
+            # The room's previous turn may still be aborting its session.
+            await self.backend_turns.settled(room_id)
             turn = self._begin_turn(
                 room_state,
                 session_id=session_id,
@@ -476,6 +491,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 tools=tools,
                 sender_id=msg.sender_id,
             )
+            # The watcher owns the turn's backend work, so it is registered
+            # before the prompt can start any.
+            turn_task = asyncio.create_task(
+                self._watch_turn_completion(room_state, room_id, turn)
+            )
+            turn.watcher = room_state.turn_task = turn_task
             # Snapshot THIS turn's state before the prompt await: prompt_async
             # can span the whole turn (session.idle may arrive mid-POST), and a
             # message racing in during that window would _begin_turn again;
@@ -525,19 +546,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._clear_turn_state(room_state, expected_turn=turn)
                 raise
 
-            turn_task = asyncio.create_task(
-                self._watch_turn_completion(
-                    room_state,
-                    room_id,
-                    turn,
-                )
-            )
-            # Register the watcher only while this turn is still current; a
-            # superseded turn's task must not clobber (or be cancelled through)
-            # the next turn's ambient pointer.
-            if room_state.turn is turn:
-                room_state.turn_task = turn_task
-
             if release_future is not None:
                 await release_future
             if turn_future is not None and turn_future.done():
@@ -548,20 +556,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # timeout handler of its own.
         except asyncio.CancelledError:
             # The runtime interrupts a turn by cancelling this coroutine, but the
-            # watcher runs detached. Left alone it outlives the interrupt: it
-            # posts the very reply the user stopped, and holds the room's busy
-            # guard until turn_timeout_s. Drop the turn state even if a second
-            # cancellation (e.g. a double-tap stop) cuts off the abandon/abort
-            # awaits below -- otherwise the room stays wedged on a turn whose
-            # state never clears.
-            if turn_future is not None:
-                assert turn is not None
-                try:
-                    already_aborted = await turn.approvals.abandon()
-                finally:
-                    self._clear_turn_state(room_state, expected_turn=turn)
-                if not already_aborted:
-                    await self._abort_turn(turn, "interrupted")
+            # watcher runs detached; left alone it would post the very reply the
+            # user stopped. Cancelling it stops the session through backend_turns.
+            if turn is not None and turn.watcher is not None:
+                turn.watcher.cancel()
             raise
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
@@ -593,6 +591,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         try:
             if room_state:
                 try:
+                    await self.backend_turns.stop(room_id)
                     await room_state.approvals.abandon()
                 finally:
                     self._clear_turn_state(room_state)
@@ -771,6 +770,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         self._mcp_server_name,
                     )
 
+        await self.backend_turns.drain()
         # What follows acts only on objects already detached from ``self``, so
         # no successor can be affected — and the lock must not be held across a
         # stop that waits out OpenCode's open SSE read.
@@ -1027,42 +1027,36 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             turn.session_id,
             self.config.turn_timeout_s,
         )
+        # The timeout abort stays inside running(), so a STOP during that
+        # HTTP call still finds the turn and the abort keeps running in the
+        # owned stop task after this watcher is cancelled.
+        completed = False
         try:
-            await self._await_turn(turn)
-        except TimeoutError:
-            logger.warning(
-                "OpenCode turn timed out for room %s (session=%s)",
-                room_id,
-                turn.session_id,
-            )
-            await self._abort_turn(turn, "timed-out")
-            try:
-                if turn.tools:
-                    await turn.tools.send_failure(
-                        AgentFailure(
-                            _PROVIDER,
-                            "OpenCode timed out before completing the turn.",
-                            FAILURE_CODE_TIMEOUT,
-                        )
+            async with self.backend_turns.running(room_id, turn):
+                try:
+                    await self._await_turn(turn)
+                except TimeoutError:
+                    logger.warning(
+                        "OpenCode turn timed out for room %s (session=%s)",
+                        room_id,
+                        turn.session_id,
                     )
-                # Tokens spent before the timeout were still spent — emit them,
-                # same as the success path (best-effort; no-op if none captured).
-                await self._emit_turn_usage(room_id, turn)
-            except Exception:
-                logger.exception(
-                    "Failed to report the OpenCode timeout for room %s", room_id
-                )
-                await self._report_delivery_failure(turn)
-        else:
-            try:
-                await self._deliver_fallback_text(room_state.room_id, turn)
-                await judge_detached_turn(turn.tools, room_id=room_state.room_id)
-                await self._emit_turn_usage(room_id, turn)
-            except Exception:
-                logger.exception(
-                    "Failed to deliver the OpenCode turn result for room %s", room_id
-                )
-                await self._report_delivery_failure(turn)
+                    turn.reports_timeout = True
+                    await self.backend_turns.stop(room_id)
+                    await self._report_timeout(room_id, turn)
+                else:
+                    completed = True
+            if completed:
+                try:
+                    await self._deliver_fallback_text(room_state.room_id, turn)
+                    await judge_detached_turn(turn.tools, room_id=room_state.room_id)
+                    await self._emit_turn_usage(room_id, turn)
+                except Exception:
+                    logger.exception(
+                        "Failed to deliver the OpenCode turn result for room %s",
+                        room_id,
+                    )
+                    await self._report_delivery_failure(turn)
         finally:
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
@@ -1074,6 +1068,38 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 expected_turn=turn,
                 expected_task=asyncio.current_task(),
             )
+
+    async def _stop_turn(self, turn: TurnState) -> None:
+        """Stop a cancelled turn's backend work, posting nothing for it.
+
+        The watcher goes first, so the abort's ``session.idle`` cannot make it
+        post fallback text. A watcher that is itself reporting a timeout has
+        already left that path; cancelling it would drop the report.
+        """
+        if turn.watcher is not None and not turn.reports_timeout:
+            turn.watcher.cancel()
+        reason = "timed-out" if turn.reports_timeout else "stopped"
+        if not await turn.approvals.abandon():
+            await self._abort_turn(turn, reason)
+
+    async def _report_timeout(self, room_id: str, turn: TurnState) -> None:
+        try:
+            if turn.tools:
+                await turn.tools.send_failure(
+                    AgentFailure(
+                        _PROVIDER,
+                        "OpenCode timed out before completing the turn.",
+                        FAILURE_CODE_TIMEOUT,
+                    )
+                )
+            # Tokens spent before the timeout were still spent — emit them,
+            # same as the success path (best-effort; no-op if none captured).
+            await self._emit_turn_usage(room_id, turn)
+        except Exception:
+            logger.exception(
+                "Failed to report the OpenCode timeout for room %s", room_id
+            )
+            await self._report_delivery_failure(turn)
 
     async def _abort_turn(self, turn: TurnState, reason: str) -> None:
         """Best-effort: tell OpenCode to stop working on this room's session."""

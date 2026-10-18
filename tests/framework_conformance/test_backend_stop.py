@@ -7,17 +7,25 @@ import pytest
 from band.core.simple_adapter import SimpleAdapter
 from tests.framework_conformance.outcomeprobes import band_adapters
 from tests.framework_conformance.stopprobes import StopCase
+from tests.framework_conformance.stopprobes import a2a as a2a_probe
 from tests.framework_conformance.stopprobes import acp as acp_probe
 from tests.framework_conformance.stopprobes import claudesdk as claudesdk_probe
 from tests.framework_conformance.stopprobes import codex as codex_probe
+from tests.framework_conformance.stopprobes import copilotsdk as copilotsdk_probe
 from tests.framework_conformance.stopprobes import cursoracp as cursoracp_probe
+from tests.framework_conformance.stopprobes import letta as letta_probe
+from tests.framework_conformance.stopprobes import opencode as opencode_probe
 
 #: The stop cases of each adapter that drives a backend, by class name.
 STOP_PROBES: dict[str, dict[str, StopCase]] = {
+    "A2AAdapter": a2a_probe.CASES,
     "ACPClientAdapter": acp_probe.CASES,
     "ClaudeSDKAdapter": claudesdk_probe.CASES,
     "CodexAdapter": codex_probe.CASES,
+    "CopilotSDKAdapter": copilotsdk_probe.CASES,
     "CursorACPAdapter": cursoracp_probe.CASES,
+    "LettaAdapter": letta_probe.CASES,
+    "OpencodeAdapter": opencode_probe.CASES,
 }
 
 #: Subclasses that keep a probed parent's ``backend_turns`` and ``on_message``,
@@ -30,9 +38,12 @@ INHERITED_PROBES: dict[str, str] = {
 #: The module each probe needs beyond the dev venv's always-installed core;
 #: a venv without it skips that probe's cases.
 REQUIRED_MODULES: dict[str, str] = {
+    "A2AAdapter": "a2a",
     "ACPClientAdapter": "acp",
     "ClaudeSDKAdapter": "claude_agent_sdk",
+    "CopilotSDKAdapter": "copilot",
     "CursorACPAdapter": "acp",
+    "LettaAdapter": "letta_client",
 }
 
 CASES = [
