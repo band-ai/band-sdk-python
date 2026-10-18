@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@807b075342e3d1b0031a859115bbbbe9c77d8538"]
+# dependencies = ["band-sdk[pydantic-ai] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@4c8f2c78ffaa855f4de15e64e260d2f19d77df55"]
 # ///
 """Two draft tools share a temporary workspace deleted when the host stops.
 
