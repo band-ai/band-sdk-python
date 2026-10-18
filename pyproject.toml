@@ -93,7 +93,7 @@ claude_sdk = [
     "mcp>=1.28.1,<2",
 ]
 copilot_sdk = [
-    "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
+    "github-copilot-sdk>=1.0.5,<2",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
 ]
 parlant = [
     # Floor at 3.3.2: older versions stall the in-process server's post-preamble
@@ -216,7 +216,7 @@ dev = [
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.2.159",
     # Include copilot_sdk for testing
-    "github-copilot-sdk>=1.0.5",
+    "github-copilot-sdk>=1.0.5,<2",
     # Include langgraph for testing
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",

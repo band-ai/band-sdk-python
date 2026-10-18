@@ -225,12 +225,18 @@ room, room workspace, ACP session or model turn. Install the optional
 `band-sdk[acp,copilot_sdk]` dependencies to use it; ordinary ACP construction and
 room operation do not require the Copilot SDK.
 
+Model probing requires a released `github-copilot-sdk>=1.0.5,<2`. The probe
+rejects an unsupported version or subprocess-field layout before starting
+the CLI.
+
 The probe starts the configured Copilot executable through the SDK's stdio
 protocol, removing only the ACP-specific `--acp` argument. It retains other
 configured arguments and uses `cwd` itself, not a fabricated room directory.
-Executable lookup honors the configured child `PATH` and working directory;
-it does not choose the SDK's bundled executable or fall back to an unrelated
-host executable when the configured search path has no match.
+Executable lookup honors the configured child `PATH` and working directory,
+including configured `PATHEXT` rules on Windows. Every searched candidate is
+absolute; the host's current directory is not implicitly searched. The probe
+does not choose the SDK's bundled executable or fall back to an unrelated host
+executable when the configured search path has no match.
 
 The child receives ACP's trimmed inherited environment plus the backend and
 configured environment. Put token variables in `config.env`, where
@@ -251,10 +257,17 @@ when a room starts.
 
 Ordinary discovery failures raise a safe `BandConfigError`; cancellation
 propagates. `timeout_s` bounds discovery reporting and, separately, cleanup
-reporting. `CleanupIncompleteError` means the adapter still owns the client or
-late startup: retry `await adapter.cleanup_all()` before discarding it. Band's
-public error does not include the upstream diagnostic, but the Copilot SDK can
-emit its own traceback before Band handles a failure.
+reporting. `CleanupIncompleteError` means the adapter still owns the client,
+physical child or late startup: retry `await adapter.cleanup_all()` before
+discarding it. Band's public error does not include the upstream diagnostic,
+but the Copilot SDK can emit its own traceback before Band handles a failure.
+
+The SDK 1.x public `stop()` can erase its child references even when termination
+or waiting fails, and it exposes no public process-exit handle. A narrow,
+version- and type-checked teardown bridge therefore observes its known
+`_process` and `_cli_process` `subprocess.Popen` handles before public `stop()`,
+retains them across failures, and confirms physical exit before releasing
+custody. Startup still uses the unmodified public SDK `start()` method.
 
 ```python notest
 from band.adapters.copilot_acp import CopilotACPAdapter

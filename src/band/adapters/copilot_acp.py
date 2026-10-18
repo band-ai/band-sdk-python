@@ -25,10 +25,13 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 
 from __future__ import annotations
 
+import asyncio
 import os
-import shutil
+import re
+import subprocess
+from importlib import metadata
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from acp.transports import default_environment
 from pydantic import Field
@@ -46,7 +49,75 @@ from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.workspaces import WorkspaceResolver
 
+if TYPE_CHECKING:
+    from copilot import CopilotClient
+
 DEFAULT_COPILOT_COMMAND: tuple[str, ...] = ("copilot", "--acp")
+
+
+def _require_supported_copilot_sdk() -> None:
+    """Bound the teardown compatibility seam to released Copilot SDK 1.x."""
+    requirement = (
+        "Copilot model discovery requires a released github-copilot-sdk>=1.0.5,<2. "
+        "Install band-sdk[copilot_sdk] with a supported SDK and retry."
+    )
+    try:
+        version = metadata.version("github-copilot-sdk")
+    except metadata.PackageNotFoundError:
+        raise BandConfigError(requirement) from None
+    release = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.post[0-9]+)?", version)
+    if release is None or not (
+        (1, 0, 5) <= tuple(map(int, release.groups())) < (2, 0, 0)
+    ):
+        raise BandConfigError(requirement)
+
+
+def _copilot_processes(
+    client: CopilotClient,
+) -> tuple[subprocess.Popen[bytes] | subprocess.Popen[str], ...]:
+    """Observe the known SDK 1.x fields without accepting an unknown handle type."""
+    try:
+        # SDK 1.x has no public exit handle and can erase these on failed stop.
+        handles = (client._process, client._cli_process)
+    except AttributeError:
+        raise BandConfigError(
+            "The Copilot SDK has an unsupported subprocess layout."
+        ) from None
+    if any(
+        handle is not None and not isinstance(handle, subprocess.Popen)
+        for handle in handles
+    ):
+        raise BandConfigError(
+            "The Copilot SDK has unsupported subprocess handle types."
+        )
+    return tuple(handle for handle in handles if isinstance(handle, subprocess.Popen))
+
+
+def _copilot_executable(command: str, env: dict[str, str], cwd: Path) -> str:
+    """Resolve only configured absolute candidates, including Windows extensions."""
+    if os.path.dirname(command):
+        return str((cwd / command).resolve())
+    names = (command,)
+    if os.name == "nt":
+        extensions = tuple(
+            extension
+            for extension in env.get(
+                "PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC"
+            ).split(os.pathsep)
+            if extension
+        )
+        if not any(
+            command.lower().endswith(extension.lower()) for extension in extensions
+        ):
+            names = tuple(command + extension for extension in extensions)
+    # which(path=...) still searches the host cwd and PATHEXT on Windows.
+    for entry in os.get_exec_path(env):
+        directory = (cwd / entry).resolve()
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+    raise FileNotFoundError
 
 
 class CopilotACPAdapterConfig(ACPClientAdapterConfig):
@@ -135,20 +206,34 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
         owner = self._harness_probe
 
         async def discover() -> ModelCatalog:
+            _require_supported_copilot_sdk()
             client: CopilotClient | None = None
+            processes: list[subprocess.Popen[bytes] | subprocess.Popen[str]] = []
 
             async def close() -> None:
                 nonlocal client
                 if client is None:
                     return
                 try:
+                    for process in _copilot_processes(client):
+                        if process not in processes:
+                            processes.append(process)
                     await client.stop()
+                    for process in processes:
+                        if process.poll() is None:
+                            process.kill()
+                            await asyncio.to_thread(process.wait, timeout=timeout_s)
+                        if process.poll() is None:
+                            raise CleanupIncompleteError(
+                                "Copilot model probe child exit is unconfirmed."
+                            )
                 except Exception as error:  # noqa: BLE001 -- retain any failed SDK close without exposing credentials
                     raise CleanupIncompleteError(
                         "Copilot model probe process cleanup failed "
                         f"({type(error).__name__})."
                     ) from None
                 client = None
+                processes.clear()
 
             owner.own(close)
             try:
@@ -172,18 +257,8 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
                     if self.config.cwd is not None
                     else Path.cwd()
                 )
-                if os.path.dirname(command[0]):
-                    executable = str((cwd / command[0]).resolve())
-                else:
-                    # The SDK otherwise searches the host PATH at the host cwd,
-                    # not the environment and directory of its configured child.
-                    search_path = os.pathsep.join(
-                        str((cwd / entry).resolve()) for entry in os.get_exec_path(env)
-                    )
-                    executable = shutil.which(command[0], path=search_path)
-                    if executable is None:
-                        raise FileNotFoundError
-                client = CopilotClient(
+                executable = _copilot_executable(command[0], env, cwd)
+                candidate = CopilotClient(
                     connection=RuntimeConnection.for_stdio(
                         path=executable,
                         args=[arg for arg in command[1:] if arg != "--acp"],
@@ -192,6 +267,9 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
                     working_directory=self.config.cwd,
                     github_token=token,
                 )
+                # Construction is inert; reject unknown layouts before startup.
+                processes.extend(_copilot_processes(candidate))
+                client = candidate
                 await client.start()
                 models = await client.list_models()
                 return ModelCatalog(
@@ -219,8 +297,8 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
             except Exception as error:  # noqa: BLE001 -- sanitize arbitrary SDK errors before owned cleanup starts
                 raise BandConfigError(
                     f"Copilot model discovery failed ({type(error).__name__}). "
-                    "Check the configured command, environment and Copilot "
-                    "account credentials, then retry."
+                    "Check the supported Copilot SDK version, configured command, "
+                    "environment and Copilot account credentials, then retry."
                 ) from None
 
         try:
