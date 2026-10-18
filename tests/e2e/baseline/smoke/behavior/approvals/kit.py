@@ -50,6 +50,7 @@ QUEUED_WORK_BUDGET = slow_turn_budget(TURN_BUDGET_S, barriers=5)
 
 EXPIRING_WAIT_S = 10.0
 
+# Keep approval decisions below Cursor's default turn timeout.
 PATIENT_WAIT_S = THREE_BARRIERS.deadline_s * 2
 
 REFUSING = tuple(a for a, dialect in DIALECTS.items() if dialect.refusal)
