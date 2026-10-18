@@ -241,3 +241,59 @@ class TestShutdownStatus:
             await agent.runtime.link.subscribe_room("completed-status-restart")
             assert "chat_room:completed-status-restart" in server.joined_topics
             assert server.connection_count == 2
+
+    @pytest.mark.parametrize("hosting", ["agent", "runtime"])
+    async def test_startup_cannot_restore_health_after_transport_completion(
+        self, monkeypatch: pytest.MonkeyPatch, hosting: str
+    ) -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        async with fake_phoenix_server() as server:
+            agent = wire_agent(server.url, monkeypatch, room_ids=())
+            await agent.runtime.initialize()
+            link = agent.runtime.link
+            list_chats = link.rest.agent_api_chats.list_agent_chats
+
+            async def delayed_listing(*args: object, **kwargs: object) -> object:
+                entered.set()
+                await release.wait()
+                return await list_chats(*args, **kwargs)
+
+            monkeypatch.setattr(
+                link.rest.agent_api_chats, "list_agent_chats", delayed_listing
+            )
+            owner = agent if hosting == "agent" else agent.runtime
+
+            async def start() -> None:
+                if hosting == "agent":
+                    await agent.start()
+                else:
+                    await agent.runtime.start(on_execute=AsyncMock())
+
+            starting = asyncio.create_task(start())
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2.0)
+                assert link.is_connected
+                ws = link._ws
+                assert ws is not None and ws.client is not None
+                supervisor = ws.client._supervisor_task
+                assert supervisor is not None
+                await server.close_connection(code=1000)
+                await asyncio.wait_for(asyncio.shield(supervisor), timeout=2.0)
+                assert not link.is_connected
+                release.set()
+                await asyncio.wait_for(starting, timeout=2.0)
+                stopped = owner.status()
+                assert not stopped.running and not stopped.connected
+                assert stopped.started_at is None and stopped.cleanup_pending
+                await owner.stop()
+                assert not owner.status().cleanup_pending
+                await start()
+                restarted = owner.status()
+                assert restarted.running and restarted.connected
+                assert restarted.started_at is not None
+                assert not restarted.cleanup_pending
+                assert server.connection_count == 2
+            finally:
+                release.set()
+                await asyncio.gather(starting, return_exceptions=True)
+                await owner.stop()

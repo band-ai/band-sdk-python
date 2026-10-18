@@ -263,7 +263,7 @@ for room in status.rooms:
     )
 ```
 
-- `running` observes successful startup, stop intent, terminal disconnects, and completed transport shutdown. During an ordinary network outage it remains true while `connected` is false; a successful reconnect restores `connected` without starting a new run. Cancelling a waiter alone leaves the live run intact.
+- `running` observes successful startup, stop intent, terminal disconnects, and completed transport shutdown. A shutdown during startup stays stopped when startup returns; call `stop()` to release its resources before restarting. During an ordinary network outage it remains true while `connected` is false; a successful reconnect restores `connected` without starting a new run. Cancelling a waiter alone leaves the live run intact.
 - `started_at` is the UTC time the current successful start completed. It is `None` before startup succeeds and after a stop request, terminal disconnect, or completed transport shutdown, including failed cleanup. A restart gets a fresh timestamp. The timestamp never controls lifecycle decisions.
 - `cleanup_pending` reports non-serving resources still owned, including in-flight metadata/startup, held identity guards, and failed or cancelled cleanup. During startup, wait for the start and any deferred stop to settle. After a failed or cancelled stop, retry `stop()` before restarting. A standalone runtime's explicitly host-claimed guard remains host-owned until `release_single_instance()`; the snapshot is not a startup gate.
 - `last_disconnect_reason` retains the typed terminal cause through stop and resets on a fresh connection attempt.

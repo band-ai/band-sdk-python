@@ -74,6 +74,7 @@ class PlatformRuntime:
         # replace a runtime whose rooms may still be serving or cleaning up.
         self._runtime: AgentRuntime | None = None
         self._running = False
+        self._stop_observed = False
         self._started_at: datetime | None = None
         self._instance_guard: SingleInstanceGuard | None = None
         # Only a guard ``start()`` claimed itself is released by this runtime;
@@ -235,6 +236,7 @@ class PlatformRuntime:
             )
         if self._runtime is not None:
             raise RuntimeError("Platform runtime is already started")
+        self._stop_observed = False
         # Duplicates corrupt message claiming, so refuse before any
         # processing starts. A failed start that cleaned up releases the
         # lock: the guard must never block a retry within this same process.
@@ -267,10 +269,12 @@ class PlatformRuntime:
         except BaseException:
             await self._unwind_failed_start()
             raise
-        self._running = True
-        self._started_at = datetime.now(UTC)
-
-        logger.info("Platform runtime started for agent: %s", self._agent_name)
+        # Startup can outlive its transport while awaiting REST bootstrap.
+        # Its return must not overwrite a shutdown already observed.
+        if not self._stop_observed:
+            self._running = True
+            self._started_at = datetime.now(UTC)
+            logger.info("Platform runtime started for agent: %s", self._agent_name)
 
     async def _unwind_failed_start(self) -> None:
         """Stop a partially started runtime without replacing the start error;
@@ -311,6 +315,7 @@ class PlatformRuntime:
         """Observe non-serving state without recording a host stop request."""
         if link is not None and self._link is not link:
             return
+        self._stop_observed = True
         self._running = False
         self._started_at = None
 
