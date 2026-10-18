@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@807b075342e3d1b0031a859115bbbbe9c77d8538"]
+# dependencies = ["band-sdk[anthropic] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@4b15347387a217d81b471c8c238c6b10f64d15d1"]
 # ///
 """Two custom tools share one HTTP client, closed by the adapter's host.
 
