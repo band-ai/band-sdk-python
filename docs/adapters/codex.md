@@ -38,9 +38,11 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   On Windows, the client owns the helper and its process-tree job from startup
   through cleanup. It starts the interpreter image directly so a virtual-environment
   launcher cannot hide another helper process. Cleanup confirms the helper has
-  exited before terminating and draining the job; an empty job alone does not
-  establish helper exit.
-  Failed cleanup retains that same owner and job for retry.
+  exited, seals the job against new children, and retains member process handles
+  before requesting termination. It waits for those handles to signal physical
+  exit as well as empty job accounting; accounting alone does not prove directory
+  and file handles were released. Failed cleanup retains that same owner, job,
+  and any pending process handles for retry.
 - **Leaving is final.** Leaving a room stops it admitting work at once. A
   leave that fails or runs over keeps the process, thread and workspace claim,
   and the room refuses work until a retried leave succeeds; a later rejoin
