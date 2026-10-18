@@ -19,5 +19,6 @@ and correlation identifiers use the same policy before becoming retained errors
 or disconnect reasons. Raw HTTP upgrade exceptions are not chained into errors
 returned to callers because they can retain response bodies.
 
-Wire payloads and caller-visible errors remain unchanged. Applications remain
-responsible for logs they produce outside the connection-owned diagnostic boundary.
+Wire payloads are unchanged. Caller-visible errors redact credentials but may still
+contain personal data. Applications remain responsible for logs they produce
+outside the connection-owned diagnostic boundary.

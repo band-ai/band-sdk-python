@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import traceback
@@ -9,7 +10,6 @@ from urllib.parse import quote
 
 import pytest
 from phoenix_channels_python_client.exceptions import PHXConnectionError
-from websockets.asyncio.client import connect
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.http11 import Request, Response
 
@@ -20,6 +20,42 @@ from band.testing.phoenix_server import Upgrade
 
 
 class TestTransportDiagnosticSecurity:
+    async def test_connection_and_reconnect_keep_headers_and_logs_private(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        secret = "synthetic-reconnect-credential"
+        personal_data = "synthetic-person@example.invalid"
+        reconnected = asyncio.Event()
+
+        async def on_reconnect() -> None:
+            reconnected.set()
+
+        caplog.set_level(logging.DEBUG, logger="phoenix_channels_python_client.client")
+        async with (
+            fake_phoenix_server() as server,
+            WebSocketClient(
+                server.url, secret, "agent-synthetic", on_reconnect=on_reconnect
+            ),
+        ):
+            await server.close_connection(code=1012, reason=personal_data)
+            await asyncio.wait_for(reconnected.wait(), timeout=10)
+
+        assert len(server.upgrades) == 2
+        for upgrade in server.upgrades:
+            assert upgrade.query == {"vsn": "2.0.0", "agent_id": "agent-synthetic"}
+            assert upgrade.headers["x-api-key"] == secret
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "phoenix_channels_python_client.client"
+        ]
+        assert records
+        assert all(
+            secret not in repr(record.__dict__)
+            and personal_data not in repr(record.__dict__)
+            for record in records
+        )
+
     @pytest.mark.parametrize("status", [400, 409, 429, 503])
     @pytest.mark.parametrize("field", ["message", "code", "request_id"])
     async def test_refused_upgrade_and_probe_sanitize_each_error_field(
@@ -125,50 +161,6 @@ class TestTransportDiagnosticSecurity:
                 await client.__aenter__()
             assert secret not in "".join(traceback.format_exception(terminal.value))
             assert secret not in repr(client.last_disconnect_reason)
-
-    async def test_trusted_proxy_replaces_header_without_credential_query(self) -> None:
-        sentinel = "proxy-managed-public-sentinel"
-        injected = "synthetic-proxy-owned-credential"
-        incoming: list[Upgrade] = []
-        forwarded: list[Upgrade] = []
-
-        def authenticate(
-            connection: ServerConnection, request: Request
-        ) -> Response | None:
-            upgrade = Upgrade.from_request(request)
-            forwarded.append(upgrade)
-            if upgrade.headers.get("x-api-key") != injected:
-                return connection.respond(HTTPStatus.UNAUTHORIZED, "unauthorized")
-            return None
-
-        async def upstream(connection: ServerConnection) -> None:
-            await connection.wait_closed()
-
-        async with serve(
-            upstream, "127.0.0.1", 0, process_request=authenticate
-        ) as trusted:
-            upstream_port = trusted.sockets[0].getsockname()[1]
-
-            async def proxy(connection: ServerConnection) -> None:
-                assert connection.request is not None
-                incoming.append(Upgrade.from_request(connection.request))
-                assert connection.request.headers["x-api-key"] == sentinel
-                async with connect(
-                    f"ws://127.0.0.1:{upstream_port}" + connection.request.path,
-                    additional_headers={"x-api-key": injected},
-                ):
-                    await connection.wait_closed()
-
-            async with serve(proxy, "127.0.0.1", 0) as server:
-                proxy_port = server.sockets[0].getsockname()[1]
-                async with WebSocketClient(
-                    f"ws://127.0.0.1:{proxy_port}/socket", sentinel, "agent-synthetic"
-                ):
-                    pass
-        assert len(incoming) == len(forwarded) == 1
-        assert "api_key" not in incoming[0].query
-        assert "api_key" not in forwarded[0].query
-        assert forwarded[0].headers["x-api-key"] == injected
 
     @pytest.mark.parametrize("refuse", [False, True])
     async def test_agent_identity_remains_one_opaque_query_value(
