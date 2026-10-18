@@ -27,7 +27,7 @@ class TestOpenCodeLifetime:
     async def test_parked_native_turn_dual_dispatch_aborts_remote_once(
         self,
         execution: Callable[..., ExecutionContext],
-        peer: LifecyclePlatform,
+        activity_platform: LifecyclePlatform,
         mode: ControlMode,
     ) -> None:
         client = FakeOpencodeClient(
@@ -59,8 +59,8 @@ class TestOpenCodeLifetime:
             ctx = execution(handler)
             try:
                 await ctx._process_event(make_message_event(msg_id="original"))
-                assert peer.activity_reports == [KEEP_ALIVE]
-                assert peer.marked("processed") == ["original"]
+                assert activity_platform.activity_reports == [KEEP_ALIVE]
+                assert activity_platform.marked("processed") == ["original"]
                 assert ctx.interrupt(kind=mode)
                 notify = asyncio.create_task(adapter.on_interrupt(ROOM_ID, mode))
                 await aborting.wait()
@@ -70,8 +70,8 @@ class TestOpenCodeLifetime:
                 await ctx._join_activity_completion()
                 assert client.aborted_sessions == ["sess-1"]
                 assert cleaned.is_set()
-                assert peer.activity_reports == [KEEP_ALIVE, IDLE]
-                assert peer.marked("processed") == ["original"]
+                assert activity_platform.activity_reports == [KEEP_ALIVE, IDLE]
+                assert activity_platform.marked("processed") == ["original"]
             finally:
                 release.set()
                 await adapter.on_cleanup(ROOM_ID)

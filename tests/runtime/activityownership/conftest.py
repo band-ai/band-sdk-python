@@ -20,16 +20,16 @@ from tests.runtime.helpers import (
 
 
 @pytest.fixture
-async def peer() -> AsyncIterator[LifecyclePlatform]:
+async def activity_platform() -> AsyncIterator[LifecyclePlatform]:
     yield ActivityPlatform()
 
 
 @pytest.fixture
 async def execution(
-    peer: LifecyclePlatform,
+    activity_platform: LifecyclePlatform,
 ) -> AsyncIterator[Callable[..., ExecutionContext]]:
     contexts: list[ExecutionContext] = []
-    async with rest_client_over(peer.answer) as rest:
+    async with rest_client_over(activity_platform.answer) as rest:
 
         def create(
             handler: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
