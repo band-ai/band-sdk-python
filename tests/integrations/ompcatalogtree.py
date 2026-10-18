@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -46,22 +47,46 @@ def start_tree_child(
 
 def hold_tree_child(role: str, port: int) -> None:
     observed = receipt()
-    if role == "leaf":
+    if role in {"leaf", "zombie"}:
         sys.stdout.write(observed.model_dump_json() + "\n")
         sys.stdout.flush()
-        threading.Event().wait()
+        if role == "leaf":
+            threading.Event().wait()
         return
     with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
         connection.settimeout(None)
         connection.sendall((observed.model_dump_json() + "\n").encode())
         sys.stdout.write(observed.model_dump_json() + "\n")
         sys.stdout.flush()
-        while command := connection.recv(1):
-            if command == b"s":
-                _child, created = start_tree_child("leaf", port)
-                connection.sendall((created.model_dump_json() + "\n").encode())
-            else:
-                return
+        zombie_child: subprocess.Popen[bytes] | None = None
+        try:
+            while command := connection.recv(1):
+                if command == b"s":
+                    _child, created = start_tree_child("leaf", port)
+                    connection.sendall((created.model_dump_json() + "\n").encode())
+                elif command == b"z":
+                    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                    zombie_child, created = start_tree_child("zombie", port)
+                    os.setpgid(0, 0)
+                    child = psutil.Process(created.pid)
+                    deadline = time.monotonic() + 5
+                    while child.status() != psutil.STATUS_ZOMBIE:
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(
+                                "The fixture child did not become a zombie"
+                            )
+                        time.sleep(0.001)
+                    connection.sendall((created.model_dump_json() + "\n").encode())
+                elif command == b"r":
+                    if zombie_child is not None:
+                        zombie_child.wait(timeout=5)
+                        zombie_child = None
+                    connection.sendall(b"reaped\n")
+                else:
+                    return
+        finally:
+            if zombie_child is not None:
+                zombie_child.wait(timeout=5)
 
 
 class CatalogTreeGate:
@@ -92,13 +117,19 @@ class CatalogTreeGate:
                 ProcessReceipt.model_validate_json(await self._reader.readline())
             )
 
-    async def spawn_late_child(self) -> None:
+    async def spawn_late_child(self, *, zombie: bool = False) -> ProcessReceipt:
         assert self._reader is not None and self._writer is not None
-        self._writer.write(b"s")
+        self._writer.write(b"z" if zombie else b"s")
         await self._writer.drain()
-        self.receipts.append(
-            ProcessReceipt.model_validate_json(await self._reader.readline())
-        )
+        observed = ProcessReceipt.model_validate_json(await self._reader.readline())
+        self.receipts.append(observed)
+        return observed
+
+    async def reap_child(self) -> None:
+        assert self._reader is not None and self._writer is not None
+        self._writer.write(b"r")
+        await self._writer.drain()
+        assert await self._reader.readline() == b"reaped\n"
 
     @staticmethod
     def _alive(observed: ProcessReceipt) -> psutil.Process | None:

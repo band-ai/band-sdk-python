@@ -22,12 +22,14 @@ class TestOmpCatalogNativeFlags:
     @pytest.mark.parametrize("route", ["extension", "config"])
     @pytest.mark.parametrize("before_mode", [False, True])
     @pytest.mark.parametrize("mode_equals", [False, True])
+    @pytest.mark.parametrize("launch_position", ["implicit", "first", "last"])
     async def test_native_catalog_loads_configured_extension(
         self,
         tmp_path: Path,
         route: Literal["extension", "config"],
         before_mode: bool,
         mode_equals: bool,
+        launch_position: Literal["implicit", "first", "last"],
     ) -> None:
         executable = shutil.which("omp")
         if executable is None:
@@ -47,6 +49,10 @@ class TestOmpCatalogNativeFlags:
         )
         mode = ("--mode=rpc",) if mode_equals else ("--mode", "rpc")
         arguments = (*metadata, *mode) if before_mode else (*mode, *metadata)
+        if launch_position == "first":
+            arguments = ("launch", *arguments)
+        elif launch_position == "last":
+            arguments = (*arguments, "launch")
         adapter = OmpAdapter(
             OmpAdapterConfig(
                 command=(executable, *arguments),
@@ -77,8 +83,11 @@ class TestOmpCatalogNativeFlags:
                 ExtensionReceipt.model_validate_json(line)
                 for line in receipts.read_text(encoding="utf-8").splitlines()
             ]
-            assert loaded and all(receipt.models_command for receipt in loaded)
-            assert catalog.current_model is None
+            assert loaded
+            if launch_position == "implicit":
+                assert all(receipt.models_command for receipt in loaded)
+            if all(receipt.models_command for receipt in loaded):
+                assert catalog.current_model is None
             assert not adapter._rooms
         finally:
             await adapter.cleanup_all()

@@ -94,6 +94,53 @@ class TestOmpCatalogCommand:
                 ("custom-omp", "--mode", "rpc", "--config", "overlay.yml"),
                 ("custom-omp", "models", "--json", "--config", "overlay.yml"),
             ),
+            (
+                ("omp", "launch", "--mode", "rpc"),
+                ("omp", "models", "--json"),
+            ),
+            (
+                ("omp", "launch", "--config", "launch", "--mode=rpc"),
+                ("omp", "models", "--json", "--config", "launch"),
+            ),
+            (
+                (
+                    "python3.12",
+                    "-u",
+                    "-m",
+                    "native_launcher",
+                    "launch",
+                    "--mode",
+                    "rpc",
+                ),
+                ("python3.12", "-u", "-m", "native_launcher", "models", "--json"),
+            ),
+            (
+                (
+                    "bun",
+                    "x",
+                    "--bun",
+                    "@oh-my-pi/pi-coding-agent",
+                    "launch",
+                    "--mode=rpc",
+                ),
+                ("bun", "x", "--bun", "@oh-my-pi/pi-coding-agent", "models", "--json"),
+            ),
+            (
+                ("node", "native-launcher.js", "launch", "--mode", "rpc"),
+                ("node", "native-launcher.js", "models", "--json"),
+            ),
+            (
+                ("python3.12", "-m", "launch", "--mode", "rpc"),
+                ("python3.12", "-m", "launch", "models", "--json"),
+            ),
+            (
+                ("bun", "run", "launch", "--mode", "rpc"),
+                ("bun", "run", "launch", "models", "--json"),
+            ),
+            (
+                ("node", "launch", "--mode", "rpc"),
+                ("node", "launch", "models", "--json"),
+            ),
         ],
     )
     def test_options_follow_the_native_subcommand(self, command, expected) -> None:
@@ -119,6 +166,9 @@ class TestOmpCatalogCommand:
                 "--mode",
                 "rpc",
             ),
+            ("omp", "--config", "overlay.yml", "launch", "--mode", "rpc"),
+            ("custom-omp", "launch", "--mode", "rpc"),
+            ("omp", "--config", "launch", "--mode", "rpc"),
         ],
     )
     def test_ambiguous_launcher_configuration_requires_native_rpc(

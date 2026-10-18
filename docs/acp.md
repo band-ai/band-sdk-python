@@ -230,10 +230,11 @@ and advertised efforts. The probe first reads `omp models --json`, preserving
 launcher arguments, configuration flags, the configured working directory and
 provider environment, including `OmpAdapterConfig.api_key`. Native options follow
 `models --json`, so [native command routing](https://unpkg.com/@oh-my-pi/pi-coding-agent@18.12.1/src/cli-commands.ts)
-does not discard configuration overlays or extensions. If the launcher boundary
-is ambiguous, or the CLI fails or supplies no valid listing, the probe uses a
-temporary native RPC connection's `get_available_models`, not ACP or an inferred
-catalog.
+does not discard configuration overlays or extensions. An explicit native `launch`
+is replaced at the known command boundary, not treated as a model filter.
+Ambiguous launcher or native-command boundaries, failed commands or invalid
+listings use the original launch command for temporary native RPC
+`get_available_models`, not ACP or an inferred catalog.
 
 Missing effort metadata remains `None` (unknown); an explicit empty list or no
 thinking support yields `()` (none). Native RPC supplies the live model's
@@ -253,6 +254,12 @@ retry `await adapter.cleanup_all()` before discarding it.
 CLI probes own an isolated POSIX process group or a Windows Job from launch,
 including descendants that inherit it after their launcher exits. Cleanup waits
 until no member is running before releasing probe custody or provider credentials.
+An empty PID snapshot or successful kill does not by itself settle POSIX custody.
+The CLI owner retains observed process identities (PID and creation time) across
+failed cleanup and retries, checking their current identities and status before
+release. A known zombie has exited and need not be reaped to finish its cleanup.
+Unavailable identity, group or status inspection keeps cleanup retryable rather
+than being treated as successful exit.
 
 From a source checkout with the `omp` extra and a configured native OMP executable,
 exercise the installed CLI route and actual native catalog RPC without a Band
