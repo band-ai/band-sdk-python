@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -131,9 +130,9 @@ async def relay_agent_response(
     still working on it.
     """
     offset = min_offset
-    # perf_counter keeps its resolution on Windows, where monotonic() is coarse.
-    deadline = time.perf_counter() + timeout
-    while (remaining := deadline - time.perf_counter()) > 0:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while (remaining := deadline - loop.time()) > 0:
         polled = await next_agent_events(
             app=app,
             session_id=session_id,
@@ -199,6 +198,8 @@ def _message_parts(data: Any) -> tuple[str, list[str]]:
 
 
 async def _back_off(deadline: float) -> None:
-    backoff = min(EMPTY_READ_BACKOFF_SECONDS, deadline - time.perf_counter())
+    backoff = min(
+        EMPTY_READ_BACKOFF_SECONDS, deadline - asyncio.get_running_loop().time()
+    )
     if backoff > 0:
         await asyncio.sleep(backoff)

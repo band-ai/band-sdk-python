@@ -14,9 +14,12 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from unittest.mock import patch
+
+import pytest
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
-from band.adapters.parlant.messages import live_preamble_tasks, process_session_tag
+from band.adapters.parlant.messages import process_session_tag
 from band.client.streaming import ControlMode
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.stopprobes import (
@@ -24,7 +27,6 @@ from tests.framework_conformance.stopprobes import (
     StopCase,
     end_turn,
     stop_room,
-    wait_until,
 )
 from tests.framework_conformance.turnprobes import ROOM_ID, turn_input
 
@@ -35,10 +37,15 @@ ENGINE_WAIT_SECONDS = 15.0
 ENGINE_STOPPED = "engine stopped processing the session"
 PREAMBLE_STOPPED = "preamble generation stopped"
 TAG_IS_LIVE = "process_session_tag names the engine's running task"
+RESPONSE_TIMEOUT_SECONDS = 5.0
+# Binary ticks keep Parlant's exact-zero expiry check free of float residuals.
+VIRTUAL_CLOCK_RESOLUTION_SECONDS = 2**-20
 
 
 @asynccontextmanager
-async def started() -> AsyncIterator[tuple[ParlantAdapter, Any]]:
+async def started(
+    config: ParlantAdapterConfig | None = None,
+) -> AsyncIterator[tuple[ParlantAdapter, Any]]:
     """A started adapter on an owned server whose model never answers."""
     import parlant.sdk as p  # noqa: PLC0415 -- dev-parlant extra
 
@@ -48,7 +55,7 @@ async def started() -> AsyncIterator[tuple[ParlantAdapter, Any]]:
 
     nlp = StubNLP()
     adapter = ParlantAdapter(
-        ParlantAdapterConfig(),
+        config or ParlantAdapterConfig(),
         nlp_service=nlp.factory,
         server_options={"host": LOOPBACK, "log_level": p.LogLevel.WARNING},
     )
@@ -79,25 +86,92 @@ async def processing_turn(
 
 
 async def end_running_turn(mode: ControlMode) -> list[str]:
-    async with started() as (adapter, nlp):
+    async with started() as (adapter, nlp), captured_preambles() as (created, preamble):
         tools = FakeAgentTools()
         turn, session_id = await processing_turn(adapter, nlp, tools)
         engine = background_tasks(adapter)._tasks[process_session_tag(session_id)]
-        preamble: list[asyncio.Task[Any]] = []
-
-        def preamble_is_running() -> bool:
-            preamble[:] = live_preamble_tasks(session_id)
-            return bool(preamble)
-
-        await wait_until(preamble_is_running)
+        await created.wait()
+        await nlp.generation_started(preamble[0]).wait()
         await end_turn(adapter, turn, ROOM_ID, mode)
-        stopped, _ = await asyncio.wait({engine}, timeout=ENGINE_WAIT_SECONDS)
-        preamble_stopped = bool(preamble) and all(task.done() for task in preamble)
-        return [
-            *([ENGINE_STOPPED] if stopped else []),
-            *([PREAMBLE_STOPPED] if preamble_stopped else []),
-            *(f"posted {sent}" for sent in tools.messages_sent),
-        ]
+        return stopped_work(engine, preamble, tools)
+
+
+@asynccontextmanager
+async def captured_preambles() -> AsyncIterator[
+    tuple[asyncio.Event, list[asyncio.Task[Any]]]
+]:
+    """Observe the actual child factory independently of adapter discovery."""
+    from parlant.core.engines.alpha.engine import (  # noqa: PLC0415 -- dev-parlant extra
+        AlphaEngine,
+    )
+
+    create_preamble = AlphaEngine._get_preamble_task
+    children: list[asyncio.Task[Any]] = []
+    created = asyncio.Event()
+
+    async def capture(engine: Any, context: Any) -> asyncio.Task[bool]:
+        child = await create_preamble(engine, context)
+        children.append(child)
+        created.set()
+        return child
+
+    with patch.object(AlphaEngine, "_get_preamble_task", capture):
+        try:
+            yield created, children
+        finally:
+            for child in children:
+                child.cancel()
+            await asyncio.gather(*children, return_exceptions=True)
+
+
+def stopped_work(
+    engine: asyncio.Task[Any], preamble: list[asyncio.Task[Any]], tools: FakeAgentTools
+) -> list[str]:
+    return [
+        *([ENGINE_STOPPED] if engine.done() else []),
+        *([PREAMBLE_STOPPED] if preamble and all(t.done() for t in preamble) else []),
+        *(f"posted {sent}" for sent in tools.messages_sent),
+    ]
+
+
+async def response_timeout() -> list[str]:
+    config = ParlantAdapterConfig(
+        response_timeout=RESPONSE_TIMEOUT_SECONDS,
+        response_poll=RESPONSE_TIMEOUT_SECONDS,
+    )
+    async with (
+        started(config) as (adapter, nlp),
+        captured_preambles() as (created, preamble),
+    ):
+        assert adapter._rooms is not None
+        sessions = adapter._rooms.app.sessions
+        post = sessions.create_customer_message
+        processing: list[asyncio.Task[Any]] = []
+
+        async def post_when_generating(**kwargs: Any) -> Any:
+            event = await post(**kwargs)
+            parent = background_tasks(adapter)._tasks[
+                process_session_tag(kwargs["session_id"])
+            ]
+            processing.append(parent)
+            # The response budget starts after this returns to the adapter.
+            await created.wait()
+            await nlp.generation_started(preamble[0]).wait()
+            assert not parent.done() and not preamble[0].done()
+            return event
+
+        tools = FakeAgentTools()
+        try:
+            with patch.object(
+                sessions, "create_customer_message", post_when_generating
+            ):
+                await adapter.on_event(turn_input(tools))
+            [engine] = processing
+            return stopped_work(engine, preamble, tools)
+        finally:
+            for parent in processing:
+                parent.cancel()
+            await asyncio.gather(*processing, return_exceptions=True)
 
 
 async def tag_parity() -> list[str]:
@@ -138,5 +212,10 @@ CASES: dict[str, StopCase] = {
         for mode in ENDING_CONTROLS
     },
     "tag-matches-the-engine": StopCase(run=tag_parity, expected=[TAG_IS_LIVE]),
+    "response-timeout": StopCase(
+        run=response_timeout,
+        expected=[ENGINE_STOPPED, PREAMBLE_STOPPED],
+        marks=(pytest.mark.looptime(resolution=VIRTUAL_CLOCK_RESOLUTION_SECONDS),),
+    ),
     "idle-room": StopCase(run=idle, expected=[]),
 }

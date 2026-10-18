@@ -6,14 +6,17 @@ the real engine is covered by ``tests/integrations/parlant`` and the E2E smoke.
 
 from __future__ import annotations
 
+import asyncio
 import sys
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from band.adapters.parlant.messages import process_session_tag
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.parlant.helpers import (
@@ -82,6 +85,26 @@ def application_class(mock_app: MagicMock) -> Iterator[MagicMock]:
 def background_tasks() -> RecordingBackgroundTasks:
     """The engine's background-task service, recording what it cancels."""
     return RecordingBackgroundTasks()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def processing_session(
+    background_tasks: RecordingBackgroundTasks,
+) -> AsyncIterator[asyncio.Task[None]]:
+    """A session whose processing can finish only when cancelled."""
+    entered = asyncio.Event()
+
+    async def process() -> None:
+        entered.set()
+        await asyncio.Future[None]()
+
+    task = await background_tasks.start(process(), tag=process_session_tag(SESSION_ID))
+    try:
+        await entered.wait()
+        yield task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.fixture

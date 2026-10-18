@@ -68,7 +68,7 @@ REQUIRED_MODULES: dict[str, str] = {
 }
 
 CASES = [
-    pytest.param(adapter, case, id=f"{adapter}-{name}")
+    pytest.param(adapter, case, id=f"{adapter}-{name}", marks=case.marks)
     for adapter, cases in STOP_PROBES.items()
     for name, case in cases.items()
 ]

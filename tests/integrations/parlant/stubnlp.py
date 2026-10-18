@@ -7,7 +7,7 @@ Import only where ``parlant`` is installed (the dev-parlant venv).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Generic, TypeVar
 
 from parlant.core.nlp.embedding import Embedder, EmbeddingResult
@@ -25,10 +25,18 @@ MAX_TOKENS = 100_000
 class ParkedGenerator(SchematicGenerator[T], Generic[T]):
     """Every generation parks, so a turn stays in the engine until cancelled."""
 
-    def __init__(self, entered: asyncio.Event) -> None:
+    def __init__(
+        self,
+        entered: asyncio.Event,
+        generation_started: Callable[[asyncio.Task[Any]], asyncio.Event],
+    ) -> None:
         self._entered = entered
+        self._generation_started = generation_started
 
     async def generate(self, prompt: Any, hints: Mapping[str, Any] = {}) -> Any:
+        task = asyncio.current_task()
+        assert task is not None
+        self._generation_started(task).set()
         self._entered.set()
         await asyncio.Future[None]()
 
@@ -73,6 +81,11 @@ class StubNLP(NLPService):
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
+        self._generation_started: dict[asyncio.Task[Any], asyncio.Event] = {}
+
+    def generation_started(self, task: asyncio.Task[Any]) -> asyncio.Event:
+        """Signal when this engine task has entered model generation."""
+        return self._generation_started.setdefault(task, asyncio.Event())
 
     def factory(self, container: Any) -> NLPService:
         """The ``nlp_service=`` callable a Parlant server takes."""
@@ -85,7 +98,7 @@ class StubNLP(NLPService):
     async def get_schematic_generator(
         self, t: type[T], hints: Mapping[str, Any] = {}
     ) -> SchematicGenerator[T]:
-        return ParkedGenerator[t](self.entered)
+        return ParkedGenerator[t](self.entered, self.generation_started)
 
     async def get_streaming_text_generator(self, hints: Mapping[str, Any] = {}) -> Any:
         raise NotImplementedError
