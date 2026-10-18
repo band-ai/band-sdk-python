@@ -319,13 +319,19 @@ class TestCopilotModelProbe:
 
         assert copilot_probe_sdk.open_clients == set()
 
+    @pytest.mark.looptime
     async def test_timeout_closes_client_and_next_probe_still_works(
-        self, copilot_probe_sdk: CopilotProbeSDK
+        self,
+        copilot_probe_sdk: CopilotProbeSDK,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # Windows' native timer resolution can exceed this virtual deadline.
+        monkeypatch.setattr(asyncio.get_running_loop(), "_clock_resolution", 1e-6)
         adapter = CopilotACPAdapter()
         copilot_probe_sdk.hold_start = True
         with pytest.raises(BandConfigError):
             await adapter.probe_models(timeout_s=0.01)
+        assert copilot_probe_sdk.started.is_set()
         assert copilot_probe_sdk.open_clients == set()
 
         copilot_probe_sdk.hold_start = False
