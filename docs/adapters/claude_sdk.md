@@ -145,6 +145,15 @@ room and MCP cleanup are still attempted when probe cleanup fails. Room shutdown
 keeps its original requester and runs before probe cleanup, even when either
 cleanup raises or its caller is cancelled.
 
+`await adapter.probe_models(timeout_s=60)` reads the CLI's advertised `models`
+from a separate initialization and returns a `ModelCatalog`. It preserves model
+aliases and reported effort levels. Missing effort metadata stays unknown;
+explicitly unsupported effort becomes an empty choice set. These inventory
+records do not report provider identity or an active model selection, so those
+catalog fields stay unset rather than being inferred from the adapter or config.
+Missing or malformed inventory raises `BandConfigError`; an explicitly advertised
+empty list is a valid empty catalog.
+
 ## Room ownership
 
 Each room's session is owned through that room's residency
