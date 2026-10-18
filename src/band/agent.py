@@ -13,6 +13,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, cast
 
 from band.core.exceptions import CleanupIncompleteError, InputNotAccepted
+from band.core.handoff import context_delivery
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
 from band.preprocessing.default import DefaultPreprocessor
@@ -542,15 +543,20 @@ class Agent:
         if inp is None or await self._try_control(inp):
             return
 
-        rejected = False
-        try:
-            await self._adapter.on_event(inp)
-        except InputNotAccepted:
-            rejected = True
-            raise
-        finally:
-            if not rejected and inp.commit_context is not None:
-                inp.commit_context()
+        with context_delivery() as delivery:
+            rejected = False
+            try:
+                await self._adapter.on_event(inp)
+            except InputNotAccepted:
+                rejected = True
+                raise
+            finally:
+                if (
+                    not rejected
+                    and delivery.should_commit
+                    and inp.commit_context is not None
+                ):
+                    inp.commit_context()
 
     async def _on_control(self, ctx: ExecutionContext, event: PlatformEvent) -> bool:
         """Handle controls with their delivery tools, preserving active ownership."""

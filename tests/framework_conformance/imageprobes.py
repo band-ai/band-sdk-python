@@ -301,13 +301,16 @@ async def _probe_nooa() -> bool:
     from band.adapters.nooa.tools import (  # noqa: PLC0415 -- nooa extra, absent outside Python 3.12-3.13 on POSIX
         RoomToolSpec,
         room_tools_class,
+        tool_method,
     )
 
     async def read(tools: Any, arguments: dict[str, Any]) -> object:
         return _IMAGE_RESULT
 
     spec = RoomToolSpec(
-        BandTool.READ_ROOM_FILE, TOOL_MODELS[BandTool.READ_ROOM_FILE], read
+        BandTool.READ_ROOM_FILE,
+        read,
+        tool_method(BandTool.READ_ROOM_FILE, TOOL_MODELS[BandTool.READ_ROOM_FILE]),
     )
     room = room_tools_class([spec])(emit_tool_calls=False)
     async with room.bound_to(MagicMock()):
