@@ -15,10 +15,6 @@ class TestAgentRunnerPerRoomSerialization:
     """Two events in the same room must serialize through the forwarder;
     two events in different rooms must overlap.
 
-    Regression test for the duplicate-reply race seen during INT-506 deploy:
-    two PA messages arriving back-to-back in the same room invoked the
-    container twice in parallel; both invocations fetched history before
-    either reply landed and both LLMs emitted duplicate responses.
     """
 
     async def test_same_room_serializes(self) -> None:

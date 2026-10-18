@@ -7,9 +7,9 @@ import logging
 
 import pytest
 
+from tests.bridge.conftest import FakeForwarder
 from tests.bridge.kit import (
     AGENT_ID,
-    MultiRoomHangingForwarder,
     make_platform_message,
     rehydrating_runner,
 )
@@ -22,7 +22,7 @@ class TestFailedRehydrationNudge:
     async def test_a_failed_nudge_is_logged_and_the_other_rooms_still_rehydrate(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        forwarder = MultiRoomHangingForwarder([])
+        forwarder = FakeForwarder()
         # A null-content /next message cannot be wrapped as a message event.
         unwrappable = dataclasses.replace(
             make_platform_message("m-failing", FAILING_ROOM), content=None
