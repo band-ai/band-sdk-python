@@ -1,0 +1,144 @@
+"""Host probes keep resource custody through failed or interrupted cleanup."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from band.core.exceptions import BandConfigError, CleanupIncompleteError
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import PlatformMessage
+
+
+class ProbeAdapter(SimpleAdapter[None]):
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: Any,
+        history: None,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        await tools.no_reply()
+
+
+async def test_an_unsupported_preflight_cannot_report_success() -> None:
+    result = await ProbeAdapter().preflight()
+    assert not result.ok
+    assert result.reason is not None
+    assert result.remedy is not None
+
+
+async def test_an_unsupported_catalog_is_not_an_empty_success() -> None:
+    with pytest.raises(BandConfigError):
+        await ProbeAdapter().probe_models()
+
+
+async def test_failed_close_keeps_the_resource_for_a_cleanup_retry(
+    tmp_path: Path,
+) -> None:
+    adapter = ProbeAdapter()
+    resource = tmp_path / "owned-resource"
+    refuse_close = True
+
+    async def close() -> None:
+        if refuse_close:
+            raise PermissionError("resource still in use")
+        resource.unlink()
+
+    async def operation() -> str:
+        adapter._harness_probe.own(close)
+        resource.write_text("private configuration", encoding="utf-8")
+        return "catalog"
+
+    with pytest.raises(CleanupIncompleteError):
+        await adapter._harness_probe.run(operation, timeout_s=0.1)
+    assert resource.read_text(encoding="utf-8") == "private configuration"
+    refuse_close = False
+    await adapter.cleanup_all()
+    assert not resource.exists()
+
+    async def next_operation() -> str:
+        return "next catalog"
+
+    assert (
+        await adapter._harness_probe.run(next_operation, timeout_s=0.1)
+        == "next catalog"
+    )
+
+
+async def test_timeout_retains_a_start_that_settles_after_cancellation(
+    tmp_path: Path,
+) -> None:
+    adapter = ProbeAdapter()
+    resource = tmp_path / "late-resource"
+    entered = asyncio.Event()
+    settle = asyncio.Event()
+
+    async def close() -> None:
+        resource.unlink()
+
+    async def operation() -> str:
+        adapter._harness_probe.own(close)
+        entered.set()
+        try:
+            await settle.wait()
+        except asyncio.CancelledError:
+            await settle.wait()
+        resource.write_text("late configuration", encoding="utf-8")
+        return "late catalog"
+
+    running = asyncio.create_task(adapter._harness_probe.run(operation, timeout_s=0.01))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        with pytest.raises(CleanupIncompleteError):
+            await running
+        settle.set()
+        await adapter.cleanup_all()
+        assert not resource.exists()
+    finally:
+        settle.set()
+        await asyncio.gather(running, return_exceptions=True)
+        await adapter.cleanup_all()
+
+
+async def test_caller_cancellation_does_not_abandon_late_startup(
+    tmp_path: Path,
+) -> None:
+    adapter = ProbeAdapter()
+    resource = tmp_path / "cancelled-resource"
+    entered = asyncio.Event()
+    settle = asyncio.Event()
+
+    async def close() -> None:
+        resource.unlink()
+
+    async def operation() -> str:
+        adapter._harness_probe.own(close)
+        entered.set()
+        try:
+            await settle.wait()
+        except asyncio.CancelledError:
+            await settle.wait()
+        resource.write_text("configuration", encoding="utf-8")
+        return "catalog"
+
+    running = asyncio.create_task(adapter._harness_probe.run(operation, timeout_s=0.01))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        settle.set()
+        await adapter.cleanup_all()
+        assert not resource.exists()
+    finally:
+        settle.set()
+        await asyncio.gather(running, return_exceptions=True)
+        await adapter.cleanup_all()

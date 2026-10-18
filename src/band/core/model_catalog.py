@@ -52,6 +52,8 @@ class ModelChoice(BaseModel):
     label: str | None = None
     efforts: tuple[str, ...] | None = None
     default_effort: str | None = None
+    provider: str | None = None
+    is_default: bool = False
 
 
 class ModelCatalog(BaseModel):
