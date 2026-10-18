@@ -132,6 +132,8 @@ no model query. A successful initialization is not proof of account entitlement
 or inference access.
 
 The adapter retains both the SDK client and its transport before connection.
+The transport retains an unconfirmed child even if the SDK's own close call
+returns; cleanup succeeds only after that child's exit is confirmed.
 If a timed-out or failed startup cannot finish closing within the reporting
 budget, `CleanupIncompleteError` propagates instead of an ordinary failed
 result. Call `await adapter.cleanup_all()` again to join or retry that cleanup;
