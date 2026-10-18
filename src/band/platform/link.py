@@ -23,7 +23,10 @@ from band.client.streaming import (
 )
 from band.client.streaming.client import ControlHook
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
-from band.core.exceptions import AgentAlreadyRunningError
+from band.core.exceptions import (
+    AgentAlreadyRunningError,
+    AgentDisconnectedError,
+)
 from band.core.settlement import SettlementResult
 from band.core.types import ConflictPolicy, PlatformConnection
 from band.platform.event import (
@@ -135,6 +138,8 @@ class BandLink:
 
         # Durable terminal disconnect reason for the current connection lifecycle.
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+        self._terminal_disconnect = asyncio.Event()
+        self._disconnect_requested = False
 
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
         # runtime. Never run via the serialized _event_queue, so a control
@@ -144,6 +149,10 @@ class BandLink:
         self.on_control: ControlHook | None = None
         # Control signals still being applied, in arrival order.
         self._control_lane: list[asyncio.Task[None]] = []
+
+        # Publish confirmed shutdown synchronously, before cancellable waiter
+        # cleanup. This observes transport completion, not host stop intent.
+        self.on_transport_stopped: Callable[[BandLink], None] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -192,6 +201,8 @@ class BandLink:
         self._connecting = True
         try:
             self._last_disconnect_reason = None
+            self._terminal_disconnect = asyncio.Event()
+            self._disconnect_requested = False
             ws = WebSocketClient(
                 self.ws_url,
                 self.api_key,
@@ -199,6 +210,7 @@ class BandLink:
                 on_reconnect=self._on_reconnected,
                 on_disconnect=self._on_disconnected,
                 conflict_policy=self.conflict_policy,
+                on_transport_stopped=self._record_transport_stopped,
             )
             try:
                 await ws.__aenter__()
@@ -230,32 +242,82 @@ class BandLink:
         finally:
             self._connecting = False
 
+    def request_disconnect(self) -> None:
+        """Record host intent without closing resources or awaiting cleanup."""
+        self._disconnect_requested = True
+
     async def disconnect(self) -> None:
-        if not self._ws:
+        self.request_disconnect()
+        ws = self._ws
+        if ws is None:
             return
 
-        if not self._ws.transport_ended:
+        if not ws.transport_ended:
             try:
-                await self._ws.leave_agent_control_channel(self.agent_id)
+                await ws.leave_agent_control_channel(self.agent_id)
             except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Error unsubscribing from agent_control: %s", e)
 
         await self._cancel_control_lane()
-        await self._ws.__aexit__(None, None, None)
+        await ws.__aexit__(None, None, None)
+        if self._ws is not ws:
+            return
+        self._record_transport_stopped(ws)
         self._ws = None
-        self._is_connected = False
         self._subscriptions_manager.end_session()
         logger.info("Disconnected from platform")
 
-    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
-        """Block until the connection ends.
+    def _record_transport_stopped(self, ws: WebSocketClient) -> None:
+        """Publish completion only for the current transport generation."""
+        if self._ws is not ws:
+            return
+        self._is_connected = False
+        if self.on_transport_stopped is not None:
+            self.on_transport_stopped(self)
 
-        ``install_signal_handlers`` goes to ``PHXChannelsClient.run_forever``;
-        see ``Agent.run_forever`` for when a host turns it off.
+    async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
+        """Wait for a host stop or raise the typed terminal platform cause.
+
+        Terminal events end this wait even if the server leaves the socket
+        open. Host intent wins when a terminal event arrives during cleanup.
+        Signal handling remains the transport's opt-out behavior.
         """
-        if not self._ws:
+        ws = self._ws
+        if ws is None:
             raise RuntimeError("Not connected")
-        await self._ws.run_forever(install_signal_handlers=install_signal_handlers)
+        terminal_disconnect = self._terminal_disconnect
+
+        # Keep the transport wait in this task so its signal handlers are
+        # installed before the first suspension. The deadline only interrupts
+        # this wait; the socket and its cleanup remain owned by the link.
+        terminal = asyncio.timeout(None)
+        try:
+            async with terminal:
+                wakeup = asyncio.create_task(
+                    self._wake_on_terminal_disconnect(terminal, terminal_disconnect)
+                )
+                try:
+                    await ws.run_forever(
+                        install_signal_handlers=install_signal_handlers
+                    )
+                finally:
+                    wakeup.cancel()
+                    await asyncio.gather(wakeup, return_exceptions=True)
+        except TimeoutError:
+            if not terminal.expired():
+                raise
+
+        if self._ws is not ws:
+            return
+
+        if not self._disconnect_requested and self._last_disconnect_reason is not None:
+            raise AgentDisconnectedError(self._last_disconnect_reason)
+
+    async def _wake_on_terminal_disconnect(
+        self, terminal: asyncio.Timeout, terminal_disconnect: asyncio.Event
+    ) -> None:
+        await terminal_disconnect.wait()
+        terminal.reschedule(asyncio.get_running_loop().time())
 
     async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
         """Shared join call for agent_control -- used by both the initial
@@ -367,6 +429,9 @@ class BandLink:
         ``_drain_reconciliation`` -- this reconnect is the only point where
         that ambiguity is safely resolvable (see design doc).
         """
+        if self._last_disconnect_reason is not None:
+            return
+        self._is_connected = True
         logger.info("WebSocket reconnected — reconciling room state")
         self._subscriptions_manager.mark_reconnected()
         ws = self._connected_ws()
@@ -415,6 +480,7 @@ class BandLink:
         ws.record_terminal_disconnect(reason)
         self._last_disconnect_reason = reason
         self._is_connected = False
+        self._terminal_disconnect.set()
         logger.warning(
             "WebSocket connection superseded: reason=%s retryable=%s correlation_id=%s",
             reason.reason,
@@ -480,6 +546,7 @@ class BandLink:
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
+        self._is_connected = False
         if self.last_disconnect_reason:
             logger.warning(
                 "WebSocket disconnected after terminal platform reason: %s",

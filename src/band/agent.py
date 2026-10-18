@@ -35,6 +35,7 @@ from band.runtime.startup import (
 )
 
 if TYPE_CHECKING:
+    from band.client.streaming.client import WebSocketDisconnectReason
     from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
@@ -283,6 +284,15 @@ class Agent:
         """Check if agent is subscribed to contact events."""
         return self._runtime.is_contacts_subscribed
 
+    @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """The terminal platform disconnect cause, retained after ``stop()``.
+
+        A fresh connection attempt resets it. Ordinary transport loss does
+        not set a terminal reason or end the reconnecting run.
+        """
+        return self._runtime.last_disconnect_reason
+
     async def start(self) -> None:
         """Start agent.
 
@@ -426,6 +436,9 @@ class Agent:
             ExceptionGroup: Runtime or adapter cleanup remains incomplete.
         """
         refuse_recursive_shutdown(self._adapter)
+        if self._started or self._starting or self._cleanup_pending:
+            # Publish host intent before the lock or room cleanup can suspend.
+            self._runtime.request_stop()
         async with self._stop_lock:
             if self._starting and not self._started:
                 self._stop_requested = True
@@ -498,6 +511,9 @@ class Agent:
                               Set to None for immediate cancellation.
                               Default is 30 seconds.
             install_signal_handlers: See ``run_forever``.
+
+        Raises:
+            AgentDisconnectedError: The platform ended this connection for good.
         """
         self._shutdown_timeout = shutdown_timeout
         await self.start()
@@ -567,6 +583,12 @@ class Agent:
         handlers are restored on return. A host that owns its process signals
         passes ``install_signal_handlers=False`` and calls ``stop()`` from its
         own handler; ``run_forever`` then returns normally.
+
+        Raises:
+            AgentDisconnectedError: A terminal platform disconnect ended the run.
+                Its ``reason`` is also available as ``last_disconnect_reason``.
+                Host-requested stops return normally, even when a terminal
+                event arrives while cleanup is still in progress.
         """
         if not self._started:
             return

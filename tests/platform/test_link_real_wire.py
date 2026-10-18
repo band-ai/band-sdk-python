@@ -18,6 +18,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from band.client.streaming.client import WebSocketClient
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy
 from band.platform.link import BandLink
@@ -227,6 +228,50 @@ async def test_default_run_stops_on_signal_and_restores_host_handler(
 
             assert signal.getsignal(sig) is host_handler
             assert link.last_disconnect_reason is None
+            await link.disconnect()
+
+
+async def test_old_transport_completion_cannot_disconnect_reused_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed, release = asyncio.Event(), asyncio.Event()
+    original = WebSocketClient.run_forever
+    first = True
+
+    async def hold_first_completion(
+        client: WebSocketClient, *, install_signal_handlers: bool = True
+    ) -> None:
+        nonlocal first
+        held = first
+        first = False
+        await original(client, install_signal_handlers=install_signal_handlers)
+        if held:
+            completed.set()
+            await release.wait()
+
+    monkeypatch.setattr(WebSocketClient, "run_forever", hold_first_completion)
+
+    async with fake_phoenix_server() as server:
+        link = make_link(server.url)
+        await link.connect()
+        running = await started_run(link, install_signal_handlers=False)
+        try:
+            await link.disconnect()
+            await asyncio.wait_for(completed.wait(), timeout=2.0)
+            await link.connect()
+            assert link.is_connected is True
+
+            release.set()
+            await asyncio.wait_for(running, timeout=2.0)
+
+            assert link.is_connected is True
+            await link.subscribe_room("reused-proof")
+            assert "chat_room:reused-proof" in server.joined_topics
+            assert server.connection_count == 2
+        finally:
+            release.set()
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
             await link.disconnect()
 
 

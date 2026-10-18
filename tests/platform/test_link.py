@@ -113,6 +113,7 @@ class TestBandLinkConnection:
             on_reconnect=link._on_reconnected,
             on_disconnect=link._on_disconnected,
             conflict_policy=ConflictPolicy.REJECT,
+            on_transport_stopped=link._record_transport_stopped,
         )
         mock_ws_client.__aenter__.assert_called_once()
         mock_ws_client.join_agent_control_channel.assert_called_once_with(
