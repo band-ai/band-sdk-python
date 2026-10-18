@@ -90,7 +90,8 @@ class TestOmpRoomAsk:
             assert not failure_reports(tools)
             first_frames = await ask_frames(ask_adapter)
             [response] = [
-                frame for frame in first_frames
+                frame
+                for frame in first_frames
                 if frame["type"] == "extension_ui_response"
             ]
             assert response["id"] == "ask-1"
@@ -112,7 +113,10 @@ class TestOmpRoomAsk:
                     ask_adapter, resumed, bootstrap=False, content="Use SQLite for Dev."
                 )
             assert ask_adapter._rooms["room-123"].runtime is runtime
-            assert resumed.messages_sent[0]["content"] == "The answer resumed this session."
+            assert (
+                resumed.messages_sent[0]["content"]
+                == "The answer resumed this session."
+            )
             assert resumed.turn.replied
             frames = await ask_frames(ask_adapter)
             assert len([frame for frame in frames if frame["type"] == "prompt"]) == 2

@@ -11,7 +11,9 @@ from band.integrations.ompwire import OmpAskAnswer, OmpUIRequest, OmpUIResponse
 
 class TestOmpAskWire:
     @pytest.mark.parametrize("recommended", [-1, 0.5, 8])
-    def test_numeric_recommendations_do_not_break_the_reader(self, recommended: float) -> None:
+    def test_numeric_recommendations_do_not_break_the_reader(
+        self, recommended: float
+    ) -> None:
         request = OmpUIRequest.model_validate(
             {
                 "id": "ask-1",

@@ -78,12 +78,16 @@ class AskPeer(Peer):
 
     def handle(self, frame: Frame) -> None:
         if frame.type == "set_ask_dialog":
-            self.frames.append(cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True)))
+            self.frames.append(
+                cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True))
+            )
             self.dialog_enabled = self.scenario != "refused-dialog"
             self.respond(frame, {"enabled": self.dialog_enabled})
             return
         if frame.type in {"extension_ui_response", "host_tool_result"}:
-            self.frames.append(cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True)))
+            self.frames.append(
+                cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True))
+            )
             if self.held is not None:
                 self.respond(self.held)
                 self.held = None

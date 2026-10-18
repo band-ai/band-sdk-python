@@ -21,7 +21,9 @@ from band.integrations.ompwire import (
 @pytest.mark.asyncio
 class TestOmpAskShutdown:
     @pytest.mark.parametrize("scenario", ["ask-on-abort", "tool-on-abort"])
-    async def test_callbacks_arriving_during_shutdown_never_run(self, scenario: str) -> None:
+    async def test_callbacks_arriving_during_shutdown_never_run(
+        self, scenario: str
+    ) -> None:
         client = OmpRpcClient(
             (sys.executable, "-u", "-m", "tests.integrations.ompaskpeer", scenario)
         )
@@ -45,7 +47,9 @@ class TestOmpAskShutdown:
             async with asyncio.timeout(5):
                 await client.start()
                 running = asyncio.create_task(
-                    client.prompt("first", on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+                    client.prompt(
+                        "first", on_event=on_event, on_tool=on_tool, on_ui=on_ui
+                    )
                 )
                 await yielded.wait()
                 running.cancel()
