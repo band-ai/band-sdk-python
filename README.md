@@ -255,7 +255,11 @@ healthy = status.running and status.connected
 for room in status.rooms:
     logger.info(
         "Room %s member=%s routed=%s unsettled=%s execution=%s",
-        room.room_id, room.member, room.routed, room.unsettled, room.state,
+        room.room_id,
+        room.member,
+        room.routed,
+        room.unsettled,
+        room.state,
     )
 ```
 
