@@ -23,7 +23,9 @@ from tests.runtime.helpers import ROOM_ID
 
 class TestOwnedDetail:
     async def test_real_tools_observer_reports_canonical_wire_detail(
-        self, execution: Callable[..., ExecutionContext], activity_platform: ActivityPlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
     ) -> None:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
@@ -47,7 +49,9 @@ class TestOwnedDetail:
 
     @pytest.mark.looptime
     async def test_settled_owner_remains_authoritative_and_transient_tools_are_quiet(
-        self, execution: Callable[..., ExecutionContext], activity_platform: ActivityPlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
     ) -> None:
         release = asyncio.Event()
         captured: list[AgentTools] = []
@@ -86,7 +90,9 @@ class TestOwnedDetail:
         assert activity_platform.activity_bodies == before
 
     async def test_queued_observation_is_rechecked_after_stop_and_replacement(
-        self, execution: Callable[..., ExecutionContext], activity_platform: ActivityPlatform
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
     ) -> None:
         captured: list[AgentTools] = []
         release = asyncio.Event()
