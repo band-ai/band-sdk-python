@@ -152,6 +152,8 @@ class TestACPPreflight:
     async def test_timeout_is_a_failure_and_closes_the_runtime(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Windows' native timer resolution can exceed this virtual deadline.
+        monkeypatch.setattr(asyncio.get_running_loop(), "_clock_resolution", 1e-6)
         adapter = ACPClientAdapter(ACPClientAdapterConfig(command=("configured-acp",)))
         spawn = ProbeSpawn()
         spawn.connection.initialize.side_effect = spawn.hold_initialize
