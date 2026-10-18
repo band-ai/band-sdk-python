@@ -29,6 +29,7 @@ from band.integrations.crewai import (
     ReplyTracker,
     build_band_crewai_tools,
 )
+from band.integrations.crewai.turn import ToolTurn, settle_tool_turns, tool_turn
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import BandTool
@@ -47,15 +48,12 @@ _PROVIDER = "crewai"
 _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = ContextVar(
     "_current_room_context", default=None
 )
-
-# Per-turn tool activity: whether any tool ran and what band_send_message
-# posted. Set in on_message, written by the tool wrappers (through
-# _get_context). Shared by reference so the marks are visible across CrewAI's
-# sync-to-async tool execution boundary.
 _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
-
+_tool_turn_var: ContextVar[ToolTurn | None] = ContextVar(
+    "_crewai_tool_turn", default=None
+)
 
 # CrewAI offers no error type or code for an empty completion, so its message
 # is the only discriminator. One definition, matched here and faked in tests.
@@ -185,6 +183,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         self._message_history: dict[str, list[dict[str, Any]]] = {}
         self._custom_tools: list[CustomToolDef] = additional_tools or []
         self._tool_loop: asyncio.AbstractEventLoop | None = None
+        self._tool_turns: dict[str, set[ToolTurn]] = {}
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Initialize CrewAI agent after metadata is fetched."""
@@ -252,18 +251,16 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         )
 
     def _get_context(self) -> CrewAIToolContext | None:
-        """Snapshot the current room context for the shared tool builder.
-
-        Returns CrewAIToolContext when called inside ``on_message``,
-        otherwise None (which the shared wrapper translates into a
-        ``"No room context available"`` error JSON).
-        """
-        ctx = _current_room_context.get()
-        if ctx is None:
+        """Share the same admission and ownership with copied worker contexts."""
+        context = _current_room_context.get()
+        if context is None:
             return None
-        room_id, tools = ctx
+        room_id, tools = context
         return CrewAIToolContext(
-            room_id=room_id, tools=tools, reply_tracker=_reply_tracker_var.get()
+            room_id=room_id,
+            tools=tools,
+            reply_tracker=_reply_tracker_var.get(),
+            tool_turn=_tool_turn_var.get(),
         )
 
     def create_crewai_tools(self) -> list[BaseTool]:
@@ -302,28 +299,27 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             await tools.send_failure(AgentFailure(_PROVIDER, message))
             raise RuntimeError(message)
 
-        # Set context variable for tool access (thread-safe room context).
-        # Wrap in try/finally immediately to ensure cleanup even if code
-        # before the main try block raises an exception.
         reply_tracker = ReplyTracker()
-        _current_room_context.set((room_id, tools))
-        _reply_tracker_var.set(reply_tracker)
-        try:
-            await self._process_message(
-                msg=msg,
-                tools=tools,
-                history=history,
-                participants_msg=participants_msg,
-                contacts_msg=contacts_msg,
-                is_session_bootstrap=is_session_bootstrap,
-                room_id=room_id,
-                reply_tracker=reply_tracker,
-            )
-        finally:
-            # Clear context after processing to prevent stale context in async
-            # environments with task reuse
-            _current_room_context.set(None)
-            _reply_tracker_var.set(None)
+        async with tool_turn(self._tool_turns, room_id, tools) as turn:
+            room_token = _current_room_context.set((room_id, tools))
+            reply_token = _reply_tracker_var.set(reply_tracker)
+            turn_token = _tool_turn_var.set(turn)
+            try:
+                await self._process_message(
+                    msg=msg,
+                    tools=tools,
+                    history=history,
+                    participants_msg=participants_msg,
+                    contacts_msg=contacts_msg,
+                    is_session_bootstrap=is_session_bootstrap,
+                    room_id=room_id,
+                    reply_tracker=reply_tracker,
+                    tool_turn=turn,
+                )
+            finally:
+                _tool_turn_var.reset(turn_token)
+                _reply_tracker_var.reset(reply_token)
+                _current_room_context.reset(room_token)
 
     async def _process_message(
         self,
@@ -336,6 +332,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         is_session_bootstrap: bool,
         room_id: str,
         reply_tracker: ReplyTracker,
+        tool_turn: ToolTurn,
     ) -> None:
         """Internal message processing logic."""
         assert self._crewai_agent is not None, "on_message already checked this"
@@ -397,8 +394,10 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         # per-turn. Proper per-turn capture is deferred — don't add emit_usage here.
         try:
             prompt = "\n\n".join(sections)
-            result = await self._kickoff_with_empty_response_retry(
-                self._crewai_agent, prompt, reply_tracker, room_id
+            result = await tool_turn.execute(
+                lambda: self._kickoff_with_empty_response_retry(
+                    self._crewai_agent, prompt, reply_tracker, room_id, tool_turn
+                )
             )
 
         except Exception:
@@ -434,9 +433,14 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up message history when agent leaves a room."""
+        await settle_tool_turns(self._tool_turns, room_id=room_id)
         if room_id in self._message_history:
             del self._message_history[room_id]
             logger.debug("Room %s: Cleaned up CrewAI session", room_id)
+
+    async def cleanup_all(self) -> None:
+        """Keep resources owned until native execution and tool work settle."""
+        await settle_tool_turns(self._tool_turns)
 
     async def _kickoff_with_empty_response_retry(
         self,
@@ -444,9 +448,12 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         prompt: str,
         reply_tracker: ReplyTracker,
         room_id: str,
+        tool_turn: ToolTurn | None = None,
     ) -> Any:
         """Retry an empty kickoff once only when no tool activity was recorded."""
         for attempt in range(2):
+            if tool_turn is not None:
+                tool_turn.check_active()
             try:
                 result = await agent.kickoff_async(prompt)
             except Exception as exc:

@@ -69,6 +69,7 @@ from band.core.types import (
     PlatformMessage,
     metadata_to_dict,
 )
+from band.integrations.crewai.turn import ToolTurn, settle_tool_turns, tool_turn
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -551,6 +552,7 @@ class CrewAIFlowCustomTools:
         custom_tools: Mapping[str, CustomToolDef],
         tools: AgentToolsProtocol,
         features: AdapterFeatures,
+        tool_turn: ToolTurn | None = None,
     ) -> None:
         from band.integrations.crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
             EmitToolCallsReporter,
@@ -559,6 +561,7 @@ class CrewAIFlowCustomTools:
         self._custom_tools = custom_tools
         self._tools = tools
         self._reporter = EmitToolCallsReporter(features)
+        self._tool_turn = tool_turn
 
     def __dir__(self) -> list[str]:
         return sorted({*super().__dir__(), *self._custom_tools})
@@ -595,6 +598,17 @@ class CrewAIFlowCustomTools:
         if tool is None:
             raise ValueError(f"Unknown custom tool: {name}")
         input_data = dict(arguments or kwargs)
+
+        async def invoke() -> Any:
+            return await self._execute_tool(name, tool, input_data)
+
+        if self._tool_turn is None:
+            return await invoke()
+        return await self._tool_turn.run_tool(invoke)
+
+    async def _execute_tool(
+        self, name: str, tool: CustomToolDef, input_data: dict[str, Any]
+    ) -> Any:
         await self._report_call(name, input_data)
         try:
             result = await execute_custom_tool(
@@ -649,6 +663,7 @@ class CrewAIFlowRuntimeTools:
         features: AdapterFeatures,
         custom_tools: Mapping[str, CustomToolDef],
         fallback_loop: asyncio.AbstractEventLoop | None,
+        tool_turn: ToolTurn | None = None,
     ) -> None:
         self._room_id = room_id
         self._agent_name = agent_name
@@ -664,8 +679,10 @@ class CrewAIFlowRuntimeTools:
             custom_tools=self._custom_tool_defs,
             tools=tools,
             features=features,
+            tool_turn=tool_turn,
         )
         self._fallback_loop = fallback_loop
+        self._tool_turn = tool_turn
 
     @property
     def room_id(self) -> str:
@@ -793,7 +810,9 @@ class CrewAIFlowRuntimeTools:
             exclude_tools=self._features.exclude_tools,
             include_categories=self._features.include_categories,
         )
-        ctx = CrewAIToolContext(room_id=self._room_id, tools=self._tools)
+        ctx = CrewAIToolContext(
+            room_id=self._room_id, tools=self._tools, tool_turn=self._tool_turn
+        )
         reporter = CrewAIFlowSubCrewReporter(
             executor=self._executor,
             run_id=self._run_id,
@@ -1677,6 +1696,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         self._custom_tools = custom_tools_by_name
 
         self._tool_loop: asyncio.AbstractEventLoop | None = None
+        self._tool_turns: dict[str, set[ToolTurn]] = {}
 
         # Per-room async locks and transient caches. Cleared on on_cleanup.
         self._room_locks: dict[str, RoomLockEntry] = {}
@@ -1702,11 +1722,16 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         entry = await self._acquire_room_lock_entry(room_id, cleanup_requested=True)
         try:
             async with entry.lock:
+                await settle_tool_turns(self._tool_turns, room_id=room_id)
                 clear_room = getattr(self._state_source, "clear_room", None)
                 if callable(clear_room):
                     clear_room(room_id, self.metadata_namespace)
         finally:
             await self._release_room_lock_entry(room_id, entry)
+
+    async def cleanup_all(self) -> None:
+        """Retain native Flow and tool work until cleanup can safely finish."""
+        await settle_tool_turns(self._tool_turns)
 
     # ------------------------------------------------------------------
     # Internal accessors
@@ -1766,7 +1791,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
 
         entry = await self._acquire_room_lock_entry(room_id)
         try:
-            async with entry.lock:
+            async with (
+                entry.lock,
+                tool_turn(self._tool_turns, room_id, tools) as turn,
+            ):
                 await self._process_one_turn(
                     msg=msg,
                     tools=tools,
@@ -1774,6 +1802,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                     participants_msg=participants_msg,
                     contacts_msg=contacts_msg,
                     room_id=room_id,
+                    tool_turn=turn,
                 )
         finally:
             await self._release_room_lock_entry(room_id, entry)
@@ -1787,6 +1816,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         participants_msg: str | None,
         contacts_msg: str | None,
         room_id: str,
+        tool_turn: ToolTurn,
     ) -> None:
         run_id = msg.id
         executor = SideEffectExecutor(
@@ -1996,11 +2026,12 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             features=self.features,
             custom_tools=self._custom_tools,
             fallback_loop=self._tool_loop,
+            tool_turn=tool_turn,
         )
         token = _current_flow_runtime.set(runtime)
         try:
             try:
-                result = await flow.kickoff_async(inputs)
+                result = await tool_turn.execute(lambda: flow.kickoff_async(inputs))
             except Exception as exc:
                 logger.exception("kickoff_async raised")
                 await self._safe_record_failed(
