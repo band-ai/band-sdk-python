@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -17,12 +15,9 @@ from acp.schema import SessionConfigOptionSelect, ToolCallUpdate
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.client.streaming import ControlMode
 from band.core.model_catalog import ModelSelection
-from band.core.retention import ReleaseCause, RoomRetentionConfig
+from band.core.retention import ReleaseCause
 from band.integrations.acp import client_runtime
-from band.integrations.acp.client_adapter import (
-    ACPClientAdapter,
-    ACPClientAdapterConfig,
-)
+from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.model_selection import MODEL_CATEGORY
@@ -47,8 +42,6 @@ from tests.integrations.acp.acp_toolkit.agent import (
 )
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
-# A transition bound short enough that waiting it out costs nothing.
-SHORT_TRANSITION_S = 0.05
 # A guard on a wait that should finish at once, so a hang fails clearly.
 TEST_GUARD_S = 5
 
@@ -111,14 +104,6 @@ def question_token(reply: Reply) -> str:
     """The token of the one question decision ``reply`` asked the room."""
     [prompt] = questions(reply)
     return decision_token(prompt)
-
-
-def stop_budget() -> ACPClientAdapterConfig:
-    """Band tools on, with a transition bound short enough to outlast."""
-    return fake_agent_config(
-        inject_band_tools=True,
-        retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S),
-    )
 
 
 def holds_prompt(agent: FakeACPAgent, number: int) -> Gate:
@@ -276,8 +261,3 @@ def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
         for record in caplog.records
         if record.name == client_runtime.__name__ and record.levelno >= logging.WARNING
     ]
-
-
-def terminate_pid(pid: int) -> None:
-    with suppress(ProcessLookupError, OSError):
-        os.kill(pid, signal.SIGTERM)
