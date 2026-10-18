@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.client.rest import AsyncRestClient
 from band.client.streaming import DeliveryStatus
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
@@ -28,8 +28,6 @@ from band.platform.message_lifecycle import (
 ROOM_ID = "room-1"
 MESSAGE_ID = "msg-1"
 PEER_URL = "http://peer.test"
-# Requests the generated client spends on one logical write that keeps answering 5xx.
-HTTP_ATTEMPTS = DEFAULT_REQUEST_OPTIONS["max_retries"] + 1
 
 
 @dataclass(frozen=True)
@@ -89,6 +87,7 @@ class SettlementPeer:
 
     def __init__(self) -> None:
         self.reply: Reply | None = None
+        self.replies: list[Reply] = []
         self.writes: list[str] = []
         self.arrived = asyncio.Event()
         self.app = Starlette(
@@ -98,12 +97,13 @@ class SettlementPeer:
     async def respond(self, request: Request) -> Response:
         self.writes.append(request.url.path.split("/messages/")[1])
         self.arrived.set()
-        if self.reply is None:
+        reply = self.replies.pop(0) if self.replies else self.reply
+        if reply is None:
             await asyncio.Event().wait()
             raise AssertionError("an unanswered request was released")
         return Response(
-            self.reply.body,
-            status_code=self.reply.status,
+            reply.body,
+            status_code=reply.status,
             media_type="application/json",
         )
 

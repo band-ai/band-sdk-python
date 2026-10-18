@@ -8,7 +8,7 @@ from band_rest.core import ParsingError
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
 from tests.platform.settlement.kit import (
-    HTTP_ATTEMPTS,
+    MISSING_ATTEMPT,
     Reply,
     SettlementPeer,
     Terminal,
@@ -31,14 +31,14 @@ class TestUnconfirmedFailures:
 
         assert await terminal.detailed(link) is SettlementResult.UNCONFIRMED
 
-    async def test_a_retryable_status_is_retried_inside_one_logical_write(
+    async def test_a_retryable_status_is_not_retried_inside_one_logical_write(
         self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
     ) -> None:
         settlement_peer.reply = Reply(503)
 
         await terminal.detailed(link)
 
-        assert settlement_peer.writes == [terminal.write] * HTTP_ATTEMPTS
+        assert settlement_peer.writes == [terminal.write]
 
     async def test_a_transport_failure_is_unconfirmed(self, terminal: Terminal) -> None:
         async with refused_rest_client() as rest:
@@ -58,3 +58,11 @@ class TestUnconfirmedFailures:
         monkeypatch.setattr(raw, f"mark_agent_message_{terminal.action}", unparsable)
 
         assert await terminal.detailed(link) is SettlementResult.UNCONFIRMED
+
+    async def test_a_lost_success_is_not_retried_into_a_missing_attempt_refusal(
+        self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
+    ) -> None:
+        settlement_peer.replies = [Reply(503), MISSING_ATTEMPT]
+
+        assert await terminal.detailed(link) is SettlementResult.UNCONFIRMED
+        assert settlement_peer.writes == [terminal.write]

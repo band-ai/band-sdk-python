@@ -25,11 +25,11 @@ def capture_lifecycle_log(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG, logger=LIFECYCLE_LOGGER)
 
 
-def warning_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+def outcome_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [
-        record.getMessage()
+        record
         for record in caplog.records
-        if record.name == LIFECYCLE_LOGGER and record.levelno >= logging.WARNING
+        if record.name == LIFECYCLE_LOGGER and " ended " in record.getMessage()
     ]
 
 
@@ -54,13 +54,16 @@ class TestOutageLogging:
 
         await terminal.detailed(link)
 
-        assert warning_lines(caplog) == []
+        assert [record.levelno for record in outcome_records(caplog)] == [logging.DEBUG]
 
         await oldest.detailed(link)
 
-        lines = warning_lines(caplog)
-        assert lines
-        assert all("oldest" in line for line in lines)
+        records = outcome_records(caplog)
+        assert [record.levelno for record in records] == [
+            logging.DEBUG,
+            logging.WARNING,
+        ]
+        assert "oldest" in records[-1].getMessage()
 
     async def test_the_first_unconfirmed_write_of_an_intent_warns(
         self,
@@ -73,9 +76,11 @@ class TestOutageLogging:
 
         await terminal.detailed(link)
 
-        lines = warning_lines(caplog)
-        assert lines
-        assert all(MESSAGE_ID in line for line in lines)
+        warnings = [
+            record for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert MESSAGE_ID in warnings[0].getMessage()
 
     async def test_repeated_unconfirmed_writes_of_the_same_intent_stay_quiet(
         self,
@@ -91,7 +96,10 @@ class TestOutageLogging:
         await terminal.detailed(link)
         await terminal.detailed(link)
 
-        assert warning_lines(caplog) == []
+        assert [record.levelno for record in outcome_records(caplog)] == [
+            logging.DEBUG,
+            logging.DEBUG,
+        ]
 
     async def test_an_outage_after_a_recovered_write_warns_again(
         self,
@@ -109,4 +117,26 @@ class TestOutageLogging:
         settlement_peer.reply = OUTAGE
         await terminal.detailed(link)
 
-        assert warning_lines(caplog)
+        assert [record.levelno for record in outcome_records(caplog)] == [
+            logging.WARNING
+        ]
+
+    async def test_a_changed_failure_cause_warns_again(
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        settlement_peer.reply = OUTAGE
+        await terminal.detailed(link)
+        caplog.clear()
+
+        settlement_peer.reply = Reply(401)
+        await terminal.detailed(link)
+        await terminal.detailed(link)
+
+        assert [record.levelno for record in outcome_records(caplog)] == [
+            logging.WARNING,
+            logging.DEBUG,
+        ]

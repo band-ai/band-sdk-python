@@ -13,12 +13,17 @@ from tests.platform.settlement.kit import (
     SettlementPeer,
     Terminal,
     accepted,
+    error_body,
 )
 
 # Each outcome's reply, the result it settles to and the bool it projects to.
 PROJECTIONS = {
     "accepted": (accepted(DeliveryStatus.PROCESSED), SettlementResult.ACCEPTED, True),
-    "not-found": (Reply(404), SettlementResult.NOT_FOUND, False),
+    "not-found": (
+        Reply.of_json(404, error_body("not_found")),
+        SettlementResult.NOT_FOUND,
+        False,
+    ),
     "rejected": (MISSING_ATTEMPT, SettlementResult.REJECTED, False),
     "unconfirmed": (Reply(401), SettlementResult.UNCONFIRMED, False),
 }

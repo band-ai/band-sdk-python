@@ -17,7 +17,9 @@ from typing import Any, TypeVar
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
 from band_rest.core.parse_error import ParsingError
+from band_rest.core.request_options import RequestOptions
 from band_rest.types.chat_message import ChatMessage
+from band_rest.types.error import Error as PlatformError
 from band_rest.types.validation_error import ValidationError as ErrorEnvelope
 from pydantic import ValidationError as ModelValidationError
 
@@ -38,6 +40,9 @@ ResponseData = TypeVar("ResponseData")
 # JSON Pointer (the agent API's `ValidationError` schema).
 VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
+NOT_FOUND_ERROR_CODE = "not_found"
+# Retrying a committed write can turn a lost success into a missing-attempt refusal.
+TERMINAL_REQUEST_OPTIONS: RequestOptions = {"max_retries": 0}
 
 
 def _accepted_response(
@@ -73,6 +78,14 @@ def _names_missing_attempt(body: object) -> bool:
     )
 
 
+def _names_missing_resource(body: object) -> bool:
+    try:
+        error = PlatformError.model_validate(body).error
+    except ModelValidationError:
+        return False
+    return error.code == NOT_FOUND_ERROR_CODE
+
+
 def _failure_result(error: Exception) -> SettlementResult:
     """Classify a failed terminal write from the public status and error body.
 
@@ -82,7 +95,7 @@ def _failure_result(error: Exception) -> SettlementResult:
     if not isinstance(error, ApiError | ParsingError):
         return SettlementResult.UNCONFIRMED
     match error.status_code:
-        case HTTPStatus.NOT_FOUND:
+        case HTTPStatus.NOT_FOUND if _names_missing_resource(error.body):
             return SettlementResult.NOT_FOUND
         case HTTPStatus.UNPROCESSABLE_ENTITY if _names_missing_attempt(error.body):
             return SettlementResult.REJECTED
@@ -105,7 +118,7 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
 
 
 ACTIONABLE_PAGE_SIZE = 100
-# Diagnostic suppression must stay bounded when pending writes are abandoned.
+# Diagnostic suppression stays bounded; evicted intents warn again on retry.
 UNCONFIRMED_WRITE_LIMIT = 256
 
 
@@ -130,9 +143,9 @@ class MessageLifecycle:
         self._activity_report_failing = False
         # Recent unconfirmed intents suppress repeat warnings without retaining
         # abandoned writes for the lifetime of the link.
-        self._unconfirmed_writes: OrderedDict[tuple[str, DeliveryStatus], None] = (
-            OrderedDict()
-        )
+        self._unconfirmed_writes: OrderedDict[
+            tuple[str, DeliveryStatus], tuple[type[Exception], int | None]
+        ] = OrderedDict()
 
     async def mark_processing(
         self, rest: AsyncRestClient, room_id: str, message_id: str
@@ -179,10 +192,12 @@ class MessageLifecycle:
         """Write the processed mark once and report what it established."""
         logger.debug("Marking message %s as processed", message_id)
         return await self._settle(
-            rest.agent_api_messages.with_raw_response.mark_agent_message_processed(
-                chat_id=room_id,
-                id=message_id,
-                request_options=DEFAULT_REQUEST_OPTIONS,
+            lambda: (
+                rest.agent_api_messages.with_raw_response.mark_agent_message_processed(
+                    chat_id=room_id,
+                    id=message_id,
+                    request_options=TERMINAL_REQUEST_OPTIONS,
+                )
             ),
             room_id=room_id,
             message_id=message_id,
@@ -194,18 +209,17 @@ class MessageLifecycle:
     ) -> SettlementResult:
         """Write the failed mark once and report what it established."""
         error = error.strip() or "Unknown error"
-        logger.log(
-            self._write_level(message_id, DeliveryStatus.FAILED),
+        logger.debug(
             "Marking message %s as failed: %s",
             message_id,
             error,
         )
         return await self._settle(
-            rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
+            lambda: rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
                 chat_id=room_id,
                 id=message_id,
                 error=error,
-                request_options=DEFAULT_REQUEST_OPTIONS,
+                request_options=TERMINAL_REQUEST_OPTIONS,
             ),
             room_id=room_id,
             message_id=message_id,
@@ -214,14 +228,14 @@ class MessageLifecycle:
 
     async def _settle(
         self,
-        write: Awaitable[AsyncHttpResponse[Any]],
+        write: Callable[[], Awaitable[AsyncHttpResponse[Any]]],
         *,
         room_id: str,
         message_id: str,
         action: DeliveryStatus,
     ) -> SettlementResult:
         try:
-            _accepted_response(await write, stopped_room_id=room_id)
+            _accepted_response(await write(), stopped_room_id=room_id)
         except RoomExecutionStoppedError:
             raise
         except Exception as e:  # noqa: BLE001 -- a failed write is an outcome, never a crash of the turn/link
@@ -239,9 +253,10 @@ class MessageLifecycle:
         error: Exception,
     ) -> None:
         unconfirmed = result is SettlementResult.UNCONFIRMED
-        level = (
-            self._write_level(message_id, action) if unconfirmed else logging.WARNING
-        )
+        key = (message_id, action)
+        cause = (type(error), getattr(error, "status_code", None))
+        repeated = unconfirmed and self._unconfirmed_writes.get(key) == cause
+        level = logging.DEBUG if repeated else logging.WARNING
         logger.log(
             level,
             "Marking message %s as %s ended %s: %s",
@@ -251,18 +266,12 @@ class MessageLifecycle:
             error,
         )
         if unconfirmed:
-            key = (message_id, action)
-            self._unconfirmed_writes[key] = None
+            self._unconfirmed_writes[key] = cause
             self._unconfirmed_writes.move_to_end(key)
             if len(self._unconfirmed_writes) > UNCONFIRMED_WRITE_LIMIT:
                 self._unconfirmed_writes.popitem(last=False)
         else:
             self._unconfirmed_writes.pop((message_id, action), None)
-
-    def _write_level(self, message_id: str, action: DeliveryStatus) -> int:
-        """WARNING for unretained intents, DEBUG for recent unconfirmed repeats."""
-        repeats = (message_id, action) in self._unconfirmed_writes
-        return logging.DEBUG if repeats else logging.WARNING
 
     async def report_activity(
         self,
