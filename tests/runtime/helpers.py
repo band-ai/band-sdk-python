@@ -177,7 +177,13 @@ class LifecyclePlatform:
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
 
-    def add_message(self, message_id: str, *, content: str = "hello") -> None:
+    def add_message(
+        self,
+        message_id: str,
+        *,
+        content: str = "hello",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         self.messages.append(
             {
                 "id": message_id,
@@ -187,7 +193,7 @@ class LifecyclePlatform:
                 "sender_type": "User",
                 "sender_name": "User",
                 "message_type": "text",
-                "metadata": {},
+                "metadata": metadata or {},
                 "inserted_at": "2026-01-01T00:00:00Z",
                 "updated_at": "2026-01-01T00:00:00Z",
             }

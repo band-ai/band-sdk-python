@@ -17,13 +17,13 @@ class TestStopNotification:
         stopping_adapter: StoppingAdapter,
     ) -> None:
         runtime, ctx = stopping_room
-        scope = await ctx._begin_scope()
-        assert scope is not None
-        ctx.observe_platform_stop(scope)
-        while not stopping_adapter.heard:
-            await asyncio.sleep(0)
+        async with ctx._turn_scope() as scope:
+            assert scope is not None
+            ctx.observe_platform_stop(scope)
+            while not stopping_adapter.heard:
+                await asyncio.sleep(0)
 
-        await runtime.handle_control(control_payload(ControlMode.STOP))
+            await runtime.handle_control(control_payload(ControlMode.STOP))
 
         assert stopping_adapter.heard == [("room-1", ControlMode.STOP)]
         assert ctx.is_stopped
@@ -34,14 +34,15 @@ class TestStopNotification:
         stopping_adapter: StoppingAdapter,
     ) -> None:
         runtime, ctx = stopping_room
-        observed = await ctx._begin_scope()
-        assert observed is not None
-        stopping_adapter.release.set()
-        ctx.observe_platform_stop(observed)
-        assert observed.observer_task is not None
-        await observed.observer_task
-        assert await ctx._begin_scope() is not None
+        async with ctx._turn_scope() as observed:
+            assert observed is not None
+            stopping_adapter.release.set()
+            ctx.observe_platform_stop(observed)
+            assert observed.observer_task is not None
+            await observed.observer_task
+        async with ctx._turn_scope() as newer:
+            assert newer is not None
 
-        await runtime.handle_control(control_payload(ControlMode.STOP))
+            await runtime.handle_control(control_payload(ControlMode.STOP))
 
         assert stopping_adapter.heard == [("room-1", ControlMode.STOP)] * 2

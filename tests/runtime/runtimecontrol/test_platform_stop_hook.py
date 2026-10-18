@@ -34,13 +34,12 @@ class TestPlatformStopHook:
         ctx = await runtime.rooms.admit("room-1")
         assert isinstance(ctx, ExecutionContext)
         try:
-            await ctx._begin_scope()
-            scope = ctx.current_scope
-            assert scope is not None
-            ctx.observe_platform_stop(scope)
-            assert scope.observer_task is not None
-            await scope.observer_task
-            assert heard == [("room-1", ControlMode.STOP)]
-            assert not ctx.is_stopped
+            async with ctx._turn_scope() as scope:
+                assert scope is not None
+                ctx.observe_platform_stop(scope)
+                assert scope.observer_task is not None
+                await scope.observer_task
+                assert heard == [("room-1", ControlMode.STOP)]
+                assert not ctx.is_stopped
         finally:
             await ctx.stop()
