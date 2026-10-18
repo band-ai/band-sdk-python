@@ -30,6 +30,7 @@ class PipeProcess:
         self.agent_connected = asyncio.Event()
         self.holder_ready = asyncio.Event()
         self.closing = asyncio.Event()
+        self.transport_closing = asyncio.Event()
         self.exited = asyncio.Event()
         self.stdout_closed = asyncio.Event()
         self.stdout_read = asyncio.Event()
@@ -38,6 +39,7 @@ class PipeProcess:
         self._spawn_allowed.set()
         self._exit_requested = asyncio.Event()
         self._holder_released = asyncio.Event()
+        self._holder_creation_settled = asyncio.Event()
         self._transport: asyncio.SubprocessTransport | None = None
         self.adapter: ACPClientAdapter[Any]
         self._connections: list[asyncio.Task[None]] = []
@@ -73,6 +75,7 @@ class PipeProcess:
                     await self._send(writer, PipeCommand.EXIT)
                 case PipeRole.HOLDER:
                     self.holder_ready.set()
+                    self._holder_creation_settled.set()
                     await self._holder_released.wait()
                     await self._send(writer, PipeCommand.RELEASE)
             await reader.read()
@@ -105,6 +108,7 @@ class PipeProcess:
         def exited() -> None:
             on_exit()
             self.exited.set()
+            self._holder_creation_settled.set()
 
         def pipe_closed(fd: int, error: Exception | None) -> None:
             on_pipe(fd, error)
@@ -136,6 +140,9 @@ class PipeProcess:
                 yield process
             finally:
                 self.closing.set()
+                # Transport shutdown must not kill a delayed holder creator.
+                await self._holder_creation_settled.wait()
+                self.transport_closing.set()
 
     def begin_start(self) -> asyncio.Task[None]:
         return self._start(send_to(self.adapter, DEFAULT_ROOM))

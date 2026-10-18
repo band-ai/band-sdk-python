@@ -37,6 +37,7 @@ class TestPipeFixture:
                 if cancel_start:
                     starting.cancel()
                     await peer.closing.wait()
+                    assert not peer.transport_closing.is_set()
                 raise RuntimeError("test interrupted")
 
         assert peer.holder_ready.is_set()
