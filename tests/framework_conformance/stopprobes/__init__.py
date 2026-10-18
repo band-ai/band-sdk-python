@@ -19,11 +19,10 @@ from enum import StrEnum
 
 from band.client.streaming import ControlMode
 from band.core.simple_adapter import SimpleAdapter
+from tests.adapters.waiting import until
 
-#: How long a probe waits for its turn to reach the backend, and how often it
-#: looks.
+#: A control probe fails rather than hanging if its task never becomes ready.
 STARTUP_TIMEOUT_SECONDS = 5.0
-STARTUP_POLL_SECONDS = 0.001
 
 #: The controls that end a running turn.
 ENDING_CONTROLS = [ControlMode.STOP, ControlMode.INTERRUPT]
@@ -61,10 +60,8 @@ def waiting_on_stop(task: asyncio.Task[None]) -> bool:
 
 
 async def wait_until(condition: Callable[[], bool]) -> None:
-    """Let the turn run until ``condition`` holds."""
-    async with asyncio.timeout(STARTUP_TIMEOUT_SECONDS):
-        while not condition():
-            await asyncio.sleep(STARTUP_POLL_SECONDS)
+    """Observe readiness through the test suite's bounded state waiter."""
+    await until(condition, failure="backend stop probe did not become ready")
 
 
 async def end_turn(

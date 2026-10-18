@@ -18,7 +18,6 @@ from tests.framework_conformance.stopprobes import (
     StopCase,
     end_turn,
     stop_room,
-    wait_until,
 )
 
 if TYPE_CHECKING:
@@ -81,7 +80,7 @@ async def stop_running_turn(room: ClaudeRoom, mode: ControlMode) -> None:
     working = Hold()
     room.claude.script([working])
     turn = room.send_in_background("work")
-    await wait_until(working.reached.is_set)
+    await working.arrived()
     await end_turn(room.adapter, turn, room.room_id, mode)
 
 

@@ -91,7 +91,6 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.retention import (
-    ReleaseCause,
     RoomRetentionConfig,
     require_disabled_retention,
 )
@@ -1023,9 +1022,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         session = self._session_manager.session(room_id)
         if session is None:
             return
+        generation = session.generation
         session.recover("Turn stopped before its result")
-        if session.client is not None:
-            await session.release(ReleaseCause.RECOVERY)
+        await session.retained.wait_released(generation=generation)
 
     @asynccontextmanager
     async def _turn_lease(

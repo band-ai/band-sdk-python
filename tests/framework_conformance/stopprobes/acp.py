@@ -198,7 +198,7 @@ async def next_turn_waits_for_the_previous_stop() -> list[str]:
         with suppress(asyncio.CancelledError):
             await turn
         await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
-        await wait_until(sent.is_set)
+        await sent.wait()
         nxt_tools = FakeAgentTools()
         nxt = asyncio.create_task(adapter.on_event(turn_input(nxt_tools)))
         try:
