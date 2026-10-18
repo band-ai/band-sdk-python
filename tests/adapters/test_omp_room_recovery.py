@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -50,12 +51,30 @@ class TestOmpRoomRecovery:
         )
         return tools
 
-    @pytest.mark.parametrize("select_model", [False, True])
+    @pytest.mark.parametrize(
+        ("select_model", "wrapped_launcher"),
+        [(False, False), (True, False), (True, True)],
+    )
     async def test_next_input_retires_failed_close_before_reopening(
-        self, tmp_path: Path, monkeypatch, select_model: bool
+        self, tmp_path: Path, monkeypatch, select_model: bool, wrapped_launcher: bool
     ) -> None:
         monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", AsyncMock())
         adapter, receipts = catalog_adapter(tmp_path, "room-recovery")
+        if wrapped_launcher:
+            adapter.config = adapter.config.model_copy(
+                update={
+                    "command": (
+                        sys.executable,
+                        "-u",
+                        "-c",
+                        (
+                            "import subprocess, sys; "
+                            "raise SystemExit(subprocess.call(sys.argv[1:]))"
+                        ),
+                        *adapter.config.command,
+                    )
+                }
+            )
         try:
             first = await self._turn(adapter, bootstrap=True)
             assert first.chat == ["Room reply delivered"]
@@ -89,14 +108,16 @@ class TestOmpRoomRecovery:
             replacement = adapter._rooms["room-123"]
             assert replacement is not old
             if select_model:
-                replacement_process = replacement.runtime._proc
-                assert replacement_process is not None
                 observed = [
                     RoomReceipt.model_validate_json(line)
                     for line in receipts.read_text(encoding="utf-8").splitlines()
                 ]
+                # The owned launcher can have a different PID from its native peer.
+                replacement_pid = next(
+                    entry.pid for entry in reversed(observed) if entry.event == "spawn"
+                )
                 assert any(
-                    entry.pid == replacement_process.pid
+                    entry.pid == replacement_pid
                     and entry.parameters is not None
                     and entry.parameters.type == "set_model"
                     and entry.parameters.provider == "local"

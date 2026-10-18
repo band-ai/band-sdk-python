@@ -17,6 +17,7 @@ from band.core.exceptions import BandConfigError, CleanupIncompleteError
 from band.integrations.codex.winspawn import Job
 from band.integrations.ompcatalog import OmpModelListing
 from band.integrations.omprpc import OmpRpcClient
+from tests.paths import REPO_ROOT
 
 
 def catalog_adapter(
@@ -48,6 +49,10 @@ def catalog_adapter(
             env={
                 "OMP_CATALOG_RECEIPTS": str(receipts),
                 "OMP_CATALOG_SCENARIO": scenario,
+                # Python peers must remain importable from the configured workspace.
+                "PYTHONPATH": os.pathsep.join(
+                    filter(None, (str(REPO_ROOT), os.environ.get("PYTHONPATH")))
+                ),
                 **({"OPENAI_API_KEY": "explicit-provider-key"} if explicit_key else {}),
                 **(env or {}),
             },
