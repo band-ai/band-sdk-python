@@ -123,6 +123,20 @@ Only a local rejection before `query()` qualifies as `InputNotAccepted`:
 transport errors and timeouts do not establish that Claude rejected the input.
 The shared room scheduler owns later attempts.
 
+## Standalone host checks
+
+`await adapter.preflight(timeout_s=60)` handshakes a throwaway Claude Code
+process using the configured CLI path, environment, directory, plugins and
+settings sources. It needs no Band credentials, MCP server or room, and sends
+no model query. A successful initialization is not proof of account entitlement
+or inference access.
+
+The adapter retains both the SDK client and its transport before connection.
+If a timed-out or failed startup cannot finish closing within the reporting
+budget, `CleanupIncompleteError` propagates instead of an ordinary failed
+result. Call `await adapter.cleanup_all()` again to join or retry that cleanup;
+room and MCP cleanup are still attempted when probe cleanup fails.
+
 ## Room ownership
 
 Each room's session is owned through that room's residency
