@@ -388,8 +388,8 @@ class AgentTools(AgentToolsProtocol):
         return tools
 
     def register_turn_task(self, owner: TurnTask) -> None:
-        if self._scope is not None:
-            self._scope.bind(owner)
+        if self._scope is not None and self._ctx is not None:
+            self._ctx.register_turn_task(self._scope, owner)
 
     def _abort_stopped_post(self, error: RoomExecutionStoppedError) -> None:
         if self._ctx is not None and self._scope is not None:

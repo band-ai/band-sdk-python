@@ -74,6 +74,7 @@ class WorkingStateReporter:
             # Re-entrant start while active is a no-op: the signal is already
             # alive and the keep-alive task is already running.
             return
+        await self._finish_false_send()
         self._active = True
         self._started_at = asyncio.get_running_loop().time()
         await self._safe_report(True)
