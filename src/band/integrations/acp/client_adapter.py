@@ -1741,14 +1741,18 @@ class ACPClientAdapter(
             CleanupIncompleteError: A probe, room or MCP server is still closing.
             BaseExceptionGroup: Multiple owned cleanup attempts failed.
         """
-        results = await asyncio.gather(
-            super().cleanup_all(),
+        # Room shutdown must see this task to spare work requesting its own stop.
+        failures: list[BaseException] = []
+        for cleanup in (
             self._mcp.close_after(
                 self._retention.stop(), retention=self.config.retention
             ),
-            return_exceptions=True,
-        )
-        failures = [result for result in results if isinstance(result, BaseException)]
+            super().cleanup_all(),
+        ):
+            try:
+                await cleanup
+            except BaseException as error:  # noqa: BLE001 -- attempt every cleanup without discarding cancellation
+                failures.append(error)
         if len(failures) == 1:
             raise failures[0]
         if failures:
