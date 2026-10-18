@@ -11,11 +11,13 @@ they do not need to rewrite the URL. Deployments must support header authenticat
 before adopting this transport behavior.
 
 The connection-owned Phoenix logger sanitizes handshake and lifecycle records before
-handlers receive them. Records contain formatted safe text, without raw exception
-objects, socket metadata, or formatting arguments. Upgrade-error messages, codes,
+handlers receive them. Transport URLs, headers, frame payloads, identities and
+untrusted server details are omitted from dynamic diagnostic arguments. Records
+retain static lifecycle descriptions, native connection states and exception types,
+without raw exception objects, socket metadata, or formatting arguments. Upgrade-error messages, codes,
 and correlation identifiers use the same policy before becoming retained errors
 or disconnect reasons. Raw HTTP upgrade exceptions are not chained into errors
 returned to callers because they can retain response bodies.
 
-This policy does not promise to remove arbitrary credentials from application
-messages. Applications remain responsible for the content they send and log.
+Wire payloads and caller-visible errors remain unchanged. Applications remain
+responsible for logs they produce outside the connection-owned diagnostic boundary.
