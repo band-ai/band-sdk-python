@@ -1,0 +1,499 @@
+from __future__ import annotations
+
+import logging
+from typing import Any, ClassVar
+from unittest.mock import AsyncMock
+
+import band_sdk_core
+import pytest
+from opentelemetry.sdk.trace import TracerProvider
+
+from band.client.streaming import (
+    DeliveryStatus,
+    MessageCreatedPayload,
+    ParticipantAddedPayload,
+    ParticipantRemovedPayload,
+    RoomAddedPayload,
+    RoomDeletedPayload,
+    RoomRemovedPayload,
+    WebSocketClient,
+    WireEvent,
+)
+from tests.websocket.clientkit import (
+    VALID_MESSAGE_CREATED_PAYLOAD,
+    VALID_MESSAGE_UPDATED_PAYLOAD,
+    dispatch,
+)
+
+
+class TestClientPayloads:
+    async def test_skips_invalid_message_created_payload(self, caplog):
+        """Should log error and skip when message_created payload is missing required fields."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            # Missing: content, sender_id, sender_type, etc.
+            received = await dispatch(client, "message_created", {"id": "msg-123"})
+
+        assert received is None, "Callback should not be called for invalid payload"
+        assert "Invalid message_created payload" in caplog.text
+
+    async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(
+        self, caplog
+    ):
+        """A real OpenTelemetry span's traceparent reaches the real band_sdk_core
+        call, comes back on the raised ValueError, and lands on the seam's own
+        log record -- through the actual OTel propagation and band_sdk_core
+        binding, neither faked. Uses a standalone TracerProvider instance (never
+        ``trace.set_tracer_provider``), so this doesn't touch the process-global
+        provider other tests may depend on.
+        """
+        tracer = TracerProvider().get_tracer("test")
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with (
+            caplog.at_level(logging.ERROR),
+            tracer.start_as_current_span("probe") as span,
+        ):
+            span_context = span.get_span_context()
+            # Missing required fields -- a genuine band_sdk_core rejection.
+            received = await dispatch(client, "message_created", {"id": "msg-123"})
+
+        assert received is None
+        record = next(
+            r for r in caplog.records if "Invalid message_created" in r.getMessage()
+        )
+        assert record.trace_context is not None
+        assert format(span_context.trace_id, "032x") in record.trace_context
+        assert format(span_context.span_id, "016x") in record.trace_context
+
+    async def test_skips_invalid_room_added_payload(self, caplog):
+        """Should log error and skip when room_added payload is missing required fields."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            # Missing required fields: id, inserted_at, updated_at
+            received = await dispatch(client, "room_added", {"title": "Test Room"})
+
+        assert received is None, "Callback should not be called for invalid payload"
+        assert "Invalid room_added payload" in caplog.text
+
+    async def test_rejects_room_added_missing_timestamps(self, caplog):
+        """Regression test for INT-186: room_added without inserted_at/updated_at must be rejected."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            # Missing required: inserted_at, updated_at
+            received = await dispatch(
+                client, "room_added", {"id": "room-123", "title": "Test Room"}
+            )
+
+        assert received is None, "Callback should not be called without timestamps"
+        assert "Invalid room_added payload" in caplog.text
+
+    async def test_skips_invalid_room_removed_payload(self, caplog):
+        """Should log error and skip when room_removed payload is missing required fields."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            # Missing required field: id
+            received = await dispatch(client, "room_removed", {"status": "closed"})
+
+        assert received is None, "Callback should not be called for invalid payload"
+        assert "Invalid room_removed payload" in caplog.text
+
+    async def test_skips_invalid_room_deleted_payload(self, caplog):
+        """Should log error and skip when room_deleted payload is missing required fields."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            received = await dispatch(client, "room_deleted", {})
+
+        assert received is None, "Callback should not be called for invalid payload"
+        assert "Invalid room_deleted payload" in caplog.text
+
+    async def test_skips_invalid_participant_added_payload(self, caplog):
+        """Should log error and skip when participant_added payload is missing required fields."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            # Missing required fields: name, type (only id is provided)
+            received = await dispatch(client, "participant_added", {"id": "p-123"})
+
+        assert received is None, "Callback should not be called for invalid payload"
+        assert "Invalid participant_added payload" in caplog.text
+
+    async def test_skips_invalid_participant_removed_payload(self, caplog):
+        """Should log error and skip when participant_removed payload is missing required fields."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with caplog.at_level(logging.ERROR):
+            # Missing: id
+            received = await dispatch(client, "participant_removed", {})
+
+        assert received is None, "Callback should not be called for invalid payload"
+        assert "Invalid participant_removed payload" in caplog.text
+
+    async def test_accepts_valid_message_created_payload(self):
+        """Should accept valid message_created payload without raising."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client, "message_created", VALID_MESSAGE_CREATED_PAYLOAD
+        )
+        assert isinstance(received, MessageCreatedPayload)
+        assert received.id == "msg-123"
+
+    async def test_accepts_message_updated_payload_with_delivery_status(self):
+        """message_updated parses into MessageCreatedPayload and exposes delivery_status."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client, "message_updated", VALID_MESSAGE_UPDATED_PAYLOAD
+        )
+        assert isinstance(received, MessageCreatedPayload)
+        assert received.metadata is not None
+        assert received.metadata.delivery_status == {
+            "agent-123": {
+                "status": "processed",
+                "delivered_at": "2025-11-17T11:20:11.000000Z",
+                "processed_at": "2025-11-17T11:20:13.000000Z",
+                "attempts": [{"attempt_number": 1, "status": "success"}],
+            }
+        }
+
+    async def test_routes_message_created_and_updated_to_distinct_handlers(self):
+        """When both handlers are registered, each event reaches only its own one."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        created_calls: list[str] = []
+        updated_calls: list[str] = []
+
+        async def on_created(payload):
+            created_calls.append(payload.id)
+
+        async def on_updated(payload):
+            updated_calls.append(payload.id)
+
+        handlers = {"message_created": on_created, "message_updated": on_updated}
+
+        class CreatedMsg:
+            event = "message_created"
+            payload = VALID_MESSAGE_CREATED_PAYLOAD
+
+        class UpdatedMsg:
+            event = "message_updated"
+            payload = VALID_MESSAGE_UPDATED_PAYLOAD
+
+        await client._handle_events(CreatedMsg(), handlers)
+        await client._handle_events(UpdatedMsg(), handlers)
+
+        assert created_calls == ["msg-123"]
+        assert updated_calls == ["msg-123"]
+
+    def test_delivery_status_enum_matches_backend_values(self):
+        """Drift guard: these are the recipient delivery states the backend emits
+        (thenvoi-platform chat_message.ex). The barrier relies on the exact strings."""
+        assert {s.value for s in DeliveryStatus} == {
+            "delivered",
+            "processing",
+            "processed",
+            "failed",
+        }
+
+    def test_wire_event_matches_band_sdk_core_event_type(self):
+        """Drift guard: WireEvent's members through AGENT_CONTROL are meant to
+        mirror band_sdk_core.EventType's wire-name vocabulary exactly (they're
+        kept as separate literals, not derived, since EventType is an opaque
+        PyO3 type that can't be a StrEnum member's value)."""
+        core_wire_names = {
+            getattr(band_sdk_core.EventType, name).wire_name
+            for name in dir(band_sdk_core.EventType)
+            if isinstance(
+                getattr(band_sdk_core.EventType, name), band_sdk_core.EventType
+            )
+        }
+        assert core_wire_names <= {member.value for member in WireEvent}
+
+    async def test_ignores_message_updated_when_no_handler_registered(self, caplog):
+        """Back-compat: a message_updated frame is dropped (not an error) when only
+        message_created is wired up, as before the optional handler was added."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        created_calls: list[str] = []
+
+        async def on_created(payload):
+            created_calls.append(payload.id)
+
+        class UpdatedMsg:
+            event = "message_updated"
+            payload = VALID_MESSAGE_UPDATED_PAYLOAD
+
+        with caplog.at_level(logging.WARNING):
+            await client._handle_events(UpdatedMsg(), {"message_created": on_created})
+
+        assert created_calls == []  # not misrouted to the message_created handler
+
+    async def test_accepts_valid_room_added_payload(self):
+        """Should accept valid room_added payload without raising."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client,
+            "room_added",
+            {
+                "id": "room-123",
+                "title": "Test Room",
+                "task_id": None,
+                "inserted_at": "2025-11-17T09:05:35.642172Z",
+                "updated_at": "2025-11-17T09:05:35.642172Z",
+            },
+        )
+        assert isinstance(received, RoomAddedPayload)
+        assert received.id == "room-123"
+
+    async def test_accepts_valid_room_removed_payload(self):
+        """Should accept valid room_removed payload without raising."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client,
+            "room_removed",
+            {
+                "id": "room-123",
+                "title": "Test Room",
+                "task_id": "task-1",
+                "inserted_at": "2025-11-17T09:05:35Z",
+                "updated_at": "2025-11-17T11:26:59Z",
+            },
+        )
+        assert isinstance(received, RoomRemovedPayload)
+        assert received.id == "room-123"
+
+    async def test_accepts_minimal_room_removed_payload(self):
+        """Should accept room_removed with only its required fields (title/task_id optional)."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client,
+            "room_removed",
+            {
+                "id": "room-456",
+                "inserted_at": "2025-11-17T09:05:35Z",
+                "updated_at": "2025-11-17T09:05:35Z",
+            },
+        )
+        assert isinstance(received, RoomRemovedPayload)
+        assert received.id == "room-456"
+        assert received.title is None
+        assert received.task_id is None
+
+    async def test_accepts_minimal_room_deleted_payload(self):
+        """Should accept room_deleted with only required `id` field."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(client, "room_deleted", {"id": "room-789"})
+        assert isinstance(received, RoomDeletedPayload)
+        assert received.id == "room-789"
+
+    async def test_accepts_valid_participant_added_payload(self):
+        """Should accept valid participant_added payload and pass typed model to callback."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client,
+            "participant_added",
+            {
+                "id": "p-123",
+                "name": "Test Agent",
+                "type": "Agent",
+                "is_remote": True,
+                "is_external": True,
+            },
+        )
+        assert isinstance(received, ParticipantAddedPayload)
+        assert received.id == "p-123"
+        assert received.name == "Test Agent"
+        assert received.is_remote is True
+        assert received.is_external is True
+
+    async def test_accepts_valid_participant_removed_payload(self):
+        """Should accept valid participant_removed payload and pass typed model to callback."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client,
+            "participant_removed",
+            {"id": "p-123", "name": "Test Agent", "type": "Agent"},
+        )
+        assert isinstance(received, ParticipantRemovedPayload)
+        assert received.id == "p-123"
+
+    async def test_join_room_participants_channel_allows_omitted_room_deleted_handler(
+        self,
+    ):
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        client.client = AsyncMock()
+
+        async def on_participant_added(payload):
+            pass
+
+        async def on_participant_removed(payload):
+            pass
+
+        await client.join_room_participants_channel(
+            "room-123",
+            on_participant_added=on_participant_added,
+            on_participant_removed=on_participant_removed,
+        )
+
+        client.client.subscribe_to_topic.assert_awaited_once()
+        topic, message_handler = client.client.subscribe_to_topic.await_args.args
+        assert topic == "room_participants:room-123"
+
+        class MockMessage:
+            event = "room_deleted"
+            payload: ClassVar[dict[str, Any]] = {"id": "room-123"}
+
+        await message_handler(MockMessage())
+
+    async def test_join_room_participants_channel_routes_room_deleted_handler(self):
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        client.client = AsyncMock()
+        received_payload = None
+
+        async def on_participant_added(payload):
+            pass
+
+        async def on_participant_removed(payload):
+            pass
+
+        async def on_room_deleted(payload):
+            nonlocal received_payload
+            received_payload = payload
+
+        await client.join_room_participants_channel(
+            "room-123",
+            on_participant_added=on_participant_added,
+            on_participant_removed=on_participant_removed,
+            on_room_deleted=on_room_deleted,
+        )
+
+        _, message_handler = client.client.subscribe_to_topic.await_args.args
+
+        class MockMessage:
+            event = "room_deleted"
+            payload: ClassVar[dict[str, Any]] = {"id": "room-123"}
+
+        await message_handler(MockMessage())
+
+        assert isinstance(received_payload, RoomDeletedPayload)
+        assert received_payload.id == "room-123"
+
+    @pytest.mark.parametrize(
+        ("event_name", "base_payload", "expected_type"),
+        [
+            pytest.param(
+                "message_created",
+                {
+                    "id": "msg-123",
+                    "content": "hi",
+                    "message_type": "text",
+                    "metadata": {
+                        "mentions": [{"id": "a-1", "handle": "bot", "name": "Bot"}],
+                        "status": "sent",
+                    },
+                    "sender_id": "u-1",
+                    "sender_type": "User",
+                    "chat_room_id": "r-1",
+                    "thread_id": None,
+                    "inserted_at": "2025-11-17T11:20:10Z",
+                    "updated_at": "2025-11-17T11:20:10Z",
+                },
+                MessageCreatedPayload,
+                id="message_created",
+            ),
+            pytest.param(
+                "room_added",
+                {
+                    "id": "room-123",
+                    "owner": {"id": "u-1", "name": "User", "type": "User"},
+                    "status": "active",
+                    "type": "direct",
+                    "title": "Room",
+                    "inserted_at": "2025-11-17T09:05:35Z",
+                    "updated_at": "2025-11-17T09:05:35Z",
+                    "participant_role": "member",
+                },
+                RoomAddedPayload,
+                id="room_added",
+            ),
+            pytest.param(
+                "room_removed",
+                {
+                    "id": "room-123",
+                    "title": "Room",
+                    "inserted_at": "2025-11-17T09:05:35Z",
+                    "updated_at": "2025-11-17T11:26:59Z",
+                },
+                RoomRemovedPayload,
+                id="room_removed",
+            ),
+            pytest.param(
+                "room_deleted",
+                {"id": "room-123"},
+                RoomDeletedPayload,
+                id="room_deleted",
+            ),
+            pytest.param(
+                "participant_added",
+                {"id": "p-123", "name": "Agent", "type": "Agent"},
+                ParticipantAddedPayload,
+                id="participant_added",
+            ),
+            pytest.param(
+                "participant_removed",
+                {"id": "p-123", "name": "Agent", "type": "Agent"},
+                ParticipantRemovedPayload,
+                id="participant_removed",
+            ),
+        ],
+    )
+    async def test_allows_extra_fields_in_payload(
+        self, event_name, base_payload, expected_type
+    ):
+        """Should accept payloads with extra fields (forward compatibility)."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        extra_fields = {"extra_field_1": "some value", "extra_field_2": 42}
+        received = await dispatch(client, event_name, {**base_payload, **extra_fields})
+        assert isinstance(received, expected_type)
+
+    async def test_skips_unknown_event_without_handler(self, caplog):
+        """Should warn when receiving an event with no registered handler."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        class MockMessage:
+            event = "unknown_event"
+            payload: ClassVar[dict[str, Any]] = {"data": "test"}
+
+        with caplog.at_level(logging.WARNING):
+            await client._handle_events(MockMessage(), {})
+
+        assert "no handler registered" in caplog.text
+
+    async def test_event_created_without_handler_logs_at_debug_not_warning(
+        self, caplog
+    ):
+        """event_created has no handler/PlatformEvent anywhere yet (event rows are read
+        back over REST instead) -- this is expected, so it must not warn like a
+        genuinely unregistered event does, but it should still be visible at debug."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        class MockMessage:
+            event = "event_created"
+            payload: ClassVar[dict[str, Any]] = {"data": "test"}
+
+        with caplog.at_level(logging.DEBUG, logger="band.client.streaming.client"):
+            await client._handle_events(MockMessage(), {})
+
+        unhandled = [r for r in caplog.records if "no handler registered" in r.message]
+        assert len(unhandled) == 1
+        assert unhandled[0].levelno == logging.DEBUG
+
+    async def test_passes_raw_dict_for_unknown_event_types(self):
+        """Should pass raw payload dict for event types without Pydantic models."""
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+        received = await dispatch(
+            client, "task_created", {"task_id": "t-123", "status": "pending"}
+        )
+        assert received == {"task_id": "t-123", "status": "pending"}

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 from band_sdk_core import (
     AgentTopicKind,
@@ -457,9 +458,7 @@ class WebSocketClient:
             additional_headers=self._handshake_headers,
         )
         if self.agent_id:
-            client.channel_socket_url += (
-                f"&agent_id={self.agent_id}{self._initial_connect_query}"
-            )
+            client.channel_socket_url += f"&{urlencode({'agent_id': self.agent_id})}{self._initial_connect_query}"
         return client
 
     @property
@@ -486,17 +485,23 @@ class WebSocketClient:
         (e.g. a 429's Retry-After) can differ between two occurrences of the
         same status, and Session's backoff needs the current value, so any
         cached classification carrying one always gets a fresh probe."""
-        upgrade_error = WebSocketUpgradeError.from_exception(exc)
+        client = self._require_client()
+        upgrade_error = WebSocketUpgradeError.from_exception(
+            exc, redact=client.redact_diagnostic
+        )
         if upgrade_error is not None or not isinstance(exc, PHXConnectionError):
             return upgrade_error
-        message = str(exc)
+        message = client.redact_diagnostic(str(exc))
         cached = self._cached_connect_failure
         cache_is_valid = message == self._probed_failure_message and (
             cached is None or cached.retry_after is None
         )
         if not cache_is_valid:
             cached = await probe_upgrade_error(
-                self._require_client().channel_socket_url, self._handshake_headers
+                client.channel_socket_url,
+                self._handshake_headers,
+                logger=client.logger,
+                redact=client.redact_diagnostic,
             )
             self._cached_connect_failure = cached
             self._probed_failure_message = message
@@ -540,7 +545,7 @@ class WebSocketClient:
             self.record_terminal_disconnect(
                 _disconnect_reason_from_exception(raise_exc, outcome)
             )
-            logger.warning(
+            self._require_client().logger.warning(
                 "Initial WebSocket connection permanently failed (dead_reason=%s): %s",
                 outcome.dead_reason,
                 raise_exc,
@@ -551,9 +556,8 @@ class WebSocketClient:
                 # its traceback. Same cross-frame re-raise as the `case _`
                 # above -- only valid while __aenter__'s except is active.
                 raise  # noqa: PLE0704
-            # A newly-built WebSocketUpgradeError -- chain it to the
-            # original exception, same as the pre-Session code did.
-            raise raise_exc from exc
+            # Raw upgrade responses can retain credentials in exception chains.
+            raise raise_exc from None
 
         # None only when Dead (handled above) or stale (unreachable here) --
         # fail loudly rather than trust a Session contract that assert would
@@ -562,7 +566,7 @@ class WebSocketClient:
             raise RuntimeError(
                 "Session returned a non-Dead outcome with no retry_after_s"
             )
-        logger.warning(
+        self._require_client().logger.warning(
             "Initial WebSocket connection failed; retrying in %.2fs: %s",
             outcome.retry_after_s,
             raise_exc,

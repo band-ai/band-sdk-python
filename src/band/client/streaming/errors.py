@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from websockets.asyncio.client import connect
@@ -33,7 +34,9 @@ class WebSocketUpgradeError(Exception):
         return self.code == CONNECTION_CONFLICT_CODE
 
     @classmethod
-    def from_exception(cls, exc: Exception) -> WebSocketUpgradeError | None:
+    def from_exception(
+        cls, exc: Exception, *, redact: Callable[[str], str] = str
+    ) -> WebSocketUpgradeError | None:
         """Parse a websockets handshake exception when it exposes the HTTP response."""
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)
@@ -58,15 +61,19 @@ class WebSocketUpgradeError(Exception):
 
         return cls(
             status_code=status_code,
-            code=code if isinstance(code, str) else None,
-            message=message if isinstance(message, str) else None,
-            request_id=request_id if isinstance(request_id, str) else None,
+            code=redact(code) if isinstance(code, str) else None,
+            message=redact(message) if isinstance(message, str) else None,
+            request_id=redact(request_id) if isinstance(request_id, str) else None,
             retry_after=retry_after,
         )
 
 
 async def probe_upgrade_error(
-    websocket_url: str, headers: Mapping[str, str]
+    websocket_url: str,
+    headers: Mapping[str, str],
+    *,
+    logger: logging.Logger,
+    redact: Callable[[str], str],
 ) -> WebSocketUpgradeError | None:
     """Recover a platform upgrade error hidden by the Phoenix client
     supervisor's generic PHXConnectionError, via a fresh live-socket
@@ -74,10 +81,12 @@ async def probe_upgrade_error(
     exception carries no HTTP status of its own to classify. ``headers`` must
     authenticate the probe exactly as the attempt it re-runs."""
     try:
-        async with connect(websocket_url, additional_headers=headers, open_timeout=5):
+        async with connect(
+            websocket_url, additional_headers=headers, open_timeout=5, logger=logger
+        ):
             return None
     except Exception as probe_exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
-        return WebSocketUpgradeError.from_exception(probe_exc)
+        return WebSocketUpgradeError.from_exception(probe_exc, redact=redact)
 
 
 def _decode_upgrade_error_body(body: Any) -> dict[str, Any]:
