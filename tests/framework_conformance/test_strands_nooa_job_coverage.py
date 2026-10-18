@@ -42,6 +42,11 @@ class TestStrandsNooaJobCoverage:
             coverage.job_command("test-strands-nooa", "Run Strands and NOOA tests")
         )
         selected = coverage.selected_nodes(arguments)
+        activity_arguments = coverage.pytest_arguments(
+            coverage.job_command("test-strands-nooa", "Run Strands activity tests")
+        )
+        assert "-k" not in activity_arguments
+        selected |= coverage.selected_nodes(activity_arguments)
         # Directory collection honors NOOA's supported-platform conftest gate.
         nooa_tests = REPO_ROOT / "tests/adapters/nooa"
         targets = {

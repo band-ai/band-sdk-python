@@ -11,6 +11,13 @@ class ActivityRecorder:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
+    @property
+    def waiting(self) -> bool:
+        return next(
+            (event["waiting"] for event in reversed(self.events) if "waiting" in event),
+            False,
+        )
+
     async def update(self, activity: AgentActivityDetail) -> None:
         self.events.append(activity.model_dump(exclude_unset=True))
 

@@ -12,7 +12,12 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    nullcontext,
+)
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -1100,6 +1105,11 @@ class ACPClientAdapter(
         else:
             await narrate(narration)
 
+    def _permission_activity(
+        self, emitter: RoomTurnEmitter | None
+    ) -> AbstractAsyncContextManager[None]:
+        return emitter.permission_wait() if emitter is not None else nullcontext()
+
     async def _resolve_permission_option(
         self,
         *,
@@ -1114,7 +1124,7 @@ class ACPClientAdapter(
             return select_allow_option_id(options)
 
         offered = self._permission_options(options)
-        async with emitter.permission_wait() if emitter is not None else nullcontext():
+        async with self._permission_activity(emitter):
             option_id = await self._resolve_permission(
                 ACPPermissionRequest(
                     room_id=room_id,

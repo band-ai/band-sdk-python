@@ -17,6 +17,8 @@ class ActivityPlatform(PostingPlatform):
         self.hold_next_activity = False
         self.activity_entered = asyncio.Event()
         self.activity_release = asyncio.Event()
+        self.reject_detail = False
+        self.event_bodies: list[dict[str, Any]] = []
 
     @property
     def working_transitions(self) -> list[bool]:
@@ -35,6 +37,11 @@ class ActivityPlatform(PostingPlatform):
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
+        if tail == "events" and request.method == "POST":
+            self.event_bodies.append(json.loads(request.content))
         if tail == "activity":
-            self.activity_bodies.append(json.loads(request.content))
+            body = json.loads(request.content)
+            self.activity_bodies.append(body)
+            if self.reject_detail and "activity" in body:
+                return httpx.Response(422, json={"error": "unsupported activity"})
         return super().answer(request)

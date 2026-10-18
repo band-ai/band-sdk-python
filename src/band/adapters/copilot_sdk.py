@@ -8,6 +8,7 @@ history, memory, and context stay isolated per room.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -57,7 +58,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
-from band.runtime.working_state import tool_activity
+from band.runtime.working_state import set_permission_wait, tool_activity
 
 try:
     from copilot import (
@@ -98,6 +99,8 @@ if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
     from band.core.types import FeatureKwargs, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
+
+ASK_USER_TOOL_NAME = "ask_user"
 
 logger = logging.getLogger(__name__)
 
@@ -622,13 +625,40 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         if self._ask_user is not None:
             # ask_user is session-isolated (no shell/file/host access), so
             # allowing it does not weaken the approve_all stance above.
-            available_tools.append("ask_user")
-            kwargs["on_user_input_request"] = (
-                self._ask_user
-                if callable(self._ask_user)
-                else self._make_room_ask_user_handler(room_id)
-            )
+            available_tools.append(ASK_USER_TOOL_NAME)
+            kwargs["on_user_input_request"] = self._activity_user_input_handler(room_id)
         return kwargs
+
+    def _activity_user_input_handler(self, room_id: str) -> UserInputHandler:
+        handler = (
+            self._ask_user
+            if callable(self._ask_user)
+            else self._make_room_ask_user_handler(room_id)
+        )
+        manual = callable(self._ask_user)
+        pending = 0
+
+        async def handle(
+            request: UserInputRequest, context: dict[str, str]
+        ) -> UserInputResponse:
+            nonlocal pending
+            tools = self._room_tools.get(room_id)
+            async with tool_activity(tools, ASK_USER_TOOL_NAME):
+                result = handler(request, context)
+                if not inspect.isawaitable(result):
+                    return result
+                if manual:
+                    pending += 1
+                try:
+                    if manual:
+                        await set_permission_wait(tools, True)
+                    return await result
+                finally:
+                    if manual:
+                        pending -= 1
+                        await set_permission_wait(tools, pending > 0)
+
+        return handle
 
     def _make_room_ask_user_handler(self, room_id: str) -> UserInputHandler:
         """Bind the room id for the session's ask_user → room bridge."""

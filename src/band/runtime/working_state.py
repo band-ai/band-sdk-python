@@ -65,8 +65,8 @@ async def set_permission_wait(tools: object, waiting: bool) -> None:
 
 @asynccontextmanager
 async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
-    await report_tool_activity(tools, name)
     try:
+        await report_tool_activity(tools, name)
         yield
     finally:
         await end_tool_activity(tools)

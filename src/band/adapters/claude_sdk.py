@@ -1870,24 +1870,26 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             self._release_turn(room_id)
 
             decision = await registry.wait(
-                entry, pending.future, timeout_s=self._approvals.wait_timeout_s
+                entry,
+                pending.future,
+                timeout_s=self._approvals.wait_timeout_s,
+                retain_entry=True,
             )
+            match decision:
+                case Timeout.TIMED_OUT:
+                    return await self._apply_approval_timeout(
+                        tools, room_id, token, mention, tool_use_id
+                    )
+                case ApprovalReply():
+                    return await self._apply_approval_reply(
+                        tools, room_id, token, decision, tool_use_id
+                    )
+            # Forced by eviction or room teardown: no notice names this call.
+            return PermissionResultDeny(message="User declined tool use")
         finally:
             self._clear_pending_approval(room_id, entry)
             if tools:
                 await set_permission_wait(tools, bool(registry))
-
-        match decision:
-            case Timeout.TIMED_OUT:
-                return await self._apply_approval_timeout(
-                    tools, room_id, token, mention, tool_use_id
-                )
-            case ApprovalReply():
-                return await self._apply_approval_reply(
-                    tools, room_id, token, decision, tool_use_id
-                )
-        # Forced by eviction or room teardown: no notice names this call.
-        return PermissionResultDeny(message="User declined tool use")
 
     async def _apply_approval_reply(
         self,
