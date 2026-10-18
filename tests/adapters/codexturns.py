@@ -79,6 +79,7 @@ class FakeCodexClient(RecordedRequests):
         resumed_settings: dict[str, Any] | None = None,
         resumed_thread_id: str | None = None,
         recorded_cwd: str | None = None,
+        hold_when_drained: bool = False,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -105,6 +106,11 @@ class FakeCodexClient(RecordedRequests):
         self._released: deque[RpcEvent] = deque()
         self._emitted = asyncio.Event()
         self.turn_started = asyncio.Event()
+        self._hold_when_drained = hold_when_drained
+        self.interrupt_released = asyncio.Event()
+        self.interrupt_released.set()
+        self.turn_start_released = asyncio.Event()
+        self.turn_start_released.set()
 
     async def connect(self) -> None:
         self.connected = True
@@ -156,6 +162,7 @@ class FakeCodexClient(RecordedRequests):
                 thread_id = f"thr-{self._thread_counter}"
                 return {"thread": {"id": thread_id}, **self._started_settings}
             case CodexRequestMethod.TURN_INTERRUPT:
+                await self.interrupt_released.wait()
                 if self._interrupt_error is not None:
                     raise self._interrupt_error
             case CodexRequestMethod.TURN_START:
@@ -165,6 +172,7 @@ class FakeCodexClient(RecordedRequests):
                         self._turn_start_error = None
                     raise err
                 self._turn_counter += 1
+                await self.turn_start_released.wait()
                 self._release_turn_events(f"turn-{self._turn_counter}")
                 self.turn_started.set()
                 return {
@@ -214,6 +222,8 @@ class FakeCodexClient(RecordedRequests):
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         while not self._released:
+            if not self._events and self._hold_when_drained:
+                await asyncio.Future[None]()
             self._emitted.clear()
             await asyncio.wait_for(self._emitted.wait(), timeout=timeout_s)
         return self._released.popleft()

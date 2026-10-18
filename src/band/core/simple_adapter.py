@@ -24,6 +24,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.turn import report_unsettled_turn
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -290,15 +291,28 @@ class SimpleAdapter(ABC, Generic[H]):
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""
 
-    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
-        """Override to abort per-room work still running after ``on_message``/
-        ``on_event`` returned early (e.g. a turn parked on a human decision).
+    @property
+    def backend_turns(self) -> BackendTurns[Any] | None:
+        """The room turns of the external backend this adapter drives, if any.
 
-        The runtime's own interrupt/stop only cancels the task that invoked
-        the handler; once that task has returned, this is the only signal
-        that still reaches work the adapter kept running detached. No-op by
-        default -- an adapter that never returns early needs no override.
+        An adapter that drives one overrides this, so an interrupt, a cancelled
+        turn and teardown stop that backend's turn too.
         """
+        return None
+
+    async def on_interrupt(self, room_id: str, mode: ControlMode) -> None:
+        """Stop the room's work that outlives the runtime's own interrupt/stop.
+
+        The runtime cancels only the task that invoked the handler. This is
+        the signal that still reaches the room's backend turn and any work the
+        adapter kept running detached (e.g. a turn parked on a human decision).
+
+        By default it starts stopping the room's ``backend_turns`` entry,
+        without waiting: this runs on the control-processing task, so it must
+        never await a backend call. An override calls ``super()`` first.
+        """
+        if self.backend_turns is not None:
+            self.backend_turns.cancel(room_id)
 
     async def cleanup_all(self) -> None:
         """Override to release adapter-wide resources (clients, servers).
