@@ -217,6 +217,56 @@ failure fails that room turn visibly instead of falling back.
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`
   as `CURSOR_API_KEY` only to its baseline step; local runs may use a stored `agent login`.
 
+## Copilot host model catalog
+
+`await copilot_adapter.probe_models(timeout_s=60.0)` returns the canonical
+`ModelCatalog` for the configured Copilot account without a Band connection,
+room, room workspace, ACP session or model turn. Install the optional
+`band-sdk[acp,copilot_sdk]` dependencies to use it; ordinary ACP construction and
+room operation do not require the Copilot SDK.
+
+The probe starts the configured Copilot executable through the SDK's stdio
+protocol, removing only the ACP-specific `--acp` argument. It retains other
+configured arguments and uses `cwd` itself, not a fabricated room directory.
+Executable lookup honors the configured child `PATH` and working directory;
+it does not choose the SDK's bundled executable or fall back to an unrelated
+host executable when the configured search path has no match.
+
+The child receives ACP's trimmed inherited environment plus the backend and
+configured environment. Put token variables in `config.env`, where
+`COPILOT_GITHUB_TOKEN` takes precedence over `GH_TOKEN`, then `GITHUB_TOKEN`.
+`config.github_token` supplies the lowest-priority `GITHUB_TOKEN` convenience
+value; an explicit `config.env["GITHUB_TOKEN"]` overrides it. Unrelated token
+variables exported only in the host process are not implicitly injected.
+Stored CLI login remains available through the inherited home environment.
+
+This lists hosted-account models, not BYOK provider catalogs. It does not prove
+inference entitlement or validate configured model/effort selection, MCP servers
+or tools. Advertised reasoning efforts remain `None` when unknown and `()`
+when explicitly absent; the probe invents neither efforts nor provider, default
+or currently selected model metadata. A successful empty catalog is distinct
+from a missing SDK, unsupported operation or failed discovery. This explicit
+host API does not replace the startup `list_models` hook or run automatically
+when a room starts.
+
+Ordinary discovery failures raise a safe `BandConfigError`; cancellation
+propagates. `timeout_s` bounds discovery reporting and, separately, cleanup
+reporting. `CleanupIncompleteError` means the adapter still owns the client or
+late startup: retry `await adapter.cleanup_all()` before discarding it. Band's
+public error does not include the upstream diagnostic, but the Copilot SDK can
+emit its own traceback before Band handles a failure.
+
+```python notest
+from band.adapters.copilot_acp import CopilotACPAdapter
+
+adapter = CopilotACPAdapter()
+try:
+    catalog = await adapter.probe_models(timeout_s=15.0)
+    model_ids = catalog.model_ids
+finally:
+    await adapter.cleanup_all()
+```
+
 ## Server prompt outcomes
 
 `ACPServer.prompt` settles on the first terminal outcome for its room:

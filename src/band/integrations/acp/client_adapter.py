@@ -1661,17 +1661,28 @@ class ACPClientAdapter(
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
         Disposes every room, then stops the shared Band MCP server, within one
-        ``retention.transition_timeout_s`` budget. Anything unfinished stays
-        owned and the next call resumes it. The MCP server stops only after
-        every room's process closed. Later turns are refused until
-        ``on_started`` serves again.
+        ``retention.transition_timeout_s`` budget. Probe cleanup is also
+        attempted, with its own reporting budget, even if room teardown fails.
+        Anything unfinished stays owned and the next call resumes it. The MCP
+        server stops only after every room's process closed. Later turns are
+        refused until ``on_started`` serves again.
 
         Raises:
-            CleanupIncompleteError: A room or the MCP server is still closing.
+            CleanupIncompleteError: A probe, room or MCP server is still closing.
+            BaseExceptionGroup: Multiple owned cleanup attempts failed.
         """
-        await self._mcp.close_after(
-            self._retention.stop(), retention=self.config.retention
+        results = await asyncio.gather(
+            super().cleanup_all(),
+            self._mcp.close_after(
+                self._retention.stop(), retention=self.config.retention
+            ),
+            return_exceptions=True,
         )
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("ACP adapter cleanup failed", failures)
         await self.backend_turns.drain()
         logger.info("ACP client adapter stopped")
 

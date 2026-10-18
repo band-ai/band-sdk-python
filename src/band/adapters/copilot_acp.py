@@ -25,11 +25,17 @@ pass an explicit reachable ``mcp_servers`` entry instead.
 
 from __future__ import annotations
 
+import os
+import shutil
+from pathlib import Path
 from typing import ClassVar
 
+from acp.transports import default_environment
 from pydantic import Field
 from typing_extensions import Unpack
 
+from band.core.exceptions import BandConfigError, CleanupIncompleteError
+from band.core.model_catalog import ModelCatalog, ModelChoice
 from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
@@ -70,6 +76,9 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
 
     A thin specialization of :class:`ACPClientAdapter` that presets the Copilot
     command, no-op profile (default), and ``GITHUB_TOKEN`` environment.
+
+    ``probe_models`` optionally uses the Copilot SDK to discover the configured
+    account's hosted models without opening an ACP session or a Band room.
     """
 
     def __init__(
@@ -106,6 +115,123 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
     def _credential_env(self) -> dict[str, str]:
         token = self.config.github_token
         return {"GITHUB_TOKEN": token} if token else {}
+
+    async def probe_models(self, *, timeout_s: float = 60.0) -> ModelCatalog:
+        """List hosted-account models without a room, session or model turn.
+
+        Requires the optional ``copilot_sdk`` extra. Unlike session config
+        discovery, this does not discover BYOK models or prove that configured
+        inference, MCP servers or tools are ready. Failed cleanup remains owned
+        by this adapter; retry it with ``cleanup_all``.
+        """
+        try:
+            from copilot import CopilotClient, RuntimeConnection  # noqa: PLC0415 -- catalog-only SDK remains optional for ordinary ACP use
+        except ImportError:
+            raise BandConfigError(
+                "Copilot model discovery requires the optional Copilot SDK. "
+                "Install band-sdk[copilot_sdk] and retry."
+            ) from None
+
+        owner = self._harness_probe
+
+        async def discover() -> ModelCatalog:
+            client: CopilotClient | None = None
+
+            async def close() -> None:
+                nonlocal client
+                if client is None:
+                    return
+                try:
+                    await client.stop()
+                except Exception as error:  # noqa: BLE001 -- retain any failed SDK close without exposing credentials
+                    raise CleanupIncompleteError(
+                        "Copilot model probe process cleanup failed "
+                        f"({type(error).__name__})."
+                    ) from None
+                client = None
+
+            owner.own(close)
+            try:
+                env = default_environment()
+                env.update(self._spawn_env() or {})
+                token = next(
+                    (
+                        env[name]
+                        for name in (
+                            "COPILOT_GITHUB_TOKEN",
+                            "GH_TOKEN",
+                            "GITHUB_TOKEN",
+                        )
+                        if env.get(name)
+                    ),
+                    None,
+                )
+                command = self.config.command
+                cwd = (
+                    Path(self.config.cwd).resolve()
+                    if self.config.cwd is not None
+                    else Path.cwd()
+                )
+                if os.path.dirname(command[0]):
+                    executable = str((cwd / command[0]).resolve())
+                else:
+                    # The SDK otherwise searches the host PATH at the host cwd,
+                    # not the environment and directory of its configured child.
+                    search_path = os.pathsep.join(
+                        str((cwd / entry).resolve()) for entry in os.get_exec_path(env)
+                    )
+                    executable = shutil.which(command[0], path=search_path)
+                    if executable is None:
+                        raise FileNotFoundError
+                client = CopilotClient(
+                    connection=RuntimeConnection.for_stdio(
+                        path=executable,
+                        args=[arg for arg in command[1:] if arg != "--acp"],
+                    ),
+                    env=env,
+                    working_directory=self.config.cwd,
+                    github_token=token,
+                )
+                await client.start()
+                models = await client.list_models()
+                return ModelCatalog(
+                    models=tuple(
+                        ModelChoice(
+                            id=model.id,
+                            label=model.name,
+                            efforts=(
+                                tuple(model.supported_reasoning_efforts)
+                                if model.supported_reasoning_efforts is not None
+                                else None
+                            ),
+                            default_effort=model.default_reasoning_effort,
+                        )
+                        for model in models
+                    )
+                )
+            except CleanupIncompleteError:
+                raise
+            except FileNotFoundError:
+                raise BandConfigError(
+                    "The configured Copilot executable was not found. Install "
+                    "Copilot or correct command, env['PATH'] and cwd, then retry."
+                ) from None
+            except Exception as error:  # noqa: BLE001 -- sanitize arbitrary SDK errors before owned cleanup starts
+                raise BandConfigError(
+                    f"Copilot model discovery failed ({type(error).__name__}). "
+                    "Check the configured command, environment and Copilot "
+                    "account credentials, then retry."
+                ) from None
+
+        try:
+            return await owner.run(discover, timeout_s=timeout_s)
+        except CleanupIncompleteError:
+            raise
+        except TimeoutError:
+            raise BandConfigError(
+                "Copilot model discovery timed out. Check the configured CLI "
+                "and credentials, or increase timeout_s, then retry."
+            ) from None
 
 
 __all__ = [
