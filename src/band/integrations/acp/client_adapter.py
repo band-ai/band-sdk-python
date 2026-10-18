@@ -12,7 +12,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -869,6 +869,7 @@ class ACPClientAdapter(
                 self._install_turn_handlers(
                     runtime,
                     emitter=emitter,
+                    tools=tools,
                     room_id=room_id,
                     session_id=session_id,
                 )
@@ -925,6 +926,8 @@ class ACPClientAdapter(
         except Exception as error:
             await self._fail_turn(room, generation, tools, error)
             raise
+        finally:
+            runtime.set_activity_tools(session_id, None)
 
     @staticmethod
     async def _fail_turn(
@@ -1006,9 +1009,11 @@ class ACPClientAdapter(
         runtime: ACPRuntime,
         *,
         emitter: RoomTurnEmitter,
+        tools: AgentToolsProtocol,
         room_id: str,
         session_id: str,
     ) -> None:
+        runtime.set_activity_tools(session_id, tools)
         runtime.set_permission_handler(
             session_id,
             self._make_permission_handler(emitter, room_id),
@@ -1050,6 +1055,7 @@ class ACPClientAdapter(
                 options=options,
                 room_id=room_id,
                 session_id=session_id,
+                emitter=emitter,
             )
 
             logger.info(
@@ -1101,20 +1107,22 @@ class ACPClientAdapter(
         options: object,
         room_id: str,
         session_id: str,
+        emitter: RoomTurnEmitter | None = None,
     ) -> str | None:
         """Return a validated permission choice, or cancel the request."""
         if self._resolve_permission is None:
             return select_allow_option_id(options)
 
         offered = self._permission_options(options)
-        option_id = await self._resolve_permission(
-            ACPPermissionRequest(
-                room_id=room_id,
-                session_id=session_id,
-                tool_call=call,
-                options=offered,
+        async with emitter.permission_wait() if emitter is not None else nullcontext():
+            option_id = await self._resolve_permission(
+                ACPPermissionRequest(
+                    room_id=room_id,
+                    session_id=session_id,
+                    tool_call=call,
+                    options=offered,
+                )
             )
-        )
         if option_id is None:
             return None
         if not isinstance(option_id, str):

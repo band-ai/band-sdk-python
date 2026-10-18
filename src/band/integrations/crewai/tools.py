@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from band.runtime.working_state import tool_activity
+
 if TYPE_CHECKING:
     from crewai.tools import BaseTool
 
@@ -95,7 +97,8 @@ def _execute_tool(
 
     async def _execute() -> str:
         try:
-            return await coro_factory(tools)
+            async with tool_activity(tools, tool_name):
+                return await coro_factory(tools)
         except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             error_msg = str(e)
             if tool_name == BandTool.SEND_MESSAGE and isinstance(

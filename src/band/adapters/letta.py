@@ -51,6 +51,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
     turn_effect,
 )
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 __all__ = [
     "LettaAdapter",
@@ -477,10 +478,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         Returns the list of assistant text parts collected during the turn.
         """
         messages = [{"role": "user", "content": content}]
-        # Per-turn token usage. Reachable only on the per_room path, where the
-        # non-streamed LettaResponse carries an aggregate .usage; the shared-mode
-        # Conversations stream exposes no such aggregate, so it stays empty (N-A).
-        # Emitted on every exit via the finally.
+        # Shared Conversations has no aggregate usage; per-room step streams do.
         turn_usage = TurnUsage()
 
         try:
@@ -489,7 +487,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 # processing (including deliver_reply, below) runs unbounded so a
                 # slow Band-side delivery is never mislabeled as a Letta timeout.
                 response_messages, turn_usage = await asyncio.wait_for(
-                    self._call_provider(agent_id, messages, room_ctx),
+                    self._call_provider(agent_id, messages, room_ctx, tools),
                     timeout=self.config.turn_timeout_s,
                 )
                 room_ctx.pending_seed = []
@@ -532,6 +530,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         agent_id: str,
         messages: list[dict[str, str]],
         room_ctx: RoomContext,
+        tools: AgentToolsProtocol,
     ) -> tuple[list[Any], TurnUsage]:
         """Round-trip to the Letta API -- no response processing or delivery."""
         # Use Conversations API in shared mode, direct agent API in per_room mode
@@ -540,14 +539,46 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 conversation_id=room_ctx.conversation_id,
                 messages=messages,
             )
-            response_messages = [resp_msg async for resp_msg in conversation_stream]
-            return response_messages, TurnUsage()
+            stream = conversation_stream
+            per_room = False
+        else:
+            stream = await self._client.agents.messages.create(
+                agent_id=agent_id,
+                messages=messages,
+                streaming=True,
+                stream_tokens=False,
+            )
+            per_room = True
+        response_messages: list[Any] = []
+        usage = TurnUsage()
+        async with stream:
+            async for message in stream:
+                await self._observe_provider_message(message, tools)
+                if (
+                    per_room
+                    and getattr(message, "message_type", None) == "usage_statistics"
+                ):
+                    usage = TurnUsage.from_object(
+                        message,
+                        input="prompt_tokens",
+                        output="completion_tokens",
+                        cache_read="cached_input_tokens",
+                        cache_write="cache_write_tokens",
+                    )
+                else:
+                    response_messages.append(message)
+        return response_messages, usage
 
-        response = await self._client.agents.messages.create(
-            agent_id=agent_id,
-            messages=messages,
-        )
-        return list(response.messages), self._usage_from_response(response)
+    @staticmethod
+    async def _observe_provider_message(
+        message: Any, tools: AgentToolsProtocol
+    ) -> None:
+        match getattr(message, "message_type", None):
+            case "tool_call_message":
+                for call in message.tool_calls or [message.tool_call]:
+                    await report_tool_activity(tools, call.name)
+            case "tool_return_message":
+                await end_tool_activity(tools)
 
     async def _process_response_messages(
         self,

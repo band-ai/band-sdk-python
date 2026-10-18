@@ -57,6 +57,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.working_state import tool_activity
 
 try:
     from copilot import (
@@ -744,46 +745,47 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = Emit.TOOL_CALLS in self.features.emit
-        if should_report:
-            await self._report_tool_call(room_tools, invocation, arguments)
+        async with tool_activity(room_tools, tool_name):
+            should_report = Emit.TOOL_CALLS in self.features.emit
+            if should_report:
+                await self._report_tool_call(room_tools, invocation, arguments)
 
-        try:
-            custom_tool = find_custom_tool(self._custom_tools, tool_name)
-            if custom_tool:
-                result = await execute_custom_tool(
-                    custom_tool, arguments, turn=room_tools.turn
-                )
-            else:
-                # Structured variant: a base tool (e.g. band_send_message) can fail
-                # without raising (bad args, API error) — that surfaces as ok=False,
-                # not an exception, and must reach the model as a failed call.
-                outcome = await room_tools.execute_tool_call_structured(
-                    tool_name, arguments
-                )
-                if not outcome.ok:
-                    return await self._fail_tool_call(
-                        room_tools,
-                        invocation,
-                        outcome.error_message or str(outcome.value),
-                        report=should_report,
+            try:
+                custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                if custom_tool:
+                    result = await execute_custom_tool(
+                        custom_tool, arguments, turn=room_tools.turn
                     )
-                result = outcome.value
-        except ValidationError as exc:
-            logger.error("Validation error for tool %s: %s", tool_name, exc)
-            error_text = (
-                f"Invalid arguments for {tool_name}: {format_validation_error(exc)}"
-            )
-            return await self._fail_tool_call(
-                room_tools, invocation, error_text, report=should_report
-            )
-        except Exception as exc:
-            logger.exception("Tool execution failed for %s", tool_name)
-            return await self._fail_tool_call(
-                room_tools, invocation, f"Error: {exc}", report=should_report
-            )
+                else:
+                    # Structured variant: a base tool (e.g. band_send_message) can fail
+                    # without raising (bad args, API error) — that surfaces as ok=False,
+                    # not an exception, and must reach the model as a failed call.
+                    outcome = await room_tools.execute_tool_call_structured(
+                        tool_name, arguments
+                    )
+                    if not outcome.ok:
+                        return await self._fail_tool_call(
+                            room_tools,
+                            invocation,
+                            outcome.error_message or str(outcome.value),
+                            report=should_report,
+                        )
+                    result = outcome.value
+            except ValidationError as exc:
+                logger.error("Validation error for tool %s: %s", tool_name, exc)
+                error_text = (
+                    f"Invalid arguments for {tool_name}: {format_validation_error(exc)}"
+                )
+                return await self._fail_tool_call(
+                    room_tools, invocation, error_text, report=should_report
+                )
+            except Exception as exc:
+                logger.exception("Tool execution failed for %s", tool_name)
+                return await self._fail_tool_call(
+                    room_tools, invocation, f"Error: {exc}", report=should_report
+                )
 
-        binary_results: list[ToolBinaryResult] | None = None
+            binary_results: list[ToolBinaryResult] | None = None
         if is_image_passthrough_result(tool_name, result):
             # Same failure path as the tool-execution try/except above: a
             # malformed or future-extended content block must still route

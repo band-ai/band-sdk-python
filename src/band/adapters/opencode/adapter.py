@@ -70,6 +70,7 @@ from band.integrations.opencode import (
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ class TurnState:
     assistant_message_ids: set[str] = field(default_factory=set)
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
+    activity_tool_status: dict[str, str | None] = field(default_factory=dict)
     reported_tool_results: set[str] = field(default_factory=set)
     worker: TurnTask | None = None
     abort_started: bool = False
@@ -895,7 +897,30 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self, room_state: RoomState, part: OpencodePart
     ) -> None:
         """Report the tool's call/result."""
-        if part.state is None or Emit.TOOL_CALLS not in self.features.emit:
+        if part.state is None:
+            return
+        turn = room_state.turn
+        if turn is not None and part.id is not None:
+            call_id = part.call_id or part.id
+            previous = turn.activity_tool_status.get(call_id)
+            status = part.state.status
+            turn.activity_tool_status[call_id] = status
+            if (
+                status in {OpencodeToolStatus.PENDING, OpencodeToolStatus.RUNNING}
+                and previous is None
+            ):
+                await report_tool_activity(
+                    turn.tools, self._canonical_tool_name(part.tool or "")
+                )
+            elif status in {
+                OpencodeToolStatus.COMPLETED,
+                OpencodeToolStatus.ERROR,
+            } and previous not in {
+                OpencodeToolStatus.COMPLETED,
+                OpencodeToolStatus.ERROR,
+            }:
+                await end_tool_activity(turn.tools)
+        if Emit.TOOL_CALLS not in self.features.emit:
             return
 
         state = part.state
