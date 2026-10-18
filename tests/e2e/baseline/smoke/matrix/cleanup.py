@@ -79,6 +79,7 @@ async def stop_cleanup_host(host: CleanupHost) -> None:
 
 @dataclass
 class ResourceUse:
+    completed: bool = False
     settled: bool = False
     resource_open_at_settlement: bool = False
 
@@ -89,6 +90,10 @@ class ResourceWork:
     release: asyncio.Event = field(default_factory=asyncio.Event)
     settled_event: asyncio.Event = field(default_factory=asyncio.Event)
     calls: list[ResourceUse] = field(default_factory=list)
+
+    @property
+    def completed(self) -> bool:
+        return all(call.completed for call in self.calls)
 
     @property
     def settled(self) -> bool:
@@ -128,6 +133,7 @@ class ResourceWork:
                 result = await read(args)
                 self.entered.set()
                 await self.release.wait()
+                call.completed = True
                 return result
             finally:
                 call.resource_open_at_settlement = not client.is_closed

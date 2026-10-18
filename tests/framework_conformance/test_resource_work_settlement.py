@@ -45,10 +45,13 @@ class TestResourceWorkSettlement:
             finally:
                 await work.release_and_settle()
             assert work.settled
+            assert not work.completed
             assert not work.resource_released_early
             assert not client.is_closed
 
-    async def test_failed_scenario_drains_held_work_before_peer_teardown(self) -> None:
+    async def test_release_and_settle_completes_held_work_after_a_failed_body(
+        self,
+    ) -> None:
         async with shared_api() as (client, base_url, values):
             work = ResourceWork()
             native = work.tool(client, base_url).as_callable()
@@ -62,5 +65,6 @@ class TestResourceWorkSettlement:
                 result = await task
             assert json.loads(result) == values["todo"]
             assert work.settled
+            assert work.completed
             assert not work.resource_released_early
             assert not client.is_closed

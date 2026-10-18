@@ -39,5 +39,6 @@ class TestInvokerDraining:
                 assert not stopping.done()
                 assert not turn.client.is_closed
             assert turn.work.settled
+            assert turn.work.completed
             assert not turn.work.resource_released_early
             assert turn.client.is_closed
