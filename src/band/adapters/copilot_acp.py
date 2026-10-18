@@ -95,8 +95,11 @@ def _copilot_processes(
 
 def _copilot_executable(command: str, env: dict[str, str], cwd: Path) -> str:
     """Resolve only configured absolute candidates, including Windows extensions."""
-    if os.path.dirname(command):
-        return str((cwd / command).resolve())
+    qualified = bool(os.path.dirname(command))
+    if qualified:
+        command = str((cwd / command).resolve())
+        if os.name != "nt":
+            return command
     names = (command,)
     if os.name == "nt":
         extensions = tuple(
@@ -111,7 +114,8 @@ def _copilot_executable(command: str, env: dict[str, str], cwd: Path) -> str:
         ):
             names = tuple(command + extension for extension in extensions)
     # which(path=...) still searches the host cwd and PATHEXT on Windows.
-    for entry in os.get_exec_path(env):
+    search_path = ("",) if qualified else os.get_exec_path(env)
+    for entry in search_path:
         directory = (cwd / entry).resolve()
         for name in names:
             candidate = directory / name
@@ -258,10 +262,17 @@ class CopilotACPAdapter(ACPClientAdapter[CopilotACPAdapterConfig]):
                     else Path.cwd()
                 )
                 executable = _copilot_executable(command[0], env, cwd)
+                args = [arg for arg in command[1:] if arg != "--acp"]
+                if os.name == "nt" and executable.lower().endswith(".js"):
+                    args.insert(0, executable)
+                    # Preserve native node.exe selection without host image lookup.
+                    executable = _copilot_executable(
+                        "node", env | {"PATHEXT": ".exe"}, cwd
+                    )
                 candidate = CopilotClient(
                     connection=RuntimeConnection.for_stdio(
                         path=executable,
-                        args=[arg for arg in command[1:] if arg != "--acp"],
+                        args=args,
                     ),
                     env=env,
                     working_directory=self.config.cwd,

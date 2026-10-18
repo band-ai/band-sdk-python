@@ -8,7 +8,9 @@ import threading
 from pathlib import Path
 
 
-def serve(trace_path: Path, *, reject_connect: bool = False) -> None:
+def serve(
+    trace_path: Path, *, reject_connect: bool = False, linger_after_eof: bool = True
+) -> None:
     """Answer only handshake, hosted-model listing and runtime shutdown."""
     incoming = sys.stdin.buffer
     outgoing = sys.stdout.buffer
@@ -54,10 +56,11 @@ def serve(trace_path: Path, *, reject_connect: bool = False) -> None:
             outgoing.write(payload)
             outgoing.flush()
 
-    # EOF closes the transport, not the physical process under test.
+    # Custody tests distinguish transport EOF from physical process exit.
     sys.stdout.close()
     sys.stderr.close()
-    threading.Event().wait()
+    if linger_after_eof:
+        threading.Event().wait()
 
 
 if __name__ == "__main__":

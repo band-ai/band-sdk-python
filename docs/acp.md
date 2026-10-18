@@ -233,10 +233,17 @@ The probe starts the configured Copilot executable through the SDK's stdio
 protocol, removing only the ACP-specific `--acp` argument. It retains other
 configured arguments and uses `cwd` itself, not a fabricated room directory.
 Executable lookup honors the configured child `PATH` and working directory,
-including configured `PATHEXT` rules on Windows. Every searched candidate is
-absolute; the host's current directory is not implicitly searched. The probe
-does not choose the SDK's bundled executable or fall back to an unrelated host
-executable when the configured search path has no match.
+including configured `PATHEXT` rules on Windows for both bare and path-qualified
+commands. Windows lookup confirms an existing file before SDK startup. Every
+searched candidate is absolute; the host's current directory is not implicitly
+searched. The probe does not choose the SDK's bundled executable or fall back to
+an unrelated host executable when the configured search path has no match.
+
+For a Windows JavaScript entrypoint, the probe resolves `node.exe` through the
+configured `PATH` and working directory, then supplies its absolute path and the
+script argument through the public SDK stdio connection. This preserves the SDK's
+native Node interpreter choice without letting a bare `node` search the host
+environment. A missing configured interpreter fails before starting a child.
 
 The child receives ACP's trimmed inherited environment plus the backend and
 configured environment. Put token variables in `config.env`, where
