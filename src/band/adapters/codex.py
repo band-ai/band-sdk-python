@@ -35,7 +35,7 @@ from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core import exceptions, harness
+from band.core import exceptions, harness, model_catalog
 from band.core.adapterconfig import EnvAdapterConfig
 from band.core.content import has_visible_content
 from band.core.defaultmodels import OPENAI_MODEL
@@ -2236,6 +2236,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
         return harness.PreflightResult.passed()
 
+    async def probe_models(self, *, timeout_s: float = 60.0) -> model_catalog.ModelCatalog:
+        """Discover the visible catalog on an owned, no-room app-server."""
+        return await self._probe_harness(
+            partial(_fetch_codex_models, timeout_s=timeout_s), timeout_s=timeout_s
+        )
+
     async def _probe_harness(
         self,
         operation: Callable[[CodexClientProtocol], Awaitable[_ProbeResult]],
@@ -2287,7 +2293,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             return self.config.model
 
         try:
-            result = await client.request(CodexRequestMethod.MODEL_LIST, {})
+            catalog = await _fetch_codex_models(
+                client, timeout_s=self.config.retention.transition_timeout_s
+            )
         except Exception:
             logger.warning(
                 "model/list failed; using default Codex model",
@@ -2295,9 +2303,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
             return OPENAI_MODEL
 
-        visible_model_ids = self._visible_model_ids(result)
-        if visible_model_ids:
-            return visible_model_ids[0]
+        if catalog.models:
+            return catalog.models[0].id
         logger.warning("model/list has no visible models; using default Codex model")
         return OPENAI_MODEL
 
@@ -3807,8 +3814,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
             if model_arg.lower() in _MODEL_LIST_WORDS:
                 client = self._require_active_client_state().require_client()
-                result = await client.request(CodexRequestMethod.MODEL_LIST, {})
-                models = self._visible_model_ids(result)
+                catalog = await _fetch_codex_models(
+                    client, timeout_s=self.config.retention.transition_timeout_s
+                )
+                models = catalog.model_ids
                 if models:
                     preview = ", ".join(models[:10])
                     if len(models) > 10:
@@ -4516,53 +4525,88 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         for entry in registry.cancel_all():
             entry.payload.future.set_result("decline")
 
-    @staticmethod
-    def _visible_model_ids(result: dict[str, Any]) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        models: list[str] = []
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            model_id = entry.get("id")
-            if not isinstance(model_id, str) or not model_id:
-                continue
-            if bool(entry.get("hidden", False)):
-                continue
-            models.append(model_id)
-        return models
-
-    @staticmethod
-    def _supported_efforts(result: dict[str, Any], model_id: str) -> list[str]:
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return []
-        entry = next(
-            (e for e in data if isinstance(e, dict) and e.get("id") == model_id),
-            None,
-        )
-        efforts = entry.get("supportedReasoningEfforts") if entry else None
-        if not isinstance(efforts, list):
-            return []
-        return [
-            effort["reasoningEffort"]
-            for effort in efforts
-            if isinstance(effort, dict)
-            and isinstance(effort.get("reasoningEffort"), str)
-        ]
-
     async def _current_model_efforts(self) -> tuple[str, list[str]]:
         """The room's model and the efforts Codex reports for it (empty if unknown)."""
         room = self._require_active_client_state()
         client = room.require_client()
         model_id = room.selected_model or await self._select_model(client)
         try:
-            result = await client.request(CodexRequestMethod.MODEL_LIST, {})
+            catalog = await _fetch_codex_models(
+                client, timeout_s=self.config.retention.transition_timeout_s
+            )
         except Exception:
             logger.warning(
                 "model/list failed; supported reasoning efforts are unknown",
                 exc_info=True,
             )
             return model_id, []
-        return model_id, self._supported_efforts(result, model_id)
+        choice = catalog.choice(model_id)
+        return model_id, list(choice.efforts or ()) if choice is not None else []
+
+
+# A catalog this large indicates a broken pagination stream.
+_MAX_MODEL_LIST_PAGES = 50
+
+
+async def _fetch_codex_models(
+    client: CodexClientProtocol, *, timeout_s: float
+) -> model_catalog.ModelCatalog:
+    """Read every visible page for host discovery and all room model consumers."""
+    models: list[model_catalog.ModelChoice] = []
+    params: dict[str, Any] = {}
+    seen_cursors: set[str] = set()
+    async with asyncio.timeout(timeout_s):
+        for _ in range(_MAX_MODEL_LIST_PAGES):
+            result = await client.request(CodexRequestMethod.MODEL_LIST, params)
+            models.extend(_codex_model_choices(result))
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return model_catalog.ModelCatalog(models=tuple(models))
+            if not isinstance(cursor, str):
+                raise RuntimeError("Codex model/list returned an invalid cursor")
+            if cursor in seen_cursors:
+                raise RuntimeError("Codex model/list repeated cursor")
+            seen_cursors.add(cursor)
+            params = {"cursor": cursor}
+    raise RuntimeError(
+        f"Codex model/list returned more than {_MAX_MODEL_LIST_PAGES} pages"
+    )
+
+
+def _codex_model_choices(result: dict[str, Any]) -> list[model_catalog.ModelChoice]:
+    data = result.get("data")
+    if not isinstance(data, list):
+        return []
+    models: list[model_catalog.ModelChoice] = []
+    for entry in data:
+        if not isinstance(entry, dict) or entry.get("hidden", False):
+            continue
+        model_id = entry.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        supported = entry.get("supportedReasoningEfforts")
+        efforts = (
+            tuple(
+                effort["reasoningEffort"]
+                for effort in supported
+                if isinstance(effort, dict)
+                and isinstance(effort.get("reasoningEffort"), str)
+            )
+            if isinstance(supported, list)
+            else None
+        )
+        label = entry.get("displayName")
+        default_effort = entry.get("defaultReasoningEffort")
+        models.append(
+            model_catalog.ModelChoice(
+                id=model_id,
+                label=label if isinstance(label, str) and label else model_id,
+                provider="openai",
+                efforts=efforts,
+                default_effort=(
+                    default_effort if isinstance(default_effort, str) else None
+                ),
+                is_default=bool(entry.get("isDefault", False)),
+            )
+        )
+    return models

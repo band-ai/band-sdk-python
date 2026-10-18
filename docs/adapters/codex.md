@@ -52,6 +52,38 @@ requests immediate owned POSIX termination before ordinary settlement. The defau
 reader settlement still require confirmation; an unfinished cleanup remains owned
 for retry within the existing reporting bound.
 
+## Host model discovery
+
+`await adapter.probe_models(timeout_s=60.0)` uses the same owned throwaway
+app-server handshake, including the configured skill roots, then paginates
+`model/list`. It creates no thread or turn and leaves existing rooms, their
+selected models and their workspace claims unchanged.
+
+The result is the canonical `band.core.model_catalog.ModelCatalog`. Its visible
+`ModelChoice` entries preserve Codex IDs, display names, default-model flags,
+advertised reasoning efforts and default efforts. Unknown efforts remain `None`;
+an explicitly empty effort list becomes `()`. A default-model flag does not
+invent `current_model`: a standalone app-server has no selected room model.
+
+```python notest
+catalog = await adapter.probe_models(timeout_s=30)
+model_ids = catalog.model_ids
+default_choices = tuple(choice for choice in catalog.models if choice.is_default)
+```
+
+A successful empty catalog has `models=()`. Unsupported or failed RPCs raise
+instead of masquerading as an empty catalog. Cancellation and failed cleanup
+have the same ownership and retry behavior as preflight.
+
+One paginator also serves automatic room model selection, `/model list` and the
+current model's reasoning-effort lookup. It follows opaque `nextCursor` values,
+rejects repeated cursors and stops after 50 pages rather than returning a
+misleading partial catalog. Room listings use `retention.transition_timeout_s`
+as their RPC budget; explicit host discovery uses its `timeout_s` budget.
+Automatic selection retains its existing fallback to the SDK default on a
+failed or empty listing, while an explicitly configured or room-selected model
+is not replaced by a catalog default.
+
 ## Room behavior
 
 - **Where settings go.** Runtime settings live in `CodexAdapterConfig`, which
