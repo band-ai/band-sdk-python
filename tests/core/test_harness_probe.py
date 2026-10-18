@@ -142,3 +142,50 @@ async def test_caller_cancellation_does_not_abandon_late_startup(
         settle.set()
         await asyncio.gather(running, return_exceptions=True)
         await adapter.cleanup_all()
+
+
+async def test_cancelled_cleanup_reports_no_raw_error_but_retains_retry(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    adapter = ProbeAdapter()
+    resource = tmp_path / "failed-resource"
+    secret = "provider-token-in-transport-error"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    failed = asyncio.Event()
+    refuse_close = True
+
+    async def close() -> None:
+        entered.set()
+        await release.wait()
+        if refuse_close:
+            failed.set()
+            raise PermissionError(secret)
+        resource.unlink()
+
+    async def operation() -> str:
+        adapter._harness_probe.own(close)
+        resource.write_text("owned configuration", encoding="utf-8")
+        return "catalog"
+
+    running = asyncio.create_task(adapter._harness_probe.run(operation, timeout_s=1))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        release.set()
+        await asyncio.wait_for(failed.wait(), 1)
+        await asyncio.sleep(0)
+        assert secret not in caplog.text
+        assert resource.exists()
+        with pytest.raises(CleanupIncompleteError):
+            await adapter.cleanup_all()
+        refuse_close = False
+        await adapter.cleanup_all()
+        assert not resource.exists()
+    finally:
+        refuse_close = False
+        release.set()
+        await asyncio.gather(running, return_exceptions=True)
+        await adapter.cleanup_all()
