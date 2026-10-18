@@ -16,8 +16,11 @@ STDERR_LINE_LOG_TEMPLATE = "ACP agent stderr: %s"
 class ACPStderrDrain:
     """Drain one process and distinguish a crash from an intentional exit."""
 
-    def __init__(self, logger: logging.Logger) -> None:
+    def __init__(
+        self, logger: logging.Logger, *, diagnostic_details: bool = True
+    ) -> None:
         self._logger = logger
+        self._diagnostic_details = diagnostic_details
         self._stopping = False
         self._stdout: asyncio.StreamReader | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -70,12 +73,18 @@ class ACPStderrDrain:
             except (ValueError, asyncio.LimitOverrunError):
                 self._logger.debug("Skipped ACP stderr line exceeding the stream limit")
                 continue
-            except OSError:
-                self._logger.debug("Error reading ACP agent stderr", exc_info=True)
+            except OSError as error:
+                self._logger.debug(
+                    "Error reading ACP agent stderr",
+                    exc_info=self._diagnostic_details,
+                    extra={"error_type": type(error).__name__},
+                )
                 break
             if not line:
                 break
             text = line.decode(errors="replace").rstrip("\r\n")
+            if not self._diagnostic_details:
+                text = f"<stderr line: {len(text)} characters>"
             tail.append(text)
             self._logger.debug(STDERR_LINE_LOG_TEMPLATE, text)
         # A later stop cannot reclassify an EOF already observed.
@@ -89,5 +98,9 @@ class ACPStderrDrain:
             await asyncio.wait_for(task, timeout=STDERR_DRAIN_TIMEOUT_S)
         except TimeoutError:
             self._logger.debug("Timed out draining ACP agent stderr")
-        except Exception:
-            self._logger.debug("Error draining ACP agent stderr", exc_info=True)
+        except Exception as error:
+            self._logger.debug(
+                "Error draining ACP agent stderr",
+                exc_info=self._diagnostic_details,
+                extra={"error_type": type(error).__name__},
+            )

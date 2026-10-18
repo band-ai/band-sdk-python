@@ -24,6 +24,44 @@ adapter = ACPClientAdapter(config)
 assert adapter.config.command == ("codex-acp",)
 ```
 
+## Host preflight
+
+`await adapter.preflight(timeout_s=60.0)` on `ACPClientAdapter`,
+`CursorACPAdapter` or `CopilotACPAdapter` starts a throwaway ACP process,
+initializes it, and closes it without a Band connection, room, room workspace,
+ACP session or model turn. It uses the configured executable, backend credential
+environment, client capabilities and protocol options. A configured `cwd` is
+the probe's working directory itself, not a root for a fabricated room.
+This ACP operation is separate from the native OMP adapter's protocol.
+
+When `auth_method` is set, preflight also calls ACP `authenticate`. This can open
+an interactive login flow or change stored authentication state; leave it unset
+when a host must not request login. Even a successful initialize/authenticate
+does not establish inference entitlement, MCP connectivity, session creation or
+configured model/effort readiness. Session catalogs and model selection are
+still checked when a real room opens a session.
+
+The result is a `PreflightResult`: `ok`, with a safe `reason` and `remedy` on an
+ordinary handshake failure. `timeout_s` bounds handshake reporting and, separately,
+cleanup reporting. Cancellation propagates. `CleanupIncompleteError` is not a
+failed handshake result: the adapter still owns a process or late startup.
+Call `await adapter.cleanup_all()` again to settle it before discarding the
+adapter. Probe stderr diagnostics report line lengths and process exit metadata,
+not raw child output or configured command arguments. Third-party protocol
+libraries can emit their own diagnostics.
+
+```python notest
+from band.adapters.copilot_acp import CopilotACPAdapter
+
+adapter = CopilotACPAdapter()
+try:
+    result = await adapter.preflight(timeout_s=15.0)
+    if not result.ok:
+        raise RuntimeError(f"{result.reason} {result.remedy}")
+finally:
+    await adapter.cleanup_all()
+```
+
 ## Band tools
 
 - **Injected tools are bound to the room.** With `inject_band_tools` on (the

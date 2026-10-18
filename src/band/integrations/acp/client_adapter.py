@@ -46,8 +46,10 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.exceptions import (
     BandConfigError,
+    CleanupIncompleteError,
     InputNotAccepted,
 )
+from band.core.harness import PreflightResult
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
@@ -318,7 +320,8 @@ class ACPClientAdapterConfig(BaseAdapterConfig):
         inject_band_tools: Serve the Band tools to each session over a
             loopback MCP server.
         auth_method: ACP auth method to ``authenticate`` with after
-            ``initialize``; ``None`` skips authentication.
+            ``initialize``, including during preflight; ``None`` skips it.
+            A method may interactively log in or change stored credentials.
         custom_section: Extra instructions added to the session's system
             context.
         use_unstable_protocol: Speak ACP's unstable protocol methods.
@@ -636,6 +639,73 @@ class ACPClientAdapter(
             | {LEGACY_SEND_MESSAGE_TOOL}
         )
         return definitions, names
+
+    async def preflight(self, *, timeout_s: float = 60.0) -> PreflightResult:
+        """Initialize a throwaway ACP process without claiming a Band room.
+
+        An explicit ``auth_method`` also runs ``authenticate``; that may start
+        interactive login or change the backend's stored credentials. A passed
+        handshake proves neither login nor session, MCP or model readiness.
+        Unfinished cleanup stays owned for ``cleanup_all`` to retry.
+        """
+        owner = self._harness_probe
+
+        async def initialize() -> PreflightResult:
+            runtime = ACPRuntime(
+                command=_resolve_launcher(self._spawn_command(None)),
+                env=self._spawn_env(),
+                cwd=self._spawn_cwd(self.config.cwd),
+                auth_method=self.config.auth_method,
+                client_factory=partial(
+                    ACPCollectingClient,
+                    profile=self._profile,
+                    canonicalize_tool_name=self._canonical_tool_name,
+                ),
+                spawn_process=spawn_agent_process,
+                client_capabilities=self._client_capabilities,
+                use_unstable_protocol=self.config.use_unstable_protocol,
+                diagnostic_details=False,
+            )
+
+            async def close() -> None:
+                try:
+                    await runtime.stop()
+                except Exception as error:
+                    raise CleanupIncompleteError(
+                        f"ACP probe process cleanup failed ({type(error).__name__})."
+                    ) from None
+
+            owner.own(close)
+            try:
+                await runtime.start()
+            except CleanupIncompleteError:
+                raise
+            except FileNotFoundError:
+                return PreflightResult.failed(
+                    "The configured ACP executable was not found.",
+                    "Install the ACP agent or correct command and env['PATH'], then retry.",
+                )
+            except Exception as error:
+                return PreflightResult.failed(
+                    f"ACP initialize/authenticate failed ({type(error).__name__}).",
+                    "Check the configured command, environment and auth_method, then retry.",
+                )
+            return PreflightResult.passed()
+
+        try:
+            return await owner.run(initialize, timeout_s=timeout_s)
+        except CleanupIncompleteError:
+            raise
+        except TimeoutError:
+            return PreflightResult.failed(
+                "ACP initialize/authenticate timed out.",
+                "Check the configured agent and auth_method, or increase timeout_s.",
+            )
+        except Exception as error:
+            return PreflightResult.failed(
+                f"ACP initialize/authenticate failed ({type(error).__name__}).",
+                "Check the configured command, environment and auth_method, then retry.",
+            )
 
     def _build_runtime(self, room: ACPRoom, generation: int) -> ACPRuntime:
         """The process and connection for one residency of ``room``."""
@@ -1661,17 +1731,28 @@ class ACPClientAdapter(
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
         Disposes every room, then stops the shared Band MCP server, within one
-        ``retention.transition_timeout_s`` budget. Anything unfinished stays
-        owned and the next call resumes it. The MCP server stops only after
-        every room's process closed. Later turns are refused until
-        ``on_started`` serves again.
+        ``retention.transition_timeout_s`` budget. Probe cleanup is also
+        attempted, with its own reporting budget, even if room teardown fails.
+        Anything unfinished stays owned and the next call resumes it. The MCP
+        server stops only after every room's process closed. Later turns are
+        refused until ``on_started`` serves again.
 
         Raises:
-            CleanupIncompleteError: A room or the MCP server is still closing.
+            CleanupIncompleteError: A probe, room or MCP server is still closing.
+            BaseExceptionGroup: Multiple owned cleanup attempts failed.
         """
-        await self._mcp.close_after(
-            self._retention.stop(), retention=self.config.retention
+        results = await asyncio.gather(
+            super().cleanup_all(),
+            self._mcp.close_after(
+                self._retention.stop(), retention=self.config.retention
+            ),
+            return_exceptions=True,
         )
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("ACP adapter cleanup failed", failures)
         await self.backend_turns.drain()
         logger.info("ACP client adapter stopped")
 

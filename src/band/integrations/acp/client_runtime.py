@@ -94,6 +94,7 @@ class ACPRuntime(ACPSessionOperations):
         client_capabilities: ClientCapabilities | None = None,
         use_unstable_protocol: bool = False,
         pass_builtin_transport_options: bool = True,
+        diagnostic_details: bool = True,
     ) -> None:
         super().__init__()
         self._command = list(command)
@@ -105,6 +106,7 @@ class ACPRuntime(ACPSessionOperations):
         self._client_capabilities = client_capabilities
         self._use_unstable_protocol = use_unstable_protocol
         self._pass_builtin_transport_options = pass_builtin_transport_options
+        self._diagnostic_details = diagnostic_details
 
         self._conn: ACPConnectionProtocol | None = None
         self._ctx: (
@@ -113,7 +115,7 @@ class ACPRuntime(ACPSessionOperations):
         self._transport: object = None
         self._exit_attempted = False
         self._closure: asyncio.Task[None] | None = None
-        self._stderr = ACPStderrDrain(logger)
+        self._stderr = ACPStderrDrain(logger, diagnostic_details=diagnostic_details)
 
     async def start(self) -> None:
         """Spawn the ACP agent subprocess and initialize its connection."""
@@ -137,7 +139,9 @@ class ACPRuntime(ACPSessionOperations):
         # rather than logging a blank suffix.
         logger.info(
             "Connected to ACP agent: %s",
-            " ".join(self._command) or INJECTED_TRANSPORT,
+            (" ".join(self._command) or INJECTED_TRANSPORT)
+            if self._diagnostic_details
+            else "<configured probe command>",
         )
 
     def _spawn_context(
@@ -171,7 +175,12 @@ class ACPRuntime(ACPSessionOperations):
         self._agent_supports_session_close = self._select_session_close(init_response)
         if self._auth_method:
             await conn.authenticate(method_id=self._auth_method)
-            logger.info("Authenticated with method: %s", self._auth_method)
+            logger.info(
+                "Authenticated with method: %s",
+                self._auth_method
+                if self._diagnostic_details
+                else "<configured probe auth method>",
+            )
 
     async def ensure_connection(self) -> ACPConnectionProtocol:
         if self._conn is None:
@@ -251,12 +260,13 @@ class ACPRuntime(ACPSessionOperations):
         ``stop`` and is logged here, since the start raises its own error."""
         try:
             await self._closed()
-        except Exception:
+        except Exception as error:
             logger.warning(
                 "Closing ACP agent subprocess %s after a failed start failed; "
                 "stop retries it",
                 _pid(self._transport),
-                exc_info=True,
+                exc_info=self._diagnostic_details,
+                extra={"error_type": type(error).__name__},
             )
 
     @staticmethod
