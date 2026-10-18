@@ -17,6 +17,7 @@ from websockets.exceptions import ConnectionClosed
 from band.agent import Agent
 from band.client.streaming.client import WebSocketClient
 from band.core.simple_adapter import SimpleAdapter
+from band.core.types import PlatformMessage
 from band.platform.link import BandLink
 from band.runtime.agentconfig import AgentConfig
 from band.runtime.platform_runtime import PlatformRuntime
@@ -40,6 +41,7 @@ def wire_agent(
     *,
     adapter: SimpleAdapter | None = None,
     room_ids: tuple[str, ...] = ("room-1",),
+    next_messages: list[PlatformMessage] | None = None,
 ) -> Agent:
     """Stub REST only; retain real startup, rooms, stop, and wire callbacks."""
     link = BandLink(
@@ -48,7 +50,7 @@ def wire_agent(
         ws_url=server_url,
         rest_url="https://test.invalid",
     )
-    rest_boundary = make_link_mock()
+    rest_boundary = make_link_mock(next_messages=next_messages)
     link.rest = rest_boundary.rest
     link.rest.agent_api_chats.list_agent_chats = AsyncMock(
         return_value=MagicMock(

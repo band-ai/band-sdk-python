@@ -33,6 +33,7 @@ from band.runtime.startup import (
     release_adapter,
     start_adapter,
 )
+from band.runtime.status import AgentStatus
 
 if TYPE_CHECKING:
     from band.client.streaming.client import WebSocketDisconnectReason
@@ -292,6 +293,18 @@ class Agent:
         not set a terminal reason or end the reconnecting run.
         """
         return self._runtime.last_disconnect_reason
+
+    def status(self) -> AgentStatus:
+        """Copy runtime status, including cleanup held only by the adapter."""
+        status = self._runtime.status()
+        return status.model_copy(
+            update={
+                "running": self._started and status.running,
+                "cleanup_pending": status.cleanup_pending
+                or self._starting
+                or (not self._started and bool(self._cleanup_pending)),
+            }
+        )
 
     async def start(self) -> None:
         """Start agent.

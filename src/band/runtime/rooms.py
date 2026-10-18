@@ -129,6 +129,16 @@ class RoomExecutions:
     def room_ids(self) -> list[str]:
         return list(self._rooms)
 
+    def lifecycle(self, room_id: str) -> RoomState | None:
+        """The current ownership phase, or ``None`` for an unowned room."""
+        room = self._rooms.get(room_id)
+        return room.state if room is not None else None
+
+    def execution(self, room_id: str) -> Execution | None:
+        """The owned execution, including startup and unsettled cleanup."""
+        room = self._rooms.get(room_id)
+        return room.execution if room is not None else None
+
     def wanted(self, room_id: str) -> bool:
         room = self._rooms.get(room_id)
         return room is not None and room.wanted

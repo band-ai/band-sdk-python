@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from band_rest.core.api_error import ApiError
 
@@ -23,6 +24,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.single_instance import SingleInstanceGuard
+from band.runtime.status import AgentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +69,12 @@ class PlatformRuntime:
         self._on_participant_removed = on_participant_removed
 
         self._link: BandLink | None = None
+        self._initializing = False
         # Held from creation until its stop() completes, so a restart can never
         # replace a runtime whose rooms may still be serving or cleaning up.
         self._runtime: AgentRuntime | None = None
         self._running = False
+        self._started_at: datetime | None = None
         self._instance_guard: SingleInstanceGuard | None = None
         # Only a guard ``start()`` claimed itself is released by this runtime;
         # a host that claimed it first releases it after its own cleanup.
@@ -123,6 +127,22 @@ class PlatformRuntime:
         """The current connection's terminal cause, retained after stopping."""
         return self._link.last_disconnect_reason if self._link is not None else None
 
+    def status(self) -> AgentStatus:
+        """Copy current transport, lifecycle, membership and room custody."""
+        running = self._running and self.last_disconnect_reason is None
+        return AgentStatus(
+            running=running,
+            connected=self._link.is_connected if self._link is not None else False,
+            cleanup_pending=self._initializing
+            or (
+                not running
+                and (self._runtime is not None or self._instance_guard is not None)
+            ),
+            last_disconnect_reason=self.last_disconnect_reason,
+            started_at=self._started_at if running else None,
+            rooms=self._runtime.room_statuses() if self._runtime is not None else (),
+        )
+
     @property
     def link(self) -> BandLink:
         if not self._link:
@@ -167,16 +187,19 @@ class PlatformRuntime:
         if self._link:
             return self._link
 
-        self._link = BandLink(
-            agent_id=self._agent_id,
-            api_key=self._api_key,
-            ws_url=self._ws_url,
-            rest_url=self._rest_url,
-            conflict_policy=self._config.conflict_policy,
-        )
-        self._link.on_transport_stopped = self._mark_stopped
-
-        await self._fetch_agent_metadata()
+        self._initializing = True
+        try:
+            self._link = BandLink(
+                agent_id=self._agent_id,
+                api_key=self._api_key,
+                ws_url=self._ws_url,
+                rest_url=self._rest_url,
+                conflict_policy=self._config.conflict_policy,
+            )
+            self._link.on_transport_stopped = self._mark_stopped
+            await self._fetch_agent_metadata()
+        finally:
+            self._initializing = False
         logger.debug("Platform runtime initialized for agent: %s", self._agent_name)
         return self._link
 
@@ -245,6 +268,7 @@ class PlatformRuntime:
             await self._unwind_failed_start()
             raise
         self._running = True
+        self._started_at = datetime.now(UTC)
 
         logger.info("Platform runtime started for agent: %s", self._agent_name)
 
@@ -288,6 +312,7 @@ class PlatformRuntime:
         if link is not None and self._link is not link:
             return
         self._running = False
+        self._started_at = None
 
     def request_stop(self) -> None:
         """Record host intent synchronously, before any shutdown awaits."""

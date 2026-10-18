@@ -243,7 +243,29 @@ from band import AgentDisconnectedError, BandConnectionError
 assert issubclass(AgentDisconnectedError, BandConnectionError)
 ```
 
-Compatibility: a terminal supersede no longer looks like a successful return from `run_forever()`. Hosts that previously polled the link's private state can catch the public exception instead.
+Compatibility: a terminal supersede no longer looks like a successful return from `run_forever()`. Hosts that previously polled disconnect state can catch the public exception instead.
+
+### Host Status Snapshots
+
+`agent.status()` returns an immutable `AgentStatus` without I/O. `agent.runtime.status()` provides the same runtime view; the agent-level method also includes adapter-only cleanup failures. Call it on the agent's event loop, for example from a host heartbeat:
+
+```python notest
+status = agent.status()
+healthy = status.running and status.connected
+for room in status.rooms:
+    logger.info(
+        "Room %s member=%s routed=%s unsettled=%s execution=%s",
+        room.room_id, room.member, room.routed, room.unsettled, room.state,
+    )
+```
+
+- `running` observes successful startup, stop intent, terminal disconnects, and completed transport shutdown. During an ordinary network outage it remains true while `connected` is false; a successful reconnect restores `connected` without starting a new run. Cancelling a waiter alone leaves the live run intact.
+- `started_at` is the UTC time the current successful start completed. It is `None` before startup succeeds and after a stop request, terminal disconnect, or completed transport shutdown, including failed cleanup. A restart gets a fresh timestamp. The timestamp never controls lifecycle decisions.
+- `cleanup_pending` reports non-serving resources still owned, including in-flight metadata/startup, held identity guards, and failed or cancelled cleanup. During startup, wait for the start and any deferred stop to settle. After a failed or cancelled stop, retry `stop()` before restarting. A standalone runtime's explicitly host-claimed guard remains host-owned until `release_single_instance()`; the snapshot is not a startup gate.
+- `last_disconnect_reason` retains the typed terminal cause through stop and resets on a fresh connection attempt.
+- `rooms` is a sorted tuple covering both current local membership and every room still tracked by the execution owner. A starting, retiring, or failed-cleanup execution does not disappear just because it is no longer routed. Rooms are not hidden during shutdown.
+
+Each immutable `RoomStatus` has `room_id`, `member`, `lifecycle`, `state`, `routed`, and `unsettled`. `member` is the presence roster's last reconciled membership, not a claim that a disconnected socket is subscribed. `lifecycle` is the owner's `idle`, `starting`, `serving`, or `retiring` phase (`None` when membership has no execution owner). `state` is the canonical `ExecutionState`, or `None` for an absent/custom execution without that state. `routed` means the execution receives room work and control; `unsettled` means an execution remains owned but is not routed. A snapshot already taken never changes as rooms leave, work completes, or cleanup is retried.
 
 ### Logging
 

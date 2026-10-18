@@ -18,10 +18,16 @@ from band.platform.event import PlatformEvent
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.control import ControlDeduplicator, apply_control, control_targets
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
+from band.runtime.execution import (
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
+    ExecutionState,
+)
 from band.runtime.presence import RoomPresence
 from band.runtime.rooms import RoomExecutions, request_resync
 from band.runtime.sessionconfig import SessionConfig
+from band.runtime.status import RoomStatus
 
 if TYPE_CHECKING:
     from band.client.streaming import AgentControlPayload
@@ -172,6 +178,26 @@ class AgentRuntime:
     def unsettled_rooms(self) -> list[str]:
         """Rooms owning an execution that is not serving them."""
         return self.rooms.unsettled
+
+    def room_statuses(self) -> tuple[RoomStatus, ...]:
+        """Copy membership and every owned room, not only routed executions."""
+        members = set(self.presence.roster.tracked_room_ids())
+        unsettled = set(self.rooms.unsettled)
+        snapshots: list[RoomStatus] = []
+        for room_id in sorted(members | set(self.rooms.room_ids())):
+            execution = self.rooms.execution(room_id)
+            state = getattr(execution, "state", None)
+            snapshots.append(
+                RoomStatus(
+                    room_id=room_id,
+                    member=room_id in members,
+                    lifecycle=self.rooms.lifecycle(room_id),
+                    state=state if isinstance(state, ExecutionState) else None,
+                    routed=self.rooms.serving(room_id),
+                    unsettled=room_id in unsettled,
+                )
+            )
+        return tuple(snapshots)
 
     def set_hub_room_id(self, hub_room_id: str | None) -> None:
         """Register the hub-room ID so future executions can auto-enable contact tools.
