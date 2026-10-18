@@ -6,20 +6,27 @@ of WebSocket connection or subscription state.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
+from math import ceil
 from typing import Any, TypeVar
 
+from band_rest.agent_api_activity.types.report_agent_chat_activity_response import (
+    ReportAgentChatActivityResponse,
+)
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_rest.types.chat_message import ChatMessage
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.types import metadata_to_dict
+from band.platform.activity import activity_support
 from band.runtime.messages import PlatformMessage
 
 logger = logging.getLogger(__name__)
@@ -167,6 +174,8 @@ class MessageLifecycle:
         room_id: str,
         working: bool,
         *,
+        activity: AgentActivityDetail | None = None,
+        rest_url: str | None = None,
         timeout_seconds: int = 2,
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
@@ -179,26 +188,27 @@ class MessageLifecycle:
         the backstop and activity reporting must never break message
         processing.
 
-        ``timeout_seconds`` bounds each POST so a slow/half-open endpoint
-        can't stall the keep-alive or wedge teardown. Retries are off: a
-        dropped keep-alive gets re-sent next cadence tick, and a dropped
-        ``false`` is cleared by the platform TTL either way — retrying would
-        only add latency.
+        One deadline bounds discovery, POST and the sole compatibility retry.
+        A rejected detail permanently downgrades the process to boolean reports;
+        other failures wait for the next keep-alive or platform TTL.
 
         A successful ``working=True`` report echoed as ``False`` identifies a
         stopped execution. Notify ``on_stopped`` separately from the request's
         success boolean; transport failures never imply STOP.
         """
         try:
-            response = await rest.agent_api_activity.report_agent_chat_activity(
-                chat_id=room_id,
-                working=working,
-                request_options={
-                    "timeout_in_seconds": timeout_seconds,
-                    "max_retries": 0,
-                },
-            )
-            stopped = working and response.data.working is False
+            async with asyncio.timeout(timeout_seconds):
+                deadline = asyncio.get_running_loop().time() + timeout_seconds
+                detail = activity if working else None
+                if detail is not None and (
+                    rest_url is None
+                    or not await activity_support.allows(rest_url, timeout_seconds / 2)
+                ):
+                    detail = None
+                response = await self._post_activity(
+                    rest, room_id, working, detail, deadline
+                )
+                stopped = working and response.data.working is False
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             if not self._activity_report_failing:
                 self._activity_report_failing = True
@@ -223,6 +233,41 @@ class MessageLifecycle:
         if stopped and on_stopped is not None:
             on_stopped()
         return True
+
+    @staticmethod
+    async def _post_activity(
+        rest: AsyncRestClient,
+        room_id: str,
+        working: bool,
+        activity: AgentActivityDetail | None,
+        deadline: float,
+    ) -> ReportAgentChatActivityResponse:
+        kwargs: dict[str, Any] = {}
+        if activity is not None and activity_support.supported:
+            kwargs["activity"] = activity
+        for attempt in range(2):
+            try:
+                return await rest.agent_api_activity.report_agent_chat_activity(
+                    chat_id=room_id,
+                    working=working,
+                    request_options={
+                        "timeout_in_seconds": max(
+                            1, ceil(deadline - asyncio.get_running_loop().time())
+                        ),
+                        "max_retries": 0,
+                    },
+                    **kwargs,
+                )
+            except ApiError as error:
+                if (
+                    attempt
+                    or "activity" not in kwargs
+                    or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY
+                ):
+                    raise
+                activity_support.disable()
+                kwargs.clear()
+        raise AssertionError("Activity compatibility retry did not return")
 
     async def get_next_message(
         self, rest: AsyncRestClient, room_id: str

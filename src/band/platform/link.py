@@ -12,6 +12,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_sdk_core import AgentTopicKind, SessionState
 
 from band.client.rest import AsyncRestClient
@@ -584,6 +585,7 @@ class BandLink:
         room_id: str,
         working: bool,
         *,
+        activity: AgentActivityDetail | None = None,
         timeout_seconds: int = 2,
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
@@ -591,6 +593,8 @@ class BandLink:
             self.rest,
             room_id,
             working,
+            activity=activity,
+            rest_url=self.rest_url,
             timeout_seconds=timeout_seconds,
             on_stopped=on_stopped,
         )

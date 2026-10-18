@@ -19,6 +19,7 @@ import contextlib
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
@@ -30,6 +31,7 @@ from typing import (
     runtime_checkable,
 )
 
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_sdk_core import (
     AgentFailure,
     ClaimRegistry,
@@ -84,7 +86,7 @@ from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.resync import ResyncSchedule
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.working_state import WorkingStateReporter
+from band.runtime.working_state import ActivityObserver, WorkingStateReporter
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -281,6 +283,18 @@ class Execution(Protocol):
 ExecutionHandler = Callable[["ExecutionContext", PlatformEvent], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class ScopeActivityObserver:
+    context: ExecutionContext
+    scope: TurnScope
+
+    async def update(self, activity: AgentActivityDetail) -> None:
+        await self.context.observe_activity(self.scope, activity=activity)
+
+    async def set_manual_wait(self, waiting: bool) -> None:
+        await self.context.observe_activity(self.scope, waiting=waiting)
+
+
 class ExecutionContext:
     """
     Default execution: context accumulation model.
@@ -431,10 +445,9 @@ class ExecutionContext:
         # The first stop's graceful result; a retry only settles retained work.
         self._stop_graceful = True
 
-        # Optional seam for clearing user-visible activity state ("reasoning…")
-        # when a cycle is interrupted/stopped. Filled by the activity-signal
-        # work; a no-op (None) here.
-        self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
+        self._on_activity_clear: Callable[[], Awaitable[None]] | None = (
+            self._clear_scope_activity
+        )
 
     @property
     def thread_id(self) -> str:
@@ -1853,9 +1866,11 @@ class ExecutionContext:
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
+        detail = self._working_reporter.activity if working else None
         return await self.link.report_activity(
             self.room_id,
             working,
+            **({"activity": detail} if detail is not None else {}),
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
@@ -1919,7 +1934,39 @@ class ExecutionContext:
         if self._activity_owner is not scope:
             self._activity_stop_scope = None
         self._activity_owner = scope
-        await self._working_reporter.start()
+        await self._working_reporter.start(owner=scope)
+
+    def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
+        return ScopeActivityObserver(self, scope) if scope is not None else None
+
+    def owns_activity(self, scope: TurnScope) -> bool:
+        return self._activity_owner is scope and not scope.aborted and not self._closing
+
+    async def observe_activity(
+        self,
+        scope: TurnScope,
+        *,
+        activity: AgentActivityDetail | None = None,
+        waiting: bool | None = None,
+    ) -> None:
+        if (
+            self._activity_owner is None
+            and scope is self.current_scope
+            and not scope.settled
+        ):
+            await self._acquire_activity(scope)
+        await self._working_reporter.update(
+            current=partial(self.owns_activity, scope),
+            activity=activity,
+            waiting=waiting,
+        )
+
+    async def _clear_scope_activity(self) -> None:
+        scope = self.current_scope
+        if scope is not None:
+            await self._working_reporter.clear_detail(
+                current=partial(self.owns_activity, scope)
+            )
 
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
