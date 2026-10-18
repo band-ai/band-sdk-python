@@ -1791,19 +1791,18 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
 
         entry = await self._acquire_room_lock_entry(room_id)
         try:
-            async with (
-                entry.lock,
-                tool_turn(self._tool_turns, room_id, tools) as turn,
-            ):
-                await self._process_one_turn(
-                    msg=msg,
-                    tools=tools,
-                    history=history,
-                    participants_msg=participants_msg,
-                    contacts_msg=contacts_msg,
-                    room_id=room_id,
-                    tool_turn=turn,
-                )
+            async with entry.lock:
+                await settle_tool_turns(self._tool_turns, room_id=room_id)
+                async with tool_turn(self._tool_turns, room_id, tools) as turn:
+                    await self._process_one_turn(
+                        msg=msg,
+                        tools=tools,
+                        history=history,
+                        participants_msg=participants_msg,
+                        contacts_msg=contacts_msg,
+                        room_id=room_id,
+                        tool_turn=turn,
+                    )
         finally:
             await self._release_room_lock_entry(room_id, entry)
 
