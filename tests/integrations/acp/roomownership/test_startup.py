@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager, suppress
+from contextlib import AbstractAsyncContextManager
 
 import pytest
 
@@ -28,6 +28,7 @@ from tests.integrations.acp.roomownership.kit import (
     stop,
 )
 from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 
 
@@ -53,15 +54,11 @@ class TestStartup:
             retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S)
         )
         async with controlled_clock() as clock, acp_adapter(agent, config) as session:
-            sending = asyncio.create_task(session.send("hello"))
-            try:
+            async with background(session.send("hello")) as sending:
                 await starting.received.wait()
                 clock.advance(SHORT_TRANSITION_S * 2)
                 with pytest.raises(TimeoutError):
                     await sending
-            finally:
-                sending.cancel()
-                await asyncio.gather(sending, return_exceptions=True)
             assert session.last_reply.errors == [PROCESS_NOT_READY_ERROR]
             assert adapter_warnings(caplog) == [
                 (
@@ -85,21 +82,18 @@ class TestStartup:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         # The default start bound is far away: the stop, not the bound, frees it.
-        async with opened(agent) as session:
-            first = asyncio.create_task(session.send("hello"))
-            try:
-                await starting.received.wait()
+        async with (
+            opened(agent) as session,
+            background(session.send("hello")) as first,
+        ):
+            await starting.received.wait()
 
-                await stop(session, first)
-                async with asyncio.timeout(TEST_GUARD_S):
-                    served = await session.send("again")
-                    await accepted_work_finished(session.room())
+            await stop(session, first)
+            async with asyncio.timeout(TEST_GUARD_S):
+                served = await session.send("again")
+                await accepted_work_finished(session.room())
 
-                assert served.errors == []
-            finally:
-                first.cancel()
-                with suppress(asyncio.CancelledError):
-                    await first
+            assert served.errors == []
         assert len(agent.prompts) == 1
 
     @pytest.mark.asyncio
@@ -112,15 +106,11 @@ class TestStartup:
             retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S)
         )
         async with controlled_clock() as clock, acp_adapter(agent, config) as session:
-            sending = asyncio.create_task(session.send("hello"))
-            try:
+            async with background(session.send("hello")) as sending:
                 await starting.received.wait()
                 clock.advance(SHORT_TRANSITION_S * 2)
                 with pytest.raises(TimeoutError):
                     await sending
-            finally:
-                sending.cancel()
-                await asyncio.gather(sending, return_exceptions=True)
             starting.release.set()
             while session.room().retained.snapshot.pending_cleanup:
                 await asyncio.sleep(0)

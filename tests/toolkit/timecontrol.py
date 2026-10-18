@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 
 from looptime import LoopTimeEventLoop
 
+from tests.adapters.waiting import spin
 from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
 
 
 class ControlledClock:
@@ -22,6 +24,11 @@ class ControlledClock:
             start=self.loop.time() + seconds, resolution=binary_clock_resolution()
         )
 
+    async def elapse(self, seconds: float) -> None:
+        """Cross a timer boundary and let its runnable callbacks settle."""
+        self.advance(seconds)
+        await spin()
+
 
 async def keep_time_stationary() -> None:
     # A ready task prevents looptime from jumping to a timer during socket I/O.
@@ -33,10 +40,5 @@ async def keep_time_stationary() -> None:
 async def controlled_clock() -> AsyncIterator[ControlledClock]:
     loop = asyncio.get_running_loop()
     assert isinstance(loop, LoopTimeEventLoop) and loop.looptime_on
-    clock_task = asyncio.create_task(keep_time_stationary())
-    try:
+    async with background(keep_time_stationary()):
         yield ControlledClock(loop)
-    finally:
-        clock_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await clock_task

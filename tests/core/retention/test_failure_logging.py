@@ -17,6 +17,7 @@ from tests.core.retention.kit import (
     retention_records,
 )
 from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 
 pytestmark = pytest.mark.timeout(10)
@@ -81,8 +82,10 @@ class TestFailureLogging:
             order.append("cleanup failed")
             raise RuntimeError("close failed")
 
-        async with controlled_clock() as clock:
-            cleanup = spawn_owned(failing_cleanup(), label="cleanup")
+        async with (
+            controlled_clock() as clock,
+            background(spawn_owned(failing_cleanup(), label="cleanup")) as cleanup,
+        ):
             cleanup.add_done_callback(lambda _: order.append("done callback"))
             release = loop.call_later(1, gate.set_result, None)
             # Both distinct timers become due in one step; equal deadlines have
@@ -104,8 +107,6 @@ class TestFailureLogging:
             finally:
                 release.cancel()
                 jump.cancel()
-                cleanup.cancel()
-                await asyncio.gather(cleanup, return_exceptions=True)
 
     async def test_a_failure_its_cancelled_caller_never_saw_is_logged_once(
         self, caplog: pytest.LogCaptureFixture

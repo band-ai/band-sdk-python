@@ -7,7 +7,6 @@ import logging
 import pytest
 
 from band.client.streaming.watchdog import logger
-from tests.adapters.waiting import spin
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 from tests.websocket.watchdog import (
@@ -29,8 +28,7 @@ class TestWatchdog:
     async def test_stale_watchdog_cannot_close_a_superseded_connection(self) -> None:
         first, second = WatchdogPeer(), WatchdogPeer()
         async with controlled_clock() as clock, watching(first):
-            clock.advance(DEAD_THRESHOLD_S - 1)
-            await spin()
+            await clock.elapse(DEAD_THRESHOLD_S - 1)
             assert first.close_calls == []
             clock.advance(2)
             assert await first.attempts.get() == CLOSE_REASON
@@ -53,8 +51,7 @@ class TestWatchdog:
         caplog.set_level(logging.WARNING, logger=logger.name)
         async with controlled_clock() as clock, watching(peer):
             for _ in range(2):
-                clock.advance(DEAD_THRESHOLD_S + 1)
-                await spin()
+                await clock.elapse(DEAD_THRESHOLD_S + 1)
             assert peer.close_calls == []
             assert [
                 r.getMessage() for r in caplog.records if r.name == logger.name
@@ -63,12 +60,10 @@ class TestWatchdog:
     async def test_reset_deadline_lets_a_fresh_socket_survive_a_reconnect(self) -> None:
         peer = WatchdogPeer(connected=False)
         async with controlled_clock() as clock, watching(peer) as watchdog:
-            clock.advance(DEAD_THRESHOLD_S - 1)
-            await spin()
+            await clock.elapse(DEAD_THRESHOLD_S - 1)
             peer.connection = object()
             watchdog.reset_deadline()
-            clock.advance(2)
-            await spin()
+            await clock.elapse(2)
             assert peer.close_calls == []
             clock.advance(DEAD_THRESHOLD_S)
             assert await peer.attempts.get() == CLOSE_REASON

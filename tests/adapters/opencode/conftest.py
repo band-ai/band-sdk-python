@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import nullcontext
+from contextlib import AbstractAsyncContextManager
 
-import looptime
 import pytest
 import pytest_asyncio
-from typing_extensions import Unpack
 
-from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import FeatureKwargs
-from band.runtime.custom_tools import CustomToolDef
+from band.adapters.opencode import OpencodeAdapter
 from band.testing import FakeAgentTools
-from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls, FakeOpencodeClient
+from tests.adapters.opencode.approvalclock import ApprovalTurn, pending_approval
+from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls
+from tests.adapters.opencode.ownership import AdapterOwner
 from tests.mcpbackends import BackendStarts, backends_created_by
+
+
+@pytest.fixture
+def approval_turn() -> Callable[[], AbstractAsyncContextManager[ApprovalTurn]]:
+    return pending_approval
 
 
 @pytest.fixture
@@ -37,52 +39,8 @@ async def make_adapter(
 ) -> AsyncIterator[Callable[..., OpencodeAdapter]]:
     """Build an adapter around the scenario's fake OpenCode client."""
 
-    owned: list[tuple[OpencodeAdapter, bool]] = []
-    loop = asyncio.get_running_loop()
-
-    def build(
-        client: FakeOpencodeClient,
-        *,
-        config: OpencodeAdapterConfig | None = None,
-        additional_tools: list[CustomToolDef] | None = None,
-        adapter_type: type[OpencodeAdapter] = OpencodeAdapter,
-        **features: Unpack[FeatureKwargs],
-    ) -> OpencodeAdapter:
-        adapter = adapter_type(
-            config=config,
-            additional_tools=additional_tools,
-            client_factory=lambda _: client,
-            **features,
-        )
-
-        owned.append(
-            (adapter, isinstance(loop, looptime.LoopTimeEventLoop) and loop.looptime_on)
-        )
-        return adapter
-
-    try:
-        yield build
-    finally:
-        for adapter, virtual in reversed(owned):
-            mode = (
-                looptime.enabled(strict=True)
-                if virtual
-                and isinstance(loop, looptime.LoopTimeEventLoop)
-                and not loop.looptime_on
-                else nullcontext()
-            )
-            with mode:
-                watchers = [
-                    room.turn_task for room in adapter._rooms.values() if room.turn_task
-                ]
-                try:
-                    for room_id in list(adapter._rooms):
-                        await adapter.on_cleanup(room_id)
-                finally:
-                    await asyncio.gather(*watchers, return_exceptions=True)
-                assert adapter._rooms == {}
-                assert adapter._registration is None
-                assert adapter._event_task is None
+    async with AdapterOwner() as adapters:
+        yield adapters.create
 
 
 @pytest.fixture(autouse=True)
