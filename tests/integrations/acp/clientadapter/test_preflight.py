@@ -148,6 +148,7 @@ class TestACPPreflight:
         assert (await adapter.preflight(timeout_s=1)).ok
         assert spawn.open_count == 0
 
+    @pytest.mark.looptime
     async def test_timeout_is_a_failure_and_closes_the_runtime(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -158,6 +159,7 @@ class TestACPPreflight:
 
         result = await adapter.preflight(timeout_s=0.01)
 
+        assert spawn.initializing.is_set()
         assert not result.ok
         assert result.reason
         assert result.remedy

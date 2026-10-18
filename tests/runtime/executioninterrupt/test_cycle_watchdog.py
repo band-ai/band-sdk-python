@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
+import pytest
+
 from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
@@ -187,6 +189,7 @@ class TestCycleWatchdog:
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
         mock_link.mark_failed.assert_not_awaited()
 
+    @pytest.mark.looptime
     async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
         self, mock_link
     ):
