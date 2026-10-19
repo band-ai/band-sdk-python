@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from functools import wraps
 from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions
@@ -67,6 +68,12 @@ class ConfirmedCloseTransport(Transport):
 
     async def close(self) -> None:
         self._observe_child()
+        # Accept the child before asking an inner transport to defer its own
+        # exit assertion; this owner can then kill and reap a forgotten child.
+        if self._child is not None and (
+            defer := getattr(self._inner, "_defer_exit_confirmation", None)
+        ):
+            defer()
         await self._inner.close()
         await self._confirm_exit()
 
@@ -90,8 +97,17 @@ class ConfirmedCloseTransport(Transport):
         self._child = None
 
 
+def _confirmed_close(
+    factory: Callable[[ClaudeAgentOptions], Transport],
+) -> Callable[[ClaudeAgentOptions], Transport]:
+    @wraps(factory)
+    def create(options: ClaudeAgentOptions) -> Transport:
+        return ConfirmedCloseTransport(factory(options))
+
+    return create
+
+
+@_confirmed_close
 def create_transport(options: ClaudeAgentOptions) -> Transport:
     """Keep permission routing identical to the SDK's default transport."""
-    return ConfirmedCloseTransport(
-        SubprocessCLITransport(prompt="", options=_configure_can_use_tool(options))
-    )
+    return SubprocessCLITransport(prompt="", options=_configure_can_use_tool(options))

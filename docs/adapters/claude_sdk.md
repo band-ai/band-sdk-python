@@ -137,6 +137,8 @@ reuse the failed client or take another room's claimed directory.
   retried before a later turn starts a replacement connection.
   Concurrent `cleanup_all()` calls share one teardown that a cancelled caller
   can't abandon.
+  The physical-exit owner accepts the native child before a transport can defer
+  its own exit check; a deferred check never replaces the owner's kill and reap.
 
 ```python
 import pytest
