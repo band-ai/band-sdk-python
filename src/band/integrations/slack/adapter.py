@@ -55,6 +55,7 @@ from band.integrations.slack.block_kit import (
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.platform.posting import post_event
+from band.runtime.startup import dispose_adapter
 from band.runtime.tools import AgentTools, ToolCallOutcome, TurnEffect
 from band.runtime.tools.schema import is_failed_tool_output
 
@@ -472,11 +473,14 @@ class SlackAdapter(SimpleAdapter[Any]):
         self.config = config
         self._router: Router | None = None
         self._socket_listeners: list[SlackSocketListener] = []
+        self._listener_close_lock = asyncio.Lock()
         self._web_client_factory: WebClientFactory = (
             web_client_factory or self._default_web_client_factory
         )
         self._web_clients: dict[str, AsyncWebClient] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._accepting_events = True
+        self._inner_live = False
 
         # Band-side state.
         self._rest: AsyncRestClient | None = rest_client
@@ -633,6 +637,8 @@ class SlackAdapter(SimpleAdapter[Any]):
             # a duck-typed adapter may not declare the attribute.
             setattr(self._inner, "platform", self.platform)  # noqa: B010
 
+        self._accepting_events = True
+        self._inner_live = True
         await self._inner.on_started(agent_name, agent_description)
 
         if self.config.transport == "socket":
@@ -662,17 +668,38 @@ class SlackAdapter(SimpleAdapter[Any]):
         For HTTP it's a no-op — the developer's ASGI server owns the
         HTTP lifecycle. Safe to call multiple times.
         """
-        if self._socket_listeners:
-            listeners = self._socket_listeners
-            self._socket_listeners = []
-            for listener in listeners:
+        for error in await self._close_listeners():
+            logger.error("Failed to stop Slack Socket Mode listener", exc_info=error)
+
+    async def _close_listeners(self) -> list[Exception]:
+        errors: list[Exception] = []
+        async with self._listener_close_lock:
+            for listener in list(self._socket_listeners):
                 try:
                     await listener.stop()
-                except Exception:
-                    logger.exception(
-                        "Failed to stop Slack Socket Mode listener (app=%s)",
-                        listener.app.slug,
-                    )
+                except Exception as exc:  # noqa: BLE001 -- retain failures and close other listeners
+                    exc.add_note(f"Slack listener app: {listener.app.slug}")
+                    errors.append(exc)
+                else:
+                    self._socket_listeners.remove(listener)
+        return errors
+
+    async def cleanup_all(self) -> None:
+        """Close ingress and join accepted handlers before inner framework teardown."""
+        self._accepting_events = False
+        errors = await self._close_listeners()
+        for task in self._background_tasks:
+            task.cancel()
+        await self.wait_idle()
+        if self._inner_live:
+            try:
+                await dispose_adapter(self._inner)
+            except Exception as exc:  # noqa: BLE001 -- preserve listener and inner failures
+                errors.append(exc)
+            else:
+                self._inner_live = False
+        if errors:
+            raise ExceptionGroup("Slack cleanup failed; retry host shutdown", errors)
 
     async def on_event(self, inp: AgentInput) -> None:
         """Rehydrate Slack binding on bootstrap, then delegate as normal.
@@ -802,6 +829,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         Slack requires HTTP 200 within 3 seconds; we fire the actual
         work into a task so the route handler can ack immediately.
         """
+        if not self._accepting_events:
+            logger.warning("Dropping Slack event for app %s: shutting down", app.slug)
+            return
         task = asyncio.create_task(self._handle_event(app, payload))
         self._background_tasks.add(task)
         task.add_done_callback(self._on_background_task_done)
