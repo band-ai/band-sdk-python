@@ -73,6 +73,11 @@ def room_call(tool_name: str, arguments: dict[str, Any] | None = None) -> str:
     return f"await self.room.{tool_name}(**{arguments or {}!r})"
 
 
+def custom_room_call(tool_name: str, arguments: dict[str, Any] | None = None) -> str:
+    """Python that supplies a custom tool's original validation payload."""
+    return room_call(tool_name, {"arguments": arguments or {}})
+
+
 def scripted_llm(*cells: str) -> FakeLLMClient:
     """A model that runs each cell in turn, then returns ``None``.
 

@@ -14,13 +14,19 @@ point, so every call here uses whatever ``rest`` the caller currently has.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
-from band_rest.errors import ForbiddenError
+from band_rest.core.parse_error import ParsingError
+from band_rest.errors import ForbiddenError, UnprocessableEntityError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.content import has_visible_content
-from band.core.exceptions import RoomExecutionStoppedError
+from band.core.exceptions import (
+    MessagePostError,
+    MessagePostKind,
+    RoomExecutionStoppedError,
+)
 
 if TYPE_CHECKING:
     from band_rest.types import EventCreatedResponse, MessageSentResponse
@@ -61,23 +67,103 @@ def _truncate_event_content(content: str) -> str:
 _EXECUTION_STOPPED_MESSAGE = "execution is stopped"
 
 
-def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
-    """Whether a posting rejection identifies stopped room execution.
-
-    The body is the parsed Fern ``Error`` model when the response parsed, or
-    a raw dict/str when it did not; every shape that carries the message is
-    checked.
-    """
-    body = error.body
+def _error_message(body: object) -> str | None:
+    """The platform error message, whether the body parsed or stayed raw."""
     if isinstance(body, str):
-        message: object = body
-    elif isinstance(body, dict):
+        return body
+    if isinstance(body, dict):
         inner = body.get("error")
         message = inner.get("message") if isinstance(inner, dict) else None
     else:
         inner = getattr(body, "error", None)
         message = getattr(inner, "message", None)
-    return isinstance(message, str) and _EXECUTION_STOPPED_MESSAGE in message.lower()
+    return message if isinstance(message, str) else None
+
+
+def _is_execution_stopped_rejection(error: ForbiddenError) -> bool:
+    message = _error_message(error.body)
+    return message is not None and _EXECUTION_STOPPED_MESSAGE in message.lower()
+
+
+def _raise_classified(kind: MessagePostKind, room_id: str, detail: str) -> NoReturn:
+    error = MessagePostError.classified(kind, detail)
+    logger.error("message post in room %s failed: %s", room_id, error)
+    # The Fern error's own text includes response headers. Suppressing it
+    # keeps those headers out of adapter tracebacks.
+    raise error from None
+
+
+class PostedRecipient(BaseModel):
+    """A recipient on a 2xx body, with the handle optional.
+
+    A missing handle prevents parsing the delivery receipt. A present non-string
+    handle is a different parse failure, so the whole body stays unclassified.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1)
+    name: str | None = None
+    handle: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def present_handle_is_a_string(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and "handle" in value
+            and not isinstance(value["handle"], str)
+        ):
+            raise ValueError("a present recipient handle must be a string")
+        return value
+
+
+class PostedMessage(BaseModel):
+    """The 2xx body shape that can name the created message and its recipients."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1)
+    recipients: list[PostedRecipient]
+
+
+def _posted_message(body: object) -> PostedMessage | None:
+    data = body.get("data") if isinstance(body, dict) else None
+    try:
+        return PostedMessage.model_validate(data)
+    except ValidationError:
+        return None
+
+
+def _recipient_phrase(recipient: PostedRecipient) -> str:
+    identity = f"id={recipient.id}"
+    if recipient.name is None:
+        return identity
+    return f"{identity} name={recipient.name}"
+
+
+def _unconfirmed_recipient(error: ParsingError) -> str | None:
+    """Origin text when a 2xx body omits a recipient handle, else None.
+
+    The platform validates recipient membership before creating the message.
+    A handle-less receipt still means delivery succeeded; retrying would duplicate
+    the message. Any other body shape stays a parse error.
+    """
+    status = error.status_code
+    if status is None or not 200 <= status < 300:
+        return None
+    if not isinstance(error.cause, ValidationError):
+        return None
+    message = _posted_message(error.body)
+    if message is None:
+        return None
+    omitted = [
+        recipient for recipient in message.recipients if recipient.handle is None
+    ]
+    if not omitted:
+        return None
+    who = ", ".join(_recipient_phrase(recipient) for recipient in omitted)
+    return f"message {message.id} was delivered; do not resend; {who}"
 
 
 async def post_message(
@@ -107,6 +193,19 @@ async def post_message(
         if _is_execution_stopped_rejection(error):
             raise RoomExecutionStoppedError(room_id) from error
         raise
+    except ParsingError as error:
+        detail = _unconfirmed_recipient(error)
+        if detail is None:
+            raise
+        _raise_classified(MessagePostKind.UNCONFIRMED_RECIPIENT, room_id, detail)
+    except UnprocessableEntityError as error:
+        if _error_message(error.body) != MessagePostKind.MENTION_NOT_IN_ROOM:
+            raise
+        _raise_classified(
+            MessagePostKind.MENTION_NOT_IN_ROOM,
+            room_id,
+            "mentioned participant is not in the room",
+        )
     if not response.data:
         raise RuntimeError("Failed to send message - no response data")
     return response.data

@@ -10,40 +10,106 @@ import shutil
 import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
 from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
+from band.integrations.codex.winspawn import (
+    MISSING_EXECUTABLE,
+    SpawnFailure,
+    WindowsProcess,
+    await_returncode,
+    close_stdin,
+    find_executable,
+    process_image,
+)
 
 logger = logging.getLogger(__name__)
 
-_PROCESS_EXIT_TIMEOUT_S = 1.0
+# Long enough for the child watcher to record an exit, short enough that a
+# held stdio pipe cannot stall room cleanup.
+_EXIT_OBSERVE_S = 2.0
+_STDOUT_LIMIT = 16 * 1024 * 1024
+HELPER_PATH = Path(__file__).resolve().with_name("winmain.py")
+
+
+def _absolute_command(command: Sequence[str]) -> tuple[str, ...]:
+    """Resolve the executable in this process, not in the room directory.
+
+    The helper's current directory is the room. ``CreateProcessW`` searches
+    that directory when the application name is relative, so a room-local
+    binary would run in place of the one this process would have started.
+    """
+    head, *rest = command
+    if Path(head).is_absolute():
+        return (head, *rest)
+    if os.name == "nt" and not os.path.dirname(head):
+        found = find_executable(head)
+    else:
+        found = shutil.which(head)
+        if found is None and Path(head).exists():
+            found = str(Path(head).resolve())
+    if found is None:
+        raise FileNotFoundError(head)
+    return (str(Path(found).resolve()), *rest)
+
+
+def _session_pid_reused(process: asyncio.subprocess.Process) -> bool:
+    """True when ``process.pid`` now names some other live process.
+
+    After the leader is reaped, its session id stays reserved only while a
+    member of that session still exists. Once the id is free it can be given
+    to a new session, and ``killpg`` would signal that session.
+    """
+    if process.returncode is None:
+        return False
+    try:
+        os.kill(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        logger.warning(
+            "Codex process %s pid is not signalable; leaving its session",
+            process.pid,
+        )
+        return True
+    logger.warning(
+        "Codex process %s pid was reused; not signaling that session",
+        process.pid,
+    )
+    return True
+
+
+def _missing_cli_message(binary: str) -> str:
+    return (
+        f"Codex CLI binary not found: '{binary}'. "
+        "Install it (`npm install -g @openai/codex`), authenticate "
+        "(`codex login`), or configure CodexAdapterConfig.codex_command."
+    )
+
+
+async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
+    """Let cancelled reads finish without awaiting a pipe that may never close."""
+    if not readers:
+        return
+    _done, pending = await asyncio.wait(readers, timeout=_EXIT_OBSERVE_S)
+    if pending:
+        logger.warning("Codex stdio readers still pending after tree kill")
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Force-stop ``process`` and everything it spawned.
+    """Force-stop a Unix process and everything in its session.
 
-    The ``codex`` launcher is a shim (``codex.cmd`` on Windows, a node script
-    elsewhere) whose real CLI is its child; killing only the shim leaves that
-    child running, and on Windows its open workdir cannot be removed.
+    The codex launcher is a shim whose real CLI is its child. On Unix the
+    child leads a session, so ``killpg`` still reaches that group after the
+    leader has exited.
     """
     if os.name != "nt":
-        # The child leads its own session, so its pid is the group id.
-        with suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+        if not _session_pid_reused(process):
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
         return
-    taskkill = await asyncio.create_subprocess_exec(
-        "taskkill",
-        "/F",
-        "/T",
-        "/PID",
-        str(process.pid),
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    if await taskkill.wait() != 0:
-        with suppress(ProcessLookupError):
-            process.kill()
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -70,6 +136,7 @@ class CodexStdioClient(BaseJsonRpcClient):
             self.env = merged_env
 
         self._proc: asyncio.subprocess.Process | None = None
+        self._windows_process: WindowsProcess | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -95,31 +162,72 @@ class CodexStdioClient(BaseJsonRpcClient):
             return
 
         try:
-            self._proc = await asyncio.create_subprocess_exec(
-                *self.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
-                env=self.env,
-                start_new_session=True,
-                limit=16 * 1024 * 1024,  # 16 MB — Codex sends large JSON-RPC lines
-            )
+            self._proc = await self._spawn()
         except FileNotFoundError as exc:
-            binary = self.command[0] if self.command else "codex"
-            raise BandConnectionError(
-                f"Codex CLI binary not found: '{binary}'. "
-                "Install it (`npm install -g @openai/codex`), authenticate "
-                "(`codex login`), or configure CodexAdapterConfig.codex_command."
-            ) from exc
+            raise BandConnectionError(_missing_cli_message(self.command[0])) from exc
+        except SpawnFailure as exc:
+            raise self._spawn_connection_error(exc) from exc
         self._connected = True
         self._reader_task = asyncio.create_task(self._read_stdout_loop())
         self._stderr_task = asyncio.create_task(self._read_stderr_loop())
 
+    async def _spawn(self) -> asyncio.subprocess.Process:
+        if os.name == "nt":
+            if self._windows_process is not None:
+                raise BandConnectionError("Codex process is already starting")
+            self._windows_process = owner = WindowsProcess()
+            try:
+                return await owner.start(
+                    self._windows_command,
+                    cwd=self.cwd,
+                    env=self.env,
+                    limit=_STDOUT_LIMIT,
+                )
+            except BaseException:
+                await self.close()
+                raise
+        # The child leads its own session, so its pid is the group id.
+        return await asyncio.create_subprocess_exec(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self.cwd,
+            env=self.env,
+            start_new_session=True,
+            limit=_STDOUT_LIMIT,
+        )
+
+    def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
+        return [
+            str(process_image()),
+            "-I",
+            "-S",
+            str(HELPER_PATH),
+            job_name,
+            str(status_handle),
+            "--",
+            *_absolute_command(self.command),
+        ]
+
+    def _spawn_connection_error(self, failure: SpawnFailure) -> BandConnectionError:
+        if failure.winerror in MISSING_EXECUTABLE:
+            return BandConnectionError(_missing_cli_message(self.command[0]))
+        detail = (
+            f"winerror {failure.winerror}"
+            if failure.winerror is not None
+            else "the spawn helper did not report readiness"
+        )
+        return BandConnectionError(
+            f"Codex process could not be assigned to its job ({detail})"
+        )
+
     async def close(self) -> None:
         """Share retryable cleanup that survives a cancelled or timed-out caller."""
-        if self._proc is None:
+        if self._windows_process is None and self._proc is None:
             return
+        if self._windows_process is not None:
+            self._windows_process.closing = True
         self._connected = False
         if self._close_task is None or (
             self._close_task.done()
@@ -142,18 +250,23 @@ class CodexStdioClient(BaseJsonRpcClient):
         ]
         for task in readers:
             task.cancel()
-        await asyncio.gather(*readers, return_exceptions=True)
-
-        if (process := self._proc) is not None:
-            if process.stdin is not None:
-                process.stdin.close()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_PROCESS_EXIT_TIMEOUT_S)
-            except TimeoutError:
+        try:
+            # A cancelled pipe read on Windows stays pending while the child is
+            # blocked in a synchronous stdin read, and awaiting that read never
+            # times out. Terminate the tree and close our write end first.
+            if self._windows_process is not None:
+                await self._windows_process.close(_EXIT_OBSERVE_S)
+                self._windows_process = None
+            elif (process := self._proc) is not None:
                 await kill_process_tree(process)
-                await process.wait()
-
-        self._fail_pending("Codex stdio client closed")
+                await close_stdin(process)
+                if not await await_returncode(process, _EXIT_OBSERVE_S):
+                    logger.warning(
+                        "Codex process %s still alive after tree kill", process.pid
+                    )
+            self._fail_pending("Codex stdio client closed")
+        finally:
+            await _wait_readers(readers)
 
     async def _send_json(self, payload: dict[str, Any]) -> None:
         if not self._proc or not self._proc.stdin:
