@@ -85,9 +85,9 @@ from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
+from band.core import exceptions
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
-from band.core.model_catalog import ModelCatalog
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -168,6 +168,7 @@ from band.workspaces import RoomWorkspaces, WorkspaceResolver
 
 if TYPE_CHECKING:
     from band.core.harness import PreflightResult
+    from band.core.model_catalog import ModelCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -778,15 +779,15 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Discover advertised model aliases without inference or a room."""
         try:
             info = await self._probe_server_info(timeout_s=timeout_s)
-        except CleanupIncompleteError:
+        except exceptions.CleanupIncompleteError:
             raise
         except TimeoutError:
-            raise BandConfigError(
+            raise exceptions.BandConfigError(
                 "Claude model discovery timed out. Check the configured CLI "
                 "and host settings, or increase timeout_s."
             ) from None
         except Exception as error:  # noqa: BLE001 -- SDK failures must not expose provider configuration through host diagnostics
-            raise BandConfigError(
+            raise exceptions.BandConfigError(
                 f"Claude model discovery failed ({type(error).__name__}). "
                 "Check the configured Claude CLI, credentials and settings."
             ) from None
