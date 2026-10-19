@@ -13,7 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from band.core.exceptions import BandConnectionError
+from band.core.exceptions import BandConnectionError, CleanupIncompleteError
 from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 from band.integrations.codex.winspawn import (
     MISSING_EXECUTABLE,
@@ -115,8 +115,7 @@ async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
 class CodexStdioClient(BaseJsonRpcClient):
     """Bidirectional JSON-RPC client with a single stdout read loop.
 
-    Disabling diagnostic details keeps wire data and exception text out of logs
-    throughout startup and retryable cleanup; callers still receive the errors.
+    Transport logs report metadata only; callers still receive original errors.
     """
 
     def __init__(
@@ -127,13 +126,8 @@ class CodexStdioClient(BaseJsonRpcClient):
         env: Mapping[str, str] | None = None,
         retry_policy: OverloadRetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        diagnostic_details: bool = True,
     ) -> None:
-        super().__init__(
-            retry_policy=retry_policy,
-            sleep=sleep,
-            diagnostic_details=diagnostic_details,
-        )
+        super().__init__(retry_policy=retry_policy, sleep=sleep)
         self._transport_label = "codex output line"
         self.command = tuple(command) if command else self._default_codex_command()
         self.cwd = cwd
@@ -272,12 +266,9 @@ class CodexStdioClient(BaseJsonRpcClient):
 
     def _log_close_failure(self, task: asyncio.Task[None]) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
-            if self.diagnostic_details:
-                logger.error("Codex subprocess cleanup failed", exc_info=error)
-            else:
-                logger.error(
-                    "Codex subprocess cleanup failed (%s)", type(error).__name__
-                )
+            logger.error(
+                "Codex subprocess cleanup failed (type=%s)", type(error).__name__
+            )
 
     async def _close_process(self) -> None:
         readers = [
@@ -304,8 +295,8 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await kill_process_tree(process)
                 await close_stdin(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
-                    raise TimeoutError(
-                        f"Codex process {process.pid} still alive after tree kill"
+                    raise CleanupIncompleteError(
+                        "Codex process did not report exit after tree cleanup"
                     )
             self._fail_pending("Codex stdio client closed")
         finally:
@@ -335,7 +326,7 @@ class CodexStdioClient(BaseJsonRpcClient):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("Codex stdout loop failed", exc_info=self.diagnostic_details)
+            logger.error("Codex stdout loop failed")
             self._fail_pending("Codex stdout loop failed")
 
     async def _read_stderr_loop(self) -> None:
@@ -346,10 +337,9 @@ class CodexStdioClient(BaseJsonRpcClient):
                 line = await self._proc.stderr.readline()
                 if not line:
                     return
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if text and self.diagnostic_details:
-                    logger.debug("codex stderr: %s", text)
+                if line.rstrip():
+                    logger.debug("codex stderr (type=bytes, length=%d)", len(line))
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("Codex stderr loop failed", exc_info=self.diagnostic_details)
+            logger.error("Codex stderr loop failed")

@@ -75,14 +75,8 @@ def install(
         command: Sequence[str] | None,
         cwd: str | None,
         env: Mapping[str, str] | None,
-        diagnostic_details: bool = True,
     ) -> CodexPeer:
-        peer = CodexPeer(
-            command=command,
-            cwd=cwd,
-            env=env,
-            diagnostic_details=diagnostic_details,
-        )
+        peer = CodexPeer(command=command, cwd=cwd, env=env)
         host.spawned(peer, cwd)
         return peer
 

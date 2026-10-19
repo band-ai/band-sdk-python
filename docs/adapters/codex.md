@@ -8,6 +8,51 @@ see [idle room resource retention](../idle-room-release.md).
 
 For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgrading-from-sdk-4x-to-5x).
 
+## Host preflight
+
+`await adapter.preflight(timeout_s=60.0)` launches a throwaway app-server using
+the adapter's `codex_command`, `codex_env`, client name/title/version,
+`experimental_api` and `skill_roots`. It sends `initialize` and `account/read`
+without creating a Codex thread, spending a model turn, or claiming a Band room
+or workspace.
+
+The result is a `PreflightResult` with `ok`, `reason` and `remedy`. A missing
+account fails only when Codex explicitly reports `requiresOpenaiAuth=true`;
+an unsupported or refused `account/read` is not proof that login is missing.
+A passed handshake is not proof of provider authentication, subscription or
+inference entitlement.
+
+Room and standalone-probe transport diagnostics omit raw app-server stdout,
+stderr and exception text, including cleanup that finishes after caller
+cancellation. Malformed frames report transport, type and length; full queues
+report only the dropped event kind. Original cleanup errors remain available to
+callers and retries.
+
+```python notest
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+adapter = CodexAdapter(CodexAdapterConfig())
+result = await adapter.preflight(timeout_s=30)
+```
+
+The timeout bounds handshake/RPC work and a separate cleanup wait. Cancellation
+propagates. Cleanup failures raise `CleanupIncompleteError` instead of reporting
+a successful or ordinary failed preflight, and the adapter retains the client,
+including a partially created process or Windows job. Keep that adapter and
+retry `await adapter.cleanup_all()` to join or retry cleanup. Shutdown attempts
+both probe and room cleanup even when either fails. A custom-tool callback
+requesting shutdown can receive a retryable pending-cleanup error while its own
+turn unwinds; it is not cancelled by that stop. Successful calls close their
+throwaway process before returning; a second preflight starts a fresh one.
+
+Windows room and probe cleanup seals each owned job against new children and
+retains member process handles before requesting termination. It waits for
+physical member exit as well as empty job accounting; accounting alone does not
+prove directory and file handles were released. Failed cleanup retains that same
+owner, job and any pending process handles for retry.
+
+## Room behavior
+
 - **Where settings go.** Runtime settings live in `CodexAdapterConfig`, which
   forbids unknown fields, so a misplaced `emit=` or a typo fails construction.
   `emit=`, `capabilities=` and `additional_tools=` go on `CodexAdapter`.
@@ -38,11 +83,9 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   On Windows, the client owns the helper and its process-tree job from startup
   through cleanup. It starts the interpreter image directly so a virtual-environment
   launcher cannot hide another helper process. Cleanup confirms the helper has
-  exited, seals the job against new children, and retains member process handles
-  before requesting termination. It waits for those handles to signal physical
-  exit as well as empty job accounting; accounting alone does not prove directory
-  and file handles were released. Failed cleanup retains that same owner, job,
-  and any pending process handles for retry.
+  exited before terminating and draining the job; an empty job alone does not
+  establish helper exit.
+  Failed cleanup retains that same owner and job for retry.
 - **Leaving is final.** Leaving a room stops it admitting work at once. A
   leave that fails or runs over keeps the process, thread and workspace claim,
   and the room refuses work until a retried leave succeeds; a later rejoin
@@ -114,38 +157,3 @@ request and approval IDs stay internal; a fresh request gets a new chat token
 after completion or room cleanup, even when Codex reuses its native ID. A
 redelivery of a still-pending request keeps its displayed token.
 
-## Host preflight
-
-`await adapter.preflight(timeout_s=60.0)` launches a throwaway app-server using
-the adapter's `codex_command`, `codex_env`, client name/title/version,
-`experimental_api` and `skill_roots`. It sends `initialize` and `account/read`
-without creating a Codex thread, spending a model turn, or claiming a Band room
-or workspace.
-
-The result is a `PreflightResult` with `ok`, `reason` and `remedy`. A missing
-account fails only when Codex explicitly reports `requiresOpenaiAuth=true`;
-an unsupported or refused `account/read` is not proof that login is missing.
-A passed handshake is not proof of provider authentication, subscription or
-inference entitlement.
-
-Standalone probes emit metadata-only diagnostics: raw app-server stdout, stderr,
-and exception text are not logged, including cleanup that finishes after caller
-cancellation. Original cleanup errors remain available to callers and retries.
-Ordinary room transports keep their existing diagnostic policy.
-
-```python notest
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-
-adapter = CodexAdapter(CodexAdapterConfig())
-result = await adapter.preflight(timeout_s=30)
-```
-
-The timeout bounds handshake/RPC work and a separate cleanup wait. Cancellation
-propagates. Cleanup failures raise `CleanupIncompleteError` instead of reporting
-a successful or ordinary failed preflight, and the adapter retains the client,
-including a partially created process or Windows job. Keep that adapter and
-retry `await adapter.cleanup_all()` to join or retry cleanup. Shutdown attempts
-both probe and room cleanup even when either fails. A custom-tool callback
-requesting shutdown can receive a retryable pending-cleanup error while its own
-turn unwinds; it is not cancelled by that stop. Successful calls close their
-throwaway process before returning; a second preflight starts a fresh one.

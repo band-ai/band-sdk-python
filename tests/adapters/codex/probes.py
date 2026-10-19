@@ -40,13 +40,13 @@ class ProbeHost:
             command: Sequence[str] | None = None,
             cwd: str | None = None,
             env: Mapping[str, str] | None = None,
-            diagnostic_details: bool = True,
+            **transport: Any,
         ) -> ProbeClient:
             client = ProbeClient(
                 command=command,
                 cwd=cwd,
                 env=env,
-                diagnostic_details=diagnostic_details,
+                **transport,
             )
             self.clients.append(client)
             return client
