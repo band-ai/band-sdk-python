@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src" / "band"
 EXAMPLES_ROOT = REPO_ROOT / "examples"
 KIT_DIR = REPO_ROOT / "docker" / "band_python_kit"
+CLAUDE_MIXIN_DIR = REPO_ROOT / "docker" / "band-claude-mixin"
 BAND_MCP_DIR = REPO_ROOT / "packages" / "band-mcp"
 # Every shipped source tree, for the repo-wide AST guards.
 SHIPPED_SOURCE_ROOTS = (SRC_ROOT, BAND_MCP_DIR / "src")
