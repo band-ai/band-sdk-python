@@ -23,6 +23,7 @@ from phoenix_channels_python_client.client import (
     PhoenixChannelsProtocolVersion,
     PHXChannelsClient,
 )
+from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import Field
@@ -348,6 +349,12 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
+# Band never stops a session with a close code: its stop signals are a
+# supersede push and an upgrade rejection, and the platform answers any
+# peer-initiated close with 1000.
+RECONNECT_POLICY = ReconnectPolicy(reconnect_on_normal_close=True)
+TERMINAL_SHUTDOWN_REASON = "terminal platform disconnect"
+
 
 def _disconnect_reason_from_exception(
     exc: Exception, outcome: SessionOutcome
@@ -401,6 +408,8 @@ class WebSocketClient:
         self._session = Session(self._watchdog.policy)
         self._probed_failure_message: str | None = None
         self._cached_connect_failure: WebSocketUpgradeError | None = None
+        # Holds the scheduled terminal shutdown so it is never garbage-collected.
+        self._transport_shutdown: asyncio.Task[None] | None = None
 
     @property
     def validation_error_count(self) -> int:
@@ -453,6 +462,7 @@ class WebSocketClient:
             self.api_key,
             protocol_version=PhoenixChannelsProtocolVersion.V2,
             auto_reconnect=False,
+            reconnect_policy=RECONNECT_POLICY,
             heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
             on_reconnect=self._handle_reconnect,
             on_disconnect=self._on_disconnect,
@@ -742,14 +752,28 @@ class WebSocketClient:
                 )
 
     def record_terminal_disconnect(self, reason: WebSocketDisconnectReason) -> None:
-        """Record a terminal platform disconnect reason and disable reconnect."""
+        """Record a terminal platform disconnect reason and end the transport."""
         self._last_disconnect_reason = reason
-        self.disable_reconnect()
+        self.end_transport()
 
-    def disable_reconnect(self) -> None:
-        """Disable PHX auto-reconnect for a terminal platform disconnect."""
-        if self.client:
-            self.client.auto_reconnect = False
+    def end_transport(self) -> None:
+        """Shut the transport down for good, so it never reconnects.
+
+        ``auto_reconnect`` is set only once the initial connect succeeds, so
+        a client without it has no loop to stop. Clearing the flag alone loses
+        a race: the transport reads it once per close, before its backoff, so
+        a supersede handled during the backoff would still reconnect. The
+        shutdown is started, not awaited, because the caller runs inside a
+        topic processor that it stops; waiters join it through
+        ``client.shutdown``, which one waiter's cancellation never aborts.
+        """
+        client = self.client
+        if client is None or not client.auto_reconnect:
+            return
+        client.auto_reconnect = False
+        self._transport_shutdown = asyncio.create_task(
+            client.shutdown(TERMINAL_SHUTDOWN_REASON)
+        )
 
     def handle_supersede(
         self, retryable: bool, retry_after_s: float | None
@@ -977,7 +1001,13 @@ class WebSocketClient:
         return await self._require_client().unsubscribe_from_topic(topic)
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
-        """Block until the connection ends; see ``Agent.run_forever``."""
-        await self._require_client().run_forever(
-            install_signal_handlers=install_signal_handlers
-        )
+        """Block until the connection ends; see ``Agent.run_forever``.
+
+        A transport already ended by a terminal disconnect has nothing left to
+        run, so this returns once its shutdown settles.
+        """
+        client = self._require_client()
+        if self._transport_shutdown is not None:
+            await client.shutdown(TERMINAL_SHUTDOWN_REASON)
+            return
+        await client.run_forever(install_signal_handlers=install_signal_handlers)

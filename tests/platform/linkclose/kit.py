@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 
 from band_sdk_core import AgentTopicKind, DeadReason
 
 from band.client.streaming import AgentControlPayload, ControlMode
-from band.client.streaming.client import WebSocketDisconnectReason
+from band.client.streaming.client import (
+    SupersedePayload,
+    WebSocketDisconnectReason,
+)
 from band.platform.link import BandLink
 from tests.conftest import TERMINAL_SUPERSEDE
 
@@ -64,3 +67,34 @@ def agent_control(mode: ControlMode, correlation_id: str) -> AgentControlPayload
     return AgentControlPayload(
         mode=mode, scope="agent", agent_id=AGENT_ID, correlation_id=correlation_id
     )
+
+
+@asynccontextmanager
+async def during_the_next_backoff(
+    link: BandLink, action: Callable[[], Coroutine[object, object, None]]
+) -> AsyncIterator[None]:
+    """Run ``action`` once the transport has read its reconnect decision for
+    the next close, i.e. while it waits out the backoff before reconnecting.
+
+    The pinned transport reads ``auto_reconnect`` synchronously after the
+    disconnect callback returns, so a task the callback starts runs only
+    once that backoff has begun. Enter before ``connect()``, which binds the
+    callback.
+    """
+    on_disconnected = link._on_disconnected
+    acted: list[asyncio.Task[None]] = []
+
+    async def then_act(error: Exception | None) -> None:
+        await on_disconnected(error)
+        if not acted:
+            acted.append(asyncio.create_task(action()))
+
+    link._on_disconnected = then_act
+    try:
+        yield
+    finally:
+        await asyncio.gather(*acted)
+
+
+async def handle_supersede(link: BandLink) -> None:
+    await link._on_supersede(SupersedePayload.model_validate(TERMINAL_SUPERSEDE))

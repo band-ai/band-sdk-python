@@ -1,7 +1,8 @@
 """Live reconnect-behavior coverage for BandLink's SubscriptionTracker adoption.
 
 Forces a real WebSocket transport disconnect (not the clean disconnect()/
-connect() lifecycle) so the transport's own reconnect logic and
+connect() lifecycle) -- an abort with no close handshake, and a normal close
+the platform answers with 1000 -- so the transport's own reconnect logic and
 BandLink._on_reconnected run for real against the live platform — the part a
 mocked-transport unit test can't prove. Single fixed adapter: this is a
 transport-layer concern, not adapter-specific, so it doesn't need the full
@@ -10,11 +11,13 @@ matrix (matches test_isolation.py / test_processing_barrier.py precedent).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock
 
 import pytest
 
-from band.testing import force_transport_disconnect
+from band.platform.link import BandLink
+from band.testing import close_transport, force_transport_disconnect
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     REPLY_PROMPT,
@@ -27,10 +30,16 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(Adapter.ANTHROPIC, prompt=REPLY_PROMPT)
+@pytest.mark.parametrize(
+    "drop_transport",
+    [force_transport_disconnect, close_transport],
+    ids=["abort", "normal-close"],
+)
 @pytest.mark.timeout(extra=60)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_room_survives_real_transport_reconnect(
     cell: AdapterCell,
+    drop_transport: Callable[[BandLink], Awaitable[None]],
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -75,7 +84,7 @@ async def test_room_survives_real_transport_reconnect(
             replies = await capture.wait_for_reply(mid, identity.id, since=mark)
             replies.assert_contains_any([before_marker])
 
-        await force_transport_disconnect(link)
+        await drop_transport(link)
 
         after_marker = unique_marker("after")
         async with reply_capture(room_id) as capture:
