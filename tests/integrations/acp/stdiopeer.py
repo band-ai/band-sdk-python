@@ -170,8 +170,7 @@ class StdioPeer:
             case ExitStage.PROMPT:
                 self.exit_process()
             case ExitStage.PROTOCOL_ERROR:
-                sys.stdout.write("[]\n")
-                sys.stdout.flush()
+                await self.fail_protocol()
             case ExitStage.STDOUT_EOF:
                 os.close(sys.stdout.fileno())
             case _:
