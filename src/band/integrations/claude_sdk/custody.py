@@ -9,7 +9,6 @@ from typing import Any
 
 from claude_agent_sdk._internal.transport import Transport
 
-
 CHILD_EXIT_TIMEOUT_SECONDS = 5.0
 """How long a child the native close left running may take to die once killed."""
 

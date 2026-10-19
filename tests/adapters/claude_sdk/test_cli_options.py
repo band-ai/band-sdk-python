@@ -22,7 +22,6 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapterConfig,
 )
 from band.core.types import Emit
-from band.integrations.claude_sdk import transport as transport_module
 from band.integrations.claude_sdk.transport import create_transport
 from tests.adapters.claude_sdk.helpers import (
     SEND_MESSAGE_MCP_NAME,
@@ -70,15 +69,15 @@ class TestCliOptions:
             return PermissionResultAllow()
 
         spawned: list[SubprocessCLITransport] = []
+        initialize = SubprocessCLITransport.__init__
 
-        def spawn(
-            *, prompt: str, options: ClaudeAgentOptions
-        ) -> SubprocessCLITransport:
-            native = SubprocessCLITransport(prompt=prompt, options=options)
+        def capture(
+            native: SubprocessCLITransport, *, prompt: str, options: ClaudeAgentOptions
+        ) -> None:
+            initialize(native, prompt=prompt, options=options)
             spawned.append(native)
-            return native
 
-        monkeypatch.setattr(transport_module, "SubprocessCLITransport", spawn)
+        monkeypatch.setattr(SubprocessCLITransport, "__init__", capture)
         options = ClaudeAgentOptions(cli_path=sys.executable, can_use_tool=allow)
         create_transport(options)
 
