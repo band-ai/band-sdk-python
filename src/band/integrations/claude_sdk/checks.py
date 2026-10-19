@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +40,7 @@ async def preflight_result(initialization: Awaitable[object]) -> PreflightResult
 
 def close_host_probes(
     cleanup_rooms: Callable[[ClaudeSDKAdapter], Awaitable[None]],
-) -> Callable[[ClaudeSDKAdapter], Awaitable[None]]:
+) -> Callable[[ClaudeSDKAdapter], Coroutine[Any, Any, None]]:
     @wraps(cleanup_rooms)
     async def cleanup(adapter: ClaudeSDKAdapter) -> None:
         failures: list[BaseException] = []
