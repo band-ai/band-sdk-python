@@ -116,11 +116,14 @@ class CodexStdioClient(BaseJsonRpcClient):
     """Bidirectional JSON-RPC client with a single stdout read loop.
 
     Transport logs report metadata only; callers still receive original errors.
+    ``graceful_shutdown=False`` requests immediate owned POSIX termination before
+    ordinary settlement; the default leaves that settlement policy unchanged.
     """
 
     def __init__(
         self,
         *,
+        graceful_shutdown: bool = True,
         command: Sequence[str] | None = None,
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
@@ -141,6 +144,7 @@ class CodexStdioClient(BaseJsonRpcClient):
         self._proc: asyncio.subprocess.Process | None = None
         self._windows_process: WindowsProcess | None = None
         self._creation_task: asyncio.Task[None] | None = None
+        self._graceful_shutdown = graceful_shutdown
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -292,6 +296,13 @@ class CodexStdioClient(BaseJsonRpcClient):
                     raise TimeoutError("Codex process creation is still pending")
                 if not self._creation_task.cancelled():
                     self._creation_task.exception()
+            if (
+                not self._graceful_shutdown
+                and os.name != "nt"
+                and (process := self._proc) is not None
+            ):
+                await close_stdin(process)
+                await kill_process_tree(process)
             # A cancelled pipe read on Windows stays pending while the child is
             # blocked in a synchronous stdin read, and awaiting that read never
             # times out. Terminate the tree and close our write end first.

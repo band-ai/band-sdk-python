@@ -45,6 +45,13 @@ requesting shutdown can receive a retryable pending-cleanup error while its own
 turn unwinds; it is not cancelled by that stop. Successful calls close their
 throwaway process before returning; a second preflight starts a fresh one.
 
+Standalone probes set the transport's `graceful_shutdown=False`. After joining
+any pending subprocess creation, their retained close owner closes stdin and
+requests immediate owned POSIX termination before ordinary settlement. The default
+`graceful_shutdown=True` leaves room settlement policy unchanged. Process exit and
+reader settlement still require confirmation; an unfinished cleanup remains owned
+for retry within the existing reporting bound.
+
 Windows room and probe cleanup seals each owned job against new children and
 retains member process handles before requesting termination. It waits for
 physical member exit as well as empty job accounting; accounting alone does not

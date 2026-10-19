@@ -2246,6 +2246,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             client = CodexStdioClient(
                 command=self.config.codex_command,
                 env=self.config.codex_env,
+                graceful_shutdown=False,
             )
             self._harness_probe.own(client.close)
             await client.connect()
