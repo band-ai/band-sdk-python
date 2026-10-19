@@ -225,6 +225,83 @@ class TestCodexMcpLaunch:
         assert "private-env-value" not in repr(caught.value)
 
     @pytest.mark.parametrize(
+        "url",
+        [
+            "https://url-only-grant@mcp.example.test/mcp",
+            "https://user:url-only-grant@mcp.example.test/mcp",
+            "https://user%3Aurl-only-grant@mcp.example.test/mcp",
+            "https://mcp.example.test/mcp?api_key=url-only-grant",
+            "https://mcp.example.test/mcp?opaque=url-only-grant",
+            "https://mcp.example.test/mcp?%61pi_key=url-only-grant",
+            "https://mcp.example.test/mcp#url-only-grant",
+            "https://@mcp.example.test/mcp",
+            "https://mcp.example.test/mcp?",
+            "https://mcp.example.test/mcp#",
+            "https://url-only-grant／mcp.example.test/mcp",
+            "https://[url-only-grant/mcp",
+        ],
+        ids=[
+            "userinfo-token",
+            "userinfo-password",
+            "encoded-userinfo",
+            "api-key-query",
+            "unknown-query",
+            "encoded-query-key",
+            "fragment",
+            "empty-userinfo",
+            "empty-query",
+            "empty-fragment",
+            "parser-normalization-error",
+            "parser-bracket-error",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "entry_point", ["constructor", "pydantic-python", "pydantic-json"]
+    )
+    def test_credential_urls_are_refused_before_public_descriptors_exist(
+        self, url: str, entry_point: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with pytest.raises(CodexMcpStartupError) as caught:
+            match entry_point:
+                case "constructor":
+                    CodexMcpHttpServer(url)
+                case "pydantic-python":
+                    TypeAdapter(CodexMcpHttpServer).validate_python({"url": url})
+                case "pydantic-json":
+                    TypeAdapter(CodexMcpHttpServer).validate_json(
+                        json.dumps({"url": url})
+                    )
+        assert caught.value.stage == "invalid-descriptor"
+        diagnostics = (
+            str(caught.value)
+            + repr(caught.value)
+            + "".join(traceback.format_exception(caught.value))
+            + caplog.text
+        )
+        assert url not in diagnostics
+        assert "url-only-grant" not in diagnostics
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://url-only-grant@mcp.example.test/mcp",
+            "https://mcp.example.test/mcp?api_key=url-only-grant",
+            "https://mcp.example.test/mcp#url-only-grant",
+        ],
+        ids=["userinfo", "query", "fragment"],
+    )
+    def test_snapshot_revalidates_url_before_building_native_overrides(
+        self, url: str
+    ) -> None:
+        server = CodexMcpHttpServer("https://mcp.example.test/mcp")
+        object.__setattr__(server, "url", url)
+        with pytest.raises(CodexMcpStartupError) as caught:
+            freeze_mcp_servers({"remote": server}).launch(("codex", "app-server"))
+        assert caught.value.stage == "invalid-descriptor"
+        diagnostics = "".join(traceback.format_exception(caught.value))
+        assert "url-only-grant" not in diagnostics
+
+    @pytest.mark.parametrize(
         "name",
         [
             "CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN",
@@ -387,6 +464,58 @@ class TestCodexMcpLaunch:
             assert secret not in " ".join(launch.command)
             assert secret not in diagnostic
             assert snapshot.redactor.text(secret) == "[REDACTED]"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost/mcp",
+            "http://127.0.0.1:8765/mcp",
+            "http://[::1]:8765/mcp",
+            "https://mcp.example.test",
+            "HTTPS://mcp.example.test/public%20endpoint",
+            "https://mcp.example.test/public@path",
+        ],
+    )
+    def test_public_endpoints_keep_protected_auth_out_of_real_child_argv(
+        self, url: str
+    ) -> None:
+        bearer = "protected-bearer-grant"
+        header = "protected-header-grant"
+        server = CodexMcpHttpServer(
+            url, bearer_token=bearer, headers={"X-Grant": header}
+        )
+        snapshot = freeze_mcp_servers({"remote": server})
+        probe = (
+            "import json,os,sys,tomllib; "
+            "entry=tomllib.loads('\\n'.join(sys.argv[2::2]))['mcp_servers']['remote']; "
+            "refs=[entry['bearer_token_env_var'],*entry['env_http_headers'].values()]; "
+            "print(json.dumps({'argv':sys.argv[1:],"
+            "'grants':[os.environ[name] for name in refs]}))"
+        )
+        command = (sys.executable, "-I", "-c", probe)
+        launch = snapshot.launch(command)
+        assert launch.env is not None
+        completed = subprocess.run(
+            launch.command,
+            env={**os.environ, **launch.env},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        observed = json.loads(completed.stdout)
+        assert observed["argv"] == list(launch.command[len(command) :])
+        assert observed["grants"] == [bearer, header]
+        assert launched_servers(launch, command)["remote"]["url"] == url
+        assert TypeAdapter(CodexMcpHttpServer).dump_python(server) == {"url": url}
+        diagnostics = (
+            repr((server, snapshot, launch))
+            + TypeAdapter(CodexMcpHttpServer).dump_json(server).decode()
+            + TypeAdapter(CodexMcpLaunch).dump_json(launch).decode()
+            + snapshot.redactor.text(f"failed {bearer} {header}")
+        )
+        for secret in (bearer, header):
+            assert secret not in " ".join(observed["argv"])
+            assert secret not in diagnostics
 
     def test_descriptor_equality_and_serialization_do_not_use_secret_fields(
         self,

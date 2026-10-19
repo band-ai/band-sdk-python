@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import traceback
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -536,6 +537,42 @@ class TestMcpStartup:
         assert launches == []
         assert adapter._room_clients["a"].client is None
         await adapter.cleanup_all()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://url-only-grant@mcp.example.test/mcp",
+            "https://mcp.example.test/mcp?api_key=url-only-grant",
+            "https://mcp.example.test/mcp#url-only-grant",
+        ],
+        ids=["userinfo", "query", "fragment"],
+    )
+    async def test_credential_url_refuses_before_client_construction(
+        self,
+        tmp_path: Path,
+        url: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        async def resolve(_workspace: str) -> Mapping[str, CodexMcpServer]:
+            return {"private": CodexMcpHttpServer(url)}
+
+        adapter, launches = mcp_adapter(tmp_path, [StatusClient()], resolve)
+        try:
+            with pytest.raises(CodexMcpStartupError) as error:
+                await start(adapter)
+            assert error.value.stage == "resolution"
+            assert launches == []
+            assert adapter._room_clients["a"].client is None
+            diagnostics = (
+                str(error.value)
+                + repr(error.value)
+                + "".join(traceback.format_exception(error.value))
+                + caplog.text
+            )
+            assert url not in diagnostics
+            assert "url-only-grant" not in diagnostics
+        finally:
+            await adapter.cleanup_all()
 
     async def test_windows_secret_stdio_refuses_before_client_construction(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
