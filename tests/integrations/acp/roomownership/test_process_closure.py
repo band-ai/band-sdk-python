@@ -16,9 +16,14 @@ from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.integrations.acp.acp_toolkit import DEFAULT_ROOM
 from tests.integrations.acp.acp_toolkit.harness import send_to
 from tests.integrations.acp.acp_toolkit.lifecycle import FailingExits
-from tests.integrations.acp.acp_toolkit.peer import ExitStage, stdio_peer_config
-from tests.integrations.acp.roomownership.kit import runtime_warnings, terminate_pid
+from tests.integrations.acp.acp_toolkit.peer import stdio_peer_config
+from tests.integrations.acp.roomownership.kit import runtime_warnings
+from tests.integrations.acp.stdiopeer import ExitStage
 from tests.paths import REPO_ROOT
+
+# Fits the real peer's start under CI load, yet lets cleanup give up on held
+# pipes; one bound covers both.
+TRANSITION_S = 5.0
 
 
 class TestProcessClosure:
@@ -42,13 +47,13 @@ class TestProcessClosure:
         still holds its stdout, so closure is unconfirmed: the room keeps its
         process until the descendant is gone and a retry confirms the exit."""
         monkeypatch.setattr(client_runtime, "STDOUT_HELD_WARNING_SECONDS", 0.1)
-        holder_pid_file = tmp_path / "holder.pid"
+        holder_release = tmp_path / "release-holder"
         adapter = ACPClientAdapter(
             stdio_peer_config(
                 stage,
                 [],
-                orphan_pid_file=holder_pid_file,
-                retention=RoomRetentionConfig(transition_timeout_s=2.0),
+                holder_release=holder_release,
+                retention=RoomRetentionConfig(transition_timeout_s=TRANSITION_S),
                 # A held stdout hides the agent's death, so its prompt only ends
                 # at the turn deadline, whose recovery then waits on the pipes.
                 turn_timeout_s=1.0,
@@ -73,14 +78,13 @@ class TestProcessClosure:
             held = f"ACP agent subprocess {process.pid} (exit code"
             assert any(warning.startswith(held) for warning in runtime_warnings(caplog))
 
-            terminate_pid(int(holder_pid_file.read_text()))
+            holder_release.touch()
             await adapter.on_cleanup(DEFAULT_ROOM)
 
             assert runtime.closed
             assert DEFAULT_ROOM not in adapter._rooms
         finally:
-            if holder_pid_file.exists():
-                terminate_pid(int(holder_pid_file.read_text()))
+            holder_release.touch()
             await adapter.cleanup_all()
 
     @pytest.mark.asyncio

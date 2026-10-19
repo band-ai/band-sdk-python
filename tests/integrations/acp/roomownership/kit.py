@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -276,8 +274,3 @@ def runtime_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
         for record in caplog.records
         if record.name == client_runtime.__name__ and record.levelno >= logging.WARNING
     ]
-
-
-def terminate_pid(pid: int) -> None:
-    with suppress(ProcessLookupError, OSError):
-        os.kill(pid, signal.SIGTERM)

@@ -39,12 +39,12 @@ from band.integrations.acp.types import ChunkType, CollectedChunk
 from band.integrations.mcp import BandMCPTransport
 from tests.integrations.acp.acp_toolkit import FakeSpawn, select_option
 from tests.integrations.acp.acp_toolkit.harness import TranscriptTools
-from tests.integrations.acp.acp_toolkit.peer import (
+from tests.integrations.acp.acp_toolkit.peer import stdio_peer_config
+from tests.integrations.acp.stdiopeer import (
     INITIALIZE_PENDING_LINE,
     PEER_EXIT_CODE,
     RECOVERED_REPLY,
     ExitStage,
-    stdio_peer_config,
 )
 from tests.paths import REPO_ROOT
 
