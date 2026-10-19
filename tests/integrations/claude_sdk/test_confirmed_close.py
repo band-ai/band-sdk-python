@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from band.integrations.claude_sdk import transport
 from tests.adapters.claude_sdk.process import (
@@ -160,3 +161,28 @@ class TestConfirmedClose:
             await owned.close()
             assert native.exited
             assert not owned.close_pending
+
+    async def test_the_physical_owner_reaps_after_native_waits_forget_the_child(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        close_native = SubprocessCLITransport.close
+
+        async def unconfirmed_wait() -> int:
+            raise TimeoutError
+
+        async def forgotten_exit(native: SubprocessCLITransport) -> None:
+            child = native._process
+            assert child is not None
+            with monkeypatch.context() as faults:
+                faults.setattr(child, "wait", unconfirmed_wait)
+                faults.setattr(child, "terminate", lambda: None)
+                faults.setattr(child, "kill", lambda: None)
+                await close_native(native)
+
+        async with started(WorkspaceProcess, tmp_path) as (owned, native):
+            with monkeypatch.context() as faults:
+                faults.setattr(SubprocessCLITransport, "close", forgotten_exit)
+                await owned.close()
+            assert native.exited
+            assert not owned.close_pending
+            await owned.close()
