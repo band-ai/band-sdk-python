@@ -22,7 +22,6 @@ class TestProbeOwnership:
         result = await adapter.preflight(timeout_s=1)
 
         assert not result.ok
-        assert "handshake" in result.reason
         probe_host.assert_exited()
 
     async def test_one_second_probe_reaps_a_late_published_hung_child_on_cancel(

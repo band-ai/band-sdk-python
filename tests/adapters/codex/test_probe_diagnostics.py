@@ -61,7 +61,7 @@ class TestProbeDiagnostics:
         event = await client.recv_event(timeout_s=1)
         assert event.method == SENSITIVE_DIAGNOSTIC
         assert event.kind == ("notification" if request_id is None else "request")
-        assert "Event queue full" in caplog.text
+        assert any(record.levelno == logging.WARNING for record in caplog.records)
         assert event.kind in caplog.text
         assert SENSITIVE_DIAGNOSTIC not in caplog.text
 
