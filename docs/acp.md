@@ -329,11 +329,11 @@ text/image tool results.
   before launching, and teardown follows its settlement. Cancelling a cleanup
   call stops only that caller's wait. Until the retirement ends, turns already
   waiting for the room and turns that arrive during it are cancelled rather than
-  starting a new process. A later turn starts normally. A room whose native or
-  overlay-resource close fails keeps its exclusive workspace claim and remains
-  retiring until a later close succeeds: `on_cleanup` raises the failure,
-  `cleanup_all` and the room's next turn retry the close first, and the retiring
-  process never receives new work.
+  starting a new process. A later turn starts normally. A room whose native close
+  fails keeps its process handle, overlay and exclusive workspace claim until a
+  later close succeeds: `on_cleanup` raises the failure, `cleanup_all` and the
+  room's next turn retry the close first, and the retiring process never receives
+  new work.
 - **Permissions.** `approval_mode="yolo"` bypasses native approval checks without
   changing Band platform permissions. Otherwise `resolve_permission` receives
   `OmpPermissionRequest(room_id, session_id, title, options)` and returns an
