@@ -251,6 +251,8 @@ may refresh native provider metadata; it does not prove authentication or
 inference entitlement. Cancellation propagates. Failed physical cleanup raises
 `CleanupIncompleteError` and stays owned by the adapter; retain the instance and
 retry `await adapter.cleanup_all()` before discarding it.
+Whole-adapter cleanup waits for probe cleanup and every room teardown before
+reporting their failures; each unfinished owner remains available for retry.
 CLI probes own an isolated POSIX process group or a Windows Job from launch,
 including descendants that inherit it after their launcher exits. Cleanup waits
 until no member is running before releasing probe custody or provider credentials.

@@ -218,59 +218,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     def _host_tools(self) -> list[dict[str, JsonValue]]:
         return self._host_schemas
 
-    def _build_host_tools(self) -> list[dict[str, JsonValue]]:
-        definitions = list(
-            iter_tool_definitions(
-                capabilities=self.features.capabilities | {Capability.CONTACTS}
-            )
-        )
-        definitions = filter_tool_schemas(
-            definitions,
-            self.features,
-            get_name=lambda item: item.name,
-            get_category=lambda item: get_band_tool_category(item.name),
-        )
-        tools: list[dict[str, JsonValue]] = []
-        if self.config.inject_band_tools:
-            tools.extend(
-                {
-                    "name": item.name,
-                    "description": get_tool_description(item.name),
-                    "parameters": platform_args_schema(item.name).model_json_schema(),
-                    "loadMode": "essential",
-                }
-                for item in definitions
-            )
-        for schema in custom_tools_to_schemas(self._custom_tools, "openai"):
-            function = schema["function"]
-            tools.append(
-                {
-                    "name": function["name"],
-                    "description": function.get("description", ""),
-                    "parameters": function["parameters"],
-                    "loadMode": "essential",
-                }
-            )
-        names = [tool["name"] for tool in tools]
-        if len(set(names)) != len(names):
-            raise ValueError("OMP host tools must have unique names")
-        return tools
-
-    def _spawn_env(self) -> dict[str, str] | None:
-        return omp_runtime_env(
-            env=self.config.env,
-            model=self.config.model,
-            api_key=self.config.api_key,
-        )
-
-    def _spawn_command(self, workspace: str | None) -> list[str]:
-        command = finalize_omp_command(
-            self.config.command,
-            model=self.config.model,
-            approval_mode=self.config.approval_mode,
-        )
-        return omp_command_in_workspace(command, workspace) if workspace else command
-
     async def probe_models(self, *, timeout_s: float = 60.0) -> ModelCatalog:
         """Discover configured OMP models without a Band room or inference.
 
@@ -329,6 +276,59 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 ) from None
 
         return await owner.run(discover, timeout_s=timeout_s)
+
+    def _build_host_tools(self) -> list[dict[str, JsonValue]]:
+        definitions = list(
+            iter_tool_definitions(
+                capabilities=self.features.capabilities | {Capability.CONTACTS}
+            )
+        )
+        definitions = filter_tool_schemas(
+            definitions,
+            self.features,
+            get_name=lambda item: item.name,
+            get_category=lambda item: get_band_tool_category(item.name),
+        )
+        tools: list[dict[str, JsonValue]] = []
+        if self.config.inject_band_tools:
+            tools.extend(
+                {
+                    "name": item.name,
+                    "description": get_tool_description(item.name),
+                    "parameters": platform_args_schema(item.name).model_json_schema(),
+                    "loadMode": "essential",
+                }
+                for item in definitions
+            )
+        for schema in custom_tools_to_schemas(self._custom_tools, "openai"):
+            function = schema["function"]
+            tools.append(
+                {
+                    "name": function["name"],
+                    "description": function.get("description", ""),
+                    "parameters": function["parameters"],
+                    "loadMode": "essential",
+                }
+            )
+        names = [tool["name"] for tool in tools]
+        if len(set(names)) != len(names):
+            raise ValueError("OMP host tools must have unique names")
+        return tools
+
+    def _spawn_env(self) -> dict[str, str] | None:
+        return omp_runtime_env(
+            env=self.config.env,
+            model=self.config.model,
+            api_key=self.config.api_key,
+        )
+
+    def _spawn_command(self, workspace: str | None) -> list[str]:
+        command = finalize_omp_command(
+            self.config.command,
+            model=self.config.model,
+            approval_mode=self.config.approval_mode,
+        )
+        return omp_command_in_workspace(command, workspace) if workspace else command
 
     async def _open_room(self, room_id: str, history: OmpSessionState) -> OmpRoom:
         workspace = self._workspaces.claim(room_id)
