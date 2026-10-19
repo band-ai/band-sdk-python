@@ -234,8 +234,6 @@ class AgentRunner:
 
     async def close(self) -> None:
         """Disconnect link and close forwarder. Idempotent."""
-        for task in tuple(self._control_tasks):
-            task.cancel()
         try:
             await self._link.disconnect()
         except Exception:
@@ -244,6 +242,9 @@ class AgentRunner:
                 self._config.agent_id,
                 exc_info=True,
             )
+        # After disconnect: the link applies control signals until it returns,
+        # so a PLAY can still spawn a nudge during it.
+        await self._cancel_control_tasks()
         try:
             await self._forwarder.close()
         except Exception:
@@ -252,6 +253,13 @@ class AgentRunner:
                 self._config.agent_id,
                 exc_info=True,
             )
+
+    async def _cancel_control_tasks(self) -> None:
+        pending = tuple(self._control_tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending)
 
     async def _connect_and_consume(self) -> None:
         """Connect, subscribe, and consume events until shutdown."""

@@ -424,8 +424,8 @@ class BandLink:
         Runs the ``on_control`` hook on a task ordered after every earlier
         signal. The hook can take seconds (a STOP drains every room's turn),
         and awaiting it here would hold a ``supersede`` queued behind it on
-        the same topic until after the transport reconnects. If no hook is
-        registered, the push is a safe no-op.
+        the same topic, where a reconnect discards queued messages unseen.
+        If no hook is registered, the push is a safe no-op.
         """
         hook = self.on_control
         if hook is None:
