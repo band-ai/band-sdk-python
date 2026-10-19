@@ -41,13 +41,6 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   exited before terminating and draining the job; an empty job alone does not
   establish helper exit.
   Failed cleanup retains that same owner and job for retry.
-- **POSIX cleanup settles the original owned process group.** Close allows the
-  leader one second to exit on stdin EOF, then sends TERM to its original group,
-  waits up to one second, and escalates to KILL with one more second to confirm
-  `ESRCH`. Unconfirmed cleanup retains the client and workspace for retry.
-  A reused leader PID is never signaled. POSIX groups lack generation-bound
-  handles: reuse between a probe and signal remains a residual race.
-  Descendants that leave the group are outside this guarantee.
 - **Leaving is final.** Leaving a room stops it admitting work at once. A
   leave that fails or runs over keeps the process, thread and workspace claim,
   and the room refuses work until a retried leave succeeds; a later rejoin
@@ -87,6 +80,13 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   First-prompt context refreshes communication instructions, not saved tool schemas.
 - **`reasoning_effort` is not validated.** The valid values depend on the model
   and the Codex CLI version, and the backend rejects unknown ones.
+- **POSIX cleanup settles the original owned process group.** Close allows the
+  leader one second to exit on stdin EOF, then sends TERM to its original group,
+  waits up to one second, and escalates to KILL with one more second to confirm
+  `ESRCH`. Unconfirmed cleanup retains the client and workspace for retry.
+  A reused leader PID is never signaled. POSIX groups lack generation-bound
+  handles: reuse between a probe and signal remains a residual race.
+  Descendants that leave the group are outside this guarantee.
 - **`skill_roots` need Codex CLI 0.136.0 or newer.** Codex has no config key
   for extra skill folders, so the adapter sends them to each room's app-server
   with `skills/extraRoots/set` before the room's thread starts. An older CLI
