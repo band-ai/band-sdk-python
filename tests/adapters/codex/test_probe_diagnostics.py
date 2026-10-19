@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
 
+from band.integrations.codex.stdio_client import CodexStdioClient
 from tests.adapters.codex.kit import send_bootstrap
 from tests.adapters.codex.probes import ProbeHost
 from tests.adapters.waiting import spin
@@ -29,7 +31,7 @@ class TestProbeDiagnostics:
         probe_host.assert_exited()
         assert SENSITIVE_DIAGNOSTIC not in caplog.text
 
-    async def test_existing_room_transport_keeps_its_diagnostic_policy(
+    async def test_room_wire_and_stderr_are_also_metadata_only(
         self, probe_host: ProbeHost, caplog: pytest.LogCaptureFixture
     ) -> None:
         adapter = probe_host.adapter(
@@ -42,7 +44,26 @@ class TestProbeDiagnostics:
 
         assert "initialize" in probe_host.methods
         probe_host.assert_exited()
-        assert SENSITIVE_DIAGNOSTIC in caplog.text
+        assert SENSITIVE_DIAGNOSTIC not in caplog.text
+
+    @pytest.mark.parametrize("request_id", [None, 7], ids=["notification", "request"])
+    async def test_full_transport_queue_logs_only_the_dropped_event_kind(
+        self, caplog: pytest.LogCaptureFixture, request_id: int | None
+    ) -> None:
+        client = CodexStdioClient()
+        client._events = asyncio.Queue(maxsize=1)
+        payload = {"method": SENSITIVE_DIAGNOSTIC, "id": request_id}
+
+        with caplog.at_level(logging.WARNING):
+            await client._dispatch_rpc_message(json.dumps(payload))
+            await client._dispatch_rpc_message(json.dumps(payload))
+
+        event = await client.recv_event(timeout_s=1)
+        assert event.method == SENSITIVE_DIAGNOSTIC
+        assert event.kind == ("notification" if request_id is None else "request")
+        assert "Event queue full" in caplog.text
+        assert event.kind in caplog.text
+        assert SENSITIVE_DIAGNOSTIC not in caplog.text
 
     async def test_late_close_failure_keeps_the_original_error_and_retry_without_raw_log(
         self,
