@@ -30,6 +30,8 @@ def main() -> None:
         sys.stdout.flush()
         sys.stderr.write(diagnostic + "\n")
         sys.stderr.flush()
+    if settings.get("startup_hang"):
+        threading.Event().wait()
     for line in sys.stdin:
         message = json.loads(line)
         with record.open("a", encoding="utf-8") as stream:

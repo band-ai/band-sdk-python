@@ -14,6 +14,59 @@ from tests.adapters.waiting import spin
 
 
 class TestProbeOwnership:
+    async def test_one_second_probe_reaps_a_child_hung_before_handshake(
+        self, probe_host: ProbeHost
+    ) -> None:
+        adapter = probe_host.adapter(startup_hang=True)
+
+        result = await adapter.preflight(timeout_s=1)
+
+        assert not result.ok
+        assert "handshake" in result.reason
+        probe_host.assert_exited()
+
+    async def test_one_second_probe_reaps_a_late_published_hung_child_on_cancel(
+        self, probe_host: ProbeHost, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = probe_host.adapter(startup_hang=True)
+        create_process = asyncio.create_subprocess_exec
+        created = asyncio.Event()
+        return_process = asyncio.Event()
+        processes: list[asyncio.subprocess.Process] = []
+
+        async def late_creation(
+            *args: str, **kwargs: Any
+        ) -> asyncio.subprocess.Process:
+            process = await create_process(*args, **kwargs)
+            processes.append(process)
+            created.set()
+            await return_process.wait()
+            return process
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", late_creation)
+        probing = asyncio.create_task(adapter.preflight(timeout_s=1))
+        try:
+            await asyncio.wait_for(created.wait(), timeout=5)
+            probing.cancel()
+            await spin()
+            return_process.set()
+            with pytest.raises(asyncio.CancelledError) as stopped:
+                await probing
+            assert stopped.value.__cause__ is None
+            assert processes
+            assert all(process.returncode is not None for process in processes)
+            assert all(client._windows_process is None for client in probe_host.clients)
+            assert adapter._room_clients == {}
+        finally:
+            return_process.set()
+            probing.cancel()
+            await asyncio.gather(probing, return_exceptions=True)
+            await adapter.cleanup_all()
+            for process in processes:
+                if process.returncode is None:
+                    process.kill()
+                await process.wait()
+
     async def test_cancel_during_late_subprocess_creation_reaps_the_eventual_child(
         self, probe_host: ProbeHost, monkeypatch: pytest.MonkeyPatch
     ) -> None:

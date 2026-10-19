@@ -60,12 +60,14 @@ class ProbeHost:
         pages: dict[str, Any] | None = None,
         endless_pages: bool = False,
         diagnostic: str | None = None,
+        startup_hang: bool = False,
         **config: Any,
     ) -> CodexAdapter:
         settings = {
             "replies": replies or {},
             "endless_pages": endless_pages,
             "diagnostic": diagnostic,
+            "startup_hang": startup_hang,
         }
         if pages is not None:
             settings["pages"] = pages
