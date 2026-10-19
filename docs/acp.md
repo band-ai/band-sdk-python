@@ -227,7 +227,8 @@ failure fails that room turn visibly instead of falling back.
   pending in that room is rejected with `invalid_params`.
 - Room events bind to a prompt only once its Band post returns, so a previous turn's
   late event stays unsolicited and cannot settle the prompt or drop the send. A terminal
-  outcome releases the prompt even while its Band REST send is still pending. One
+  outcome settles the prompt even while its Band REST send is still pending; the
+  request then returns once the cancelled send and completion timer have unwound. One
   timeout bounds the send and the reply together.
 - Error updates carry the same projection on the agent-message chunk's `_meta`, unsolicited
   errors in mapped rooms included. Their text and projected keys and values are

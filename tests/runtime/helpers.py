@@ -166,8 +166,9 @@ def page(data: list[dict[str, Any]]) -> httpx.Response:
 class LifecyclePlatform:
     """A controlled HTTP peer for the real Fern lifecycle and posting client."""
 
-    def __init__(self, *, stopped: bool = False) -> None:
+    def __init__(self, *, stopped: bool = False, page_size: int | None = None) -> None:
         self.stopped = stopped
+        self.page_size = page_size
         self.messages: list[dict[str, Any]] = []
         self.accepted_marks: list[tuple[str, str]] = []
         self.requested_marks: list[tuple[str, str]] = []
@@ -228,6 +229,8 @@ class LifecyclePlatform:
                 (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
             )
             limit = int(request.url.params.get("limit", "100"))
+            if self.page_size is not None:
+                limit = min(limit, self.page_size)
             window = self.messages[start : start + limit]
             has_more = start + limit < len(self.messages)
             return httpx.Response(
