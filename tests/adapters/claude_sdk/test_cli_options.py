@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +23,12 @@ from band.adapters.claude_sdk import (
 )
 from band.core.types import Emit
 from band.integrations.claude_sdk.transport import create_transport
-from tests.adapters.claude_sdk.helpers import SEND_MESSAGE_MCP_NAME, ClaudeRoom
+from tests.adapters.claude_sdk.helpers import (
+    SEND_MESSAGE_MCP_NAME,
+    ClaudeRoom,
+    OpenRoom,
+)
 from tests.paths import host_absolute_path
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 def test_owned_transport_preserves_sdk_permission_routing() -> None:

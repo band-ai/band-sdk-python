@@ -10,7 +10,8 @@ from band.core.retention import (
     ProviderActivity,
     ReleaseCause,
 )
-from tests.core.retention.kit import Barrier, ResidenceHost
+from tests.adapters.hold import Hold
+from tests.core.retention.kit import ResidenceHost
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -79,9 +80,9 @@ class TestFailedClose:
     ) -> None:
         resident = host.room()
         await resident.turn()
-        resident.closing = Barrier()
+        resident.closing = Hold()
         await host.clock.advance(10)
-        await resident.closing.reached.wait()
+        await resident.closing.arrived()
         admitted = asyncio.Event()
 
         async def wake_room() -> None:

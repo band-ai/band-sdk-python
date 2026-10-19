@@ -111,6 +111,71 @@ migrate before upgrading. TypeScript parity is a separate change.
 - TCP and custom transports are rejected: one remote process cannot be proven to serve
   exactly one room.
 
+## Room ownership
+
+Each room is one `ACPRoom`: its process, connection and session, composed with a
+`RetainedRoom` from the adapter's single `RoomRetention`. Detached work (a Cursor
+turn, a Copilot model switch) is owned by the room before it runs. A prompt binds
+its tools under the room's lease, and a model switch takes the room's reservation
+in turn with its prompts, so an independent room never waits on another room's
+start, prompt, switch or exit. The room's acquisition starts its process within
+`retention.transition_timeout_s`, which defaults to `ACP_TRANSITION_TIMEOUT_S` for
+every ACP profile. A start that outlasts it fails that turn with
+`PROCESS_NOT_READY_ERROR` and is recovered; raise that one bound for a slow agent.
+A turn that stops waiting for a start, at its bound or on `/stop`, cancels it, so
+the room's next message gets a new process. A leave or stop closes admission at
+once and gives the room's running turn and model switch `turn_settle_timeout_s`
+(`TURN_SETTLE_GRACE_S` by default) to finish on their own before cancelling them.
+
+```python
+from band.core.retention import RoomRetentionConfig
+from band.core.turn_lifecycle import TURN_SETTLE_GRACE_S
+from band.integrations.acp.client_adapter import (
+    ACP_TRANSITION_TIMEOUT_S,
+    ACPClientAdapterConfig,
+)
+
+config = ACPClientAdapterConfig(command="my-agent")
+assert config.retention.transition_timeout_s == ACP_TRANSITION_TIMEOUT_S
+assert config.turn_settle_timeout_s == TURN_SETTLE_GRACE_S
+
+slow = ACPClientAdapterConfig(
+    command="my-agent", retention=RoomRetentionConfig(transition_timeout_s=120)
+)
+assert slow.retention.transition_timeout_s == 120
+```
+
+- **A deliberate wake reloads the exact session.** It calls `session/load` with a
+  fresh Band MCP endpoint, then reapplies the room's model selection and verifies
+  the result. A load or selection refusal fails the wake and keeps the session id and
+  selection; it never creates a replacement session. Idle release is off, so no
+  wake happens yet; this is the path a qualified provider will take.
+- **A failed turn recovers its room.** A session-setup or prompt error, or a
+  timeout, releases that room's process for its generation; the next turn starts a
+  new process and reloads the same session. If the agent no longer has it, the turn
+  falls back to a fresh session with a transcript replay. A refused remembered
+  selection fails that turn only and reverts to the configured one; the room keeps
+  its session, and when that refusal follows a reload, the room's process is
+  recovered too, so the next turn reloads the session on a new process rather
+  than twice on the same one. Only a bootstrap resume candidate is closed when its configuration
+  is refused.
+- **Closure is confirmed, not assumed.** The process handle stays on the room until
+  `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
+  inherited it keeps the room closing until it exits, with a warning naming the
+  agent's pid. A failed or cancelled exit leaves the room owned, and a retry kills
+  and waits for the same process. `cleanup_all()` and its alias `stop()` share one
+  `transition_timeout_s` budget across the rooms and the shared Band MCP server,
+  and keep that server open while any room is still held. A cancelled, failed or
+  overdue server close stays owned and a retry joins it. A stop is final: later
+  turns are refused until `on_started` (an `Agent.start()`) finishes it and serves
+  again.
+- **Idle release stays off.** OMP, Cursor and Copilot report `ProviderActivity.UNKNOWN`,
+  so an idle release always answers BUSY. Native qualification is still owed: OMP
+  background jobs (including suppressed or acknowledged work), Cursor work beyond
+  subagent drain, and Copilot scheduled `/after` prompts. Band MCP calls and ACP
+  permission or extension requests carry no prompt id, so a call arriving after its
+  turn is served with the room's current tools.
+
 ## Session config
 
 `resolve_session_config` runs after each new or restored session and before its first
@@ -131,13 +196,22 @@ failure fails that room turn visibly instead of falling back.
   an active turn. If Cursor offers no allow-once option, the configured approval
   policy applies instead. Late Band permission requests are refused after the
   turn closes or is interrupted. Cursor omits the session id on its
-  extension notifications, so the adapter holds a turn lock and binds them to that turn's
-  session; Cursor turns are serialized. Decision prompts, timeout notices and `/cursor`
-  replies post through `send_notice`, so they never count as the model's reply, and a
+  extension requests, so each room process gets its own client profile and binds them to
+  that room's active turn on that process; a request from a replaced process opens no
+  decision. Rooms run in parallel, one turn per room; a message that arrives while its
+  room's turn still runs is not accepted, so the host keeps it unacknowledged and
+  retries it once the room is free, and a `/cursor` reply still reaches the parked
+  turn. Only the turn holding the room's lease answers Cursor's extension requests,
+  and a failed turn reports its failure before the lease passes on, once, whether
+  it failed starting or prompting. An interrupt or `/stop` cancels the room's
+  accepted turn, whether it is starting, prompting or parked. `max_pending_decisions` caps each room
+  separately. Decision prompts, timeout notices and `/cursor` replies post through
+  `send_notice`, so they never count as the model's reply, and a
   `/cursor` message settles its own turn without reaching the agent. A turn parked on a
   decision releases its message early (`tools.turn.detach()`), so it is judged when the
-  ACP turn completes normally; a failed or cancelled turn is never reported as a missing
-  reply.
+  ACP turn ends: a failed turn reports its own failure, an interrupt reports nothing,
+  and a turn its room's leave or stop cancels after the settle grace is reported once
+  as a missing reply.
   The adapter does not pick a plan/agent mode itself; a caller selects one through
   `resolve_session_config`, which reads each session's advertised catalog before the
   first prompt. The live `backends` lane pins the Cursor CLI and passes `E2E_CURSOR_API_KEY`

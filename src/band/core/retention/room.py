@@ -7,10 +7,15 @@ import logging
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from band.core.exceptions import CleanupIncompleteError
-from band.core.retention.cleanup import report_owned, spawn_owned
+from band.core.exceptions import CleanupIncompleteError, RoomClosingError
+from band.core.retention.cleanup import (
+    await_owned,
+    report_owned,
+    reporting,
+    spawn_owned,
+)
 from band.core.retention.states import (
     BUSY_ACTIVITY_REASON,
     UNKNOWN_ACTIVITY_REASON,
@@ -26,6 +31,8 @@ if TYPE_CHECKING:
     from band.core.retention.owner import RoomRetention
 
 logger = logging.getLogger(__name__)
+
+Result = TypeVar("Result")
 
 # Circuit breaker. One step joins a transition, waits for leases, or runs one
 # release. Settle allows an in-flight join, a lease wait, that release, a
@@ -126,7 +133,7 @@ class RetainedRoom:
         reason: str = "",
     ) -> bool:
         """Accept authoritative provider observations from this residency only."""
-        if not self._has_authority(generation):
+        if not self.has_authority(generation):
             return False
         changed = self._activity != activity
         self._activity = activity
@@ -136,12 +143,35 @@ class RetainedRoom:
         self._schedule(reset=changed)
         return True
 
-    def _has_authority(self, generation: int) -> bool:
+    @property
+    def closing(self) -> bool:
+        """Whether admission is closed for good: the room is being disposed or
+        its owner is stopping."""
+        return self._closing or self._owner.stopping
+
+    @property
+    def generation(self) -> int:
+        """The current residency's generation; each acquisition starts a new one."""
+        return self._generation
+
+    def has_authority(self, generation: int) -> bool:
+        """Whether residency ``generation`` may still observe or act: the
+        current one, not closing, and not retired by recovery or final close."""
         return (
             generation == self._generation
-            and not self._closing
+            and not self.closing
             and self._cause in (None, ReleaseCause.IDLE)
             and self._state not in (Residency.SUSPENDED, Residency.CLOSED)
+        )
+
+    def may_finish(self, generation: int) -> bool:
+        """Whether accepted work may still hear from residency ``generation``:
+        with authority, or while its closing room settles that work before
+        the final release."""
+        return self.has_authority(generation) or (
+            self.closing
+            and generation == self._generation
+            and self._state == Residency.RESIDENT
         )
 
     def own(self, task: asyncio.Task[Any]) -> None:
@@ -151,13 +181,30 @@ class RetainedRoom:
         the task actually finishes. A refused enrollment cancels the task.
         """
         try:
-            self._check_admission()
-        except RuntimeError:
+            self.require_admission()
+        except RoomClosingError:
             task.cancel()
             raise
         self._owned.add(task)
         task.add_done_callback(self._disown)
         self._schedule()
+
+    def start_owned(
+        self, operation: Callable[[], Coroutine[Any, Any, Result]]
+    ) -> asyncio.Task[Result]:
+        """Run ``operation`` as owned detached work that starts only once
+        enrolled; an eager task factory would otherwise run it before ``own``
+        can enroll or refuse it."""
+        enrolled = asyncio.get_running_loop().create_future()
+
+        async def run() -> Result:
+            await enrolled
+            return await operation()
+
+        task = asyncio.create_task(run())
+        self.own(task)
+        enrolled.set_result(None)
+        return task
 
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)
@@ -171,7 +218,7 @@ class RetainedRoom:
         stays with the provider until a ``RECOVERY`` release confirms closure,
         which starts once no operation holds an active I/O lease.
         """
-        if not self._has_authority(generation):
+        if not self.has_authority(generation):
             return False
         self._request(ReleaseCause.RECOVERY)
         self._recover_when_unleased = True
@@ -196,13 +243,13 @@ class RetainedRoom:
         included. An operation that abandons its acquisition leaves it for
         recovery rather than for a successor to adopt.
         """
-        self._check_admission()
+        self.require_admission()
         holder = asyncio.current_task()
         self._holders[holder] += 1
         self._schedule()
         try:
             await self._settle()
-            self._check_admission()
+            self.require_admission()
             self._leases += 1
             try:
                 if prepare is not None:
@@ -216,14 +263,15 @@ class RetainedRoom:
             self._schedule()
             self._start_requested_recovery()
 
-    def _check_admission(self) -> None:
-        if self._closing or self._owner.stopping:
-            raise RuntimeError(f"Room {self.room_id} is closing")
+    def require_admission(self) -> None:
+        """Refuse new work before waiting for provider serialization."""
+        if self.closing:
+            raise RoomClosingError(f"Room {self.room_id} is closing")
 
     async def _settle(self) -> None:
         """Finish earlier transitions and pending releases without a lease."""
         for _ in range(MAX_SETTLE_STEPS):
-            self._check_admission()
+            self.require_admission()
             match self._in_flight(), self._cause, self._leases:
                 case asyncio.Task() as transition, _, _:
                     await self._join(transition)
@@ -237,7 +285,7 @@ class RetainedRoom:
 
     async def _ensure_resident(self) -> None:
         for _ in range(MAX_RESIDENCY_STEPS):
-            self._check_admission()
+            self.require_admission()
             match self._in_flight(), self._state, self._cause:
                 case asyncio.Task() as transition, _, _:
                     await self._join(transition)
@@ -266,20 +314,25 @@ class RetainedRoom:
         """Wait a bounded time for a transition without cancelling it."""
         timeout = self._owner.config.transition_timeout_s
         try:
-            done, _ = await asyncio.wait({transition}, timeout=timeout)
+            done = await await_owned({transition}, timeout)
         except asyncio.CancelledError:
             if initiator:
-                self._abandon()
+                self._abandon_acquisition(transition)
             raise
         if not done:
             if initiator:
-                self._abandon()
+                self._abandon_acquisition(transition)
+                raise TimeoutError(
+                    f"Room {self.room_id} start abandoned after {timeout}s"
+                )
             raise TimeoutError(
                 f"Room {self.room_id} transition still running after {timeout}s"
             )
         if transition.cancelled():
-            self._check_admission()
-            raise RuntimeError(f"Room {self.room_id} transition was cancelled")
+            # Closed admission means disposal cancelled it; otherwise recovery
+            # did, and the caller re-evaluates the room.
+            self.require_admission()
+            return
         if (error := transition.exception()) is not None:
             raise error
 
@@ -289,6 +342,19 @@ class RetainedRoom:
         self._recover_when_unleased = True
         if self._state == Residency.RESIDENT:
             self._state = Residency.CLEANUP_PENDING
+
+    def _abandon_acquisition(self, transition: asyncio.Task[None]) -> None:
+        """Recovery cancels a start its initiator stopped waiting for, so one
+        that never finishes cannot hold the room; a pending ``FINAL`` leaves
+        it to disposal."""
+        self._abandon()
+        if self._state == Residency.ACQUIRING and self._cause == ReleaseCause.RECOVERY:
+            logger.warning(
+                "Room %s: abandoned acquisition (generation %s) cancelled for recovery",
+                self.room_id,
+                self._generation,
+            )
+            transition.cancel(f"Room {self.room_id} acquisition was abandoned")
 
     def _request(self, cause: ReleaseCause) -> None:
         self._cause = stronger_cause(self._cause, cause)
@@ -307,10 +373,10 @@ class RetainedRoom:
         return self._transition
 
     async def _run_acquire(self) -> None:
-        if self._closing or self._owner.stopping:
+        if self.closing:
             self._state = Residency.SUSPENDED
             self._schedule()
-            self._check_admission()
+            self.require_admission()
         try:
             await self._acquire(self._generation, self._resume)
         except BaseException as error:
@@ -358,7 +424,7 @@ class RetainedRoom:
         if cause == ReleaseCause.IDLE and not self._idle_release_allowed(automatic):
             self._refuse_idle_release(intact=previous == Residency.RESIDENT)
             if not automatic:
-                self._check_admission()
+                self.require_admission()
                 raise RuntimeError(
                     f"Room {self.room_id} cleanup pending: provider activity "
                     f"is {self._activity}; {self._reason or 'waiting for quiescence'}"
@@ -388,8 +454,7 @@ class RetainedRoom:
     def _idle_release_allowed(self, automatic: bool) -> bool:
         return (
             self._cause == ReleaseCause.IDLE
-            and not self._closing
-            and not self._owner.stopping
+            and not self.closing
             and not self._leases
             and not (automatic and self._accepted)
             and self._activity == ProviderActivity.QUIESCENT
@@ -437,8 +502,7 @@ class RetainedRoom:
     def _idle_eligible(self) -> bool:
         return (
             self._idle_candidate
-            and not self._closing
-            and not self._owner.stopping
+            and not self.closing
             and not self._leases
             and not self._accepted
             and self._activity == ProviderActivity.QUIESCENT
@@ -457,7 +521,7 @@ class RetainedRoom:
                 return False
 
     def _notify(self) -> None:
-        settleable = not self._leases or self._closing or self._owner.stopping
+        settleable = not self._leases or self.closing
         _hold(self._settleable, settleable)
         _hold(self._drained, not self._accepted)
         self._owner.reschedule()
@@ -512,7 +576,10 @@ class RetainedRoom:
         if self._transition is not None:
             await asyncio.wait({self._transition})
         if self._state != Residency.SUSPENDED:
-            await self._start_release(ReleaseCause.FINAL, automatic=False)
+            # Awaited directly so cancelling disposal also cancels its release.
+            release = self._start_release(ReleaseCause.FINAL, automatic=False)
+            with reporting({release}):
+                await release
         self._state = Residency.DISPOSING
         try:
             await self._dispose()
@@ -528,11 +595,41 @@ class RetainedRoom:
             self._schedule()
 
     async def _settle_accepted(self) -> None:
-        """Cancel accepted tasks and interrupted startup once, then join all."""
+        """Give accepted work the owner's grace, then cancel what remains and
+        interrupted startup once, and join all."""
         if not self._work_cancelled:
+            await self._grace()
             self._work_cancelled = True
-            for task in self._owned - self._unwinding:
+            for task in self._uncancelled_work():
                 task.cancel()
             if self._state == Residency.ACQUIRING and self._transition is not None:
                 self._transition.cancel()
         await self._drained.wait()
+
+    def _uncancelled_work(self) -> set[asyncio.Task[Any]]:
+        """Owned work final cleanup may still cancel: not a requester of this
+        cleanup, and not already told to cancel by its own owner."""
+        return {task for task in self._owned - self._unwinding if not task.cancelling()}
+
+    async def _grace(self) -> None:
+        """Let accepted work finish on its own, with admission closed, until
+        the owner's settle grace expires."""
+        grace = self._owner.settle_grace_s
+        if not grace or not self._uncancelled_work():
+            return
+        expired = asyncio.Event()
+        timer = self._owner.clock.call_at(self._owner.clock.now() + grace, expired.set)
+        drained = asyncio.ensure_future(self._drained.wait())
+        expiry = asyncio.ensure_future(expired.wait())
+        try:
+            await asyncio.wait({drained, expiry}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            timer.cancel()
+            drained.cancel()
+            expiry.cancel()
+        if not self._drained.is_set():
+            logger.warning(
+                "Room %s: accepted work still running after %ss; cancelling it",
+                self.room_id,
+                grace,
+            )

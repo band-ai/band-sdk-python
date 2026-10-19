@@ -13,7 +13,7 @@ from band.platform.event import (
     RoomAddedEvent,
 )
 from band.preprocessing.default import DefaultPreprocessor
-from band.runtime.types import SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 def make_message_payload(

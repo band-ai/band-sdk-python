@@ -363,12 +363,12 @@ async def copilot_persisted_selection(
     )
 
     spawner = CopilotACPAdapter(config)
-    workspace = spawner._workspaces.claim(room_id)
-    runtime = spawner._build_runtime(workspace)
+    room = spawner._room(room_id)
+    runtime = spawner._build_runtime(room, room.generation)
     await runtime.start()
     try:
         loaded = await runtime.load_session_response(
-            cwd=workspace, session_id=session_id, mcp_servers=[]
+            cwd=room.workspace, session_id=session_id, mcp_servers=[]
         )
     finally:
         await runtime.stop()

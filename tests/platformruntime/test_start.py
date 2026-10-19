@@ -8,9 +8,10 @@ import pytest
 from band_rest.core.api_error import ApiError
 
 from band.core.types import ConflictPolicy
+from band.runtime.agentconfig import AgentConfig
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.types import AgentConfig, SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 class TestStart:

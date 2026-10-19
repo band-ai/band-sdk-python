@@ -18,7 +18,8 @@ from band.client.rest import AsyncRestClient
 from band.platform.link import BandLink
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
-from band.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.helpers import AGENT_ID, ROOM_ID
 

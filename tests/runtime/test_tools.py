@@ -903,7 +903,7 @@ class TestFileTools:
         now()."""
         expired = _attachment(
             "file-1",
-            expires_at=datetime(2020, 1, 1),  # noqa: DTZ001 -- naive on purpose, see docstring
+            expires_at=datetime(2020, 1, 1),
         )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)

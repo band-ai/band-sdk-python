@@ -5,13 +5,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Self
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import (
+    cleanup_deadline,
+    finish_by,
+    report_owned,
+    spawn_owned,
+)
+from band.core.retention.config import RoomRetentionConfig
 from band.integrations.mcp.engine import (
     RoomToolResolver,
     build_resolved_band_mcp_tool_registrations,
@@ -26,6 +32,10 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+#: The cleanup steps ``close_after`` reports, as cleanup reports name them.
+ROOMS_CLOSE = "Room shutdown"
+MCP_FINAL_CLOSE = "Band MCP backend final close"
 
 
 class BandMCPTransport(StrEnum):
@@ -217,7 +227,21 @@ class SharedBandMCPBackend:
                 await backend.stop()
             return
         if (stopping := await self._final_stop()) is not None:
-            await asyncio.shield(stopping)
+            await report_owned(stopping, None)
+
+    async def close_after(
+        self, rooms_closed: Awaitable[None], *, retention: RoomRetentionConfig
+    ) -> None:
+        """Close for good once the rooms whose processes dial this server have
+        closed, both within one ``retention.transition_timeout_s`` deadline.
+
+        Raises:
+            CleanupIncompleteError: A step outlived the deadline; it stays
+                owned for a retry.
+        """
+        deadline = cleanup_deadline(retention)
+        await finish_by(deadline, rooms_closed, what=ROOMS_CLOSE)
+        await finish_by(deadline, self.close(final=True), what=MCP_FINAL_CLOSE)
 
     async def _final_stop(self) -> asyncio.Task[None] | None:
         async with self._lock:
@@ -226,7 +250,7 @@ class SharedBandMCPBackend:
                 return None
             if self._stopping is None or self._stopping.done():
                 self._stopping = spawn_owned(
-                    self._stop_closing(closing), label="Band MCP final close"
+                    self._stop_closing(closing), label=MCP_FINAL_CLOSE
                 )
             return self._stopping
 
@@ -250,9 +274,7 @@ class SharedBandMCPBackend:
         """
         async with self._lock:
             if self._closing is not None:
-                raise CleanupIncompleteError(
-                    "Band MCP backend final close is still pending"
-                )
+                raise CleanupIncompleteError(f"{MCP_FINAL_CLOSE} is still pending")
             self._closed = False
 
     async def _start(self, *, replacing: BandMCPBackend | None) -> BandMCPBackend:

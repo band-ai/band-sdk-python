@@ -44,7 +44,8 @@ from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 
-# NOOA supports Python 3.12 and 3.13 on POSIX only, so the dev extra skips it elsewhere.
+# Legacy dependencies are intentionally absent from modern dev.
+_HAS_STRANDS = importlib.util.find_spec("strands") is not None
 _HAS_NOOA = importlib.util.find_spec("nooa") is not None
 
 __all__ = [
@@ -590,7 +591,9 @@ def _build_pydantic_ai_config() -> AdapterConfig:
     )
 
 
-def _build_strands_config() -> AdapterConfig:
+def _build_strands_config() -> AdapterConfig | None:
+    if not _HAS_STRANDS:
+        return None
     from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
         StrandsAdapterConfig,
     )
@@ -821,6 +824,8 @@ if not _HAS_CLAUDE_SDK:
     _excluded = _excluded | {"claude_sdk"}
 if not _HAS_COPILOT_SDK:
     _excluded = _excluded | {"copilot_sdk"}
+if not _HAS_STRANDS:
+    _excluded = _excluded | {"strands"}
 if not _HAS_NOOA:
     _excluded = _excluded | {"nooa"}
 ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)

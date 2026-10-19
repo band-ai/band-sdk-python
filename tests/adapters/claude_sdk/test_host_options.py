@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -13,9 +12,7 @@ from band.adapters.claude_sdk import (
     ClaudePermissionMode,
     ClaudeSDKAdapterConfig,
 )
-from tests.adapters.claude_sdk.helpers import WRITE_NOTE, ClaudeRoom
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
+from tests.adapters.claude_sdk.helpers import WRITE_NOTE, OpenRoom
 
 
 async def test_dont_ask_denies_an_unlisted_native_tool_without_asking_the_room(

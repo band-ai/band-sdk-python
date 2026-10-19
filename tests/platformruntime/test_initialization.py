@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from band.runtime.agentconfig import AgentConfig
 from band.runtime.platform_runtime import PlatformRuntime
-from band.runtime.types import AgentConfig, SessionConfig
+from band.runtime.sessionconfig import SessionConfig
 
 
 class TestInitialization:

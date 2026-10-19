@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from enum import StrEnum
 
 
 class BandError(Exception):
@@ -54,6 +55,43 @@ class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
 
 
+class MessagePostKind(StrEnum):
+    """A chat-message post or delivery-receipt failure.
+
+    ``unconfirmed_recipient`` is an HTTP 2xx whose recipient has no handle:
+    the message was delivered, but its receipt could not be parsed.
+    ``mentioned_participant_not_in_room`` is the platform's own refusal token
+    for a mention that is not in the room.
+    """
+
+    UNCONFIRMED_RECIPIENT = "unconfirmed_recipient"
+    MENTION_NOT_IN_ROOM = "mentioned_participant_not_in_room"
+
+
+class MessagePostError(BandToolError):
+    """A classified chat-message post failure.
+
+    ``kind`` is the stable token logs and tool results carry. ``detail`` is
+    the short header-free origin. A caller that rebuilds the error from its
+    message string leaves both unset.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: MessagePostKind | None = None,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.detail = detail
+
+    @classmethod
+    def classified(cls, kind: MessagePostKind, detail: str) -> MessagePostError:
+        return cls(f"{kind}: {detail}", kind=kind, detail=detail)
+
+
 class InvalidToolArgumentsError(BandError, ValueError):
     """A tool call's arguments failed its input model. Actionable by the LLM,
     which reads the message and retries; a ``ValueError`` for callers that
@@ -66,6 +104,12 @@ class InputNotAccepted(BandError):
     Transport failures, timeouts and uncertain acceptance do not qualify.
     The host retains the input without reporting a failed turn.
     """
+
+
+class RoomClosingError(InputNotAccepted, RuntimeError):
+    """A closing room, or a stopping residency owner, refused work before it
+    started. Actionable by the host as ``InputNotAccepted``; distinct from a
+    cleanup failure, which the same calls raise as other errors."""
 
 
 class ProviderRunError(BandError):

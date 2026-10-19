@@ -1,0 +1,51 @@
+"""Claude session managers whose CLI children are real processes."""
+
+from __future__ import annotations
+
+import sys
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+from claude_agent_sdk import ClaudeAgentOptions
+
+from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from band.workspaces import RoomWorkspaces
+from tests.adapters.claude_sdk.process import WorkspaceProcess, launch_children
+
+
+@dataclass
+class Launches:
+    """The real CLI children a manager started, each failing its startup."""
+
+    manager: ClaudeSessionManager
+    children: list[WorkspaceProcess] = field(default_factory=list)
+    # Whether each child launched from now on refuses every close.
+    refuse_close: bool = False
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def launches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[Launches]:
+    manager = ClaudeSessionManager(
+        ClaudeAgentOptions(cli_path=sys.executable, env={"PROBE_MARKER": "startup"}),
+        workspaces=RoomWorkspaces(lambda _: str(tmp_path / "shared")),
+    )
+    launched = Launches(manager=manager)
+
+    def inherit_refusal(child: WorkspaceProcess) -> None:
+        child.refuse_close = launched.refuse_close
+
+    launched.children = launch_children(monkeypatch, WorkspaceProcess, inherit_refusal)
+    # The injected failure: the SDK's int() of this fails after the child spawns
+    # and before it builds the Query.
+    monkeypatch.setenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "invalid")
+    try:
+        yield launched
+    finally:
+        for child in launched.children:
+            child.refuse_close = False
+        await manager.stop()

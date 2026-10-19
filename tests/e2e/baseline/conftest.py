@@ -10,6 +10,9 @@ The fixture re-exports are listed in ``__all__`` so they read as intentional.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -28,6 +31,7 @@ from tests.e2e.baseline.fixtures.agents import (
     peer,
 )
 from tests.e2e.baseline.fixtures.capture import judge, reply_capture
+from tests.e2e.baseline.fixtures.diagnostics import diagnostic_logs
 from tests.e2e.baseline.fixtures.platform import (
     baseline_run_id,
     baseline_settings,
@@ -49,6 +53,11 @@ from tests.e2e.baseline.scorecard import ScorecardCollector
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.toolkit.timeouts import effective_timeout
 
+# Client libraries log every HTTP request at INFO. Live logging is INFO for
+# the nightly run; these stay quiet so an adapter line is readable.
+_HTTP_CLIENT_LOGGERS = ("httpx", "httpx2", "httpcore", "httpcore2")
+_BASELINE_DIR = Path(__file__).parent
+
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
     "adapter_id",
@@ -59,6 +68,7 @@ __all__ = [
     "baseline_user_client",
     "baseline_ws",
     "cell",
+    "diagnostic_logs",
     "judge",
     "orphan_sweep",
     "peer",
@@ -68,6 +78,32 @@ __all__ = [
     "second_user_ops",
     "user_ops",
 ]
+
+
+def _is_baseline_item(item: pytest.Item) -> bool:
+    return Path(item.path).is_relative_to(_BASELINE_DIR)
+
+
+def _live_logging(config: pytest.Config) -> bool:
+    # `--log-cli-level` enables live logging; `log_cli` is ini-only and is not
+    # an attribute of config.option.
+    return config.getoption("--log-cli-level") is not None or config.getini("log_cli")
+
+
+@contextmanager
+def quiet_http_client_loggers(config: pytest.Config) -> Iterator[None]:
+    """Hold HTTP client loggers at WARNING for one baseline test, then restore."""
+    if not _live_logging(config):
+        yield
+        return
+    previous = {name: logging.getLogger(name).level for name in _HTTP_CLIENT_LOGGERS}
+    for name in _HTTP_CLIENT_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        for name, level in previous.items():
+            logging.getLogger(name).setLevel(level)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -98,6 +134,18 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{LANE_MARKER}(lane): set by @lane(Lane.X) to assign a cross-lane test to one "
         "explicit CI lane, overriding derived home-lane scheduling. See lane_selection.",
     )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> object:
+    # pytest calls this on the session hook, so the wrapper runs for every
+    # selected item once this conftest is collected. Quiet HTTP loggers only
+    # while a baseline item actually runs.
+    del nextitem
+    if BaselineSettings().e2e_tests_enabled and _is_baseline_item(item):
+        with quiet_http_client_loggers(item.config):
+            return (yield)
+    return (yield)
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
@@ -147,10 +195,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     assert_agent_fixtures_wired(items)
     assert_every_item_is_schedulable(items)
 
-    baseline_dir = Path(__file__).parent
-    baseline_items = [
-        item for item in items if Path(item.path).is_relative_to(baseline_dir)
-    ]
+    baseline_items = [item for item in items if _is_baseline_item(item)]
     assert_flaky_is_classified(baseline_items)
 
     settings = BaselineSettings()
@@ -158,9 +203,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     session_marker = pytest.mark.asyncio(loop_scope="session")
     base = settings.e2e_timeout
-    for item in items:
-        if not Path(item.path).is_relative_to(baseline_dir):
-            continue
+    for item in baseline_items:
         item.add_marker(session_marker)
         timeout = effective_timeout(item, base)
         if timeout is not None:

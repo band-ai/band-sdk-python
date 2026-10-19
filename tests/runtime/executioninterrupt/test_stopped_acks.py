@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from band.core.exceptions import RoomExecutionStoppedError
-from band.runtime.execution import BacklogProcessResult, ExecutionContext
+from band.runtime.execution import ExecutionContext, TurnOutcome
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
@@ -19,11 +19,14 @@ class TestStoppedAcks:
         handler = BlockingHandler(block=False)
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         mock_link.mark_processed.side_effect = RoomExecutionStoppedError(ctx.room_id)
-        assert not await ctx._process_event(make_message_event(msg_id="ack"))
+        assert (
+            await ctx._process_event(make_message_event(msg_id="ack"))
+            is TurnOutcome.RETRY_LATER
+        )
         for _ in range(ctx.config.max_message_retries + 3):
             assert (
                 await ctx._process_backlog_message(backlog_message("ack"))
-                == BacklogProcessResult.RETRY_LATER
+                is TurnOutcome.RETRY_LATER
             )
             assert ctx.claims.is_ack_pending(ctx.room_id, "ack")
             assert not ctx.claims.is_completed(ctx.room_id, "ack")
@@ -31,7 +34,7 @@ class TestStoppedAcks:
         mock_link.mark_processed.side_effect = None
         assert (
             await ctx._process_backlog_message(backlog_message("ack"))
-            == BacklogProcessResult.ADVANCED
+            is TurnOutcome.ADVANCED
         )
         assert handler.completed == ["ack"]
         assert ctx.claims.is_completed(ctx.room_id, "ack")

@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import BaseModel, Field
 
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
+
 try:
     from band.adapters import PydanticAIAdapter as _PydanticAICheck  # noqa: F401
 
@@ -522,15 +524,6 @@ class TestBYOASnippet:
 class TestContactManagementSnippets:
     """README shows ContactEventConfig with HUB_ROOM and CALLBACK strategies."""
 
-    def test_contact_event_imports(self) -> None:
-        from band.runtime.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
-            ContactEventStrategy,
-        )
-
-        assert ContactEventStrategy.DISABLED is not None
-        assert ContactEventStrategy.HUB_ROOM is not None
-        assert ContactEventStrategy.CALLBACK is not None
-
     @patch.dict(
         os.environ,
         {
@@ -542,10 +535,6 @@ class TestContactManagementSnippets:
         """README snippet: Agent.create with HUB_ROOM strategy."""
         from band import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             Agent,
-        )
-        from band.runtime.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
-            ContactEventConfig,
-            ContactEventStrategy,
         )
 
         adapter = MagicMock()
@@ -575,10 +564,6 @@ class TestContactManagementSnippets:
         )
         from band.platform.event import (  # noqa: PLC0415 -- pins the exact import path this test exercises
             ContactRequestReceivedEvent,
-        )
-        from band.runtime.types import (  # noqa: PLC0415 -- pins the exact import path this test exercises
-            ContactEventConfig,
-            ContactEventStrategy,
         )
 
         TRUSTED_HANDLES = {"@teammate"}

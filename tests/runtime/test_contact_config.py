@@ -2,7 +2,7 @@
 
 import pytest
 
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 
 class TestContactEventStrategy:

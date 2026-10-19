@@ -184,10 +184,13 @@ async def provision(
     )
 
     # Reap leftovers this workflow itself may have abandoned (a crashed prior
-    # run's agent is invisible to any later run once its state file rotates) —
-    # the toolkit's sweep is prefix- and age-guarded, so nothing else's
-    # resources are ever touched.
-    await manager.sweep_orphans()
+    # run's agent is invisible to any later run once its state file rotates).
+    # The sweep is prefix- and age-guarded. This run's recorded agent is kept
+    # by id: its name does not embed the smoke run id, and a resume can outlast
+    # the age gate.
+    await manager.sweep_orphans(
+        keep_ids=[run_state.agent_id] if run_state.agent_id else []
+    )
     # Re-provisioning within a run (daemon-restart recovery, a crashed
     # launch): the recorded agent/room belong to a dead process — replace
     # them. Refuse to stack new resources on top of ones that failed to reap

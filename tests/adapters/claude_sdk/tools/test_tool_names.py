@@ -8,13 +8,9 @@ bare name, so the adapter strips its own server's prefix at those boundaries.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 from band.adapters.claude_sdk import TOOL_SEARCH, ClaudeSDKAdapter
-from tests.adapters.claude_sdk.helpers import ClaudeRoom
+from tests.adapters.claude_sdk.helpers import OpenRoom
 from tests.baseline.decisions import ModelDecision
-
-OpenRoom = Callable[..., Awaitable[ClaudeRoom]]
 
 
 def test_semantic_tool_name_strips_only_our_server_prefix() -> None:

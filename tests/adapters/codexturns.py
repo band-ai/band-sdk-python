@@ -14,7 +14,8 @@ from collections import deque
 from typing import Any
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.integrations.codex import CodexRequestMethod, RpcEvent
+from band.integrations.codex import TRANSPORT_CLOSED, CodexRequestMethod, RpcEvent
+from tests.adapters.waiting import until
 
 
 class RecordedRequests:
@@ -47,8 +48,21 @@ async def await_released_turn(
         await asyncio.wait_for(asyncio.shield(turn.task), timeout=timeout_s)
 
 
+#: The model FakeCodexClient's model/list offers.
+LISTED_MODEL = "gpt-5.5"
+#: The id of the first thread a FakeCodexClient starts.
+FIRST_THREAD_ID = "thr-1"
+
+
 class FakeCodexClient(RecordedRequests):
-    """Minimal fake transport client for adapter tests."""
+    """Minimal fake transport client for adapter tests.
+
+    Like a real app-server, it emits a turn's scripted events only once that
+    turn starts: each ``turn/start`` releases the events up to and including
+    the next ``turn/completed`` or transport close, and a scripted event that
+    names no turn is stamped with the started turn's id. Once released
+    events run out, the turn keeps working until something ends it.
+    """
 
     def __init__(
         self,
@@ -57,9 +71,14 @@ class FakeCodexClient(RecordedRequests):
         resume_error: Exception | None = None,
         turn_start_error: Exception | None = None,
         turn_start_error_once: bool = True,
+        interrupt_error: Exception | None = None,
         model_list_result: dict[str, Any] | None = None,
         model_list_error: Exception | None = None,
         skill_roots_error: Exception | None = None,
+        started_settings: dict[str, Any] | None = None,
+        resumed_settings: dict[str, Any] | None = None,
+        resumed_thread_id: str | None = None,
+        recorded_cwd: str | None = None,
     ) -> None:
         self.connected = False
         self.initialized = False
@@ -71,11 +90,21 @@ class FakeCodexClient(RecordedRequests):
         self._resume_error = resume_error
         self._turn_start_error = turn_start_error
         self._turn_start_error_once = turn_start_error_once
+        self._interrupt_error = interrupt_error
         self._model_list_result = model_list_result
         self._model_list_error = model_list_error
         self._skill_roots_error = skill_roots_error
+        # What thread/start and thread/resume report the thread runs with.
+        self._started_settings = started_settings or {}
+        self._resumed_settings = resumed_settings or self._started_settings
+        self._resumed_thread_id = resumed_thread_id
+        # The cwd a resumed thread reports when resume names none.
+        self._recorded_cwd = recorded_cwd
         self._thread_counter = 0
         self._turn_counter = 0
+        self._released: deque[RpcEvent] = deque()
+        self._emitted = asyncio.Event()
+        self.turn_started = asyncio.Event()
 
     async def connect(self) -> None:
         self.connected = True
@@ -108,17 +137,27 @@ class FakeCodexClient(RecordedRequests):
                     raise self._model_list_error
                 if self._model_list_result is not None:
                     return self._model_list_result
-                return {"data": [{"id": "gpt-5.5", "hidden": False}]}
+                return {"data": [{"id": LISTED_MODEL, "hidden": False}]}
             case CodexRequestMethod.SKILLS_EXTRA_ROOTS_SET:
                 if self._skill_roots_error is not None:
                     raise self._skill_roots_error
             case CodexRequestMethod.THREAD_RESUME:
                 if self._resume_error is not None:
                     raise self._resume_error
-                return {"thread": {"id": payload.get("threadId", "thr-resumed")}}
+                thread_id = self._resumed_thread_id or payload.get("threadId")
+                cwd = payload.get("cwd") or self._recorded_cwd
+                return {
+                    "thread": {"id": thread_id},
+                    **({"cwd": cwd} if cwd else {}),
+                    **self._resumed_settings,
+                }
             case CodexRequestMethod.THREAD_START:
                 self._thread_counter += 1
-                return {"thread": {"id": f"thr-{self._thread_counter}"}}
+                thread_id = f"thr-{self._thread_counter}"
+                return {"thread": {"id": thread_id}, **self._started_settings}
+            case CodexRequestMethod.TURN_INTERRUPT:
+                if self._interrupt_error is not None:
+                    raise self._interrupt_error
             case CodexRequestMethod.TURN_START:
                 if self._turn_start_error is not None:
                     err = self._turn_start_error
@@ -126,6 +165,8 @@ class FakeCodexClient(RecordedRequests):
                         self._turn_start_error = None
                     raise err
                 self._turn_counter += 1
+                self._release_turn_events(f"turn-{self._turn_counter}")
+                self.turn_started.set()
                 return {
                     "turn": {
                         "id": f"turn-{self._turn_counter}",
@@ -137,10 +178,45 @@ class FakeCodexClient(RecordedRequests):
 
         return {}
 
+    def _release_turn_events(self, turn_id: str) -> None:
+        while self._events:
+            event = self._events.popleft()
+            self._released.append(_attributed(event, turn_id))
+            if event.method in {"turn/completed", TRANSPORT_CLOSED}:
+                break
+        self._emitted.set()
+
+    def emit(self, *events: RpcEvent) -> None:
+        """Send events now, outside any scripted turn."""
+        self._released.extend(events)
+        self._emitted.set()
+
+    async def read_by_adapter(self) -> None:
+        """Wait until the adapter's reader has taken every event sent so far.
+
+        The reader routes an event in the same step that takes it, so this
+        also means every taken event has been routed.
+        """
+        await until(
+            lambda: not self._released,
+            failure="The adapter never read the events sent to it",
+        )
+
+    @property
+    def answers(self) -> dict[int | str, dict[str, Any]]:
+        """Each answered request's result, by request id."""
+        return dict(self.responses)
+
+    @property
+    def error_codes(self) -> dict[int | str, int]:
+        """Each request answered with an error, by request id."""
+        return {request_id: code for request_id, code, _ in self.response_errors}
+
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
-        if not self._events:
-            raise TimeoutError
-        return self._events.popleft()
+        while not self._released:
+            self._emitted.clear()
+            await asyncio.wait_for(self._emitted.wait(), timeout=timeout_s)
+        return self._released.popleft()
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
         self.responses.append((request_id, result))
@@ -159,9 +235,30 @@ class FakeCodexClient(RecordedRequests):
         self.closed = True
 
 
-def patch_codex_client(adapter: CodexAdapter, client: FakeCodexClient) -> None:
-    def _build(_config: CodexAdapterConfig) -> FakeCodexClient:
-        return client
+def _attributed(event: RpcEvent, turn_id: str) -> RpcEvent:
+    """``event`` naming ``turn_id`` when it names no turn of its own."""
+    params = event.params if isinstance(event.params, dict) else {}
+    if "turnId" in params or "turn" in params or event.method == TRANSPORT_CLOSED:
+        return event
+    params = {**params, "turnId": turn_id}
+    return RpcEvent(
+        kind=event.kind,
+        method=event.method,
+        params=params,
+        id=event.id,
+        raw={**event.raw, "params": params},
+    )
+
+
+def patch_codex_client(
+    adapter: CodexAdapter, client: FakeCodexClient, *replacements: FakeCodexClient
+) -> None:
+    """Serve ``client`` as the first Codex process and each of ``replacements``
+    to the next process started after a loss; the last one keeps serving."""
+    processes = deque([client, *replacements])
+
+    def _build(_workspace: str) -> FakeCodexClient:
+        return processes.popleft() if len(processes) > 1 else processes[0]
 
     adapter._build_client = _build  # type: ignore[method-assign]
 
@@ -214,8 +311,7 @@ def agent_message_started(
     return event_notification(
         "item/started",
         {
-            "threadId": "thr-1",
-            "turnId": "turn-1",
+            "threadId": FIRST_THREAD_ID,
             "startedAtMs": 1,
             "item": {"type": "agentMessage", "id": item_id, "text": "", "phase": phase},
         },
@@ -225,7 +321,7 @@ def agent_message_started(
 def agent_message_delta(text: str, item_id: str = "m") -> RpcEvent:
     return event_notification(
         "item/agentMessage/delta",
-        {"threadId": "thr-1", "turnId": "turn-1", "itemId": item_id, "delta": text},
+        {"threadId": FIRST_THREAD_ID, "itemId": item_id, "delta": text},
     )
 
 
@@ -235,8 +331,7 @@ def agent_message_completed(
     return event_notification(
         "item/completed",
         {
-            "threadId": "thr-1",
-            "turnId": "turn-1",
+            "threadId": FIRST_THREAD_ID,
             "completedAtMs": 2,
             "item": {
                 "type": "agentMessage",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -20,16 +21,19 @@ from band.core.types import MessageType
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
+from band.runtime.context import ConversationContext
 from band.runtime.execution import (
-    BacklogProcessResult,
     Execution,
     ExecutionContext,
     ExecutionState,
     ResyncOutcome,
+    TurnOutcome,
     _error_label,
+    _observe_phase,
 )
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools import AgentTools
-from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import (
@@ -1019,7 +1023,7 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         mock_handler.assert_not_awaited()
         mock_link_with_next.mark_processing.assert_not_awaited()
         mock_link_with_next.mark_processed.assert_not_awaited()
@@ -1241,8 +1245,8 @@ class TestCrashRecoverySync:
 
         assert handler_calls == 1
         assert mock_link_with_next.mark_processing.await_count == 1
-        assert owner_handled is True
-        assert duplicate_handled is False
+        assert owner_handled is TurnOutcome.ADVANCED
+        assert duplicate_handled is TurnOutcome.RETRY_LATER
 
     async def test_mark_processing_failure_does_not_execute_message(
         self, mock_link_with_next, mock_handler
@@ -1284,7 +1288,7 @@ class TestCrashRecoverySync:
         )
         event = make_message_event(room_id="room-123", msg_id="msg-handler-fails")
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
 
         mock_link_with_next.mark_failed.assert_awaited_once_with(
             "room-123", "msg-handler-fails", "handler failed"
@@ -1318,7 +1322,7 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.RETRY_LATER
+        assert result is TurnOutcome.RETRY_LATER
         mock_handler.assert_awaited_once()
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-ack-fails"
@@ -1375,10 +1379,8 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        assert (
-            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
-        )
-        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1413,10 +1415,8 @@ class TestCrashRecoverySync:
             ),
         )
 
-        assert (
-            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
-        )
-        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
+        assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1915,7 +1915,7 @@ class TestCrashRecoverySync:
         # A further delivery of the same message must not invoke the handler.
         result = await ctx._process_backlog_message(msg)
 
-        assert result == BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         assert failing_handler.await_count == 1
 
 
@@ -1990,7 +1990,9 @@ class TestTurnFailureReport:
             room_id="room-123", msg_id="msg-ws", sender_id="user-1"
         )
 
-        assert await self._context(mock_link)._process_event(event) is True
+        assert (
+            await self._context(mock_link)._process_event(event) is TurnOutcome.ADVANCED
+        )
 
         mock_link.mark_failed.assert_awaited_once()
         assert self._reporters(error_events) == [TURN_FAILURE_PROVIDER]
@@ -2003,15 +2005,15 @@ class TestTurnFailureReport:
             room_id="room-123", msg_id="msg-retried", sender_id="user-1"
         )
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
         error_events.assert_not_awaited()
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
         assert mock_link.mark_failed.await_count == 2
         error_events.assert_awaited_once()
 
-        assert await ctx._process_event(event) is True
+        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
         error_events.assert_awaited_once()
 
     @pytest.mark.parametrize("sender_type", ["Agent", "System"])
@@ -2027,7 +2029,9 @@ class TestTurnFailureReport:
             sender_type=sender_type,
         )
 
-        assert await self._context(mock_link)._process_event(event) is True
+        assert (
+            await self._context(mock_link)._process_event(event) is TurnOutcome.ADVANCED
+        )
 
         error_events.assert_awaited_once()
 
@@ -2104,7 +2108,7 @@ class TestTurnFailureReport:
             self._backlog_message("msg-post-fails")
         )
 
-        assert result is BacklogProcessResult.ADVANCED
+        assert result is TurnOutcome.ADVANCED
         mock_link.mark_failed.assert_awaited_once()
         error_events.assert_awaited_once()
 
@@ -2775,3 +2779,88 @@ async def test_stopped_startup_uses_next_gate_not_processing_list() -> None:
             ("newer", "processing"),
             ("newer", "processed"),
         ]
+
+
+@pytest.mark.parametrize("cancel", [False, True], ids=["complete", "cancel"])
+async def test_turn_diagnostics_distinguish_running_handler_from_ack(
+    caplog: pytest.LogCaptureFixture, cancel: bool
+) -> None:
+    peer = LifecyclePlatform()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(ctx: ExecutionContext, event: Any) -> None:
+        entered.set()
+        await release.wait()
+
+    caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+    async with rest_client_over(peer.answer) as rest:
+        link = BandLink(agent_id="agent-123", api_key="test")
+        link.rest = rest
+        ctx = ExecutionContext(
+            "room-123",
+            link,
+            handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        async with asyncio.TaskGroup() as tasks:
+            task = tasks.create_task(
+                ctx._process_event(
+                    make_message_event(
+                        room_id="room-123",
+                        msg_id="observed-turn",
+                        content="private prompt",
+                    )
+                )
+            )
+            await entered.wait()
+            assert peer.marked("processing") == ["observed-turn"]
+            assert peer.requested("processed") == []
+            assert "phase=handler state=started" in caplog.text
+            assert "phase=handler state=returned" not in caplog.text
+            assert "phase=ack" not in caplog.text
+            if cancel:
+                task.cancel()
+            else:
+                release.set()
+
+        if cancel:
+            assert task.cancelled()
+            assert peer.requested("processed") == []
+            assert "phase=handler state=cancelled" in caplog.text
+        else:
+            assert peer.marked("processed") == ["observed-turn"]
+            assert "phase=handler state=returned" in caplog.text
+            assert (
+                "Ack room=room-123 message=observed-turn accepted=True" in caplog.text
+            )
+        assert "private prompt" not in caplog.text
+
+
+class TestPhaseOutcome:
+    """Boundary traces stay at DEBUG and name interrupts that are not Exceptions."""
+
+    def test_completed_phase_is_debug_without_a_monotonic_stamp(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="band.runtime.execution")
+        with _observe_phase("handler", "room-1", "msg-1"):
+            pass
+        assert "phase=handler" not in caplog.text
+
+        caplog.clear()
+        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        with _observe_phase("handler", "room-1", "msg-1"):
+            pass
+        assert "phase=handler state=started room=room-1 message=msg-1" in caplog.text
+        assert "phase=handler state=returned room=room-1 message=msg-1" in caplog.text
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_interrupt_is_named(
+        self, caplog: pytest.LogCaptureFixture, interrupt: type[BaseException]
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="band.runtime.execution")
+        with pytest.raises(interrupt), _observe_phase("handler", "room-1", "msg-1"):
+            raise interrupt
+        assert f"phase=handler state={interrupt.__name__}" in caplog.text
+        assert "state=returned" not in caplog.text

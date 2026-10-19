@@ -8,10 +8,13 @@ built-in Band tool surface is built by
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
 from collections.abc import Callable
+from contextvars import ContextVar
+from time import monotonic
 from typing import Any, ClassVar, get_origin, get_type_hints
 
 from band_sdk_core import AgentFailure
@@ -21,11 +24,13 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstrumentationSettings,
+    ModelRequestNode,
     RunContext,
     UnexpectedModelBehavior,
     capture_run_messages,
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     BinaryContent,
@@ -38,7 +43,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+)
+from pydantic_ai.result import FinalResult
+from pydantic_graph import End
 from typing_extensions import Unpack
 
 from band.converters.pydantic_ai import (
@@ -77,6 +87,65 @@ from band.runtime.tools.schema import is_failed_tool_output
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "pydantic_ai"
+DIAGNOSTIC_TOOL_NAME_LIMIT = 80
+
+_native_turn: ContextVar[tuple[str, str, float] | None] = ContextVar(
+    "pydantic_native_turn", default=None
+)
+
+
+def _log_native_progress(
+    phase: str,
+    *,
+    request: int | None = None,
+    events: int | None = None,
+    tool: str | None = None,
+    error: BaseException | None = None,
+) -> None:
+    turn = _native_turn.get()
+    if turn is None:
+        return
+    room_id, message_id, started = turn
+    logger.debug(
+        "Pydantic native room=%s message=%s phase=%s elapsed=%.3f "
+        "request=%s events=%s tool=%r error=%s",
+        room_id,
+        message_id,
+        phase,
+        monotonic() - started,
+        request,
+        events,
+        tool[:DIAGNOSTIC_TOOL_NAME_LIMIT] if tool is not None else None,
+        type(error).__name__ if error is not None else None,
+    )
+
+
+def _before_model_request(
+    ctx: RunContext[AgentToolsProtocol], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    _log_native_progress("request_attempt", request=ctx.run_step)
+    return request_context
+
+
+def _after_model_request(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+) -> ModelResponse:
+    # With streaming, this hook sees the assembled response after consumption.
+    _log_native_progress("response_ready", request=ctx.run_step)
+    return _drop_blank_text(ctx, request_context=request_context, response=response)
+
+
+def _model_request_error(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    request_context: ModelRequestContext,
+    error: Exception,
+) -> ModelResponse:
+    _log_native_progress("request_error", request=ctx.run_step, error=error)
+    raise error
 
 
 def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
@@ -92,6 +161,27 @@ def _explicit_decline_is_terminal(request: ModelRequest) -> bool:
         if part.tool_name == BandTool.NO_REPLY:
             declined = True
     return declined
+
+
+async def _finish_explicit_decline_after_tools(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    node: AgentNode[Any],
+    result: NodeResult[Any],
+) -> NodeResult[Any]:
+    """End the run after a terminal decline without scheduling another model step.
+
+    pydantic-ai 2.55+ enforces ``request_limit`` before ``before_model_request`` hooks,
+    so a follow-up ``ModelRequestNode`` after tools can trip the limit even when the
+    hook would have skipped the call. Converting that node to ``End`` avoids the extra
+    step entirely.
+    """
+    if isinstance(result, ModelRequestNode) and _explicit_decline_is_terminal(
+        result.request
+    ):
+        ctx.messages.append(result.request)
+        return End(FinalResult(None))
+    return result
 
 
 def _finish_explicit_decline(
@@ -393,12 +483,18 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # handled where the run is driven.
             retries={"tools": 3, "output": 0},
             capabilities=[
-                # Inspect native run metadata before replay history is processed.
-                Hooks(before_model_request=_finish_explicit_decline),
+                Hooks(
+                    before_model_request=_finish_explicit_decline,
+                    after_node_run=_finish_explicit_decline_after_tools,
+                ),
                 # Strip content:null responses on every request, including mid-run
                 # ones the storage filter can't reach (see the function docstring).
                 ProcessHistory(_drop_non_replayable_messages),
-                Hooks(after_model_request=_drop_blank_text),
+                Hooks(
+                    before_model_request=_before_model_request,
+                    after_model_request=_after_model_request,
+                    model_request_error=_model_request_error,
+                ),
             ],
             # The built-in Band surface, selected and built from the tool
             # registry. Custom tools keep their own registration paths below.
@@ -477,16 +573,20 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         user_message = msg.format_for_llm()
 
         logger.debug(
-            "Room %s: Running Pydantic AI agent (history: %s msgs, prompt: %s...)",
+            "Room %s: Running Pydantic AI agent (history: %s msgs)",
             room_id,
             len(self._message_history[room_id]),
-            user_message[:80],
         )
 
         # Run agent with streaming to capture tool events.
         # pydantic-ai's result.usage is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
+        tool_call_count = 0
+        tool_result_count = 0
+        failed_tool_result_count = 0
+        native_output_type: str | None = None
+        native_output_chars = 0
         # Snapshot the prior messages' identities so the fallback usage path
         # (any run that raises) can sum only THIS run's responses: capture_run_messages()
         # records the passed message_history + the new turn, so summing the whole
@@ -509,7 +609,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # failed run captured.
         capture_cm = capture_run_messages()
         captured = capture_cm.__enter__()
+        trace_token = _native_turn.set((room_id, msg.id, monotonic()))
+        event_count = 0
         try:
+            _log_native_progress("run_started")
             # run_stream_events is an async context manager: it starts the run on the
             # first iteration and tears the background task down on exit.
             async with self._agent.run_stream_events(
@@ -518,7 +621,17 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 message_history=self._message_history[room_id],
             ) as events:
                 async for event in events:
+                    event_count += 1
+                    # Logarithmic sampling bounds output during long token streams.
+                    if event_count & (event_count - 1) == 0:
+                        _log_native_progress("stream_progress", events=event_count)
                     if isinstance(event, FunctionToolCallEvent):
+                        _log_native_progress(
+                            "tool_started",
+                            events=event_count,
+                            tool=event.part.tool_name,
+                        )
+                        tool_call_count += 1
                         if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
@@ -537,11 +650,28 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
+                        tool_succeeded = isinstance(
+                            event.part, ToolReturnPart
+                        ) and not is_failed_tool_output(event.part.content)
+                        _log_native_progress(
+                            "tool_succeeded" if tool_succeeded else "tool_failed",
+                            events=event_count,
+                            tool=event.part.tool_name,
+                        )
+                        tool_result_count += 1
+                        if isinstance(event.part, RetryPromptPart) or (
+                            isinstance(event.part, ToolReturnPart)
+                            and (
+                                event.part.outcome != "success"
+                                or is_failed_tool_output(event.part.content)
+                            )
+                        ):
+                            failed_tool_result_count += 1
                         # Native custom tools run outside execute_custom_tool, so
                         # their declared effect is recorded here.
                         if (
-                            isinstance(event.part, ToolReturnPart)
-                            and not is_failed_tool_output(event.part.content)
+                            tool_succeeded
+                            and isinstance(event.part, ToolReturnPart)
                             and (
                                 effect := self._custom_effects.get(event.part.tool_name)
                             )
@@ -577,6 +707,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                     "Failed to send tool_result event: %s", e
                                 )
                     elif isinstance(event, AgentRunResultEvent):
+                        _log_native_progress("result_received", events=event_count)
+                        native_output_type = type(event.result.output).__name__
+                        if isinstance(event.result.output, str):
+                            native_output_chars = len(event.result.output)
                         turn_usage = self._usage_from_result(event.result)
                         # Keep native run history, but drop responses that replay as
                         # content:null (e.g. thinking-only) — providers reject them
@@ -595,7 +729,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 room_id,
                                 dropped,
                             )
+                _log_native_progress("iterator_completed", events=event_count)
+            _log_native_progress("run_completed", events=event_count)
+        except asyncio.CancelledError as error:
+            _log_native_progress("run_cancelled", events=event_count, error=error)
+            raise
         except Exception as e:
+            _log_native_progress("run_error", events=event_count, error=e)
             # A turn that already did its work must not fail over the reply the model
             # owes pydantic-ai. Allowing `None` — and normalizing blank text into it
             # — ends the ordinary nothing-left-to-say response cleanly, but some
@@ -633,12 +773,28 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 return
-            logger.exception("Room %s: Pydantic AI turn failed", room_id)
+            logger.error(
+                "Room %s: Pydantic AI turn failed (%s)", room_id, type(e).__name__
+            )
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
         finally:
+            _native_turn.reset(trace_token)
+            if native_output_type is not None and not tools.turn.complete:
+                logger.warning(
+                    "Room %s message %s: native run ended without a turn outcome "
+                    "(output_type=%s, output_chars=%s, tool_calls=%s, "
+                    "tool_results=%s, failed_tool_results=%s)",
+                    room_id,
+                    msg.id,
+                    native_output_type,
+                    native_output_chars,
+                    tool_call_count,
+                    tool_result_count,
+                    failed_tool_result_count,
+                )
             capture_cm.__exit__(None, None, None)
             # Single emit point for every exit. A run that raised (benign
             # empty-final or a hard failure) never saw the result event, so

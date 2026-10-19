@@ -9,8 +9,8 @@ import pytest
 
 from band.client.streaming import ControlMode
 from band.runtime.execution import ExecutionContext
+from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.types import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,

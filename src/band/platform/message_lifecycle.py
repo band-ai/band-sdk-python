@@ -20,7 +20,7 @@ from band_rest.types.chat_message import ChatMessage
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.types import metadata_to_dict
-from band.runtime.types import PlatformMessage
+from band.runtime.messages import PlatformMessage
 
 logger = logging.getLogger(__name__)
 

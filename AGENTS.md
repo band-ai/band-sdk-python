@@ -78,7 +78,7 @@ pinned wheel lacks one, so a new core symbol needs no manual CI step.
 
 `ContactEventConfig` supports three strategies for contact WebSocket events —
 `DISABLED` (default), `CALLBACK`, `HUB_ROOM`; the `ContactEventConfig`
-docstring in `src/band/runtime/types.py` has configuration examples.
+docstring in `src/band/runtime/contacts.py` has configuration examples.
 
 > **WARNING (AI coding assistants):** Always ask the developer which contact
 > strategy they want before choosing one — do not default to `CALLBACK` with
@@ -187,11 +187,14 @@ To wire a new framework adapter into the matrix, follow
 ## Commands
 
 ```bash
-# Install dependencies (all extras except crewai and parlant — see Dependency Conflicts below)
+# Install dependencies (modern frameworks; see Dependency Conflicts below)
 uv sync --extra dev
 
 # Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
 uv sync --extra dev-crewai
+
+# Install Strands/NOOA adapter deps in their OpenAI-2 environment
+uv sync --extra dev-strands-nooa
 
 # Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
 uv sync --extra dev-parlant
@@ -230,9 +233,13 @@ uv run pyrefly check
 environment (crewai's exact `~=` pins on `mcp`, `aiofiles`, `regex` and `tomli` drag the
 whole lock), and **parlant cannot coexist with pydantic-ai** either (a
 `griffe`/`griffelib` namespace collision uv cannot see as a version conflict).
-That's why there are three separate extras — `dev` (everything except crewai
-and parlant), `dev-crewai`, `dev-parlant` — each installed in its own CI
-job/venv. The `[tool.uv] conflicts` comments in `pyproject.toml` carry the
+Strands and NOOA/LiteLLM require OpenAI 2, while modern Pydantic AI requires
+OpenAI 3. There are four isolated development extras: `dev` (modern frameworks),
+`dev-strands-nooa` (Strands, conditional NOOA, and their LangGraph peer), `dev-crewai`,
+and `dev-parlant`. Each has its own CI job/venv. Public LangGraph and Parlant
+remain compatible with either OpenAI major; LangGraph + Strands is supported.
+Use `uv run --locked --isolated --python 3.12 --all-packages --extra <extra>`
+for concurrent work so one lane never overwrites another lane's environment. The `[tool.uv] conflicts` comments in `pyproject.toml` carry the
 mechanism.
 
 ## Environment Variables
@@ -264,7 +271,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `nooa` (NOOA, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -315,8 +322,12 @@ Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown
 — so `python` snippets in the docs must stay correct and runnable, not rot:
 
 ```bash
-uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
+uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest --markdown-docs docs/adapters/nooa.md --no-cov
 ```
+
+NOOA's runnable documentation requires its legacy environment; the two commands
+above cover the complete tracked documentation suite.
 
 Fence tags: plain ` ```python ` **executes** (top-level `assert`s are the
 checks); ` ```python notest ` is collected out — reserve it for pseudo-code,
@@ -357,6 +368,13 @@ install` it and exercise the real call in this repo's venv.
   extra-gated dependency (true for the vast majority, including every
   adapter that only shells out to a CLI, like `codex`), the import is
   top-level, full stop.
+- Import symbols directly from the module that owns them. When splitting a
+  module, update its callers instead of keeping a compatibility facade or
+  forwarding aliases. Do not preserve obsolete import paths. Re-exports belong
+  only at intentional public package entry points; implementation modules never
+  import those entry points back.
+  Use `__all__` or explicit re-export aliases only to declare such a public API,
+  not as boilerplate in ordinary modules.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,

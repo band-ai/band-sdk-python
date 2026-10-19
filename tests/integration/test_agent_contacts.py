@@ -21,7 +21,7 @@ from band.platform.event import (
     ContactEvent,
 )
 from band.runtime.contact_tools import ContactTools
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 
 PYDANTIC_AI_MODEL = f"openai:{OPENAI_MODEL}"
 
