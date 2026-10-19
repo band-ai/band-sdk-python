@@ -1555,10 +1555,8 @@ class ACPClientAdapter(
         # MCP resolution cannot start a new scope after teardown. Configuration
         # already accepted on a resident scope may finish while its lease holds.
         task = asyncio.current_task()
-        refused = (
-            not room.retained.may_finish(room.generation)
-            if finishing
-            else room.retained.closing
+        refused = room.retained.closing and not (
+            finishing and room.retained.may_finish(room.generation)
         )
         if refused or (
             task is not None and (task.cancelling() or task is room.abandoned_setup)
