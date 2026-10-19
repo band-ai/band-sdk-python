@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.integrations.slack.socket import SlackSocketListener
+from band.runtime.startup import arm_adapter
 from tests.integrations.slack.shutdown.kit import GatedBrain
 from tests.integrations.slack.socketkit import _build_adapter_with_socket, _socket_app
 
@@ -19,10 +20,8 @@ class TestListenerOwnership:
         adapter, _, clients, _, _ = _build_adapter_with_socket(
             inner=brain, apps=[_socket_app("first"), _socket_app("second")]
         )
-        adapter._inner_live = True
-        clients["second"].disconnect = AsyncMock(
-            side_effect=[OSError("Try again"), None]
-        )
+        arm_adapter(brain)
+        clients["second"].close = AsyncMock(side_effect=[OSError("Try again"), None])
         adapter._socket_listeners = [
             SlackSocketListener(app=app, client=clients[app.slug])
             for app in adapter.config.apps
@@ -32,5 +31,5 @@ class TestListenerOwnership:
         assert brain.cleanup_calls == 1
         await adapter.cleanup_all()
         assert brain.cleanup_calls == 1
-        assert clients["first"].disconnect.await_count == 1
-        assert clients["second"].disconnect.await_count == 2
+        assert clients["first"].close.await_count == 1
+        assert clients["second"].close.await_count == 2
