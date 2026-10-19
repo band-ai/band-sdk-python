@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from band.core.exceptions import CleanupIncompleteError, RoomClosingError
 from band.core.retention.cleanup import (
     await_owned,
+    cleanup_deadline,
+    finish_by,
     report_owned,
     reporting,
     spawn_owned,
@@ -230,6 +232,58 @@ class RetainedRoom:
         self._schedule()
         self._start_requested_recovery()
         return True
+
+    async def wait_released(self, *, generation: int) -> None:
+        """Join a requested residency retirement without acquiring a successor.
+
+        Caller cancellation or the reporting deadline leaves cleanup owned.
+        Enrolled work cannot join a release that waits for its own lease.
+        """
+        if generation > self._generation:
+            raise ValueError("Cannot wait for a future residency")
+        if self.enrolls(asyncio.current_task()):
+            raise CleanupIncompleteError(
+                f"Room {self.room_id} release waits for the calling work to finish"
+            )
+        if (
+            generation == self._generation
+            and not self.closing
+            and self._state not in (Residency.SUSPENDED, Residency.CLOSED)
+            and self._cause not in (ReleaseCause.RECOVERY, ReleaseCause.FINAL)
+        ):
+            raise ValueError("Residency has no retirement request")
+        await finish_by(
+            cleanup_deadline(self._owner.config),
+            self._wait_released(generation),
+            what=f"Room {self.room_id} release",
+        )
+
+    async def _wait_released(self, generation: int) -> None:
+        for _ in range(MAX_SETTLE_STEPS):
+            if generation < self._generation or self._state in (
+                Residency.SUSPENDED,
+                Residency.CLOSED,
+            ):
+                return
+            if self.closing:
+                if (disposal := self._begin_disposal()) is not None:
+                    await report_owned(disposal, None)
+                return
+            if (transition := self._in_flight()) is not None:
+                if self._state == Residency.ACQUIRING:
+                    # A failed start still leaves its partial handle to release.
+                    await await_owned({transition}, None)
+                else:
+                    await report_owned(transition, None)
+            elif self._leases:
+                await self._settleable.wait()
+            elif (cause := self._cause) is not None:
+                await report_owned(self._start_release(cause, automatic=False), None)
+            else:
+                raise RuntimeError(
+                    f"Room {self.room_id} retirement is no longer pending"
+                )
+        raise self._stalled(MAX_SETTLE_STEPS)
 
     @asynccontextmanager
     async def use(

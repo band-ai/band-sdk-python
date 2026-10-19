@@ -108,6 +108,7 @@ class TestDisposal:
             await host.owner.stop()
             assert not resident.live
 
+    @pytest.mark.looptime
     async def test_disposal_report_timeout_is_joined_without_a_second_close(
         self,
         impatient_host: ResidenceHost,
