@@ -156,4 +156,3 @@ Approval commands use the token displayed in the room prompt. Native Codex
 request and approval IDs stay internal; a fresh request gets a new chat token
 after completion or room cleanup, even when Codex reuses its native ID. A
 redelivery of a still-pending request keeps its displayed token.
-

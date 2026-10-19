@@ -13,7 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from band.core.exceptions import BandConnectionError, CleanupIncompleteError
+from band.core.exceptions import BandConnectionError
 from band.integrations.codex.rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 from band.integrations.codex.winspawn import (
     MISSING_EXECUTABLE,
@@ -271,6 +271,13 @@ class CodexStdioClient(BaseJsonRpcClient):
             )
 
     async def _close_process(self) -> None:
+        await self._settle_process()
+        if self._proc is not None and self._proc.returncode is None:
+            raise TimeoutError(
+                f"Codex process {self._proc.pid} still alive after tree kill"
+            )
+
+    async def _settle_process(self) -> None:
         readers = [
             task for task in (self._reader_task, self._stderr_task) if task is not None
         ]
@@ -295,8 +302,8 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await kill_process_tree(process)
                 await close_stdin(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
-                    raise CleanupIncompleteError(
-                        "Codex process did not report exit after tree cleanup"
+                    logger.warning(
+                        "Codex process %s still alive after tree kill", process.pid
                     )
             self._fail_pending("Codex stdio client closed")
         finally:
