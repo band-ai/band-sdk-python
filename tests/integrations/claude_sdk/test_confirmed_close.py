@@ -13,7 +13,11 @@ import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 
 from band.integrations.claude_sdk import transport
-from tests.adapters.claude_sdk.process import ForgetfulProcess, WorkspaceProcess
+from tests.adapters.claude_sdk.process import (
+    DelegatingProcess,
+    ForgetfulProcess,
+    WorkspaceProcess,
+)
 
 
 @asynccontextmanager
@@ -103,6 +107,56 @@ class TestConfirmedClose:
             assert not native.exited
 
             native.refuse_close = False
+            await owned.close()
+            assert native.exited
+            assert not owned.close_pending
+
+    async def test_a_native_exit_check_defers_to_the_physical_custodian(
+        self, tmp_path: Path
+    ) -> None:
+        async with started(DelegatingProcess, tmp_path) as (owned, native):
+            await owned.close()
+            assert native.exited
+            assert not owned.close_pending
+
+    async def test_delegated_exit_custody_survives_a_failed_kill(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async with started(DelegatingProcess, tmp_path) as (owned, native):
+            child = native._child
+            with monkeypatch.context() as faults:
+                faults.setattr(
+                    child, "kill", lambda: (_ for _ in ()).throw(PermissionError())
+                )
+                with pytest.raises(transport.ClaudeProcessCloseError):
+                    await owned.close()
+                assert owned.close_pending
+                assert not native.exited
+
+            await owned.close()
+            assert native.exited
+            assert not owned.close_pending
+
+    async def test_a_cancelled_native_close_keeps_physical_custody_for_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async with started(WorkspaceProcess, tmp_path) as (owned, native):
+            entered = asyncio.Event()
+
+            async def held_close() -> None:
+                entered.set()
+                await asyncio.Event().wait()
+
+            with monkeypatch.context() as faults:
+                faults.setattr(native, "close", held_close)
+                closing = asyncio.create_task(owned.close())
+                await entered.wait()
+                closing.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await closing
+                assert owned.close_pending
+                assert not native.exited
+
             await owned.close()
             assert native.exited
             assert not owned.close_pending

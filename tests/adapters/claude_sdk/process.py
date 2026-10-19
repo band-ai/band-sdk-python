@@ -10,6 +10,7 @@ import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
+from band.core.exceptions import CleanupIncompleteError
 from band.integrations.claude_sdk import transport
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import CLEANUP_FAILURE
@@ -108,3 +109,17 @@ class ForgetfulProcess(WorkspaceProcess):
 
     async def close(self) -> None:
         self._process = None
+
+
+class DelegatingProcess(ForgetfulProcess):
+    """A native close that requires a physical-exit custodian before returning."""
+
+    _exit_confirmation_deferred = False
+
+    def _defer_exit_confirmation(self) -> None:
+        self._exit_confirmation_deferred = True
+
+    async def close(self) -> None:
+        if not self._exit_confirmation_deferred:
+            raise CleanupIncompleteError("Claude CLI process exit is unconfirmed")
+        await super().close()
