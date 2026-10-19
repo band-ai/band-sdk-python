@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from heapq import heapify, heappop, heappush
 from types import MappingProxyType
 from typing import Annotated, Any, NoReturn, SupportsIndex, TypeAlias
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from pydantic import Field
@@ -135,6 +136,23 @@ def _valid_text(value: Any, *, nonempty: bool = False) -> bool:
     )
 
 
+def _public_http_url(value: str) -> bool:
+    # URL overrides are public argv, unlike protected bearer/header references.
+    # Refuse every query and fragment rather than guessing credential names.
+    if "?" in value or "#" in value:
+        return False
+    try:
+        endpoint = urlsplit(value)
+        return (
+            endpoint.scheme in ("http", "https")
+            and bool(endpoint.hostname)
+            and endpoint.username is None
+            and endpoint.password is None
+        )
+    except ValueError:
+        return False
+
+
 def _string_mapping(
     mapping: Mapping[str, str], stage: str, *, environment: bool = False
 ) -> dict[str, str]:
@@ -191,7 +209,7 @@ class CodexMcpStdioServer:
 
 @dataclass(frozen=True, slots=True)
 class CodexMcpHttpServer:
-    """A streamable HTTP server; bearer and header values stay out of diagnostics."""
+    """A public HTTP endpoint with protected bearer and header credentials."""
 
     url: str
     bearer_token: Annotated[str | None, Field(exclude=True)] = field(
@@ -202,8 +220,10 @@ class CodexMcpHttpServer:
     )
 
     def __post_init__(self) -> None:
-        if not _valid_text(self.url, nonempty=True) or (
-            self.bearer_token is not None and not _valid_text(self.bearer_token)
+        if (
+            not _valid_text(self.url, nonempty=True)
+            or not _public_http_url(self.url)
+            or (self.bearer_token is not None and not _valid_text(self.bearer_token))
         ):
             raise CodexMcpStartupError("invalid-descriptor")
         object.__setattr__(

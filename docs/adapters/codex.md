@@ -133,9 +133,17 @@ Pass the keyword-only `resolve_mcp_servers` callback to `CodexAdapter`, not
   protected environment names are refused. On Windows, nonempty stdio `env`
   fails before client construction with stage `unsupported-platform`:
   `secret-bearing stdio MCP servers require POSIX exec`. Env-free Windows stdio
-  and all HTTP servers remain supported; no Windows supervisor is included.
+  and HTTP servers remain supported; no Windows supervisor is included.
 - `CodexMcpHttpServer(url, bearer_token=None, headers={})` describes streamable
-  HTTP. Other descriptor types, including SSE, are refused. Names must match
+  HTTP. `url` must be an absolute `http://` or `https://` endpoint with a host.
+  Its origin and path are public: they appear in argv, repr and supported
+  Pydantic serialization, so never put credentials there. URL authentication
+  is unsupported: userinfo, every query string (regardless of parameter names)
+  and fragments are refused, including empty `?` or `#` suffixes. Put credentials
+  in `bearer_token` or `headers` instead. Invalid URLs raise
+  `CodexMcpStartupError` with stage `invalid-descriptor` without echoing the URL;
+  descriptor construction inside a resolver is reported as stage `resolution`.
+  Other descriptor types, including SSE, are refused. Names must match
   `[A-Za-z0-9_-]+`, be unique, and not be the reserved native name `codex_apps`.
 - Resolution runs inside the retained room's acquisition, once per new process
   after any predecessor is confirmed closed. Reusing a process does not resolve
