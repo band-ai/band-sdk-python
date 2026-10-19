@@ -23,7 +23,7 @@ MAX_SEEN_CONTROL_IDS = 256
 class ControlDeduplicator:
     """Drops repeated signals by correlation id; the server does not.
 
-    Bounded LRU, only touched from the WebSocket receive task.
+    Bounded LRU; ``BandLink`` delivers control signals one at a time.
     """
 
     def __init__(self) -> None:

@@ -252,9 +252,10 @@ class Execution(Protocol):
     def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
         """Abort the in-flight reasoning cycle for this room.
 
-        Called preemptively from the WebSocket receive task on an ``interrupt``
-        or ``stop`` control signal. ``AgentRuntime`` ``hasattr``-guards this, so
-        custom ``Execution`` implementations that omit it degrade to a no-op.
+        Called preemptively, outside the room's message queue, on an
+        ``interrupt`` or ``stop`` control signal. ``AgentRuntime``
+        ``hasattr``-guards this, so custom ``Execution`` implementations that
+        omit it degrade to a no-op.
         ``kind`` keeps ``str`` in the union because ``Protocol`` signatures
         aren't runtime-enforced and a custom implementation may still pass a
         plain string.
@@ -691,8 +692,8 @@ class ExecutionContext:
     def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
         """Abort the in-flight reasoning cycle, if any.
 
-        Called from the WebSocket receive task. It only terminates the running
-        turn scope; all message-status / dedupe bookkeeping happens once in
+        Called on a control signal, outside the cycle. It only terminates the
+        running turn scope; all message-status / dedupe bookkeeping happens once in
         ``_run_cycle``, never here, so the two coroutines do not race on shared
         state.
 

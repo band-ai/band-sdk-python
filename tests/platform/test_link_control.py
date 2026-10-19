@@ -1,12 +1,13 @@
 """Tests for BandLink agent.control signal routing.
 
-Control signals must be delivered preemptively, directly from the WebSocket
-receive task — NOT enqueued on the serialized _event_queue (which would make a
-control signal wait behind the very message cycle it is meant to interrupt).
+Control signals must be delivered preemptively — NOT enqueued on the
+serialized _event_queue (which would make a control signal wait behind the
+very message cycle it is meant to interrupt).
 """
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -26,10 +27,12 @@ def link() -> BandLink:
 class TestOnControlRouting:
     async def test_on_control_invokes_registered_hook(self, link: BandLink):
         """_on_control should call the registered on_control hook with the payload."""
-        received: list[AgentControlPayload] = []
+        received: asyncio.Future[AgentControlPayload] = (
+            asyncio.get_running_loop().create_future()
+        )
 
         async def hook(payload: AgentControlPayload) -> None:
-            received.append(payload)
+            received.set_result(payload)
 
         link.on_control = hook
         payload = AgentControlPayload(
@@ -38,7 +41,7 @@ class TestOnControlRouting:
 
         await link._on_control(payload)
 
-        assert received == [payload]
+        assert await asyncio.wait_for(received, timeout=5.0) == payload
 
     async def test_on_control_does_not_enqueue(self, link: BandLink):
         """Control must bypass the serialized event queue entirely."""
