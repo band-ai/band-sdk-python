@@ -82,6 +82,8 @@ class RetainedRoom:
         self._generation = 0
         self._leases = 0
         self._owned: set[asyncio.Task[Any]] = set()
+        # A child asking to stop must not cancel its accepted caller.
+        self._accepted_creators: dict[asyncio.Task[Any], asyncio.Task[Any]] = {}
         # Owned tasks that requested this room's cleanup and unwind themselves.
         self._unwinding: set[asyncio.Task[Any]] = set()
         self._holders: Counter[asyncio.Task[Any] | None] = Counter()
@@ -203,11 +205,15 @@ class RetainedRoom:
 
         task = asyncio.create_task(run())
         self.own(task)
+        creator = asyncio.current_task()
+        if creator is not None and self.enrolls(creator):
+            self._accepted_creators[task] = creator
         enrolled.set_result(None)
         return task
 
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)
+        self._accepted_creators.pop(task, None)
         self._unwinding.discard(task)
         self._schedule()
 
@@ -541,6 +547,10 @@ class RetainedRoom:
             return False
         if current is not None and current in self._owned:
             self._unwinding.add(current)
+        creator = self._accepted_creators.get(current) if current is not None else None
+        while creator is not None and self.enrolls(creator):
+            self._unwinding.add(creator)
+            creator = self._accepted_creators.get(creator)
         return True
 
     async def dispose(self) -> None:

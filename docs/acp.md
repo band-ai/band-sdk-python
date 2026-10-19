@@ -217,6 +217,11 @@ prompt. Each successful `session/set_config_option` response replaces the catalo
 selection is validated against (choosing a model can change the reasoning levels). Any
 failure fails that room turn visibly instead of falling back.
 
+A configuration callback for an accepted prompt on an acquired process may request
+cleanup. It receives `CleanupIncompleteError` without cancelling that prompt or
+its shared session setup; teardown waits for the accepted work to finish. Later
+work is refused. MCP resolution still cannot start a new session scope after cleanup.
+
 ## Backends
 
 - **OMP:** `approval_mode="yolo"` bypasses OMP's native approval and gives the agent full

@@ -1324,13 +1324,19 @@ class ACPClientAdapter(
             room.session_setup = setup
         return await asyncio.shield(setup)
 
-    def _require_current_runtime(self, room: ACPRoom, runtime: ACPRuntime) -> None:
+    def _require_current_runtime(
+        self, room: ACPRoom, runtime: ACPRuntime, *, finishing: bool = False
+    ) -> None:
         task = asyncio.current_task()
         if (
             self._rooms.get(room.room_id) is not room
             or room.runtime is not runtime
             or runtime.closed
-            or not room.retained.has_authority(room.generation)
+            or not (
+                room.retained.may_finish(room.generation)
+                if finishing
+                else room.retained.has_authority(room.generation)
+            )
             or (
                 task is not None and (task.cancelling() or task is room.abandoned_setup)
             )
@@ -1364,7 +1370,7 @@ class ACPClientAdapter(
                     room, runtime, restore_id, mcp, retained=session is not None
                 )
             initialized = restored or await self._create_session(room, runtime, mcp)
-            self._require_current_runtime(room, runtime)
+            self._require_current_runtime(room, runtime, finishing=True)
             room.session = initialized
             return initialized.session_id
 
@@ -1401,7 +1407,7 @@ class ACPClientAdapter(
 
         try:
             await self._configure_session(runtime, room.room_id, session_id)
-            self._require_setup_result(room)
+            self._require_setup_result(room, finishing=True)
         except BaseException as error:
             if retained:
                 room.retained.recover(
@@ -1439,7 +1445,7 @@ class ACPClientAdapter(
         await self._configure_session(
             runtime, room.room_id, session.session_id, keep_refused_selection=True
         )
-        self._require_setup_result(room)
+        self._require_setup_result(room, finishing=True)
         session.band_url = mcp.band_url
         session.live = True
 
@@ -1449,7 +1455,7 @@ class ACPClientAdapter(
         """Create and configure a session for one room."""
         async with self._fresh_session(room, runtime, mcp.servers) as session:
             await self._configure_session(runtime, room.room_id, session.session_id)
-            self._require_setup_result(room)
+            self._require_setup_result(room, finishing=True)
 
         logger.info(
             "Created ACP session %s for room %s (mcp_servers=%d)",
@@ -1545,11 +1551,16 @@ class ACPClientAdapter(
         )
 
     @staticmethod
-    def _require_setup_result(room: ACPRoom) -> None:
-        # Callbacks may swallow cancellation or request their own teardown.
-        # Neither result may reach the agent or publish a session afterwards.
+    def _require_setup_result(room: ACPRoom, *, finishing: bool = False) -> None:
+        # MCP resolution cannot start a new scope after teardown. Configuration
+        # already accepted on a resident scope may finish while its lease holds.
         task = asyncio.current_task()
-        if room.retained.closing or (
+        refused = (
+            not room.retained.may_finish(room.generation)
+            if finishing
+            else room.retained.closing
+        )
+        if refused or (
             task is not None and (task.cancelling() or task is room.abandoned_setup)
         ):
             raise asyncio.CancelledError
