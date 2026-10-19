@@ -33,14 +33,6 @@ class TestOnControlRouting:
         await link._on_control(payload)
 
         assert await asyncio.wait_for(received, timeout=5.0) == payload
-
-    async def test_on_control_does_not_enqueue(self, link: BandLink):
-        """Control must bypass the serialized event queue entirely."""
-        link.on_control = AsyncMock()
-        payload = AgentControlPayload(mode="stop", scope="agent", agent_id="agent-123")
-
-        await link._on_control(payload)
-
         assert link._event_queue.empty()
 
     async def test_on_control_without_hook_is_safe_noop(self, link: BandLink):
@@ -51,12 +43,8 @@ class TestOnControlRouting:
 
         assert link._event_queue.empty()
 
-    async def test_connect_wires_on_control_to_channel(self):
+    async def test_connect_wires_on_control_to_channel(self, link: BandLink):
         """connect() must pass _on_control into join_agent_control_channel."""
-        link = BandLink(
-            agent_id="agent-123", api_key="k", ws_url="wss://x/ws", rest_url="https://x"
-        )
-
         fake_ws = AsyncMock()
         fake_ws.__aenter__ = AsyncMock(return_value=fake_ws)
         fake_ws.join_agent_control_channel = AsyncMock()

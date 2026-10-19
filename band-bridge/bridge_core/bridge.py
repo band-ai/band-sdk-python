@@ -120,8 +120,8 @@ class AgentRunner:
         # it delegates cancel/nudge/room-list back to this runner but owns the
         # correlation-id dedup and routing (see control.py).
         self._control = ControlSignalHandler(self)
-        # Background tasks spawned by control signals (play nudges) so the WS
-        # receive task isn't blocked awaiting them. Tracked here to be
+        # Background tasks spawned by control signals (play nudges) so the
+        # next control signal isn't queued behind them. Tracked here to be
         # cancelled on close() and to keep a strong ref (create_task alone
         # doesn't).
         self._control_tasks: set[asyncio.Task[None]] = set()
@@ -589,10 +589,10 @@ class AgentRunner:
     def _spawn_play_nudge(self, room_ids: list[str]) -> None:
         """Fire ``play`` /next nudges as tracked background tasks.
 
-        Runs off the WS receive task so a following interrupt/stop isn't queued
-        behind the nudge's /next + forward. Each spawned forward still lands in
-        ``_active_room_tasks`` (via ``_safe_handle_event``), so a later
-        interrupt/stop can cancel it. Tasks are tracked in ``_control_tasks``
+        Runs off BandLink's control lane so a following interrupt/stop isn't
+        queued behind the nudge's /next + forward. Each spawned forward still
+        lands in ``_active_room_tasks`` (via ``_safe_handle_event``), so a
+        later interrupt/stop can cancel it. Tasks are tracked in ``_control_tasks``
         and cancelled on ``close()``.
         """
         for room_id in room_ids:

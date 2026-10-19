@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from band_sdk_core import AgentTopicKind, SessionState
@@ -20,6 +20,7 @@ from band.client.streaming import (
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
 )
+from band.client.streaming.client import ControlHook
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy, PlatformConnection
@@ -137,7 +138,7 @@ class BandLink:
         # runtime. Never run via the serialized _event_queue, so a control
         # signal can act on a cycle already in flight instead of queuing
         # behind it.
-        self.on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None
+        self.on_control: ControlHook | None = None
         # Control signals still being applied, in arrival order.
         self._control_lane: list[asyncio.Task[None]] = []
 
@@ -433,14 +434,17 @@ class BandLink:
             )
             return
         previous = self._control_lane[-1] if self._control_lane else None
-        task = asyncio.create_task(self._apply_control(previous, hook, payload))
+        task = asyncio.create_task(
+            self._apply_control(previous, hook, payload),
+            name=f"agent.control {payload.mode} correlation_id={payload.correlation_id}",
+        )
         self._control_lane.append(task)
         task.add_done_callback(self._control_lane.remove)
 
     @staticmethod
     async def _apply_control(
         previous: asyncio.Task[None] | None,
-        hook: Callable[[AgentControlPayload], Awaitable[None]],
+        hook: ControlHook,
         payload: AgentControlPayload,
     ) -> None:
         if previous is not None:
@@ -460,8 +464,9 @@ class BandLink:
             return
         pending = list(self._control_lane)
         logger.info(
-            "Abandoning %d unapplied agent.control signal(s) on disconnect",
+            "Cancelling %d unfinished control signal(s) on disconnect: %s",
             len(pending),
+            ", ".join(task.get_name() for task in pending),
         )
         for task in pending:
             task.cancel()

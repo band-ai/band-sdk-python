@@ -6,6 +6,7 @@ import asyncio
 
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
+from band.runtime.control import ControlCallback
 from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.runtime import AgentRuntime
 
@@ -23,13 +24,18 @@ class ControlledRooms:
     adapter sees control: the aborts its ``on_interrupt`` hears, and the
     catch-ups a play queues."""
 
-    def __init__(self, link: BandLink, *room_ids: str) -> None:
+    def __init__(
+        self,
+        link: BandLink,
+        *room_ids: str,
+        on_control: ControlCallback | None = None,
+    ) -> None:
         self.heard: list[tuple[str, ControlMode]] = []
         self.runtime = AgentRuntime(
             link=link,
             agent_id=link.agent_id,
             on_execute=never_executes,
-            on_control=self.on_interrupt,
+            on_control=on_control or self.on_interrupt,
         )
         self.link = link
         self.executions: dict[str, ExecutionContext] = {}

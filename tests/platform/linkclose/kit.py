@@ -4,26 +4,23 @@ real (fake-server-backed) wire."""
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from band_sdk_core import AgentTopicKind, DeadReason
 
+from band.client.streaming import AgentControlPayload, ControlMode
 from band.client.streaming.client import WebSocketDisconnectReason
 from band.platform.link import BandLink
+from tests.conftest import TERMINAL_SUPERSEDE
 
 AGENT_ID = "agent-123"
 CONTROL_TOPIC = AgentTopicKind.Control.topic(AGENT_ID)
 HANG_GUARD_S = 5.0
 
 SUPERSEDED = WebSocketDisconnectReason(
-    reason="session.already_connected",
-    message="Superseded by a newer session",
-    retryable=False,
-    retry_after=15,
-    target_socket_id="agent_socket:agent-123",
-    correlation_id="evict-1",
-    dead_reason=DeadReason.Classified,
+    **TERMINAL_SUPERSEDE, dead_reason=DeadReason.Classified
 )
 
 
@@ -54,3 +51,16 @@ async def running(link: BandLink) -> AsyncIterator[asyncio.Task[None]]:
     finally:
         run.cancel()
         await asyncio.wait({run})
+
+
+def control_cancellations(records: list[logging.LogRecord]) -> list[str]:
+    """What ``disconnect()`` reported cancelling from the control lane."""
+    return [
+        r.getMessage() for r in records if r.msg.startswith("Cancelling %d unfinished")
+    ]
+
+
+def agent_control(mode: ControlMode, correlation_id: str) -> AgentControlPayload:
+    return AgentControlPayload(
+        mode=mode, scope="agent", agent_id=AGENT_ID, correlation_id=correlation_id
+    )
