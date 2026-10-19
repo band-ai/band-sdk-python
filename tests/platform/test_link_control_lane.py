@@ -12,13 +12,6 @@ from band.client.streaming import AgentControlPayload
 from band.platform.link import BandLink
 
 
-@pytest.fixture
-def link() -> BandLink:
-    return BandLink(
-        agent_id="agent-123", api_key="k", ws_url="wss://x/ws", rest_url="https://x"
-    )
-
-
 class TestControlLane:
     async def test_a_signal_waits_for_the_one_before_it(self, link: BandLink):
         """A PLAY behind a STOP that is still draining applies after it."""

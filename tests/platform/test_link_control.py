@@ -10,18 +10,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-import pytest
-
 import band.platform.link as link_mod
 from band.client.streaming import AgentControlPayload
 from band.platform.link import BandLink
-
-
-@pytest.fixture
-def link() -> BandLink:
-    return BandLink(
-        agent_id="agent-123", api_key="k", ws_url="wss://x/ws", rest_url="https://x"
-    )
 
 
 class TestOnControlRouting:
