@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@4b15347387a217d81b471c8c238c6b10f64d15d1", "aiosqlite>=0.21.0"]
+# dependencies = ["band-sdk[langgraph]>=6.0.0", "aiosqlite>=0.21.0"]
 # ///
 """Save and list team notes through one adapter-owned SQLite connection.
 
