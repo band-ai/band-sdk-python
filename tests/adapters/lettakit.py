@@ -171,6 +171,18 @@ def ready_letta_adapter(
     return adapter, client
 
 
+def band_mcp_registrations(adapter: LettaAdapter) -> dict[str, Any]:
+    """The adapter's real Band MCP tools by name: the path Letta's MCP client
+    reaches."""
+    return {
+        registration.name: registration
+        for registration in build_resolved_band_mcp_tool_registrations(
+            get_tools=adapter._get_room_tools,
+            capabilities=adapter.features.capabilities,
+        )
+    }
+
+
 def scripted_letta_turn(
     adapter: LettaAdapter,
     *,
@@ -184,13 +196,7 @@ def scripted_letta_turn(
     path Letta's MCP client reaches), then the turn's messages come back as
     Letta's response.
     """
-    registrations = {
-        registration.name: registration
-        for registration in build_resolved_band_mcp_tool_registrations(
-            get_tools=adapter._get_room_tools,
-            capabilities=adapter.features.capabilities,
-        )
-    }
+    registrations = band_mcp_registrations(adapter)
 
     async def create(**_kwargs: Any) -> MagicMock:
         messages: list[Any] = []
@@ -340,8 +346,9 @@ class RecordingLettaClient:
     """A Letta server that records each turn sent and each run cancelled.
 
     ``hold()`` keeps every create in flight until ``release`` is set, as a
-    Letta agent mid-turn does. ``reject_cancels`` answers each cancel with the
-    server error Letta returns without Redis.
+    Letta agent mid-turn does. ``hold_cancel()`` does the same for each run
+    cancel, which is journaled only once it finishes. ``reject_cancels``
+    answers each cancel with the server error Letta returns without Redis.
     """
 
     def __init__(self) -> None:
@@ -349,10 +356,13 @@ class RecordingLettaClient:
         self.release = asyncio.Event()
         self.release.set()
         self.reject_cancels = False
+        self.cancel_started = asyncio.Event()
+        self._cancel_release: asyncio.Event | None = None
         self.agents = SimpleNamespace(
             messages=SimpleNamespace(
                 create=self._create_agent_turn, cancel=self._cancel_agent_runs
-            )
+            ),
+            delete=self._delete_agent,
         )
         self.conversations = SimpleNamespace(
             messages=SimpleNamespace(create=self._create_conversation_turn),
@@ -361,6 +371,11 @@ class RecordingLettaClient:
 
     def hold(self) -> None:
         self.release.clear()
+
+    def hold_cancel(self) -> asyncio.Event:
+        """Each cancel waits for the returned event after it has started."""
+        self._cancel_release = asyncio.Event()
+        return self._cancel_release
 
     @property
     def sent(self) -> list[str]:
@@ -390,7 +405,13 @@ class RecordingLettaClient:
     async def _cancel_conversation_runs(self, conversation_id: str) -> None:
         await self._cancel(f"cancel conversation {conversation_id}")
 
+    async def _delete_agent(self, agent_id: str) -> None:
+        self.journal.append(f"delete agent {agent_id}")
+
     async def _cancel(self, entry: str) -> None:
+        self.cancel_started.set()
+        if self._cancel_release is not None:
+            await self._cancel_release.wait()
         self.journal.append(entry)
         if self.reject_cancels:
             raise RuntimeError("Run cancellation requires Redis on the Letta server")

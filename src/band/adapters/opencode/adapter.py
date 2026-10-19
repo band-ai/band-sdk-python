@@ -126,7 +126,6 @@ class RoomState:
     session_id: str | None = None
     tools: AgentToolsProtocol | None = None
     turn: TurnState | None = None
-    turn_task: asyncio.Task[None] | None = None
     # Bound in _get_or_create_room_state at construction, and rebound by
     # _begin_turn on every subsequent turn.
     approvals: RoomApprovals = field(init=False)
@@ -155,7 +154,6 @@ class RoomState:
             turn_release_future=loop.create_future(),
             pending_mentions=[{"id": sender_id}] if sender_id else [],
         )
-        self.turn_task = None
         return self.turn
 
     def record_message(
@@ -449,6 +447,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_id: str,
     ) -> None:
         room_state = await self._get_or_create_room_state(room_id)
+        # The room's previous turn may still be aborting its session; nothing
+        # of this turn is bound, and no prompt is sent, until that settles.
+        await self.backend_turns.settled(room_id)
 
         if self._client is None:
             agent_id = getattr(tools, "agent_id", None)
@@ -481,8 +482,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     status="created" if created else "resumed",
                 )
 
-            # The room's previous turn may still be aborting its session.
-            await self.backend_turns.settled(room_id)
             turn = self._begin_turn(
                 room_state,
                 session_id=session_id,
@@ -495,14 +494,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             turn_task = asyncio.create_task(
                 self._watch_turn_completion(room_state, room_id, turn)
             )
-            turn.watcher = room_state.turn_task = turn_task
-            # Snapshot THIS turn's state before the prompt await: prompt_async
-            # can span the whole turn (session.idle may arrive mid-POST), and a
-            # message racing in during that window would _begin_turn again;
-            # reading room_state afterwards would wire this turn's watch task
-            # to the wrong turn's future and usage dict.
-            release_future = turn.turn_release_future
-            turn_future = turn.turn_future
+            turn.watcher = turn_task
             try:
                 # Turn-phase diagnostics (classify a stuck turn from CI logs):
                 # if 'returned' never follows 'start', prompt_async is blocking
@@ -545,9 +537,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._clear_turn_state(room_state, expected_turn=turn)
                 raise
 
-            if release_future is not None:
-                await release_future
-            if turn_future.done():
+            await turn.turn_release_future
+            if turn.turn_future.done():
                 await turn_task
         # NOTE: the turn timeout is owned solely by _watch_turn_completion (via
         # asyncio.wait_for), which aborts the session and emits the error event.
@@ -1193,14 +1184,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if expected_turn is not None and room_state.turn is not expected_turn:
             return
 
-        turn_task = room_state.turn_task
-        if turn_task is not None and turn_task is not expected_task:
-            turn_task.cancel()
-
         if room_state.turn is not None:
+            watcher = room_state.turn.watcher
+            if watcher is not None and watcher is not expected_task:
+                watcher.cancel()
             room_state.turn.approvals.cancel()
         room_state.turn = None
-        room_state.turn_task = None
 
     @staticmethod
     def _resolve_future(future: asyncio.Future[None] | None) -> None:

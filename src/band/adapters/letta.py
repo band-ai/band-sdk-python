@@ -360,10 +360,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             await tools.send_failure(AgentFailure(_PROVIDER, message))
             raise RuntimeError(message)
 
-        # Point the MCP resolver at this room's current tools for the
-        # server-side tool calls this turn will make.
-        room_ctx.tools = tools
-
         content = self._compose_turn_content(
             msg,
             room_ctx,
@@ -508,6 +504,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 # processing (including deliver_reply, below) runs unbounded so a
                 # slow Band-side delivery is never mislabeled as a Letta timeout.
                 async with self.backend_turns.running(room_id, run):
+                    # Point the MCP resolver at this turn's tools only once the
+                    # previous run's cancel has settled, so a late call from
+                    # that run cannot reach them.
+                    room_ctx.tools = tools
                     try:
                         response_messages, turn_usage = await asyncio.wait_for(
                             self._call_provider(run, messages),

@@ -443,12 +443,13 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         # Same-session calls must not interleave; other rooms run concurrently.
         async with self._session_manager.turn_lock(room_id):
-            # Bound only once this message holds the room, so a queued
-            # message never redirects the running turn's tool calls.
-            self._room_tools[room_id] = tools
             # Abort is what stops the runtime's work for a cancelled turn; the
             # session stays valid for the next message.
             async with self.backend_turns.running(room_id):
+                # Bound once the previous turn's abort has settled and this
+                # message holds the room, so neither a queued message nor a
+                # late call from the stopped turn reaches this turn's tools.
+                self._room_tools[room_id] = tools
                 try:
                     session, inject_text = await self._obtain_session(
                         room_id,

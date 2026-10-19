@@ -499,7 +499,7 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
         await interrupted
 
     # The abort is sent from its own task, which the room's next turn joins.
-    await wait_for(lambda: bool(fake_client.aborted_sessions))
+    await adapter.backend_turns.drain()
     assert fake_client.aborted_sessions == ["sess-1"], "OpenCode kept working"
     assert tools.messages_sent == [], "posted the reply the user interrupted"
 
@@ -577,7 +577,6 @@ async def test_double_stop_while_abandon_awaits_abort_still_clears_turn_state(
         await interrupted
 
     assert room_state.turn is None, "turn state must clear despite the double cancel"
-    assert room_state.turn_task is None
 
     await adapter.on_cleanup("room-1")
 

@@ -8,10 +8,12 @@ import looptime
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.client.streaming import ControlMode
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
+    BandMCPCalls,
     FakeOpencodeClient,
     event_message_updated,
     event_permission,
@@ -19,28 +21,31 @@ from tests.adapters.opencode.helpers import (
     event_text_part,
     make_platform_message,
     tools_protocol,
-    wait_for,
 )
+from tests.adapters.waiting import spin
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
     STARTUP_TIMEOUT_SECONDS,
+    TURN_TIMEOUT_SECONDS,
     StopCase,
     cancel_turn,
     end_turn,
     stop_room,
+    wait_until,
+    waiting_on_stop,
 )
+from tests.framework_conformance.turnprobes import ROOM_ID
+from tests.mcpbackends import backends_created_by
 
-ROOM_ID = "room-1"
 # The fake server numbers its first session.
 SESSION_ID = "sess-1"
 ABORT_FIRST_SESSION = f"abort {SESSION_ID}"
 CLIENT_CLOSED = "client closed"
 TIMEOUT_REPORTED = "timeout reported"
-# Advanced by looptime; provider cancellation retains its own shorter bound.
-PROBE_TURN_TIMEOUT_S = 60.0
 # What the server streams once an aborted turn winds down; a watcher still
 # running would post it as the turn's fallback reply.
 LATE_TEXT = "text from the stopped turn"
+LATE_CALL = "call from the stopped turn"
 
 
 class JournalingOpencodeClient(FakeOpencodeClient):
@@ -89,7 +94,7 @@ def deliver(adapter: OpencodeAdapter, tools: FakeAgentTools) -> asyncio.Task[Non
     return asyncio.create_task(
         deliver_message(
             adapter,
-            make_platform_message(content="long task"),
+            make_platform_message(room_id=ROOM_ID, content="long task"),
             tools_protocol(tools),
             OpencodeSessionState(),
             participants_msg=None,
@@ -117,6 +122,10 @@ async def stopped_turn_winds_down(client: JournalingOpencodeClient) -> None:
     await client.push_event(all_consumed)
     async with asyncio.timeout(STARTUP_TIMEOUT_SECONDS):
         await consumed.wait()
+    # A watcher that was not cancelled resumes on the idle event and needs
+    # more loop turns to relay the late text; the turn exposes no state to
+    # wait on once it is stopped.
+    await spin()
 
 
 def posted(tools: FakeAgentTools, before: int) -> list[str]:
@@ -128,7 +137,7 @@ async def end_running_turn(mode: ControlMode) -> list[str]:
     adapter = await started(client)
     tools = FakeAgentTools()
     turn = deliver(adapter, tools)
-    await wait_for(lambda: bool(client.prompt_calls))
+    await wait_until(lambda: bool(client.prompt_calls))
     await end_turn(adapter, turn, ROOM_ID, mode)
     await stopped_turn_winds_down(client)
     recorded = client.journal + posted(tools, 0)
@@ -152,25 +161,88 @@ async def stop_detached_after_approval() -> list[str]:
     return recorded
 
 
-async def cleanup_after_stop() -> list[str]:
-    """Teardown right after STOP aborts the session before closing the client."""
-    client = JournalingOpencodeClient(prompt_event_sequences=[[]])
-    adapter = await started(client)
-    turn = deliver(adapter, FakeAgentTools())
-    await wait_for(lambda: bool(client.prompt_calls))
-    turn.cancel()
-    await asyncio.gather(turn, return_exceptions=True)
+async def stop_holding_abort(
+    adapter: OpencodeAdapter, client: HoldingAbortClient, tools: FakeAgentTools
+) -> None:
+    """Stop the running turn and leave its session's abort in flight."""
+    turn = deliver(adapter, tools)
+    await wait_until(lambda: bool(client.prompt_calls))
+    await cancel_turn(turn)
     await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
+    await wait_until(client.entered.is_set)
+
+
+async def wind_down(adapter: OpencodeAdapter, turn: asyncio.Task[None]) -> None:
+    await cancel_turn(turn)
+    await adapter.backend_turns.drain()
     await adapter.on_cleanup(ROOM_ID)
+
+
+async def next_message_waits_for_the_abort() -> list[str]:
+    """The next message does not prompt the session while its abort is in flight."""
+    client = HoldingAbortClient(prompt_event_sequences=[[], []])
+    adapter = await started(client)
+    await stop_holding_abort(adapter, client, FakeAgentTools())
+    next_turn = deliver(adapter, FakeAgentTools())
+    await wait_until(lambda: waiting_on_stop(next_turn) or len(client.prompt_calls) > 1)
+    prompted_while_aborting = len(client.prompt_calls)
+    client.release.set()
+    await wait_until(lambda: len(client.prompt_calls) == 2)
+    await wind_down(adapter, next_turn)
+    return [f"prompts while the abort was in flight: {prompted_while_aborting}"]
+
+
+async def late_mcp_call_during_held_abort() -> list[str]:
+    """A tool call from the stopped turn that lands while its abort is pending
+    posts on that turn's tools, not on the replacement turn's."""
+    with backends_created_by() as starts:
+        client = HoldingAbortClient(prompt_event_sequences=[[], []])
+        adapter = await started(client)
+        stopped, replacement = FakeAgentTools(), FakeAgentTools()
+        await stop_holding_abort(adapter, client, stopped)
+        next_turn = deliver(adapter, replacement)
+        await wait_until(
+            lambda: waiting_on_stop(next_turn) or len(client.prompt_calls) > 1
+        )
+        await BandMCPCalls(starts).band_tool_call(
+            "band_send_message",
+            {"content": LATE_CALL, "mentions": ["@alice"]},
+            room_id=ROOM_ID,
+        )()
+        landed = [
+            *(
+                f"stopped turn's tools got {m['content']}"
+                for m in stopped.messages_sent
+            ),
+            *(
+                f"replacement turn's tools got {m['content']}"
+                for m in replacement.messages_sent
+            ),
+        ]
+        client.release.set()
+        await wait_until(lambda: len(client.prompt_calls) == 2)
+        await wind_down(adapter, next_turn)
+        return landed
+
+
+async def cleanup_waits_for_the_abort() -> list[str]:
+    """Teardown right after STOP waits for the session abort before it closes
+    the client."""
+    client = HoldingAbortClient(prompt_event_sequences=[[]])
+    adapter = await started(client)
+    await stop_holding_abort(adapter, client, FakeAgentTools())
+    cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
+    await wait_until(lambda: waiting_on_stop(cleanup) or cleanup.done())
+    client.release.set()
+    await cleanup
     return client.journal
 
 
 def reported_timeout(tools: FakeAgentTools) -> list[str]:
     return [
         TIMEOUT_REPORTED
-        for event in tools.events_sent
-        if event["message_type"] == "error"
-        and event["content"] == "OpenCode timed out before completing the turn."
+        for failure in reported_failures(tools)
+        if failure["code"] == FAILURE_CODE_TIMEOUT
     ]
 
 
@@ -179,7 +251,7 @@ async def timeout_reports() -> list[str]:
     """A timed-out turn aborts the session and still posts the timeout."""
     client = JournalingOpencodeClient(prompt_event_sequences=[[]])
     adapter = await started(
-        client, OpencodeAdapterConfig(turn_timeout_s=PROBE_TURN_TIMEOUT_S)
+        client, OpencodeAdapterConfig(turn_timeout_s=TURN_TIMEOUT_SECONDS)
     )
     tools = FakeAgentTools()
     await deliver(adapter, tools)
@@ -193,7 +265,7 @@ async def stop_during_timeout_abort(mode: ControlMode) -> list[str]:
     """A STOP while the timeout abort is in flight still finishes that abort."""
     client = HoldingAbortClient(prompt_event_sequences=[[]])
     adapter = await started(
-        client, OpencodeAdapterConfig(turn_timeout_s=PROBE_TURN_TIMEOUT_S)
+        client, OpencodeAdapterConfig(turn_timeout_s=TURN_TIMEOUT_SECONDS)
     )
     turn = deliver(adapter, FakeAgentTools())
     await client.entered.wait()
@@ -226,8 +298,16 @@ CASES: dict[str, StopCase] = {
     "stop-detached-after-approval": StopCase(
         run=stop_detached_after_approval, expected=[ABORT_FIRST_SESSION]
     ),
-    "cleanup-after-stop": StopCase(
-        run=cleanup_after_stop, expected=[ABORT_FIRST_SESSION, CLIENT_CLOSED]
+    "next-message-waits-for-the-abort": StopCase(
+        run=next_message_waits_for_the_abort,
+        expected=["prompts while the abort was in flight: 1"],
+    ),
+    "late-mcp-call-during-held-abort": StopCase(
+        run=late_mcp_call_during_held_abort,
+        expected=[f"stopped turn's tools got {LATE_CALL}"],
+    ),
+    "cleanup-waits-for-the-abort": StopCase(
+        run=cleanup_waits_for_the_abort, expected=[ABORT_FIRST_SESSION, CLIENT_CLOSED]
     ),
     "timeout": StopCase(
         run=timeout_reports, expected=[ABORT_FIRST_SESSION, TIMEOUT_REPORTED]
