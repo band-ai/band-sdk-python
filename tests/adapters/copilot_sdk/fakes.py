@@ -32,7 +32,7 @@ requires_copilot_sdk = pytest.mark.skipif(
 )
 
 if _COPILOT_SDK_AVAILABLE:
-    from copilot.generated.session_events import SessionErrorData
+    from copilot.generated.session_events import SessionErrorData, SessionIdleData
 
 
 def make_platform_message(
@@ -107,6 +107,9 @@ class FakeCopilotSession:
         # While cleared, an abort stays in flight.
         self.abort_released = asyncio.Event()
         self.abort_released.set()
+        # While set, an abort is acknowledged but the idle that ends the aborted
+        # turn is withheld until ``deliver_aborted_idle``.
+        self.holds_aborted_idle = False
 
     def on(self, handler: Any) -> Any:
         self.handlers.append(handler)
@@ -145,6 +148,15 @@ class FakeCopilotSession:
         await self.abort_released.wait()
         self.aborted = True
         self.journal.append("abort")
+        if not self.holds_aborted_idle:
+            self.deliver_aborted_idle()
+
+    def deliver_aborted_idle(self) -> None:
+        """The CLI ends an aborted turn with an idle, as the real one does."""
+        self.journal.append("idle")
+        event = SimpleNamespace(data=SessionIdleData(aborted=True))
+        for handler in list(self.handlers):
+            handler(event)
 
     async def disconnect(self) -> None:
         self.disconnected = True

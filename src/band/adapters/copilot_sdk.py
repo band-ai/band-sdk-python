@@ -8,6 +8,7 @@ history, memory, and context stay isolated per room.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -73,6 +74,7 @@ try:
         AssistantTurnRetryData,
         AssistantUsageData,
         ModelCallFailureData,
+        SessionIdleData,
         SessionWarningData,
         ToolExecutionCompleteData,
     )
@@ -169,6 +171,16 @@ class TurnState:
     usage: TurnUsage = field(default_factory=TurnUsage)
     # Non-fatal trouble the turn hit, logged when it ends without a reply.
     incidents: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SessionTurn:
+    """The session a stop aborts, and whether its prompt is still running."""
+
+    session: CopilotSession
+    # Set when the prompt is sent, cleared once it returns; a prompt that is
+    # cancelled or fails leaves it set.
+    prompting: bool = False
 
 
 def _turn_incident(data: object) -> str | None:
@@ -320,7 +332,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._session_ids: dict[str, RoomSessionIds] = {}
         self._turn_state: dict[str, TurnState] = {}
-        self._backend_turns: BackendTurns[CopilotSession] = BackendTurns(
+        self._backend_turns: BackendTurns[SessionTurn] = BackendTurns(
             self._abort_turn, provider=_PROVIDER
         )
         self._system_prompt: str = ""
@@ -418,7 +430,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     # --- Message handling --------------------------------------------------
 
     @property
-    def backend_turns(self) -> BackendTurns[CopilotSession]:
+    def backend_turns(self) -> BackendTurns[SessionTurn]:
         return self._backend_turns
 
     async def on_message(
@@ -463,7 +475,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
                     raise
-                self.backend_turns.bind(room_id, session)
+                live = SessionTurn(session)
+                self.backend_turns.bind(room_id, live)
                 prompt = self._compose_prompt(
                     msg,
                     participants_msg,
@@ -481,7 +494,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 )
                 self._turn_state[room_id] = turn
                 try:
-                    final_text = await self._run_turn(session, prompt, turn)
+                    final_text = await self._run_turn(live, prompt, turn)
                 except Exception:
                     logger.exception("Room %s: Copilot turn failed", room_id)
                     # Abort any work the runtime is still doing for this turn and
@@ -908,11 +921,30 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         return "\n\n".join(parts)
 
     @staticmethod
-    async def _abort_turn(session: CopilotSession) -> None:
-        await session.abort()
+    async def _abort_turn(live: SessionTurn) -> None:
+        """Abort the prompt and, while one is running, wait for the idle that ends it.
+
+        The CLI emits that idle just after acknowledging the abort, and
+        ``send_and_wait`` ends on any idle: a next prompt sent before it
+        arrives returns on it with no reply. Subscribing first also catches
+        an idle that arrives ahead of the acknowledgement.
+        """
+        idled = asyncio.Event()
+
+        def on_event(event: SessionEvent) -> None:
+            if isinstance(event.data, SessionIdleData):
+                idled.set()
+
+        unsubscribe = live.session.on(on_event)
+        try:
+            await live.session.abort()
+            if live.prompting:
+                await idled.wait()
+        finally:
+            unsubscribe()
 
     async def _run_turn(
-        self, session: CopilotSession, prompt: str, turn: TurnState
+        self, live: SessionTurn, prompt: str, turn: TurnState
     ) -> str | None:
         """Send one prompt, wait for idle, and return the final assistant text.
 
@@ -930,13 +962,15 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             elif incident := _turn_incident(data):
                 turn.incidents.append(incident)
 
-        unsubscribe = session.on(collect)
+        unsubscribe = live.session.on(collect)
+        live.prompting = True
         try:
-            final_event = await session.send_and_wait(
+            final_event = await live.session.send_and_wait(
                 prompt, timeout=self.config.turn_timeout_s
             )
         finally:
             unsubscribe()
+        live.prompting = False
 
         content = getattr(final_event.data, "content", None) if final_event else None
         # An empty final message means no reply — same as no final event.
