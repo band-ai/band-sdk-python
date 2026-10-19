@@ -13,7 +13,7 @@ import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
-from band.integrations.claude_sdk import transport
+from band.integrations.claude_sdk import custody
 from tests.adapters.claude_sdk.process import (
     DelegatingProcess,
     ForgetfulProcess,
@@ -24,14 +24,14 @@ from tests.adapters.claude_sdk.process import (
 @asynccontextmanager
 async def started(
     child_type: type[WorkspaceProcess], tmp_path: Path
-) -> AsyncIterator[tuple[transport.ConfirmedCloseTransport, WorkspaceProcess]]:
+) -> AsyncIterator[tuple[custody.ConfirmedCloseTransport, WorkspaceProcess]]:
     native = child_type(
         prompt="",
         options=ClaudeAgentOptions(
             cli_path=sys.executable, cwd=str(tmp_path), env={"PROBE_MARKER": "close"}
         ),
     )
-    owned = transport.ConfirmedCloseTransport(native)
+    owned = custody.ConfirmedCloseTransport(native)
     await owned.connect()
     child = native._child
     kill, wait = type(child).kill, type(child).wait
@@ -64,7 +64,7 @@ class TestConfirmedClose:
             monkeypatch.setattr(
                 child, "kill", lambda: (_ for _ in ()).throw(PermissionError())
             )
-            with pytest.raises(transport.ClaudeProcessCloseError):
+            with pytest.raises(custody.ClaudeProcessCloseError):
                 await owned.close()
             assert owned.close_pending
             assert not native.exited
@@ -77,7 +77,7 @@ class TestConfirmedClose:
     async def test_an_exit_that_never_confirms_fails_within_the_bound(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(transport, "CHILD_EXIT_TIMEOUT_SECONDS", 0.2)
+        monkeypatch.setattr(custody, "CHILD_EXIT_TIMEOUT_SECONDS", 0.2)
         async with started(ForgetfulProcess, tmp_path) as (owned, native):
             child = native._child
             real_wait = child.wait
@@ -88,7 +88,7 @@ class TestConfirmedClose:
 
             monkeypatch.setattr(child, "wait", never)
             async with asyncio.timeout(5):
-                with pytest.raises(transport.ClaudeProcessCloseError):
+                with pytest.raises(custody.ClaudeProcessCloseError):
                     await owned.close()
             assert owned.close_pending
 
@@ -129,7 +129,7 @@ class TestConfirmedClose:
                 faults.setattr(
                     child, "kill", lambda: (_ for _ in ()).throw(PermissionError())
                 )
-                with pytest.raises(transport.ClaudeProcessCloseError):
+                with pytest.raises(custody.ClaudeProcessCloseError):
                     await owned.close()
                 assert owned.close_pending
                 assert not native.exited

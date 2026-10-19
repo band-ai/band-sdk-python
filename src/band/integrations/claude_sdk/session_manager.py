@@ -54,6 +54,7 @@ try:
         Message,
     )
 
+    from band.integrations.claude_sdk.custody import ConfirmedCloseTransport
     from band.integrations.claude_sdk.transport import create_transport
 
     _CLAUDE_SDK_AVAILABLE = True
@@ -403,7 +404,9 @@ class ClaudeRoomSession:
             else:
                 options = self._manager.options_for(self, generation, resume=resume)
             self._check_current(generation)
-            self.transport = transport = create_transport(options)
+            self.transport = transport = ConfirmedCloseTransport(
+                create_transport(options)
+            )
             self.client = client = ClaudeSDKClient(options=options, transport=transport)
             # Retain both before connect: SDK disconnect cannot close a child
             # when startup fails before its Query is constructed.
