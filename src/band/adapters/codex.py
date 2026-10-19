@@ -2236,7 +2236,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             )
         return harness.PreflightResult.passed()
 
-    async def probe_models(self, *, timeout_s: float = 60.0) -> model_catalog.ModelCatalog:
+    async def probe_models(
+        self, *, timeout_s: float = 60.0
+    ) -> model_catalog.ModelCatalog:
         """Discover the visible catalog on an owned, no-room app-server."""
         return await self._probe_harness(
             partial(_fetch_codex_models, timeout_s=timeout_s), timeout_s=timeout_s
