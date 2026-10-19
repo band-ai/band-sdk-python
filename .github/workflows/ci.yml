@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   # Run on the merge queue's temporary branch so these required checks report
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
@@ -14,6 +15,8 @@ permissions:
 jobs:
 
   lint:
+    # Drafts get no CI; ready_for_review above fires the first real run.
+    if: &not-draft github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -58,6 +61,7 @@ jobs:
 
 
   test:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -109,6 +113,7 @@ jobs:
 
 
   test-crewai:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -178,6 +183,7 @@ jobs:
 
 
   test-strands-nooa:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -251,6 +257,7 @@ jobs:
 
 
   test-parlant:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -322,6 +329,7 @@ jobs:
 
 
   packaging:
+    if: *not-draft
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -446,6 +454,7 @@ jobs:
 
 
   wheel-extra-cases:
+    if: *not-draft
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}
