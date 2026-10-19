@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -147,9 +147,11 @@ async def resource_response(request: Request) -> JSONResponse:
 
 
 @asynccontextmanager
-async def resource_peer() -> AsyncIterator[httpx.AsyncClient]:
+async def resource_peer(
+    routes: Sequence[Route] = (Route("/resource", resource_response),),
+) -> AsyncIterator[httpx.AsyncClient]:
     server = ManagedUvicornServer(
-        Starlette(routes=[Route("/resource", resource_response)]),
+        Starlette(routes=list(routes)),
         host="127.0.0.1",
         port=0,
         start_timeout_s=SERVER_START_TIMEOUT_S,
