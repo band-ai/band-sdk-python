@@ -117,7 +117,11 @@ The PR version also built and composed successfully, and its OAuth and Band
 identity checks passed with that existing custom binding. Twelve focused mixin
 tests and eleven existing publishing-workflow checks passed. Ruff, formatting,
 type checking, shell syntax, lock checks, and a direct secret scan passed. The
-broader non-integration/non-E2E suite is not yet a completed validation result.
+broader non-integration/non-E2E run reported 8,830 passed and 139 skipped, with
+four failures: one mixin test-fixture cleanup defect and three workflow-guard
+failures caused by inherited host package-manager configuration. The fixture
+was corrected; all 34 affected tests passed with command-local `UV_NO_CONFIG=1`
+and `UV_DEFAULT_INDEX=https://pypi.org/simple`. The full pre-commit hook set passed.
 
 Before publishing an immutable mixin image, verify a real room mention/reply and
 restart/reconnection on the exact final source, plus the declared `band` service

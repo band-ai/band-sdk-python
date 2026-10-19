@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -14,15 +13,14 @@ from tests.paths import CLAUDE_MIXIN_DIR
 
 
 @pytest.fixture
-def bridge() -> Iterator[ModuleType]:
+def bridge(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     name = "bandclaudemixin"
     spec = importlib.util.spec_from_file_location(name, CLAUDE_MIXIN_DIR / "bridge.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    monkeypatch.setitem(sys.modules, name, module)
     spec.loader.exec_module(module)
-    yield module
-    sys.modules.pop(name, None)
+    return module
 
 
 @pytest.fixture
