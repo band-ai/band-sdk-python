@@ -78,6 +78,35 @@ These invariants are easy to break:
   `band_read_room_file` returns `Image` objects the model can `show()`. The
   `tool_result` event carries a placeholder, not the bytes.
 
+## Custom tool payloads
+
+Portable custom tools accept one keyword-only `arguments` dictionary containing
+exactly the payload the original Pydantic model validates. Platform tools keep
+named keyword arguments. For example, a custom input field declared as
+`order_id: str = Field(validation_alias="orderId")` is called with
+`await self.room.lookup(arguments={"orderId": "A1"})`.
+
+This replaces custom calls such as `lookup(order_id="A1")`. Update generated-code
+instructions and scripts to use `arguments={...}`. Use the model's validation
+aliases, including nested payloads for `AliasPath`; serialization aliases do not
+define input keys. The reference includes field metadata, validation aliases and
+model configuration. Custom validators remain the authority for additional input
+rules. The original model validates once, and the handler receives that model's
+instance with its defaults, strictness and extra-field rules intact.
+
+## Context handoff
+
+The preprocessor owns bootstrap history, participant changes and contact updates
+until context is committed. History-conversion failures and NOOA setup failures
+retain those updates for the next attempt. NOOA marks the handoff immediately
+before entering `respond`; errors or cancellation after that point conservatively
+commit context because execution may have consumed it. Setup failures preserve
+their original exception and ordinary retry accounting. Session replacement drops
+the old room agent before constructing the new one, including an empty bootstrap.
+A persistent setup or conversion error continues to fail deliveries under the
+normal retry budget. Correcting that error lets a later delivery consume the
+retained context; the SDK does not discard history automatically.
+
 ## Isolation
 
 The model's code runs inside the agent process. NOOA's AST checks are not a

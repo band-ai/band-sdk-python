@@ -40,6 +40,7 @@ from band.runtime.agentconfig import AgentConfig
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
+from tests.e2e.baseline.toolkit.restclient import baseline_rest_client
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 if TYPE_CHECKING:
@@ -52,6 +53,9 @@ logger = logging.getLogger(__name__)
 
 # All provisioned agent names start with this; the orphan sweep matches on it.
 NAME_PREFIX = "e2e-band-"
+
+# Between the token and the label. Both name budgets subtract this same separator.
+TOKEN_LABEL_SEPARATOR = "-"
 
 # The platform truncates @mention handles beyond this many characters. A peer that a
 # scenario provisions and later asserts by @mention (a roster reply names it as
@@ -69,29 +73,95 @@ MENTION_HANDLE_CAP = 24
 # silently truncating a handle.
 MAX_MENTIONED_LABEL_LEN = len("invitable")  # 9
 
+# Platform ``validate_length(:name, max: 100)`` on the agent row. A longer
+# register is rejected for length, which is a different 422 from name-taken.
+AGENT_NAME_MAX = 100
+
+# Same cap on the API key created in that register. The key name is longer
+# than the agent name; see :func:`credential_name`.
+API_KEY_NAME_MAX = 100
+
+# Leading characters of the agent id appended to that key's name.
+CREDENTIAL_ID_SLICE = 8
+
+# ``uuid4().hex`` width. Labels that may exceed the mention cap take the whole
+# uuid so a leftover row cannot collide with the next provision of that label.
+NAME_TOKEN_HEX = 32
+
+
+def name_budget(limit: int, label_len: int) -> int:
+    """Characters left for the token once the prefix, separator, and label are counted."""
+    return limit - len(NAME_PREFIX) - len(TOKEN_LABEL_SEPARATOR) - label_len
+
 
 def run_id_len() -> int:
-    """Hex length for a run id that keeps the longest @mentioned peer name within
-    the handle cap: ``CAP - len(prefix) - len("-") - longest mentioned label``."""
-    return MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - MAX_MENTIONED_LABEL_LEN
+    """Hex length of a mentionable provision token.
+
+    The longest label a scenario can @mention stays inside the handle cap at
+    this width. :func:`name_token` uses it for those labels.
+    """
+    return name_budget(MENTION_HANDLE_CAP, MAX_MENTIONED_LABEL_LEN)
 
 
-def agent_name(*, run_id: str, label: str) -> str:
-    """The provisioned name for ``label`` in run ``run_id``.
+def normalized_label(label: str) -> str:
+    return label.replace("_", "-")
+
+
+def agent_name(*, token: str, label: str) -> str:
+    """The provisioned name for ``label`` and ``token``.
 
     Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
     repeating a name, so an adapter-id label must already be in the form they echo.
     """
-    return f"{NAME_PREFIX}{run_id}-{label.replace('_', '-')}"
+    return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
+
+
+def credential_name(name: str, agent_id: str) -> str:
+    """Name the platform stores on the API key created with the agent.
+
+    The agent row and the key are one transaction. The key name has its own
+    ``API_KEY_NAME_MAX`` cap, so an agent name inside ``AGENT_NAME_MAX`` still
+    rolls the registration back when this string does not fit.
+    """
+    return f"{name} ({agent_id[:CREDENTIAL_ID_SLICE]})"
+
+
+# Longest agent name whose key name still fits. Measured with an id of
+# ``CREDENTIAL_ID_SLICE`` characters; every registered id is at least that long.
+REGISTRATION_NAME_MAX = min(
+    AGENT_NAME_MAX,
+    API_KEY_NAME_MAX - len(credential_name("", "0" * CREDENTIAL_ID_SLICE)),
+)
+
+
+def name_token(label: str) -> str:
+    """A fresh hex token for one provision of ``label``.
+
+    A label a scenario can @mention gets :func:`run_id_len` characters, so the
+    longest such name stays inside ``MENTION_HANDLE_CAP``. A longer label is not
+    a mention handle and gets a full uuid slice, clamped so the name stays
+    inside ``REGISTRATION_NAME_MAX``. A fresh token per provision is what keeps a
+    leftover row from colliding with the next register of the same label.
+    """
+    normalized = normalized_label(label)
+    if len(normalized) <= MAX_MENTIONED_LABEL_LEN:
+        return uuid.uuid4().hex[: run_id_len()]
+    width = min(NAME_TOKEN_HEX, name_budget(REGISTRATION_NAME_MAX, len(normalized)))
+    if width < run_id_len():
+        raise ValueError(
+            f"label {normalized!r} leaves {width} characters for a unique name "
+            f"token; need at least {run_id_len()} within the "
+            f"{REGISTRATION_NAME_MAX}-character registration name limit"
+        )
+    return uuid.uuid4().hex[:width]
 
 
 def new_run_id() -> str:
-    """Short token identifying a single test session's provisioned resources.
+    """Short token the session fixture draws once for the orphan sweep's self-skip.
 
-    Its length is *derived* from the mention-handle cap (see :func:`run_id_len`) so
-    the longest @mentioned peer name (see :func:`agent_name`) still surfaces in
-    full rather than as a truncated handle. The resulting entropy
-    (~1M at 5 hex) is ample given the run-id + age guards in ``sweep_orphans``.
+    Provisions do not embed it; they draw :func:`name_token`. The sweep skips
+    names that still contain this token. Per-provision names rely on the age
+    gate, the same protection another job's agents have.
     """
     return uuid.uuid4().hex[: run_id_len()]
 
@@ -134,7 +204,7 @@ def user_rest_client(
     )
     if not api_key:
         raise ValueError(f"{name} is required for the user REST client")
-    return AsyncRestClient(api_key=api_key, base_url=settings.endpoints.rest_url)
+    return baseline_rest_client(api_key=api_key, base_url=settings.endpoints.rest_url)
 
 
 def agent_rest_client(
@@ -149,7 +219,9 @@ def agent_rest_client(
     left to be reclaimed at event-loop teardown rather than closed explicitly.
     ``ReplyCapture`` reuses one client per agent to bound how many are opened.
     """
-    return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
+    return baseline_rest_client(
+        api_key=agent.api_key, base_url=settings.endpoints.rest_url
+    )
 
 
 class PeerActor:
@@ -307,7 +379,7 @@ class ResourceManager:
         (default ``E2E baseline test agent ({label})``). Tests that assert on
         passive-roster description surfacing pass a self-sourced marker here.
         """
-        name = agent_name(run_id=self._run_id, label=label)
+        name = agent_name(token=name_token(label), label=label)
         agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
@@ -413,13 +485,32 @@ class ResourceManager:
             except Exception:
                 logger.warning("Failed to reap agent %s", agent_id, exc_info=True)
 
-    async def sweep_orphans(self) -> int:
+    @asynccontextmanager
+    async def reap_on_exit(self, *, enabled: bool = True) -> AsyncGenerator[None, None]:
+        """Reap everything provisioned in this block when it exits.
+
+        ``enabled`` is false when ``BAND_E2E_AUTOCLEAN`` is off, so a debug run
+        keeps the resources. ``reap_all`` logs a delete failure and continues, so
+        a teardown error does not replace an exception from the block. A row
+        whose id was never returned is not tracked and is not deleted here; the
+        next provision draws a new name, so that leftover cannot collide.
+        """
+        try:
+            yield
+        finally:
+            if enabled:
+                await self.reap_all()
+
+    async def sweep_orphans(self, *, keep_ids: Sequence[str] = ()) -> int:
         """Force-delete stale test agents left by crashed prior runs.
 
-        Only touches agents whose name carries ``NAME_PREFIX``, belongs to a
-        *different* run, and is older than ``orphan_max_age_minutes`` — so a
-        concurrent run on the same shared platform is never deleted mid-flight.
-        Returns the number of agents reaped.
+        Only touches agents whose name carries ``NAME_PREFIX`` and that are
+        older than ``orphan_max_age_minutes``. Names that still embed this
+        session's run id are skipped, and so are ``keep_ids``: a per-provision
+        name does not embed that id, so a caller that still owns an agent (the
+        staging probe's recorded one, across a resume longer than the age gate)
+        passes its id here. A concurrent run's fresh agents stay because they
+        are younger than the age gate. Returns the number of agents reaped.
         """
         max_age = timedelta(minutes=self._settings.run.orphan_max_age_minutes)
         cutoff = datetime.now(UTC) - max_age
@@ -429,6 +520,7 @@ class ResourceManager:
         # Cursor pagination (the SDK's preferred path; offset `page`/`page_size`
         # is deprecated): advance via metadata.next_cursor until has_more is
         # false. The iteration cap bounds a best-effort sweep.
+        owned = set(keep_ids)
         orphans: list[str] = []
         cursor: str | None = None
         for _ in range(20):
@@ -438,8 +530,12 @@ class ResourceManager:
             for agent in response.data or []:
                 if not agent.name.startswith(NAME_PREFIX):
                     continue  # name filter is a contains-match; re-check the prefix
-                if f"-{self._run_id}-" in agent.name:
-                    continue  # never reap our own run
+                if (
+                    agent.id in owned
+                    or f"{TOKEN_LABEL_SEPARATOR}{self._run_id}{TOKEN_LABEL_SEPARATOR}"
+                    in agent.name
+                ):
+                    continue
                 # inserted_at may be tz-naive depending on serialization; treat
                 # naive as UTC so the comparison never raises (see the codebase's
                 # _coerce_inserted_at). A naive>aware compare would TypeError and
@@ -618,9 +714,9 @@ class AdapterCell:
     async def provision(self, *, label: str | None = None) -> ProvisionedAgent:
         """Register an identity for this cell (tracked + reaped by the manager); no run.
 
-        ``label`` defaults to the adapter id (a readable provisioned name). Pass a
-        distinct label to register more than one identity of the same cell in a single
-        test, else the generated names collide.
+        ``label`` defaults to the adapter id (a readable provisioned name). Each
+        call draws its own name token, so the same label can be registered again
+        in one test without colliding with an agent this run already created.
         """
         provisioned = await self.resources.provision_agent(label or self.adapter_id)
         return replace(provisioned, adapter_id=self.adapter_id)
@@ -708,7 +804,7 @@ class AdapterCell:
         what a same-adapter co-residency gate must probe.
 
         ``labels`` default to ``{adapter_id}-{index}``; an explicit list must be length
-        ``count`` so the provisioned names don't collide. ``prompt`` / ``features`` /
+        ``count`` (one label per member). ``prompt`` / ``features`` /
         ``tools`` pass through to each :meth:`run_as`, preserving the cell defaults when
         omitted.
         """

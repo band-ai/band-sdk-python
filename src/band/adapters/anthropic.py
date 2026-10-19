@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, ClassVar, cast
 
 from anthropic import APIStatusError, AsyncAnthropic
@@ -33,12 +34,19 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    BandTool,
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.tools.schema import is_failed_tool_output
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_names(content: list) -> str:
+    names = [block.name for block in content if isinstance(block, ToolUseBlock)]
+    return ",".join(names) if names else "-"
 
 
 def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -259,18 +267,42 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         # per API call, so sum it across every iteration of the loop into one
         # per-turn TurnUsage, emitted on every exit via the finally.
         turn_usage = TurnUsage()
+        call_index = 0
         try:
             while True:
+                call_index += 1
+                message_count = len(self._message_history[room_id])
+                started = time.perf_counter()
+                logger.info(
+                    "Room %s: Anthropic request %s starting (%s messages)",
+                    room_id,
+                    call_index,
+                    message_count,
+                )
                 try:
                     response = await self._call_anthropic(
                         messages=self._message_history[room_id],
                         tools=tool_schemas,
                     )
                 except Exception as e:
-                    logger.exception("Error calling Anthropic")
+                    logger.exception(
+                        "Room %s: Anthropic request %s failed after %.3fs",
+                        room_id,
+                        call_index,
+                        time.perf_counter() - started,
+                    )
                     await tools.send_failure(_to_agent_failure(e))
                     raise  # Re-raise so message is marked as failed
 
+                logger.info(
+                    "Room %s: Anthropic request %s finished in %.3fs "
+                    "stop_reason=%s tools=%s",
+                    room_id,
+                    call_index,
+                    time.perf_counter() - started,
+                    response.stop_reason,
+                    _tool_names(response.content),
+                )
                 turn_usage = turn_usage + self._usage_from_response(response)
 
                 # Check for tool use
@@ -301,7 +333,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 )
 
                 # Process tool calls
-                tool_results = await self._process_tool_calls(response, tools)
+                tool_results, declined = await self._process_tool_calls(response, tools)
 
                 # Add tool results to history
                 self._message_history[room_id].append(
@@ -310,6 +342,18 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "content": tool_results,
                     }
                 )
+                # Skipped only after a successful decline whose siblings also
+                # succeeded. A follow-up that never returns leaves the message
+                # in processing until on_message returns.
+                if declined:
+                    logger.info(
+                        "Room %s: %s settled the turn after request %s; "
+                        "not sending a follow-up",
+                        room_id,
+                        BandTool.NO_REPLY,
+                        call_index,
+                    )
+                    break
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
@@ -405,7 +449,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     # --- Copied from BandAnthropicAgent._process_tool_calls ---
     async def _process_tool_calls(
         self, response: Message, tools: AgentToolsProtocol
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], bool]:
         """
         Process tool_use blocks from response and execute tools.
 
@@ -414,9 +458,15 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             tools: AgentToolsProtocol instance for execution
 
         Returns:
-            List of tool_result content blocks for next API call
+            Tool-result blocks for the next API call, and whether a
+            successful ``band_no_reply`` settled this response. That is true
+            only when the decline itself succeeded and every sibling did too.
+            ``turn.replied`` is also true after ``band_send_message``, so it
+            cannot stand in for this call's own outcome.
         """
         tool_results = []
+        declined = False
+        failed = False
 
         for block in response.content:
             if not isinstance(block, ToolUseBlock):
@@ -457,8 +507,17 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(
                         custom_tool, tool_input, turn=tools.turn
                     )
+                    succeeded = not is_failed_tool_output(result)
                 else:
-                    result = await tools.execute_tool_call(tool_name, tool_input)
+                    outcome = await tools.execute_tool_call_structured(
+                        tool_name, tool_input
+                    )
+                    result = outcome.value
+                    succeeded = outcome.ok
+                if succeeded and tool_name == BandTool.NO_REPLY:
+                    declined = True
+                if not succeeded:
+                    failed = True
                 if is_image_passthrough_result(tool_name, result):
                     content = _image_tool_result_content(result)
                     result_str = image_block_placeholder(len(content))
@@ -470,6 +529,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     )
                 is_error = False
             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                failed = True
                 content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
@@ -503,4 +563,4 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 }
             )
 
-        return tool_results
+        return tool_results, declined and not failed

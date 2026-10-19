@@ -21,8 +21,13 @@ from typing_extensions import Unpack
 
 from band.adapters.nooa import NooaAdapter, NooaAdapterConfig, NooaRoomAgent
 from band.adapters.nooa.adapter import TOOLS_BLOCK
+from band.agent import Agent as BandAgent
+from band.client.rest import AsyncRestClient
 from band.core.types import FeatureKwargs, MessageType, PlatformMessage, ToolEventKey
+from band.platform.link import BandLink
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
+from band.runtime.execution import ExecutionContext
+from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.tools import BandTool, ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type
 from band.testing.nooa import (
@@ -176,7 +181,7 @@ class Gate:
     def room_agent(self) -> type[NooaRoomAgent]:
         """A room agent that starts the gated tool, waits until it runs, then declines."""
         llm = scripted_llm(
-            f"pending = {background_room_call('slow')}\n"
+            f"pending = asyncio.create_task(self.room.slow(arguments={{}}))\n"
             "await self.gate.entered.wait()\n"
             f"{room_call(BandTool.NO_REPLY)}"
         )
@@ -374,3 +379,16 @@ def tool_results(tools: FakeAgentTools) -> list[dict[str, Any]]:
         json.loads(event["content"])
         for event in events_of_type(tools, MessageType.TOOL_RESULT)
     ]
+
+
+def coordinated_context(
+    adapter: NooaAdapter, rest: AsyncRestClient
+) -> ExecutionContext:
+    """Deliver through the real coordinator, runtime context and REST client."""
+    agent_id = "agent-123"
+    agent = BandAgent(
+        runtime=PlatformRuntime(agent_id=agent_id, api_key="test-key"), adapter=adapter
+    )
+    link = BandLink(agent_id=agent_id, api_key="test-key")
+    link.rest = rest
+    return ExecutionContext(ROOM_ID, link, agent._on_execute, agent_id=agent_id)

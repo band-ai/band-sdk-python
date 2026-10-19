@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
+from band.adapters.nooa import NooaAdapter, NooaRoomAgent
 from band.testing import FakeAgentTools
+from band.testing.nooa import room_agent_class
 from tests.adapters.nooa.kit import (
     declining_turns,
     prompt_text,
@@ -84,3 +88,33 @@ class TestRoomAgents:
         )
 
         assert "earlier topic" not in prompt_text(llm)
+
+    @pytest.mark.parametrize("history", [[], ["[Bob]: replacement fact"]])
+    async def test_failed_replacement_cannot_fall_back_to_the_old_session(
+        self, history: list[str]
+    ) -> None:
+        constructions = 0
+
+        def initialize(agent: NooaRoomAgent) -> None:
+            nonlocal constructions
+            constructions += 1
+            if constructions == 2:
+                raise RuntimeError("replacement setup failed")
+            NooaRoomAgent.__init__(agent)
+
+        llm = declining_turns(2)
+        adapter = NooaAdapter(
+            agent=room_agent_class(llm, namespace={"__init__": initialize}), emit=()
+        )
+        await adapter.on_started("Agent", "Test agent")
+        await run_turn(
+            adapter, FakeAgentTools(), message=room_message("obsolete secret")
+        )
+        with pytest.raises(RuntimeError, match="replacement setup failed"):
+            await run_turn(adapter, FakeAgentTools(), history=history)
+        await run_turn(
+            adapter, FakeAgentTools(), history=history, is_session_bootstrap=False
+        )
+        assert "obsolete secret" not in prompt_text(llm)
+        if history:
+            assert "replacement fact" in prompt_text(llm)

@@ -1,8 +1,9 @@
 """The ``self.room`` tool surface a NOOA model calls from its generated code.
 
 Each Band tool, and each portable custom tool, becomes an async method on a
-``RoomTools`` subclass whose signature and docstring are rendered from the
-tool's input model. A call works only while the turn that made it is running.
+``RoomTools`` subclass. Platform methods expose named parameters; custom
+methods receive the original Pydantic validation payload. A call works only
+while the turn that made it is running.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import inspect
 import json
 import keyword
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -21,6 +23,7 @@ from uuid import uuid4
 
 from nooa import Image, hidden
 from nooa.agentdoc import doc
+from nooa.agentdoc.ext import format_type
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
@@ -48,14 +51,23 @@ logger = logging.getLogger(__name__)
 
 ToolRunner = Callable[[AgentToolsProtocol, dict[str, Any]], Awaitable[object]]
 
+INPUT_CONFIG_KEYS = (
+    "populate_by_name",
+    "validate_by_alias",
+    "validate_by_name",
+    "strict",
+    "extra",
+)
+
 
 @dataclass(frozen=True)
 class RoomToolSpec:
     """One tool the model can call as ``await self.room.<name>(...)``."""
 
     name: str
-    input_model: type[BaseModel]
     run: ToolRunner
+    method: Callable[..., Awaitable[Any]]
+    reference_types: tuple[type[BaseModel], ...] = ()
 
 
 @dataclass
@@ -254,22 +266,76 @@ def tool_method_signature(input_model: type[BaseModel]) -> inspect.Signature:
     return inspect.Signature(parameters, return_annotation=Any)
 
 
-def tool_method(spec: RoomToolSpec) -> Callable[..., Awaitable[Any]]:
+def tool_method(
+    name: str, input_model: type[BaseModel]
+) -> Callable[..., Awaitable[Any]]:
     """An async method that forwards its keyword arguments to the tool."""
 
     async def method(self: RoomTools, **arguments: Any) -> Any:
-        return await self._invoke(spec.name, arguments)
+        return await self._invoke(name, arguments)
 
-    method.__name__ = spec.name
-    method.__qualname__ = f"{RoomTools.__name__}.{spec.name}"
-    method.__doc__ = tool_method_doc(spec.input_model)
-    method.__signature__ = tool_method_signature(spec.input_model)  # type: ignore[attr-defined]
+    describe_method(method, name, tool_method_doc(input_model))
+    method.__signature__ = tool_method_signature(input_model)  # type: ignore[attr-defined]
+    return method
+
+
+def describe_method(
+    method: Callable[..., Awaitable[Any]], name: str, description: str
+) -> None:
+    method.__name__ = name
+    method.__qualname__ = f"{RoomTools.__name__}.{name}"
+    method.__doc__ = description
+
+
+def custom_field_doc(name: str, model_field: FieldInfo) -> str:
+    """Document field metadata without claiming to describe a validation grammar."""
+    requirement = (
+        "required"
+        if model_field.is_required()
+        else f"default={documented_default(model_field)!r}"
+    )
+    return (
+        f"{name}: {format_type(model_field.annotation)}; "
+        f"validation_alias={model_field.validation_alias!r}; {requirement}. "
+        f"{model_field.description or ''}"
+    )
+
+
+def custom_tool_method(
+    name: str, input_model: type[BaseModel]
+) -> Callable[..., Awaitable[Any]]:
+    """Expose the original validation payload without reinterpreting its keys."""
+
+    async def method(self: RoomTools, *, arguments: dict[str, Any]) -> Any:
+        return await self._invoke(name, arguments)
+
+    fields = "\n".join(
+        custom_field_doc(field_name, model_field)
+        for field_name, model_field in input_model.model_fields.items()
+    )
+    # Generated aliases are resolved on each field; callable config adds no input keys.
+    input_config = {
+        key: input_model.model_config.get(key)
+        for key in INPUT_CONFIG_KEYS
+        if key in input_model.model_config
+    }
+    describe_method(
+        method,
+        name,
+        f"{inspect.cleandoc(input_model.__doc__ or '')}\n\n"
+        "Pass arguments as the original Pydantic validation payload, unchanged.\n"
+        f"Model fields (attributes, not method keyword arguments):\n{fields}\n"
+        "AliasChoices are ordered; AliasPath describes a nested payload.\n"
+        f"Input configuration: {input_config!r}\n"
+        "By default use the validation alias when present, otherwise the attribute name.\n"
+        "Model configuration and validators may impose different payload rules.",
+    )
     return method
 
 
 def room_tools_class(specs: list[RoomToolSpec]) -> type[RoomTools]:
     """A ``RoomTools`` subclass exposing exactly *specs* as methods."""
-    namespace: dict[str, Any] = {spec.name: tool_method(spec) for spec in specs}
+    namespace: dict[str, Any] = {spec.name: spec.method for spec in specs}
     namespace["_specs"] = {spec.name: spec for spec in specs}
     namespace["__doc__"] = RoomTools.__doc__
     namespace["__module__"] = RoomTools.__module__
@@ -283,7 +349,13 @@ def room_tools_reference(tools_class: type[RoomTools]) -> str:
     NOOA's view of ``self`` shows only the first docstring line of a referenced
     type's methods, which would drop each tool's argument descriptions.
     """
-    return doc(tools_class)
+    references = dict.fromkeys(
+        model for spec in tools_class._specs.values() for model in spec.reference_types
+    )
+    # NOOA's multi-object renderer truncates referenced types; render each root separately.
+    sections = [doc(tools_class)]
+    sections.extend(doc(model, inline_depth=sys.maxsize) for model in references)
+    return "\n\n".join(sections)
 
 
 def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
@@ -299,7 +371,9 @@ def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
             raise BandToolError(outcome.error_message or str(outcome.value))
         return outcome.value
 
-    return RoomToolSpec(definition.name, definition.input_model, run)
+    return RoomToolSpec(
+        definition.name, run, tool_method(definition.name, definition.input_model)
+    )
 
 
 def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
@@ -307,25 +381,12 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        return await execute_custom_tool(
-            tool_def, by_alias(input_model, arguments), turn=tools.turn
-        )
+        return await execute_custom_tool(tool_def, arguments, turn=tools.turn)
 
-    return RoomToolSpec(get_custom_tool_name(input_model), input_model, run)
-
-
-def by_alias(input_model: type[BaseModel], arguments: dict[str, Any]) -> dict[str, Any]:
-    """Re-key keyword arguments from field names to the aliases validation expects.
-
-    The model calls a tool with Python keyword arguments, which are always field
-    names, while ``model_validate`` reads each field under its alias.
-    """
-    aliases = {
-        name: model_field.alias
-        for name, model_field in input_model.model_fields.items()
-        if model_field.alias
-    }
-    return {aliases.get(key, key): value for key, value in arguments.items()}
+    name = get_custom_tool_name(input_model)
+    return RoomToolSpec(
+        name, run, custom_tool_method(name, input_model), (input_model,)
+    )
 
 
 def validate_custom_tool_names(custom_tools: list[CustomToolDef]) -> None:

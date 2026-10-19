@@ -132,11 +132,29 @@ itself. Already accepted detached work retains its original tools until its
 actual end and follows the existing acknowledgement and judgment rules.
 
 The default preprocessor prepares bootstrap, participant and system context
-without consuming it. A rejected attempt leaves that context owed; every other
-outcome commits it conservatively, preserving updates that arrived during the
-attempt. Custom preprocessors that consume context must defer that consumption
-through `AgentInput.commit_context` to support this contract. This waiting is
+without consuming it. A rejected attempt leaves that context owed. History
+conversion and NOOA setup also retain it when they fail or are cancelled before
+context handoff. All other outcomes commit conservatively, preserving updates
+that arrived during the attempt. Custom preprocessors that consume context must
+defer that consumption through `AgentInput.commit_context` to support this contract. This waiting is
 process-local recovery, not an exactly-once guarantee across crashes.
+
+## Setup and context consumption
+
+`band.core.handoff.context_handoff` distinguishes context consumption from turn
+outcome. Known setup runs inside its guard and calls `handoff.consume()`
+immediately before framework execution. An abnormal exit before consumption
+leaves prepared context owed to the next delivery; the original exception and
+cancellation propagate unchanged. Ordinary setup errors still spend the normal
+retry budget and produce failed acknowledgements.
+
+`Agent` scopes this decision to one delivery. Nested deliveries restore their
+caller's decision, and detached tasks cannot change the parent decision. Once
+framework execution is entered, subsequent failures cannot undo consumption.
+Adapters without an explicit handoff keep conservative commitment. The shared
+history conversion path adopts this contract; NOOA also adopts it for room-agent
+construction, transcript installation, prompt preparation, observation and tool
+binding. The preprocessor remains the sole owner of pending context.
 
 ## Declining with `band_no_reply`
 
