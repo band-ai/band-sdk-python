@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -812,10 +812,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             await self._close_room(room_id)
         self._room_selections.pop(room_id, None)
 
+    def _cleanup_rooms(self) -> Iterable[Awaitable[None]]:
+        return (self.on_cleanup(room_id) for room_id in tuple(self._rooms))
+
     async def cleanup_all(self) -> None:
-        await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in tuple(self._rooms))
-        )
+        await asyncio.gather(*self._cleanup_rooms())
 
 
 __all__ = ["OmpAdapter", "OmpAdapterConfig", "OmpPermissionRequest"]
