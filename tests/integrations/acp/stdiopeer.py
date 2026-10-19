@@ -179,23 +179,14 @@ class StdioPeer:
         await asyncio.Future[None]()
 
     async def send_recovered_reply(self, session_id: str) -> None:
-        from band.integrations.mcp import BandMCPTransport  # noqa: PLC0415 -- kept off the startup path
-        from band.runtime.tools import BandTool  # noqa: PLC0415 -- kept off the startup path
-        from band.runtime.tools.registry import BAND_MCP_SERVER_NAME  # noqa: PLC0415 -- kept off the startup path
-        from tests.mcpclient import mcp_session  # noqa: PLC0415 -- kept off the startup path
+        from band.runtime.tools import BAND_MCP_SERVER_NAME, BandTool  # noqa: PLC0415 -- kept off the startup path
+        from tests.mcpclient import advertised_server, call_advertised_tool  # noqa: PLC0415 -- kept off the startup path
 
-        server = next(
-            server
-            for server in self.mcp_servers[session_id]
-            if getattr(server, "name", None) == BAND_MCP_SERVER_NAME
+        await call_advertised_tool(
+            advertised_server(self.mcp_servers[session_id], BAND_MCP_SERVER_NAME),
+            BandTool.SEND_MESSAGE,
+            {"content": RECOVERED_REPLY, "mentions": ["@user-456"]},
         )
-        async with mcp_session(server.url, BandMCPTransport(server.type)) as client:
-            result = await client.call_tool(
-                BandTool.SEND_MESSAGE,
-                {"content": RECOVERED_REPLY, "mentions": ["@user-456"]},
-            )
-        if result.isError:
-            raise RuntimeError(f"Band tool failed: {result.content}")
 
 
 async def main() -> None:

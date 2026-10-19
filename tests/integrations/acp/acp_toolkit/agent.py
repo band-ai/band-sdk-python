@@ -50,7 +50,7 @@ from band.integrations.acp.model_selection import (
 from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.session_config import SessionConfigOption, find_select
 from band.integrations.mcp import BandMCPTransport
-from tests.mcpclient import mcp_session
+from tests.mcpclient import advertised_server, call_advertised_tool, mcp_session
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
@@ -635,17 +635,7 @@ class FakeACPAgent:
 
     def mcp_server(self, session_id: str, server: str) -> Any:
         """The MCP server config named ``server`` advertised for this session."""
-        config = next(
-            (
-                config
-                for config in self._mcp_servers_by_session[session_id]
-                if getattr(config, "name", None) == server
-            ),
-            None,
-        )
-        if config is None:
-            raise ValueError(f"MCP server {server!r} was not advertised")
-        return config
+        return advertised_server(self._mcp_servers_by_session[session_id], server)
 
     async def call_mcp_tool(
         self,
@@ -656,13 +646,9 @@ class FakeACPAgent:
         arguments: dict[str, Any],
     ) -> Any:
         """Call a tool on an MCP server advertised for this session."""
-        config = self.mcp_server(session_id, server)
-        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
-            result = await client.call_tool(tool_name, arguments)
-
-        if result.isError:
-            raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
-        return result.content
+        return await call_advertised_tool(
+            self.mcp_server(session_id, server), tool_name, arguments
+        )
 
     async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
         """The tools a session's MCP server lists."""
