@@ -1,10 +1,10 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic] @ git+ssh://git@github.com/band-ai/band-sdk-python.git@4b15347387a217d81b471c8c238c6b10f64d15d1"]
+# dependencies = ["band-sdk[anthropic]>=6.0.0"]
 # ///
 """Two custom tools share one HTTP client, closed by the adapter's host.
 
-From the feature checkout: uv run --active python examples/anthropic/shared-resources.py
+Run: uv run examples/anthropic/shared-resources.py
 Configure anthropic_agent in agent_config.yaml and credentials in root .env.test.
 Resources shared across different adapters should remain application-owned.
 """
