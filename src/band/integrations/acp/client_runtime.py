@@ -110,12 +110,12 @@ class ACPRuntime(ACPSessionOperations):
         self._ctx: (
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         ) = None
+        self._agent_mcp_http = False
+        self._agent_mcp_sse = False
         self._transport: object = None
         self._exit_attempted = False
         self._closure: asyncio.Task[None] | None = None
         self._stderr = ACPStderrDrain(logger)
-        self._agent_mcp_http = False
-        self._agent_mcp_sse = False
 
     async def start(self) -> None:
         """Spawn the ACP agent subprocess and initialize its connection."""
