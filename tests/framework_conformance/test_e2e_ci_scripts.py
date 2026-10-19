@@ -73,6 +73,8 @@ def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
     assert result.returncode == 1
     (command,) = call_log.read_text().splitlines()
     assert "-p no:rerunfailures" in command
+    assert "--log-cli-level=INFO" in command
+    assert "--log-level=INFO" in command
     assert "--last-failed" not in command
 
 

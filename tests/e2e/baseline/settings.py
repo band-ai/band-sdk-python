@@ -13,9 +13,15 @@ instead of raising a bool/int ValidationError at construction.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from band.core.defaultmodels import (
     ANTHROPIC_MODEL,
@@ -26,14 +32,7 @@ from band.core.defaultmodels import (
 from band.integrations.omp import DEFAULT_OMP_MODEL
 from tests.paths import ENV_TEST_FILE
 
-# Load .env.test into os.environ (idempotent, non-overriding) — the single
-# load path for every consumer: the framework LLM SDKs (anthropic, openai,
-# google-genai) read their provider keys straight from the environment, and
-# the settings classes below read their fields from the same environment via
-# pydantic's env source. (No ``env_file`` in the model_configs: it would
-# re-read the same file with lower priority than the env vars this line
-# already set — pure shadowed duplication.) Imported before any fixture
-# constructs a client or adapter, so keys are present in time.
+# Provider SDKs read keys from the environment; preserve explicit shell overrides.
 load_dotenv(ENV_TEST_FILE, override=False)
 
 
@@ -68,6 +67,29 @@ class BandCredentials(BaseSettings):
     api_key_user: str = Field(default="", repr=False)  # BAND_API_KEY_USER
     # Optional second human user, for smokes exercising two-user interaction.
     api_key_user_2: str = Field(default="", repr=False)  # BAND_API_KEY_USER_2
+
+
+class FileOnlySettings:
+    """Read a selected file without falling back to inherited credentials."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (dotenv_settings,)
+
+
+class FileBandEndpoints(FileOnlySettings, BandEndpoints):
+    """Keep endpoint aliases and defaults owned by BandEndpoints."""
+
+
+class FileBandCredentials(FileOnlySettings, BandCredentials):
+    """Keep credential fields and defaults owned by BandCredentials."""
 
 
 class BaselineRun(BaseSettings):
@@ -276,3 +298,11 @@ class BaselineSettings(BaseSettings):
     llm_models: LLMModels = Field(default_factory=LLMModels)
     backends: Backends = Field(default_factory=Backends)
     deployment: DeploymentFeatures = Field(default_factory=DeploymentFeatures)
+
+    @classmethod
+    def from_band_file(cls, env_file: Path) -> BaselineSettings:
+        """Read Band connection settings only from this file; retain run controls."""
+        return cls(
+            endpoints=FileBandEndpoints(_env_file=env_file),
+            credentials=FileBandCredentials(_env_file=env_file),
+        )

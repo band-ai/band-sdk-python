@@ -13,6 +13,7 @@ from typing_extensions import Unpack
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
 from band.core.exceptions import BandConfigError, InputNotAccepted
+from band.core.handoff import context_handoff
 from band.core.model_catalog import (
     ModelCatalog,
     ModelSelection,
@@ -395,13 +396,11 @@ class SimpleAdapter(ABC, Generic[H]):
         ``band.logging_config``'s log filter.
         """
         with trace_context_scope():
-            # Convert history if converter is set
-            if self.history_converter:
-                converted_history: Any = inp.history.convert(self.history_converter)
-            else:
-                # No converter: pass raw HistoryProvider as H
-                # Adapters without converters should type as SimpleAdapter[HistoryProvider]
-                converted_history = inp.history
+            with context_handoff():
+                if self.history_converter:
+                    converted_history: Any = inp.history.convert(self.history_converter)
+                else:
+                    converted_history = inp.history
 
             await self.run_judged_turn(
                 msg=inp.msg,
