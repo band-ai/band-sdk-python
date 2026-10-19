@@ -782,6 +782,37 @@ async def test_cleanup_settles_a_turn_queued_behind_a_blocked_resolution(
 
 
 @pytest.mark.asyncio
+async def test_failed_room_resource_close_keeps_the_workspace_owned_for_retry(
+    launches: Launches, tmp_path: Path
+) -> None:
+    adapter = OmpAdapter(workspace_for_room=lambda _room: str(tmp_path), emit=())
+    await run_turn(adapter, FakeAgentTools())
+    room = adapter._rooms["room-123"]
+
+    def fail_close() -> None:
+        raise OSError("room resource close failed")
+
+    room.resources.callback(fail_close)
+    try:
+        with pytest.raises(OSError, match="room resource close failed"):
+            await adapter.on_cleanup("room-123")
+
+        assert launches.runtimes[0].closed
+        assert adapter._rooms.get("room-123") is room
+        assert room.retiring
+        with pytest.raises(ValueError):
+            adapter._workspaces.claim("other-room")
+
+        await adapter.cleanup_all()
+        assert not adapter._rooms
+        assert not adapter._workspaces.rooms
+        assert adapter._workspaces.claim("other-room") == str(tmp_path)
+        adapter._workspaces.release("other-room")
+    finally:
+        await adapter.cleanup_all()
+
+
+@pytest.mark.asyncio
 async def test_a_failed_native_close_keeps_the_room_owned_until_cleanup_succeeds(
     launches: Launches, tmp_path: Path
 ):
