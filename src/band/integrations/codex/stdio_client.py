@@ -343,7 +343,7 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await self._dispatch_rpc_message(line.decode("utf-8", errors="replace"))
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 -- fail pending RPCs without logging sensitive exception text
             logger.error("Codex stdout loop failed")
             self._fail_pending("Codex stdout loop failed")
 
@@ -359,5 +359,5 @@ class CodexStdioClient(BaseJsonRpcClient):
                     logger.debug("codex stderr (type=bytes, length=%d)", len(line))
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 -- contain reader faults without logging sensitive exception text
             logger.error("Codex stderr loop failed")
