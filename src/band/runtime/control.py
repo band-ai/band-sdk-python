@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from band.client.streaming import ControlMode
-from band.core.turn_lifecycle import BACKEND_CANCEL_TIMEOUT_SECONDS
 from band.runtime.execution import Execution
 
 if TYPE_CHECKING:
@@ -117,21 +115,6 @@ def _call_if_supported(execution: Execution, name: str) -> None:
 async def _notify_adapter(
     execution: Execution, mode: ControlMode, on_control: ControlCallback | None
 ) -> None:
-    """Bound the adapter's hook: signals are applied one at a time, so one that
-    never returns would hold back every signal behind it."""
     room_id = getattr(execution, "room_id", None)
-    if on_control is None or room_id is None:
-        return
-    deadline = asyncio.timeout(BACKEND_CANCEL_TIMEOUT_SECONDS)
-    try:
-        async with deadline:
-            await on_control(room_id, mode)
-    except TimeoutError:
-        if not deadline.expired():
-            raise
-        logger.warning(
-            "Adapter %s for room %s did not finish within %ss; abandoned",
-            mode.value,
-            room_id,
-            BACKEND_CANCEL_TIMEOUT_SECONDS,
-        )
+    if on_control is not None and room_id is not None:
+        await on_control(room_id, mode)

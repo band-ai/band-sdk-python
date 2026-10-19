@@ -137,7 +137,8 @@ class BandLink:
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
         # runtime. Never run via the serialized _event_queue, so a control
         # signal can act on a cycle already in flight instead of queuing
-        # behind it.
+        # behind it. Signals apply one at a time, so a hook that never
+        # returns holds every later signal until disconnect().
         self.on_control: ControlHook | None = None
         # Control signals still being applied, in arrival order.
         self._control_lane: list[asyncio.Task[None]] = []

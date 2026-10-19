@@ -332,9 +332,7 @@ class SimpleAdapter(ABC, Generic[H]):
 
         By default it starts stopping the room's ``backend_turns`` entry,
         without waiting: this runs on the control-processing task, so it must
-        never await a backend call. One still running after
-        ``BACKEND_CANCEL_TIMEOUT_SECONDS`` is cancelled. An override calls
-        ``super()`` first.
+        never await a backend call. An override calls ``super()`` first.
         """
         if self.backend_turns is not None:
             self.backend_turns.cancel(room_id)

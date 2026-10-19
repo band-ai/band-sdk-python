@@ -33,6 +33,20 @@ class TestOnControlRouting:
         await link._on_control(payload)
 
         assert await asyncio.wait_for(received, timeout=5.0) == payload
+
+    async def test_on_control_does_not_enqueue(self, link: BandLink):
+        """Control must bypass the serialized event queue entirely."""
+        applied = asyncio.Event()
+
+        async def hook(payload: AgentControlPayload) -> None:
+            applied.set()
+
+        link.on_control = hook
+        payload = AgentControlPayload(mode="stop", scope="agent", agent_id="agent-123")
+
+        await link._on_control(payload)
+        await asyncio.wait_for(applied.wait(), timeout=5.0)
+
         assert link._event_queue.empty()
 
     async def test_on_control_without_hook_is_safe_noop(self, link: BandLink):
