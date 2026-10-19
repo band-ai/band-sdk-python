@@ -520,67 +520,6 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
     await adapter.on_cleanup("room-1")
 
 
-async def test_double_stop_while_abandon_awaits_abort_still_clears_turn_state(
-    tools,
-) -> None:
-    """Regression: a second cancellation (a double-tap stop) landing while
-    the interrupt handler's ``turn.approvals.abandon()`` await is itself
-    parked inside ``abort_session`` -- aborting a permission still waiting
-    on a human -- must not skip ``_clear_turn_state``. Otherwise the room
-    stays wedged forever on a turn whose state never clears.
-    """
-
-    class BlockingAbortClient(FakeOpencodeClient):
-        def __init__(self) -> None:
-            super().__init__(prompt_event_sequences=[[]])
-            self.abort_started = asyncio.Event()
-            self.release_abort = asyncio.Event()
-
-        async def abort_session(self, session_id: str) -> None:
-            self.abort_started.set()
-            await self.release_abort.wait()
-            await super().abort_session(session_id)
-
-    fake_client = BlockingAbortClient()
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-
-    await adapter.on_started("OpenCode Agent", "A coding agent")
-    interrupted = asyncio.create_task(
-        deliver_message(
-            adapter,
-            make_platform_message(content="long task"),
-            tools_protocol(tools),
-            OpencodeSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-    )
-    await wait_for(lambda: bool(fake_client.prompt_calls))
-
-    room_state = await adapter._get_or_create_room_state("room-1")
-    assert room_state.turn is not None
-    await room_state.turn.approvals.on_permission_asked(
-        OpencodePermissionRequest(id="perm-1", permission="bash")
-    )
-
-    # First stop: on_message's CancelledError handler finds the permission
-    # still parked on a human and starts abandon(), which awaits
-    # abort_session for it.
-    interrupted.cancel()
-    await fake_client.abort_started.wait()
-
-    # Second stop (double-tap) cuts off that abort_session await mid-flight.
-    interrupted.cancel()
-    with suppress(asyncio.CancelledError):
-        await interrupted
-
-    assert room_state.turn is None, "turn state must clear despite the double cancel"
-
-    await adapter.on_cleanup("room-1")
-
-
 async def test_teardown_does_not_disconnect_a_successor_registration(tools) -> None:
     """A superseded teardown must not strip the next client's MCP registration.
 

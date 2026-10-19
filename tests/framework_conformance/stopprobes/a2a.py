@@ -33,6 +33,7 @@ CANCEL_TASK = f"tasks/cancel {TASK_ID}"
 NO_TASK = ""
 RESTORED_CANCELLED_TASK = "bootstrap restored the cancelled task"
 CLIENT_CLOSED_MID_CANCEL = "client closed while tasks/cancel was in flight"
+CLEANUP_RETURNED_MID_CANCEL = "cleanup returned while tasks/cancel was in flight"
 
 
 def continues(task_id: str) -> str:
@@ -83,10 +84,15 @@ async def stop_before_the_remote_answers(
     return [*client.cancelled, await next_message(adapter, client)]
 
 
-async def stop_while_a_finished_task_is_delivered(mode: ControlMode) -> list[str]:
+async def stop_while_a_finished_task_is_delivered(
+    mode: ControlMode, *, resumed: bool = False
+) -> list[str]:
     """A STOP that lands while a finished task's reply is being posted has no
-    task left to cancel."""
+    task left to cancel, whether the task is new or resumed from INPUT_REQUIRED."""
     adapter, client = started()
+    if resumed:
+        client.script(task_in(INPUT_REQUIRED))
+        await adapter.on_event(turn_input(FakeAgentTools()))
     client.script(task_in(COMPLETED, text=ANSWER))
     tools = FakeAgentTools()
     delivering = tools.hold_message(ANSWER)
@@ -156,8 +162,8 @@ async def bootstrap_during_cancel() -> list[str]:
     ]
 
 
-async def shutdown_waits_for_the_cancel() -> list[str]:
-    """Shutdown does not close the client while tasks/cancel is in flight."""
+async def stop_holding_cancel() -> tuple[A2AAdapter, RecordingA2AClient, asyncio.Event]:
+    """Stop a running task and leave its tasks/cancel in flight until the event is set."""
     adapter, client = started()
     release = client.hold_cancel()
     client.script(task_in(WORKING), hold=True)
@@ -166,6 +172,26 @@ async def shutdown_waits_for_the_cancel() -> list[str]:
     await cancel_turn(turn)
     await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
     await wait_until(client.cancel_started.is_set)
+    return adapter, client, release
+
+
+async def cleanup_waits_for_the_cancel() -> list[str]:
+    """Leaving the room does not return while tasks/cancel is in flight."""
+    adapter, client, release = await stop_holding_cancel()
+    cleanup = asyncio.create_task(adapter.on_cleanup(ROOM_ID))
+    await wait_until(lambda: waiting_on_stop(cleanup) or cleanup.done())
+    returned_mid_cancel = cleanup.done()
+    release.set()
+    await cleanup
+    return [
+        *client.cancelled,
+        *([CLEANUP_RETURNED_MID_CANCEL] if returned_mid_cancel else []),
+    ]
+
+
+async def shutdown_waits_for_the_cancel() -> list[str]:
+    """Shutdown does not close the client while tasks/cancel is in flight."""
+    adapter, client, release = await stop_holding_cancel()
     shutdown = asyncio.create_task(adapter.cleanup_all())
     await wait_until(lambda: waiting_on_stop(shutdown) or shutdown.done())
     closed_mid_cancel = client.closed
@@ -226,6 +252,15 @@ CASES: dict[str, StopCase] = {
         for mode in ENDING_CONTROLS
     },
     **{
+        f"{mode}-while-a-continued-task-finishes": StopCase(
+            run=lambda mode=mode: stop_while_a_finished_task_is_delivered(
+                mode, resumed=True
+            ),
+            expected=[continues(NO_TASK)],
+        )
+        for mode in ENDING_CONTROLS
+    },
+    **{
         f"{mode}-continued-task-before-it-answers": StopCase(
             run=lambda mode=mode: stop_continued_task_before_it_answers(mode),
             expected=[CANCEL_TASK, continues(NO_TASK)],
@@ -238,6 +273,9 @@ CASES: dict[str, StopCase] = {
     "bootstrap-during-cancel": StopCase(
         run=bootstrap_during_cancel,
         expected=[CANCEL_TASK, continues(NO_TASK)],
+    ),
+    "cleanup-waits-for-the-cancel": StopCase(
+        run=cleanup_waits_for_the_cancel, expected=[CANCEL_TASK]
     ),
     "shutdown-waits-for-the-cancel": StopCase(
         run=shutdown_waits_for_the_cancel, expected=[CANCEL_TASK]

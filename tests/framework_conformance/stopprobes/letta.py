@@ -10,10 +10,11 @@ import band_sdk_core
 import looptime
 import pytest
 
+from band.adapters.letta import LettaAdapterConfig
 from band.client.streaming import ControlMode
 from band.core.protocols import TurnResultAlreadyReported
 from band.core.retention import cleanup
-from band.runtime.tools import CHAT_ID_FIELD_NAME
+from band.runtime.tools import CHAT_ID_FIELD_NAME, BandTool
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.waiting import spin
 from tests.framework_conformance.stopprobes import (
@@ -68,9 +69,6 @@ def held_adapter(
     timeout_s: float | None = None,
     delete_agents: bool = False,
 ) -> Any:
-    from band.adapters.letta import (  # noqa: PLC0415 -- letta extra, absent from some lane venvs
-        LettaAdapterConfig,
-    )
     from tests.adapters.lettakit import (  # noqa: PLC0415 -- letta extra, absent from some lane venvs
         RecordingLettaClient,
         ready_letta_adapter,
@@ -85,8 +83,10 @@ def held_adapter(
     client = RecordingLettaClient()
     client.hold()
     adapter._client = client
+    room = adapter._rooms[ROOM_ID]
+    room.agent_id = AGENT_ID
     if shared:
-        adapter._rooms[ROOM_ID].conversation_id = CONVERSATION_ID
+        room.conversation_id = CONVERSATION_ID
     return adapter, client
 
 
@@ -159,7 +159,7 @@ async def late_mcp_call_during_held_cancel() -> list[str]:
     # ``waiting_on_stop`` cannot see it; a turn that ignored the cancel would
     # publish its tools within these loop turns.
     await spin()
-    await band_mcp_registrations(adapter)["band_send_message"].execute(
+    await band_mcp_registrations(adapter)[BandTool.SEND_MESSAGE].execute(
         {
             "content": "from the stopped run",
             "mentions": ["@alice"],
