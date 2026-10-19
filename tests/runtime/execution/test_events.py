@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from band.runtime.execution import (
     ExecutionContext,
 )
@@ -56,4 +58,36 @@ class TestExecutionContextEvents:
         # Should only be called once
         assert mock_handler.call_count == 1
 
+        await ctx.stop()
+
+    async def test_deadline_arrival_still_delivers_a_queued_message(
+        self, mock_link, mock_handler
+    ):
+        """A deadline that fires as an event arrives must not end the room."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        await ctx.start()
+        await wait_for_condition(lambda: ctx._queue_wait is not None)
+
+        task = ctx._process_loop_task
+        assert task is not None
+        assert ctx._queue_wait is not None
+        ctx._queue_wait.reschedule(asyncio.get_running_loop().time())
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-1"))
+
+        await wait_for_condition(lambda: mock_handler.call_count >= 1)
+        assert not task.done()
+
+        await ctx.stop()
+
+    async def test_external_cancel_ends_the_room_task(self, mock_link, mock_handler):
+        """A cancel from outside the deadline must finish the room task."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        await ctx.start()
+        await wait_for_condition(lambda: ctx._queue_wait is not None)
+
+        task = ctx._process_loop_task
+        assert task is not None
+        task.cancel()
+
+        await wait_for_condition(task.done)
         await ctx.stop()

@@ -2,7 +2,7 @@
 
 The proof in ``test_kit_proxy_managed_live.py`` runs only on sbx + staging, so
 the deterministic pieces it relies on are guarded here, where CI executes them —
-a broken agent-name derivation, cert probe, or settings path fails fast here
+a broken scoped command, cert probe, or settings path fails fast here
 instead of lying dormant until a rare live run.
 """
 
@@ -14,7 +14,6 @@ from pathlib import Path
 from tests.docker.markers import requires_posix_shell
 from tests.docker.toolkit.sbx_cli import (
     files_containing_command,
-    kit_agent_name,
     kit_baseline_hosts,
     remove_custom_secret_command,
     set_custom_secret_command,
@@ -26,30 +25,22 @@ from tests.paths import KIT_DIR
 # its syntactic validity) is covered by tests/docker/test_sbx_cli.py.
 
 
-def test_kit_agent_name_matches_the_shipped_spec() -> None:
-    # A sandbox kit is created as `sbx create --kit <kit> <name>`; the name is
-    # the kit's own (a plain `shell` agent is rejected). Guards the derivation
-    # reads spec.yaml's `name`, and that the shipped kit declares it.
-    assert kit_agent_name(KIT_DIR) == "band-python-kit"
-
-
 def test_custom_secret_injection_is_scoped_to_the_sandbox() -> None:
     # The Band key is injected scoped to the proof's own sandbox, never globally
-    # (`-g`): the kit README registers the Band key globally for real use, so a
-    # global test secret would overwrite and then delete the operator's own
-    # credential. Guards both the set and the removal against a `-g` regression.
+    # (`-g`): a global test secret could overwrite an operator credential.
     name = "band-nevervm-abc123"
     set_command = set_custom_secret_command(
         sandbox=name,
         host="**.band.ai",
         env="BAND_API_KEY",
-        value="real-key",
         placeholder="proxy-managed",
     )
-    remove_command = remove_custom_secret_command(sandbox=name, host="**.band.ai")
+    remove_command = remove_custom_secret_command(sandbox=name)
 
-    assert "-g" not in set_command and name in set_command
+    assert "--sandbox" in set_command and name in set_command
+    assert "--value" not in set_command and "real-key" not in set_command
     assert "-g" not in remove_command and name in remove_command
+    assert remove_command[3:5] == ["--placeholder", "proxy-managed"]
 
 
 def test_kit_baseline_reaches_only_prod_band() -> None:

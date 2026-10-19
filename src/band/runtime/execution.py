@@ -1203,6 +1203,20 @@ class ExecutionContext:
 
     # --- Internal processing ---
 
+    @staticmethod
+    def _release_expired_deadline_cancel(wait: asyncio.Timeout | None) -> None:
+        """Drop the deadline's leftover cancel after the wait returned an event.
+
+        ``Timeout`` consumes its cancel only when the wait raises. A deadline
+        that lands as an event arrives leaves one cancel pending; clearing
+        that one leaves any real cancel in place.
+        """
+        if wait is None or not wait.expired():
+            return
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            task.uncancel()
+
     async def _process_loop(self) -> None:
         """Synchronize startup, then serialize queued events and due recovery."""
         try:
@@ -1223,15 +1237,22 @@ class ExecutionContext:
                 if deadline is not None and deadline <= loop.time():
                     await self._reconcile()
                     continue
+                deadline_wait: asyncio.Timeout | None = None
                 try:
-                    # Keep cancellation on the owner task so shutdown cannot
-                    # be lost in a child queue-wait task on Windows.
-                    async with asyncio.timeout_at(deadline) as self._queue_wait:
-                        event = await self.queue.get()
+                    # A queued event is taken without arming the deadline.
+                    # The empty-queue wait stays on this task so shutdown
+                    # cannot be lost in a child queue-wait task on Windows.
+                    if self.queue.empty():
+                        async with asyncio.timeout_at(deadline) as deadline_wait:
+                            self._queue_wait = deadline_wait
+                            event = await self.queue.get()
+                    else:
+                        event = self.queue.get_nowait()
                 except TimeoutError:
                     continue
                 finally:
                     self._queue_wait = None
+                self._release_expired_deadline_cancel(deadline_wait)
 
                 if isinstance(event, ResyncRequest):
                     if event is self._pending_resync:
