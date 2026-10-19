@@ -560,11 +560,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if active.retired:
                     raise asyncio.CancelledError
                 active.baseline = task.cancelling()
+                active.deadline = deadline
                 async with deadline:
-                    active.deadline = deadline
                     room = self._rooms.get(room_id)
                     if room is not None and room.retiring:
-                        await self._close_room(room_id)  # finish its earlier retirement
+                        await self._close_room(room_id)
                         room = None
                     room = room or await self._open_room(
                         room_id, history if is_session_bootstrap else OmpSessionState()
@@ -643,6 +643,14 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if self._owners.get(room_id) is active:
                     del self._owners[room_id]
                 active.settled.set()
+
+    async def _retire_after_failure(self, room_id: str) -> None:
+        try:
+            await self._close_room(room_id)
+        except Exception:
+            logger.exception(
+                "OMP room %s could not be closed; it stays owned until cleanup", room_id
+            )
 
     async def _execute_tool(
         self, call: OmpHostToolCall, tools: AgentToolsProtocol
@@ -922,24 +930,14 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
 
     async def _close_room(self, room_id: str) -> None:
-        """Retire a room's process, keeping the room, its overlay and its workspace
-        claim owned until the close succeeds: a failed close can be retried, and
-        nothing else can take the workspace or reuse the process meanwhile."""
         room = self._rooms.get(room_id)
         if room is not None:
             room.retiring = True
+            # A failed close still owns the process, startup files and workspace.
             await room.runtime.close()
-            del self._rooms[room_id]
             room.resources.close()
+            self._rooms.pop(room_id, None)
         self._workspaces.release(room_id)
-
-    async def _retire_after_failure(self, room_id: str) -> None:
-        try:
-            await self._close_room(room_id)
-        except Exception:
-            logger.exception(
-                "OMP room %s could not be closed; it stays owned until cleanup", room_id
-            )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Retire a room, joining a retirement already in progress for it.
