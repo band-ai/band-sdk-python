@@ -5,14 +5,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Callable
-from functools import wraps
+from collections.abc import AsyncIterator
 from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport import Transport
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from claude_agent_sdk.types import _configure_can_use_tool
+
+
+def _create_native_transport(options: ClaudeAgentOptions) -> Transport:
+    """Keep permission routing identical to the SDK's default transport."""
+    return SubprocessCLITransport(prompt="", options=_configure_can_use_tool(options))
+
 
 CHILD_EXIT_TIMEOUT_SECONDS = 5.0
 """How long a child the native close left running may take to die once killed."""
@@ -97,17 +102,6 @@ class ConfirmedCloseTransport(Transport):
         self._child = None
 
 
-def _confirmed_close(
-    factory: Callable[[ClaudeAgentOptions], Transport],
-) -> Callable[[ClaudeAgentOptions], Transport]:
-    @wraps(factory)
-    def create(options: ClaudeAgentOptions) -> Transport:
-        return ConfirmedCloseTransport(factory(options))
-
-    return create
-
-
-@_confirmed_close
 def create_transport(options: ClaudeAgentOptions) -> Transport:
-    """Keep permission routing identical to the SDK's default transport."""
-    return SubprocessCLITransport(prompt="", options=_configure_can_use_tool(options))
+    """Keep native permission routing under physical child custody."""
+    return ConfirmedCloseTransport(_create_native_transport(options))
