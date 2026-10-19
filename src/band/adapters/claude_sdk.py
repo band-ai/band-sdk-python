@@ -87,8 +87,6 @@ from band.converters.claude_sdk import (
 )
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
-from band.core.exceptions import BandConfigError, CleanupIncompleteError
-from band.core.harness import PreflightResult
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
     GENERIC_PROVIDER_FAILURE_MESSAGE,
@@ -118,6 +116,11 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+)
+from band.integrations.claude_sdk.checks import (
+    close_host_probes,
+    preflight_result,
+    require_server_info,
 )
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
@@ -160,6 +163,9 @@ from band.runtime.tools import (
     turn_effect,
 )
 from band.workspaces import RoomWorkspaces, WorkspaceResolver
+
+if TYPE_CHECKING:
+    from band.core.harness import PreflightResult
 
 logger = logging.getLogger(__name__)
 
@@ -758,30 +764,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
             # failed before the SDK created its query.
             self._harness_probe.own(client.disconnect)
             await client.connect()
-            info = await client.get_server_info()
-            if info is None:
-                raise BandConfigError("Claude did not return initialization metadata")
-            return info
+            return require_server_info(await client.get_server_info())
 
         return await self._harness_probe.run(initialize, timeout_s=timeout_s)
 
     async def preflight(self, *, timeout_s: float = 60.0) -> PreflightResult:
         """Handshake the configured Claude CLI without a room or inference."""
-        try:
-            await self._probe_server_info(timeout_s=timeout_s)
-        except CleanupIncompleteError:
-            raise
-        except TimeoutError:
-            return PreflightResult.failed(
-                "Claude initialization exceeded its timeout.",
-                "Check the configured CLI and host settings, or increase timeout_s.",
-            )
-        except Exception as error:  # noqa: BLE001 -- SDK failures are public diagnostics; never echo provider configuration
-            return PreflightResult.failed(
-                f"Claude initialization failed ({type(error).__name__}).",
-                "Check the configured Claude CLI, credentials, environment and settings.",
-            )
-        return PreflightResult.passed()
+        return await preflight_result(self._probe_server_info(timeout_s=timeout_s))
 
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -1689,31 +1678,21 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         self._turn_release.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
+    @close_host_probes
     async def cleanup_all(self) -> None:
-        """Close host probes and attempt room/MCP cleanup even if either fails.
+        """Stop the session manager, then the shared Band MCP server, within
+        one ``retention.transition_timeout_s`` budget.
 
-        Room sessions and MCP share one retention transition budget. An unfinished
-        or failed cleanup step stays owned for a retry.
+        Stopping closes admission for every room at once; rooms close first
+        because their CLIs dial the server until they do. An unfinished or
+        failed step stays owned for a retry.
         """
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
-        failures: list[BaseException] = []
-        # Fence rooms in the requester task before an unrelated probe can wait.
-        for cleanup in (
-            self._mcp.close_after(
-                self._stop_sessions(), retention=self.config.retention
-            ),
-            self.backend_turns.drain(),
-            super().cleanup_all(),
-        ):
-            try:
-                await cleanup
-            except BaseException as error:  # noqa: BLE001 -- attempt every cleanup without discarding cancellation
-                failures.append(error)
-        if len(failures) == 1:
-            raise failures[0]
-        if failures:
-            raise BaseExceptionGroup("Claude adapter cleanup failed", failures)
+        await self._mcp.close_after(
+            self._stop_sessions(), retention=self.config.retention
+        )
+        await self.backend_turns.drain()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow

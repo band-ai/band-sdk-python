@@ -134,12 +134,16 @@ or inference access.
 The adapter retains both the SDK client and its transport before connection.
 The transport retains an unconfirmed child even if the SDK's own close call
 returns; cleanup succeeds only after that child's exit is confirmed.
+If an outer transport accepts custody of that child, it may perform the physical
+exit confirmation instead; the native handle and version check remain retained.
 The preliminary SDK version check also stays owned after cancellation; a CLI
 that ignores its shutdown signal can keep cleanup incomplete until it exits.
 If a timed-out or failed startup cannot finish closing within the reporting
 budget, `CleanupIncompleteError` propagates instead of an ordinary failed
 result. Call `await adapter.cleanup_all()` again to join or retry that cleanup;
-room and MCP cleanup are still attempted when probe cleanup fails.
+room and MCP cleanup are still attempted when probe cleanup fails. Room shutdown
+keeps its original requester and runs before probe cleanup, even when either
+cleanup raises or its caller is cancelled.
 
 ## Room ownership
 

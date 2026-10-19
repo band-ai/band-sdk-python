@@ -11,7 +11,7 @@ from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from band.integrations.claude_sdk import transport
-from band.integrations.claude_sdk.transport import _RetainedCLITransport
+from band.integrations.claude_sdk.retained import RetainedCLITransport
 from band.runtime.tools import BAND_MCP_SERVER_NAME
 from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.paths import ROOM_PEER
@@ -28,7 +28,7 @@ sys.stdin.read()
 """
 
 
-class WorkspaceProcess(_RetainedCLITransport):
+class WorkspaceProcess(RetainedCLITransport):
     """Exercise SDK spawning, pipes and cleanup without a Claude installation."""
 
     refuse_close = False
@@ -100,5 +100,5 @@ def launch_children(
         children.append(child)
         return child
 
-    monkeypatch.setattr(transport, "_RetainedCLITransport", launch)
+    monkeypatch.setattr(transport, "RetainedCLITransport", launch)
     return children
