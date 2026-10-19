@@ -498,8 +498,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             try:
                 # Turn-phase diagnostics (classify a stuck turn from CI logs):
                 # if 'returned' never follows 'start', prompt_async is blocking
-                # (submission/scheduling), which no watcher bounds -- see the
-                # note below on _watch_turn_completion owning the timeout.
+                # (submission/scheduling) and the watcher, already running, ends
+                # the turn at its timeout -- see the note below.
                 logger.info(
                     "OpenCode turn: prompt_async start room=%s session=%s",
                     room_id,
@@ -1008,9 +1008,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_id: str,
         turn: TurnState,
     ) -> None:
-        # 'watcher started' after 'prompt_async returned' but no later
-        # 'session.idle' points at a lost/late SSE terminal event, not a slow
-        # model -- distinct from the 'timed out' branch below firing at 300s.
+        # 'prompt_async returned' but no later 'session.idle' points at a
+        # lost/late SSE terminal event, not a slow model -- distinct from the
+        # 'timed out' branch below firing at 300s. 'watcher started' only says
+        # the watcher is running: it starts before the prompt is sent.
         logger.info(
             "OpenCode turn: watcher started room=%s session=%s timeout=%ss",
             room_id,
@@ -1047,7 +1048,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
             # @mention, which the platform rejects) — otherwise on_message
-            # waits on the captured release_future forever.
+            # waits on turn_release_future forever.
             self._release_turn_wait_for(turn)
             self._clear_turn_state(
                 room_state,

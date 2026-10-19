@@ -250,8 +250,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             # Send to remote A2A agent and process events. A task paused on
             # INPUT_REQUIRED ends the stream normally and stays for the next turn.
             async with self.backend_turns.running(room_id, continued):
-                events = aiter(
-                    self._client.send_message(SendMessageRequest(message=a2a_message))
+                events = self._client.send_message(
+                    SendMessageRequest(message=a2a_message)
                 )
                 run, read = continued, []
                 if run is None:
