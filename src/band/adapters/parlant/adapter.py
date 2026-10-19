@@ -16,7 +16,7 @@ from typing_extensions import Unpack
 
 from band.adapters.parlant.config import ConfigureCallback, ParlantAdapterConfig
 from band.adapters.parlant.guidelines import GuidelineLedger, GuidelineSpec
-from band.adapters.parlant.history import inject_history
+from band.adapters.parlant.history import inject_history, name_this_agent_in_history
 from band.adapters.parlant.lifecycle import ServerLifecycle
 from band.adapters.parlant.messages import compose_user_message, post_user_message
 from band.adapters.parlant.responses import relay_agent_response
@@ -222,6 +222,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         as Parlant ToolEntry objects, built at startup."""
         return list(self._tools)
 
+    def _prompt_name(self) -> str:
+        """The name the tool-caller prompt uses: "You are an AI agent named …"."""
+        live_name = getattr(self._lifecycle.agent, "name", None)
+        if isinstance(live_name, str) and live_name:
+            return live_name
+        return self.config.name or self.agent_name or FALLBACK_AGENT_NAME
+
     def _agent_instructions(self, agent_description: str) -> str:
         """Behavioral instructions for the adapter-created Parlant agent."""
         if self.config.system_prompt:
@@ -237,7 +244,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         async def prepare(server: p.Server) -> tuple[p.Agent, Application]:
             return await self._prepare_server(
-                server, agent_name=agent_name, agent_description=agent_description
+                server, agent_description=agent_description
             )
 
         try:
@@ -257,13 +264,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         )
 
     async def _prepare_server(
-        self, server: p.Server, *, agent_name: str, agent_description: str
+        self, server: p.Server, *, agent_description: str
     ) -> tuple[p.Agent, Application]:
         """Declare everything Parlant must process before its setup phase."""
         agent = self._lifecycle.agent
         if agent is None:
             agent = await server.create_agent(
-                name=self.config.name or agent_name,
+                name=self._prompt_name(),
                 description=self._agent_instructions(agent_description),
             )
 
@@ -320,18 +327,36 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             rooms, room_id=room_id, sender_name=sender_name, tools=tools
         )
         with bound_session_tools(session_id=str(session_id), tools=tools):
-            if is_session_bootstrap and history:
+            agent_name = self._prompt_name()
+            addressed_history = name_this_agent_in_history(
+                history,
+                agent_id=tools.agent_id,
+                agent_name=agent_name,
+                participants=list(tools.participants),
+            )
+            if is_session_bootstrap and addressed_history:
                 injected = await inject_history(
                     app=rooms.app,
                     session_id=session_id,
-                    history=history,
+                    history=addressed_history,
                     agent_name=self.agent_name or FALLBACK_AGENT_NAME,
                 )
                 logger.info(
                     "Room %s: Injected %s messages from history", room_id, injected
                 )
             user_message = compose_user_message(
-                msg=msg, participants_msg=participants_msg, contacts_msg=contacts_msg
+                msg=msg,
+                participants_msg=participants_msg,
+                contacts_msg=contacts_msg,
+                agent_id=tools.agent_id,
+                agent_name=agent_name,
+                participants=list(tools.participants),
+            )
+            logger.info(
+                "Room %s: posting to Parlant (agent %s): %s",
+                room_id,
+                agent_name,
+                user_message,
             )
             try:
                 await self._converse(

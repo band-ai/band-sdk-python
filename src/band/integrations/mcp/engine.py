@@ -39,7 +39,7 @@ from pydantic import AliasChoices, BaseModel, Field, create_model, field_validat
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
 
-from band.core.exceptions import BandToolError
+from band.core.exceptions import BandToolError, MessagePostError, MessagePostKind
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.turn import Turn
@@ -240,11 +240,18 @@ def enrich_send_message_error(
     """
     if definition.name != BandTool.SEND_MESSAGE:
         return error
+    if (
+        isinstance(error, MessagePostError)
+        and error.kind is MessagePostKind.UNCONFIRMED_RECIPIENT
+    ):
+        return error
     message = append_available_mention_handles(
         str(error),
         getattr(tools, "participants", []),
         getattr(tools, "agent_id", None),
     )
+    if isinstance(error, MessagePostError):
+        return MessagePostError(message, kind=error.kind, detail=error.detail)
     return type(error)(message)
 
 

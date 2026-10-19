@@ -24,8 +24,8 @@ from tests.runtime.turnadmission.kit import (
 WITHIN_GRACE = CYCLE_CANCEL_GRACE_SECONDS / 2
 
 
+# Real time avoids looptime rounding randomized reconciliation deadlines down.
 @pytest.mark.timeout(10)
-@pytest.mark.looptime
 class TestGraceControls:
     """STOP during the platform-stop observer's grace leaves the next turn unstarted."""
 

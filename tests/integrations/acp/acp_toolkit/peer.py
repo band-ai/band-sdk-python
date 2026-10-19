@@ -23,12 +23,17 @@ from band.integrations.acp.client_adapter import ACPClientAdapterConfig
 from band.runtime.tools import BandTool
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.pipepeer import (
+    CONTROL_HOST,
+    CONTROL_PORT_ARG,
+    PipeCommand,
+    PipeRole,
+    control_line,
+)
 
 INITIALIZE_PENDING_LINE = "initialization pending"
 PEER_EXIT_CODE = 3
 CRASH_MARKER_ARG = "--crash-marker"
-ORPHAN_PID_FILE_ARG = "--orphan-pid-file"
-ORPHAN_LIFETIME_S = 120
 RECOVERED_REPLY = "Recovered after the connection failed."
 
 
@@ -49,7 +54,7 @@ def stdio_peer_config(
     lines: list[str],
     *,
     crash_marker: Path | None = None,
-    orphan_pid_file: Path | None = None,
+    control_port: int | None = None,
     **settings: Any,
 ) -> ACPClientAdapterConfig:
     # Windows' venv redirector keeps stdout open until the peer exits.
@@ -63,8 +68,8 @@ def stdio_peer_config(
     ]
     if crash_marker is not None:
         command.extend((CRASH_MARKER_ARG, str(crash_marker)))
-    if orphan_pid_file is not None:
-        command.extend((ORPHAN_PID_FILE_ARG, str(orphan_pid_file)))
+    if control_port is not None:
+        command.extend((CONTROL_PORT_ARG, str(control_port)))
     return ACPClientAdapterConfig(
         command=command,
         env={"__PYVENV_LAUNCHER__": sys.executable},
@@ -73,18 +78,37 @@ def stdio_peer_config(
     )
 
 
-def spawn_pipe_holder(pid_file: Path) -> None:
-    """Start a descendant that inherits this peer's stdout and stderr, as a
-    background job does, and record its pid."""
-    holder = subprocess.Popen(
+def spawn_pipe_holder(port: int) -> None:
+    """The control connection releases the descendant even after its agent exits."""
+    subprocess.Popen(
         # Not sys.executable: under __PYVENV_LAUNCHER__ that is Windows' venv
         # redirector, whose pid is not the child holding the pipes.
-        [sys._base_executable, "-c", f"import time; time.sleep({ORPHAN_LIFETIME_S})"],
+        [sys._base_executable, str(Path(__file__).with_name("pipepeer.py")), str(port)],
         stdin=subprocess.DEVNULL,
         stdout=sys.stdout,
         stderr=sys.stderr,
     )
-    pid_file.write_text(str(holder.pid))
+
+
+async def controlled_exit(peer: StdioPeer, port: int) -> asyncio.Task[None]:
+    reader, writer = await asyncio.open_connection(CONTROL_HOST, port)
+    writer.write(control_line(PipeRole.AGENT))
+    await writer.drain()
+    command = await reader.readline()
+    if command != control_line(PipeCommand.START):
+        peer.exit_process()
+    spawn_pipe_holder(port)
+
+    async def exit_when_requested() -> None:
+        try:
+            command = await reader.readline()
+            if command not in (b"", control_line(PipeCommand.EXIT)):
+                raise ValueError(f"Unexpected agent command: {command!r}")
+        finally:
+            writer.close()
+            peer.exit_process()
+
+    return asyncio.create_task(exit_when_requested())
 
 
 class StdioPeer(FakeACPAgent):
@@ -174,12 +198,17 @@ async def main() -> None:
     parser.add_argument("code", type=int)
     parser.add_argument("lines", nargs="*")
     parser.add_argument(CRASH_MARKER_ARG, type=Path)
-    parser.add_argument(ORPHAN_PID_FILE_ARG, type=Path)
+    parser.add_argument(CONTROL_PORT_ARG, type=int)
     args = parser.parse_args()
-    if args.orphan_pid_file is not None:
-        spawn_pipe_holder(args.orphan_pid_file)
     peer = StdioPeer(args.stage, args.code, args.lines, args.crash_marker)
+    control = (
+        await controlled_exit(peer, args.control_port)
+        if args.control_port is not None
+        else None
+    )
     await run_agent(peer)
+    if control is not None:
+        control.cancel()
     peer.exit_process()
 
 
