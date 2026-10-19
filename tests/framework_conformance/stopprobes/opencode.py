@@ -200,7 +200,6 @@ async def stop_during_timeout_abort(mode: ControlMode) -> list[str]:
     await cancel_turn(turn)
     await adapter.on_interrupt(ROOM_ID, mode)
     client.release.set()
-    assert adapter.backend_turns is not None
     await adapter.backend_turns.drain()
     recorded = list(client.completed)
     await adapter.on_cleanup(ROOM_ID)

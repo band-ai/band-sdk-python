@@ -95,16 +95,10 @@ async def shutdown_right_after_stop() -> list[str]:
         await drain()
 
     with patch.object(adapter.backend_turns, "drain", record_drain):
-        async with asyncio.TaskGroup() as tasks:
-            shutdown = tasks.create_task(adapter.cleanup_all())
-            entering = tasks.create_task(drain_entered.wait())
-            try:
-                await asyncio.wait(
-                    {shutdown, entering}, return_when=asyncio.FIRST_COMPLETED
-                )
-            finally:
-                session.abort_released.set()
-                entering.cancel()
+        shutdown = asyncio.create_task(adapter.cleanup_all())
+        await wait_until(lambda: drain_entered.is_set() or shutdown.done())
+        session.abort_released.set()
+        await shutdown
     return journal(client)
 
 

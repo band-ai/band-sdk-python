@@ -120,7 +120,6 @@ async def timeout() -> list[str]:
     tools = JournaledTools(client.journal)
     with pytest.raises(TurnResultAlreadyReported):
         await adapter.on_event(turn_input(tools))
-    assert adapter.backend_turns is not None
     await adapter.backend_turns.drain()
     return [entry for entry in client.journal if entry not in client.sent]
 

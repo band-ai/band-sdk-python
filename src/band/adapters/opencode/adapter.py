@@ -471,7 +471,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             raise RuntimeError("OpenCode client is not initialized")
 
         turn: TurnState | None = None
-        turn_future: asyncio.Future[None] | None = None
         try:
             session_id, created = await self._ensure_session(room_state, history)
             if Emit.TASK_EVENTS in self.features.emit and (
@@ -548,7 +547,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
             if release_future is not None:
                 await release_future
-            if turn_future is not None and turn_future.done():
+            if turn_future.done():
                 await turn_task
         # NOTE: the turn timeout is owned solely by _watch_turn_completion (via
         # asyncio.wait_for), which aborts the session and emits the error event.
@@ -1050,8 +1049,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await self._emit_turn_usage(room_id, turn)
             except Exception:
                 logger.exception(
-                    "Failed to deliver the OpenCode turn result for room %s",
-                    room_id,
+                    "Failed to deliver the OpenCode turn result for room %s", room_id
                 )
                 await self._report_delivery_failure(turn)
         finally:
