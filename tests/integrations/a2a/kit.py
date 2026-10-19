@@ -8,8 +8,10 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from a2a.helpers import new_text_message
 from a2a.types import (
     CancelTaskRequest,
+    Role,
     SendMessageRequest,
     StreamResponse,
     Task,
@@ -18,22 +20,37 @@ from a2a.types import (
 )
 
 CANCELLED = "tasks/cancel"
+WORKING = TaskState.Name(TaskState.TASK_STATE_WORKING)
+CANCELED = TaskState.Name(TaskState.TASK_STATE_CANCELED)
 
 
 def task_update(
-    task_id: str, state_name: str, *, context_id: str = "ctx-1"
+    task_id: str,
+    state_name: str,
+    *,
+    context_id: str = "ctx-1",
+    text: str | None = None,
 ) -> StreamResponse:
-    """A stream event reporting ``task_id`` in the named ``TaskState``."""
-    status = TaskStatus(state=TaskState.Value(state_name))
+    """A stream event reporting ``task_id`` in the named ``TaskState``, with
+    ``text`` as the agent's status message."""
+    status = TaskStatus(
+        state=TaskState.Value(state_name),
+        message=new_text_message(text, role=Role.ROLE_AGENT) if text else None,
+    )
     return StreamResponse(task=Task(id=task_id, context_id=context_id, status=status))
 
 
 @dataclass(frozen=True)
 class ScriptedStream:
-    """One reply stream: these events, then either the end or a held turn."""
+    """One reply stream: these events, then either the end or a held turn.
+
+    A ``gate`` keeps the remote silent after it accepted the request, until
+    the gate is set.
+    """
 
     events: tuple[StreamResponse, ...]
     hold: bool = False
+    gate: asyncio.Event | None = None
 
 
 class RecordingA2AClient:
@@ -57,14 +74,21 @@ class RecordingA2AClient:
         self._cancel_release = asyncio.Event()
         return self._cancel_release
 
-    def script(self, *events: StreamResponse, hold: bool = False) -> None:
-        self._streams.append(ScriptedStream(events, hold))
+    def script(
+        self,
+        *events: StreamResponse,
+        hold: bool = False,
+        gate: asyncio.Event | None = None,
+    ) -> None:
+        self._streams.append(ScriptedStream(events, hold, gate))
 
     async def send_message(
         self, request: SendMessageRequest, *, context: Any = None
     ) -> AsyncIterator[StreamResponse]:
         self.continued.append(request.message.task_id)
         stream = self._streams.popleft()
+        if stream.gate is not None:
+            await stream.gate.wait()
         for event in stream.events:
             yield event
         if stream.hold:
@@ -86,11 +110,7 @@ class RecordingA2AClient:
         self, request: Any, *, context: Any = None
     ) -> AsyncIterator[StreamResponse]:
         """The task stays non-terminal until its cancel has finished."""
-        state = (
-            "TASK_STATE_CANCELED"
-            if request.id in self._cancelled_ids
-            else "TASK_STATE_WORKING"
-        )
+        state = CANCELED if request.id in self._cancelled_ids else WORKING
         yield task_update(request.id, state)
 
     async def close(self) -> None:

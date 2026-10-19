@@ -38,7 +38,6 @@ INHERITED_PROBES: dict[str, str] = {
 #: The module each probe needs beyond the dev venv's always-installed core;
 #: a venv without it skips that probe's cases.
 REQUIRED_MODULES: dict[str, str] = {
-    "A2AAdapter": "a2a",
     "ACPClientAdapter": "acp",
     "ClaudeSDKAdapter": "claude_agent_sdk",
     "CopilotSDKAdapter": "copilot",
