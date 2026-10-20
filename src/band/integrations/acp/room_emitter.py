@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Self
 
 from band.core.content import has_visible_content
@@ -16,6 +18,7 @@ from band.integrations.acp.types import (
     ToolStatus,
 )
 from band.runtime.tools import TurnEffect, turn_effect
+from band.runtime.working_state import set_permission_wait
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +80,17 @@ class RoomTurnEmitter:
         self._emit = frozenset(emit) if emit is not None else frozenset(Emit)
         self._pending_text: list[str] = []
         self._staged_effects: list[TurnEffect] = []
+        self._manual_waits = 0
+
+    @asynccontextmanager
+    async def permission_wait(self) -> AsyncIterator[None]:
+        self._manual_waits += 1
+        try:
+            await set_permission_wait(self._tools, True)
+            yield
+        finally:
+            self._manual_waits -= 1
+            await set_permission_wait(self._tools, self._manual_waits > 0)
 
     async def emit(self, chunk: CollectedChunk) -> None:
         self._stage_tool_outcome(chunk)

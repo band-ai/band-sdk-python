@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -61,30 +61,17 @@ def fake_agno_agent(
     agent.tools = []
     resp = response if response is not None else RunOutput()
 
-    if events is None:
-        # Non-streaming path (Emit.TOOL_CALLS off): `await agent.arun(...)`.
-        async def _arun_once(*args: Any, **kwargs: Any) -> RunOutput:
+    def arun(*args: Any, **kwargs: Any) -> Any:
+        async def stream() -> Any:
             if model_turn is not None:
                 await model_turn()
-            return resp
+            for event in events or []:
+                yield event
+            yield resp
 
-        agent.arun = AsyncMock(side_effect=_arun_once)
-    else:
-        # Streaming path (Emit.TOOL_CALLS on): the adapter iterates
-        # `agent.arun(stream=True, ...)`, which yields the run events then the
-        # final RunOutput. A bare MagicMock returns an async iterator without
-        # awaiting, matching how the adapter consumes the stream.
-        def _arun(*args: Any, **kwargs: Any) -> Any:
-            async def _stream() -> Any:
-                if model_turn is not None:
-                    await model_turn()
-                for event in events:
-                    yield event
-                yield resp
+        return stream()
 
-            return _stream()
-
-        agent.arun = MagicMock(side_effect=_arun)
+    agent.arun = MagicMock(side_effect=arun)
     return agent
 
 
@@ -155,6 +142,9 @@ class CapturingModel(Model):
             ]
             await send.entrypoint(content=self._content, mentions=["@Alice"])
         return ModelResponse(content=self._content)
+
+    async def aresponse_stream(self, messages: list[Message], **kwargs: Any) -> Any:
+        yield await self.aresponse(messages, **kwargs)
 
     @property
     def captured_system_prompt(self) -> str:
@@ -256,7 +246,7 @@ def make_agent_input(
 
 def run_input(copy: MagicMock) -> list[Message]:
     """The exact list[Message] the faked Agno agent received via arun(input=...)."""
-    return copy.arun.await_args.kwargs["input"]
+    return copy.arun.call_args.kwargs["input"]
 
 
 def platform_msg(

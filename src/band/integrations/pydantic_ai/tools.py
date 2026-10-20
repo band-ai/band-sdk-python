@@ -37,6 +37,7 @@ from band.runtime.tools import (
     turn_effect,
     validate_tool_arguments,
 )
+from band.runtime.working_state import model_tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,8 @@ def _dispatcher(
         # something to hand the model as a tool error it could act on.
         method = _resolve_method(ctx.deps, definition)
         try:
-            result = await method(**kwargs)
+            async with model_tool_activity(ctx.deps, definition.name):
+                result = await method(**kwargs)
         except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return await _dispatch_failed(ctx, definition, error, notify_room=True)
         try:
