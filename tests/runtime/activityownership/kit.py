@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -36,3 +36,16 @@ class ActivityPlatform(LifecyclePlatform):
                 201, json={"data": {"id": "m-1", "success": True, "recipients": []}}
             )
         return super().answer(request)
+
+
+class ObservedIdle(asyncio.Event):
+    """The idle event a graceful stop waits on, announcing that wait."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set()
+        self.awaited = asyncio.Event()
+
+    async def wait(self) -> Literal[True]:
+        self.awaited.set()
+        return await super().wait()

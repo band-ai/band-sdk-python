@@ -140,3 +140,50 @@ class TestActivityDetail:
         finally:
             await reporter.stop()
         assert reports == ["reasoning", "tool_call"]
+
+    async def test_empty_tool_name_reports_unknown(self) -> None:
+        reports: list[dict[str, Any]] = []
+
+        async def report(working: bool) -> None:
+            if working:
+                reports.append(reporter.activity.model_dump(exclude_unset=True))
+
+        reporter = WorkingStateReporter(report)
+        try:
+            await reporter.start()
+            await reporter.update(
+                current=lambda: True,
+                activity=AgentActivityDetail(kind="tool_call", name=""),
+            )
+        finally:
+            await reporter.stop()
+        assert reports[-1] == {"kind": "tool_call", "name": "unknown"}
+
+    async def test_observation_outside_a_cycle_reports_nothing(self) -> None:
+        reports: list[bool] = []
+
+        async def report(working: bool) -> None:
+            reports.append(working)
+
+        reporter = WorkingStateReporter(report)
+        await reporter.update(
+            current=lambda: True,
+            activity=AgentActivityDetail(kind="tool_call", name="Bash"),
+        )
+        assert reports == []
+
+    async def test_permission_wait_does_not_carry_into_the_next_cycle(self) -> None:
+        reports: list[str | None] = []
+
+        async def report(working: bool) -> None:
+            reports.append(reporter.activity.kind if working else None)
+
+        reporter = WorkingStateReporter(report)
+        try:
+            await reporter.start()
+            await reporter.update(current=lambda: True, waiting=True)
+            await reporter.stop()
+            await reporter.start()
+        finally:
+            await reporter.stop()
+        assert reports == ["reasoning", "permission", None, "reasoning", None]

@@ -1873,11 +1873,10 @@ class ExecutionContext:
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
-        detail = self._working_reporter.activity if working else None
         return await self.link.report_activity(
             self.room_id,
             working,
-            activity=detail,
+            activity=self._working_reporter.activity,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
@@ -1941,7 +1940,7 @@ class ExecutionContext:
         if self._activity_owner is not scope:
             self._activity_stop_scope = None
         self._activity_owner = scope
-        await self._working_reporter.start(owner=scope)
+        await self._working_reporter.start()
 
     def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
         return ScopeActivityObserver(self, scope) if scope is not None else None

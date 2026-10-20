@@ -16,7 +16,7 @@ from band.runtime.working_state import (
     set_permission_wait,
 )
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.activityownership.kit import ActivityPlatform, ObservedIdle
 from tests.runtime.helpers import ROOM_ID
 
 
@@ -87,6 +87,53 @@ class TestOwnedDetail:
         before = list(activity_platform.activity_bodies)
         await end_tool_activity(captured[0])
         assert activity_platform.activity_bodies == before
+
+    async def test_settled_turn_cannot_restart_reporting(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        captured: list[AgentTools] = []
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            captured.append(AgentTools.from_context(ctx))
+
+        ctx = execution(handler)
+        await ctx._process_event(make_message_event())
+        await ctx._join_activity_completion()
+        before = list(activity_platform.activity_bodies)
+        await report_tool_activity(captured[0], "Bash")
+        assert before[-1] == {"working": False}
+        assert activity_platform.activity_bodies == before
+
+    async def test_graceful_stop_drops_observations_from_the_draining_turn(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        captured: list[AgentTools] = []
+        handler_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            captured.append(AgentTools.from_context(ctx))
+            handler_started.set()
+            await release.wait()
+
+        ctx = execution(handler)
+        idle = ctx._idle_event = ObservedIdle()
+        await ctx.start()
+        await ctx.on_event(make_message_event())
+        await handler_started.wait()
+        stopping = asyncio.create_task(ctx.stop(timeout=30))
+        await idle.awaited.wait()
+        await report_tool_activity(captured[0], "Bash")
+        release.set()
+        assert await stopping
+        assert activity_platform.activity_bodies == [
+            {"working": True, "activity": {"kind": "reasoning"}},
+            {"working": False},
+        ]
 
     async def test_queued_observation_is_rechecked_after_stop_and_replacement(
         self,

@@ -21,6 +21,8 @@ ReportFn = Callable[[bool], Awaitable[object]]
 
 UNKNOWN_ACTIVITY_TOOL_NAME = "unknown"
 REASONING = AgentActivityDetail(kind="reasoning")
+MEMORY = AgentActivityDetail(kind="memory")
+PERMISSION = AgentActivityDetail(kind="permission")
 
 
 class ActivityObserver(Protocol):
@@ -34,6 +36,13 @@ def tool_call_activity(name: str | None) -> AgentActivityDetail:
     return AgentActivityDetail(
         kind="tool_call", name=name or UNKNOWN_ACTIVITY_TOOL_NAME
     )
+
+
+def names_only(activity: AgentActivityDetail) -> AgentActivityDetail:
+    """Keep only what the room may see: the kind and, for a tool, its name."""
+    if activity.kind == "tool_call":
+        return tool_call_activity(activity.name)
+    return AgentActivityDetail(kind=activity.kind)
 
 
 def _observer(tools: object) -> ActivityObserver | None:
@@ -52,7 +61,7 @@ async def end_tool_activity(tools: object) -> None:
 
 async def report_memory_activity(tools: object) -> None:
     if observer := _observer(tools):
-        await observer.update(AgentActivityDetail(kind="memory"))
+        await observer.update(MEMORY)
 
 
 async def set_permission_wait(tools: object, waiting: bool) -> None:
@@ -86,7 +95,6 @@ class WorkingStateReporter:
         self._enabled = enabled
 
         self._active = False
-        self._cycle: object | None = None
         self._ordinary = REASONING
         self._manual_wait = False
         self._started_at: float | None = None
@@ -100,13 +108,10 @@ class WorkingStateReporter:
     @property
     def activity(self) -> AgentActivityDetail:
         """The immutable effective detail, read by the bool callback under its lock."""
-        return (
-            AgentActivityDetail(kind="permission")
-            if self._manual_wait
-            else self._ordinary
-        )
+        return PERMISSION if self._manual_wait else self._ordinary
 
-    async def start(self, *, owner: object | None = None) -> None:
+    async def start(self) -> None:
+        """Begin a cycle after the previous false; a re-entrant start is a no-op."""
         if not self._enabled:
             return
         await self._finish_false_send()
@@ -114,14 +119,12 @@ class WorkingStateReporter:
             if self._active:
                 return
             self._active = True
-            cycle = owner if owner is not None else object()
-            self._cycle = cycle
             self._reset_detail()
             self._started_at = asyncio.get_running_loop().time()
             await self._report_locked(True)
-            if self._cycle is cycle and self._active:
+            if self._active:
                 self._task = asyncio.create_task(
-                    self._keep_alive(cycle), name="working-state-keepalive"
+                    self._keep_alive(), name="working-state-keepalive"
                 )
 
     async def update(
@@ -131,6 +134,7 @@ class WorkingStateReporter:
         activity: AgentActivityDetail | None = None,
         waiting: bool | None = None,
     ) -> None:
+        """Apply an observation; ``current`` rechecks ownership under the lock."""
         if not self._enabled:
             return
         async with self._lock:
@@ -138,11 +142,7 @@ class WorkingStateReporter:
                 return
             previous = self.activity
             if activity is not None:
-                self._ordinary = (
-                    tool_call_activity(activity.name)
-                    if activity.kind == "tool_call"
-                    else AgentActivityDetail(kind=activity.kind)
-                )
+                self._ordinary = names_only(activity)
             if waiting is not None:
                 self._manual_wait = waiting
             if self.activity != previous:
@@ -191,7 +191,6 @@ class WorkingStateReporter:
 
     def _arm_false_report(self) -> asyncio.Task[None] | None:
         self._active = False
-        self._cycle = None
         self._reset_detail()
         task, self._task = self._task, None
         if task is not None:
@@ -223,7 +222,7 @@ class WorkingStateReporter:
             if send.done():
                 self._false_send = None
 
-    async def _keep_alive(self, cycle: object) -> None:
+    async def _keep_alive(self) -> None:
         """Re-send ``working: true`` on cadence until stopped or capped."""
         while True:
             await asyncio.sleep(self._keep_alive_seconds)
@@ -239,7 +238,7 @@ class WorkingStateReporter:
                     self._max_working_state_seconds,
                 )
                 return
-            await self._safe_report(True, cycle=cycle)
+            await self._safe_report(True)
 
     def _cap_reached(self) -> bool:
         if self._max_working_state_seconds is None or self._started_at is None:
@@ -247,11 +246,9 @@ class WorkingStateReporter:
         elapsed = asyncio.get_running_loop().time() - self._started_at
         return elapsed >= self._max_working_state_seconds
 
-    async def _safe_report(self, working: bool, *, cycle: object | None = None) -> None:
+    async def _safe_report(self, working: bool) -> None:
         async with self._lock:
-            if working and (
-                not self._active or self._cycle is not cycle or self._cap_reached()
-            ):
+            if working and (not self._active or self._cap_reached()):
                 return
             await self._report_locked(working)
 
