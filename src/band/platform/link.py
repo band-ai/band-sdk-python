@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING
 
 from band_sdk_core import AgentTopicKind, SessionState
@@ -222,7 +223,8 @@ class BandLink:
                 raise
 
             self._ws = ws
-            self._is_connected = True
+            # A supersede handled during the join has already ended it.
+            self._is_connected = not ws.transport_ended
             logger.info("Connected to platform")
         finally:
             self._connecting = False
@@ -231,10 +233,11 @@ class BandLink:
         if not self._ws:
             return
 
-        try:
-            await self._ws.leave_agent_control_channel(self.agent_id)
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Error unsubscribing from agent_control: %s", e)
+        if not self._ws.transport_ended:
+            try:
+                await self._ws.leave_agent_control_channel(self.agent_id)
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
+                logger.warning("Error unsubscribing from agent_control: %s", e)
 
         await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)
@@ -259,7 +262,7 @@ class BandLink:
         so the callback wiring only needs to be kept in sync in one place."""
         await ws.join_agent_control_channel(
             self.agent_id,
-            on_supersede=self._on_supersede,
+            on_supersede=partial(self._on_supersede, ws),
             on_control=self._on_control,
         )
 
@@ -378,7 +381,9 @@ class BandLink:
         """
         await self._subscriptions_manager.drain_reconciliation(self._connected_ws())
 
-    async def _on_supersede(self, payload: SupersedePayload) -> None:
+    async def _on_supersede(
+        self, ws: WebSocketClient, payload: SupersedePayload
+    ) -> None:
         """Handle an agent_control supersede event before the platform closes
         the socket. Session arbitrates whether this specific supersede is
         actually current (not a stale notification about an epoch this
@@ -386,28 +391,27 @@ class BandLink:
         retryable supersede should keep the connection reconnecting --
         though the platform hardcodes retryable=False today, so in practice
         this still always resolves to Dead.
+
+        ``ws`` is the client the push arrived on rather than ``_ws``, which
+        ``connect()`` assigns only after the control channel is joined.
         """
-        if self._ws is not None:
-            outcome = self._ws.handle_supersede(payload.retryable, payload.retry_after)
-            reason = payload.to_disconnect_reason(outcome)
-            if outcome.state is not SessionState.Dead:
-                # outcome.retry_after_s is computed but intentionally not
-                # applied here: enforcing it would mean this SDK taking over
-                # firing the actual reconnect attempt, which is the vendored
-                # PHXChannelsClient auto_reconnect loop's job today (see the
-                # design doc's out-of-scope boundary) -- untouched reconnect
-                # keeps working exactly as it does for any other disconnect.
-                logger.info(
-                    "Supersede reported retryable=True; Session kept the "
-                    "connection reconnecting (state=%s, retry_after_s=%s), "
-                    "not treating it as terminal.",
-                    outcome.state,
-                    outcome.retry_after_s,
-                )
-                return
-            self._ws.record_terminal_disconnect(reason)
-        else:
-            reason = payload.to_disconnect_reason()
+        outcome = ws.handle_supersede(payload.retryable, payload.retry_after)
+        reason = payload.to_disconnect_reason(outcome)
+        if outcome.state is not SessionState.Dead:
+            # outcome.retry_after_s is computed but intentionally not
+            # applied here: enforcing it would mean this SDK taking over
+            # firing the actual reconnect attempt, which is the phoenix
+            # client's auto_reconnect loop's job -- untouched reconnect keeps
+            # working exactly as it does for any other disconnect.
+            logger.info(
+                "Supersede reported retryable=True; Session kept the "
+                "connection reconnecting (state=%s, retry_after_s=%s), "
+                "not treating it as terminal.",
+                outcome.state,
+                outcome.retry_after_s,
+            )
+            return
+        ws.record_terminal_disconnect(reason)
         self._last_disconnect_reason = reason
         self._is_connected = False
         logger.warning(

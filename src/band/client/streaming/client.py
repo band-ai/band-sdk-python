@@ -23,6 +23,7 @@ from phoenix_channels_python_client.client import (
     PhoenixChannelsProtocolVersion,
     PHXChannelsClient,
 )
+from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import Field
@@ -33,6 +34,7 @@ from band.client.streaming.errors import (
 )
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
+from band.core.retention.cleanup import report_owned, spawn_owned
 from band.core.types import ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
@@ -348,6 +350,12 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
+# Band never stops a session with a close code: its stop signals are a
+# supersede push and an upgrade rejection, and the platform answers any
+# peer-initiated close with 1000.
+RECONNECT_POLICY = ReconnectPolicy(reconnect_on_normal_close=True)
+TERMINAL_SHUTDOWN_REASON = "terminal platform disconnect"
+
 
 def _disconnect_reason_from_exception(
     exc: Exception, outcome: SessionOutcome
@@ -401,6 +409,9 @@ class WebSocketClient:
         self._session = Session(self._watchdog.policy)
         self._probed_failure_message: str | None = None
         self._cached_connect_failure: WebSocketUpgradeError | None = None
+        # The scheduled terminal shutdown: held so it stays alive, and its
+        # presence tells run_forever the transport has been ended.
+        self._transport_shutdown: asyncio.Task[None] | None = None
 
     @property
     def validation_error_count(self) -> int:
@@ -411,6 +422,11 @@ class WebSocketClient:
     def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
         """Most recent terminal disconnect reason reported by the platform."""
         return self._last_disconnect_reason
+
+    @property
+    def transport_ended(self) -> bool:
+        """Whether a terminal disconnect has shut the transport down for good."""
+        return self._transport_shutdown is not None
 
     def reset_validation_error_count(self) -> int:
         """Reset the validation error counter and return the previous value.
@@ -453,6 +469,7 @@ class WebSocketClient:
             self.api_key,
             protocol_version=PhoenixChannelsProtocolVersion.V2,
             auto_reconnect=False,
+            reconnect_policy=RECONNECT_POLICY,
             heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
             on_reconnect=self._handle_reconnect,
             on_disconnect=self._on_disconnect,
@@ -616,6 +633,7 @@ class WebSocketClient:
         self._session = Session(self._watchdog.policy)
         self._probed_failure_message = None
         self._cached_connect_failure = None
+        self._transport_shutdown = None
         while True:
             now = asyncio.get_running_loop().time()
             epoch = self._session.begin_attempt(now)
@@ -742,14 +760,28 @@ class WebSocketClient:
                 )
 
     def record_terminal_disconnect(self, reason: WebSocketDisconnectReason) -> None:
-        """Record a terminal platform disconnect reason and disable reconnect."""
+        """Record a terminal platform disconnect reason and end the transport."""
         self._last_disconnect_reason = reason
-        self.disable_reconnect()
+        self.end_transport()
 
-    def disable_reconnect(self) -> None:
-        """Disable PHX auto-reconnect for a terminal platform disconnect."""
-        if self.client:
-            self.client.auto_reconnect = False
+    def end_transport(self) -> None:
+        """Shut the transport down for good, so it never reconnects.
+
+        Clearing ``auto_reconnect`` alone loses a race: the transport reads it
+        once per close, before its backoff, so a supersede handled during the
+        backoff would still reconnect. The shutdown is scheduled, not awaited,
+        because the caller runs inside a topic processor that it stops.
+        """
+        client = self.client
+        # auto_reconnect is False until the first connect finalizes, while
+        # __aenter__'s own Session loop owns the outcome, and after an earlier end.
+        if client is None or not client.auto_reconnect:
+            return
+        client.auto_reconnect = False
+        self._transport_shutdown = spawn_owned(
+            client.shutdown(TERMINAL_SHUTDOWN_REASON),
+            label="Terminal transport shutdown",
+        )
 
     def handle_supersede(
         self, retryable: bool, retry_after_s: float | None
@@ -977,7 +1009,13 @@ class WebSocketClient:
         return await self._require_client().unsubscribe_from_topic(topic)
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
-        """Block until the connection ends; see ``Agent.run_forever``."""
-        await self._require_client().run_forever(
-            install_signal_handlers=install_signal_handlers
-        )
+        """Block until the connection ends; see ``Agent.run_forever``.
+
+        A transport already ended by a terminal disconnect has nothing left to
+        run, so this returns once its shutdown settles.
+        """
+        client = self._require_client()
+        if self._transport_shutdown is not None:
+            await report_owned(self._transport_shutdown, None)
+            return
+        await client.run_forever(install_signal_handlers=install_signal_handlers)
