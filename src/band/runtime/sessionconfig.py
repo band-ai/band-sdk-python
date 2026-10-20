@@ -48,7 +48,7 @@ class SessionConfig(BaseSettings):
     # Keep-alive cadence: how often working:true is refreshed while a cycle runs.
     # Must be < TTL/2 so a single missed/slow ping still lands inside the TTL.
     working_keep_alive_seconds: float = 3.0
-    # Total deadline for discovery, POST and a compatibility fallback.
+    # Total deadline for one report's POST and its compatibility fallback.
     # Must be < cadence so a slow report cannot pile onto the next tick.
     working_request_timeout_seconds: int = 2
     # Optional upper bound on how long we keep asserting working:true for one

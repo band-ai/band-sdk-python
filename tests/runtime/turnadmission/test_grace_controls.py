@@ -70,7 +70,8 @@ class TestGraceControls:
         assert queued_synthetic(ctx) == ["local-A"]
 
         await play(ctx, platform)
-        await wait_for_condition(lambda: adapter.completed == ["local-A"])
+        assert await adapter.next_completion() == "local-A"
+        assert adapter.completed == ["local-A"]
 
     async def test_stop_during_turn_grace_skips_control_probe(
         self,

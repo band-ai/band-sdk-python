@@ -7,38 +7,33 @@ from typing import Any
 
 import httpx
 
-VERSION_URL = "https://platform.test/api/version"
+from band.platform.activity import API_VERSION_HEADER
+from tests.activitysupport import SUPPORTED_VERSION
+
+DETAIL = {"kind": "tool_call", "name": "Bash"}
 
 
 class ActivityPeer:
-    def __init__(self) -> None:
-        self.version: object = {"agent_version": "1.25.0"}
-        self.version_status = 200
-        self.version_content: bytes | None = None
-        self.version_requests: list[httpx.Request] = []
-        self.reports: list[dict[str, Any]] = []
-        self.responses: deque[httpx.Response] = deque()
-        self.post_entered = asyncio.Event()
-        self.post_release = asyncio.Event()
-        self.hold_post_number: int | None = None
-        self.discovering = asyncio.Event()
-        self.discovery_release: asyncio.Event | None = None
+    """The activity endpoint, advertising ``version`` on every response."""
 
-    async def discover(self, request: httpx.Request) -> httpx.Response:
-        self.version_requests.append(request)
-        self.discovering.set()
-        if self.discovery_release is not None:
-            await self.discovery_release.wait()
-        if self.version_content is not None:
-            return httpx.Response(self.version_status, content=self.version_content)
-        return httpx.Response(self.version_status, json=self.version)
+    def __init__(self) -> None:
+        self.version: str | None = SUPPORTED_VERSION
+        self.reports: list[dict[str, Any]] = []
+        self.requests: list[httpx.Request] = []
+        self.responses: deque[httpx.Response] = deque()
+        self.stall_post_number: int | None = None
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
+        self.requests.append(request)
         self.reports.append(body)
-        if len(self.reports) == self.hold_post_number:
-            self.post_entered.set()
-            await self.post_release.wait()
-        if self.responses:
-            return self.responses.popleft()
-        return httpx.Response(200, json={"data": {"working": body["working"]}})
+        if len(self.reports) == self.stall_post_number:
+            await asyncio.Event().wait()
+        response = (
+            self.responses.popleft()
+            if self.responses
+            else httpx.Response(200, json={"data": {"working": body["working"]}})
+        )
+        if self.version is not None:
+            response.headers[API_VERSION_HEADER] = self.version
+        return response
