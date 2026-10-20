@@ -14,6 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AdapterFeatures, Emit, ToolEventKey
+from band.integrations.crewai.turn import ToolTurn
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class CrewAIToolContext:
     room_id: str
     tools: AgentToolsProtocol
     reply_tracker: ReplyTracker | None = None
+    tool_turn: ToolTurn | None = None
 
 
 @runtime_checkable

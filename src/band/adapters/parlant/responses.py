@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Sequence
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -119,18 +118,21 @@ async def relay_agent_response(
     sender_name: str,
     timeout: float,
     poll: float,
-) -> None:
+) -> bool:
     """Relay the engine's final reply to *sender_name*, waiting up to *timeout*.
 
     Waiting polls in *poll*-second windows and keeps going past empty ones,
     so a slow (cold-start) turn is still answered. If the budget elapses with
     no final message the turn is given up honestly: Parlant intermittently
     stalls after a preamble, and a preamble is not an answer.
+
+    Returns whether the turn was given up that way, with the engine possibly
+    still working on it.
     """
     offset = min_offset
-    # perf_counter keeps its resolution on Windows, where monotonic() is coarse.
-    deadline = time.perf_counter() + timeout
-    while (remaining := deadline - time.perf_counter()) > 0:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while (remaining := deadline - loop.time()) > 0:
         polled = await next_agent_events(
             app=app,
             session_id=session_id,
@@ -140,9 +142,17 @@ async def relay_agent_response(
         )
         match polled:
             case PollMiss.FAILED:
-                return
+                logger.info(
+                    "Room %s: stopped waiting for a Parlant reply because reading events failed",
+                    room_id,
+                )
+                return False
             case PollMiss.NO_UPDATE if tools.turn.replied:
-                return
+                logger.info(
+                    "Room %s: stopped waiting for a Parlant reply because the turn already replied or declined",
+                    room_id,
+                )
+                return False
             case PollMiss():
                 await _back_off(deadline)
                 continue
@@ -150,20 +160,28 @@ async def relay_agent_response(
         offset = batch.offset
         if batch.final_seen and not batch.final_texts:
             logger.warning("Room %s: the agent's final message was empty", room_id)
-        if batch.final_texts:
-            await relay_reply(
-                tools,
-                FINAL_SEGMENT_SEPARATOR.join(batch.final_texts),
-                mentions=[sender_name],
-            )
-        if batch.final_seen or tools.turn.replied:
-            return
+        already_settled = tools.turn.replied
+        final_text = FINAL_SEGMENT_SEPARATOR.join(batch.final_texts)
+        if final_text:
+            await relay_reply(tools, final_text, mentions=[sender_name])
+        if tools.turn.replied:
+            if already_settled and final_text:
+                logger.info(
+                    "Room %s: left Parlant text unsent because the turn already replied or declined: %s",
+                    room_id,
+                    final_text,
+                )
+            return False
+        if batch.final_seen:
+            return False
         logger.debug("Room %s: only a preamble so far; still waiting", room_id)
 
-    if not tools.turn.replied:
-        logger.warning(
-            "Room %s: timed out after %ss waiting for agent response", room_id, timeout
-        )
+    if tools.turn.replied:
+        return False
+    logger.warning(
+        "Room %s: timed out after %ss waiting for agent response", room_id, timeout
+    )
+    return True
 
 
 def _message_parts(data: Any) -> tuple[str, list[str]]:
@@ -180,6 +198,8 @@ def _message_parts(data: Any) -> tuple[str, list[str]]:
 
 
 async def _back_off(deadline: float) -> None:
-    backoff = min(EMPTY_READ_BACKOFF_SECONDS, deadline - time.perf_counter())
+    backoff = min(
+        EMPTY_READ_BACKOFF_SECONDS, deadline - asyncio.get_running_loop().time()
+    )
     if backoff > 0:
         await asyncio.sleep(backoff)

@@ -111,6 +111,27 @@ async def mcp_session(
         yield session
 
 
+def advertised_server(servers: Sequence[Any], name: str) -> Any:
+    """The MCP server config named ``name`` among a session's advertised ones."""
+    config = next(
+        (config for config in servers if getattr(config, "name", None) == name), None
+    )
+    if config is None:
+        raise ValueError(f"MCP server {name!r} was not advertised")
+    return config
+
+
+async def call_advertised_tool(
+    config: Any, tool_name: str, arguments: dict[str, Any]
+) -> Any:
+    """Call ``tool_name`` on an advertised MCP server config."""
+    async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
+        result = await client.call_tool(tool_name, arguments)
+    if result.isError:
+        raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
+    return result.content
+
+
 async def served_tool_names(
     url: str, transport: BandMCPTransport = BandMCPTransport.HTTP
 ) -> set[str]:

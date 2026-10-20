@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING
 
 from band_sdk_core import AgentTopicKind, SessionState
@@ -20,6 +21,7 @@ from band.client.streaming import (
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
 )
+from band.client.streaming.client import ControlHook
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy, PlatformConnection
@@ -134,10 +136,13 @@ class BandLink:
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
 
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
-        # runtime. Invoked DIRECTLY from the WebSocket receive task — never via
-        # the serialized _event_queue — so a control signal can act on a cycle
-        # already in flight instead of queuing behind it.
-        self.on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None
+        # runtime. Never run via the serialized _event_queue, so a control
+        # signal can act on a cycle already in flight instead of queuing
+        # behind it. Signals apply one at a time, so a hook that never
+        # returns holds every later signal until disconnect().
+        self.on_control: ControlHook | None = None
+        # Control signals still being applied, in arrival order.
+        self._control_lane: list[asyncio.Task[None]] = []
 
     @property
     def is_connected(self) -> bool:
@@ -218,7 +223,8 @@ class BandLink:
                 raise
 
             self._ws = ws
-            self._is_connected = True
+            # A supersede handled during the join has already ended it.
+            self._is_connected = not ws.transport_ended
             logger.info("Connected to platform")
         finally:
             self._connecting = False
@@ -227,11 +233,13 @@ class BandLink:
         if not self._ws:
             return
 
-        try:
-            await self._ws.leave_agent_control_channel(self.agent_id)
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Error unsubscribing from agent_control: %s", e)
+        if not self._ws.transport_ended:
+            try:
+                await self._ws.leave_agent_control_channel(self.agent_id)
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
+                logger.warning("Error unsubscribing from agent_control: %s", e)
 
+        await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)
         self._ws = None
         self._is_connected = False
@@ -254,7 +262,7 @@ class BandLink:
         so the callback wiring only needs to be kept in sync in one place."""
         await ws.join_agent_control_channel(
             self.agent_id,
-            on_supersede=self._on_supersede,
+            on_supersede=partial(self._on_supersede, ws),
             on_control=self._on_control,
         )
 
@@ -373,7 +381,9 @@ class BandLink:
         """
         await self._subscriptions_manager.drain_reconciliation(self._connected_ws())
 
-    async def _on_supersede(self, payload: SupersedePayload) -> None:
+    async def _on_supersede(
+        self, ws: WebSocketClient, payload: SupersedePayload
+    ) -> None:
         """Handle an agent_control supersede event before the platform closes
         the socket. Session arbitrates whether this specific supersede is
         actually current (not a stale notification about an epoch this
@@ -381,28 +391,27 @@ class BandLink:
         retryable supersede should keep the connection reconnecting --
         though the platform hardcodes retryable=False today, so in practice
         this still always resolves to Dead.
+
+        ``ws`` is the client the push arrived on rather than ``_ws``, which
+        ``connect()`` assigns only after the control channel is joined.
         """
-        if self._ws is not None:
-            outcome = self._ws.handle_supersede(payload.retryable, payload.retry_after)
-            reason = payload.to_disconnect_reason(outcome)
-            if outcome.state is not SessionState.Dead:
-                # outcome.retry_after_s is computed but intentionally not
-                # applied here: enforcing it would mean this SDK taking over
-                # firing the actual reconnect attempt, which is the vendored
-                # PHXChannelsClient auto_reconnect loop's job today (see the
-                # design doc's out-of-scope boundary) -- untouched reconnect
-                # keeps working exactly as it does for any other disconnect.
-                logger.info(
-                    "Supersede reported retryable=True; Session kept the "
-                    "connection reconnecting (state=%s, retry_after_s=%s), "
-                    "not treating it as terminal.",
-                    outcome.state,
-                    outcome.retry_after_s,
-                )
-                return
-            self._ws.record_terminal_disconnect(reason)
-        else:
-            reason = payload.to_disconnect_reason()
+        outcome = ws.handle_supersede(payload.retryable, payload.retry_after)
+        reason = payload.to_disconnect_reason(outcome)
+        if outcome.state is not SessionState.Dead:
+            # outcome.retry_after_s is computed but intentionally not
+            # applied here: enforcing it would mean this SDK taking over
+            # firing the actual reconnect attempt, which is the phoenix
+            # client's auto_reconnect loop's job -- untouched reconnect keeps
+            # working exactly as it does for any other disconnect.
+            logger.info(
+                "Supersede reported retryable=True; Session kept the "
+                "connection reconnecting (state=%s, retry_after_s=%s), "
+                "not treating it as terminal.",
+                outcome.state,
+                outcome.retry_after_s,
+            )
+            return
+        ws.record_terminal_disconnect(reason)
         self._last_disconnect_reason = reason
         self._is_connected = False
         logger.warning(
@@ -416,18 +425,57 @@ class BandLink:
     async def _on_control(self, payload: AgentControlPayload) -> None:
         """Handle an ``agent.control`` push (interrupt/stop/play).
 
-        Invoked directly from the WebSocket receive task. Forwards to the
-        registered ``on_control`` hook WITHOUT touching the serialized event
-        queue, so the signal can preempt a cycle already in flight. If no hook
-        is registered, the push is a safe no-op.
+        Runs the ``on_control`` hook on a task ordered after every earlier
+        signal. The hook can take seconds (a STOP drains every room's turn),
+        and awaiting it here would hold a ``supersede`` queued behind it on
+        the same topic, where a reconnect discards queued messages unseen.
+        If no hook is registered, the push is a safe no-op.
         """
-        if self.on_control is None:
+        hook = self.on_control
+        if hook is None:
             logger.debug(
                 "agent.control received (mode=%s) but no on_control hook registered",
                 payload.mode,
             )
             return
-        await self.on_control(payload)
+        previous = self._control_lane[-1] if self._control_lane else None
+        task = asyncio.create_task(
+            self._apply_control(previous, hook, payload),
+            name=f"agent.control {payload.mode} correlation_id={payload.correlation_id}",
+        )
+        self._control_lane.append(task)
+        task.add_done_callback(self._control_lane.remove)
+
+    @staticmethod
+    async def _apply_control(
+        previous: asyncio.Task[None] | None,
+        hook: ControlHook,
+        payload: AgentControlPayload,
+    ) -> None:
+        if previous is not None:
+            await asyncio.wait({previous})
+        try:
+            await hook(payload)
+        except Exception:
+            logger.exception(
+                "agent.control %s failed (correlation_id=%s room_id=%s)",
+                payload.mode,
+                payload.correlation_id,
+                payload.room_id,
+            )
+
+    async def _cancel_control_lane(self) -> None:
+        if not self._control_lane:
+            return
+        pending = list(self._control_lane)
+        logger.info(
+            "Cancelling %d unfinished control signal(s) on disconnect: %s",
+            len(pending),
+            ", ".join(task.get_name() for task in pending),
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.wait(pending)
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""

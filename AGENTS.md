@@ -40,7 +40,7 @@ vars may set it) from `src/band/core/adapterconfig.py`. It is frozen, rejects
 unknown fields, and holds plain data only, so it loads from YAML/JSON. Clients,
 graphs, LLM objects, factories and callbacks stay keyword-only constructor
 arguments. Validate settings in the config, not the constructor.
-`tests/framework_conformance/test_adapter_shape.py` enforces the shape.
+`tests/framework_conformance/adaptershape/test_adaptershape.py` enforces the shape.
 
 ## Adapter Feature Flags & Capability Negotiation
 
@@ -148,6 +148,21 @@ src/band/
 ├── testing/        # Testing utilities (fake tools, test helpers)
 └── agent.py        # Main entry point
 ```
+
+## Test Synchronization
+
+Tests must prove ordering, concurrency, and lifecycle behavior through explicit
+synchronization: events, gates, barriers, or observable state transitions. Never
+use elapsed wall time, fixed sleeps, or an assumption that an operation finishes
+within a duration to establish correctness. Hold an operation at the relevant
+boundary, assert the behavior while it is blocked, then release it and await
+confirmed completion.
+
+Test timeout, expiry, and deadline behavior with a controlled clock. Keep real
+subprocess and network readiness independent of that clock. Real-time timeouts
+may guard against a hung test, but must not drive the scenario or serve as proof
+of the behavior under test. Cleanup must account for resources created during
+failed or cancelled startup and await their confirmed release.
 
 ## Testing Structure
 

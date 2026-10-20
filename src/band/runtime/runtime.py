@@ -307,8 +307,8 @@ class AgentRuntime:
     async def handle_control(self, payload: AgentControlPayload) -> None:
         """Apply an ``agent.control`` signal (interrupt/stop/play) to executions.
 
-        Invoked directly from the WebSocket receive task (via
-        ``BandLink.on_control``) so it can preempt a cycle already in flight.
+        Invoked via ``BandLink.on_control``, outside the serialized event
+        queue, so it can preempt a cycle already in flight.
 
         Routing:
         - ``scope == "agent"`` with no ``room_id`` → fan out to all executions.
@@ -318,8 +318,8 @@ class AgentRuntime:
         Dedupes on ``correlation_id`` (the server does not). A signal that
         reached no room is not recorded, so a later copy still applies once
         the room is routed. Note: exceptions raised here are
-        swallowed-and-logged by the channel handler, so this method must not
-        rely on propagating errors to signal anything.
+        only logged by ``BandLink``, so this method must not rely on
+        propagating errors to signal anything.
         """
         targets = control_targets(payload, self.executions)
         if not targets or not self._control_ids.first_sighting(payload):

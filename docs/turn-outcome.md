@@ -397,6 +397,20 @@ does not readmit the room. Successful approval release retains its original tool
 and judgment until the worker actually finishes; `Turn.detach()` is still only
 an outcome-ledger operation.
 
+Stopping the work an external backend runs for the turn is the adapter's half,
+owned by one `BackendTurns` (`band.core.turn_lifecycle`) per adapter. The task
+that owns the backend call holds `running(room_id)` around it, outside any
+timeout scope, and binds the handle the backend reveals; when the call that
+starts the turn reveals it, `started(room_id, call)` lets that call finish after
+a stop so the accepted turn is still stopped. The adapter supplies only the
+cancel call for that handle. A cancelled turn, `on_interrupt` (STOP or
+INTERRUPT, including for a detached turn), the watchdog and shutdown all stop it
+once, in a task the primitive owns, bounded by `BACKEND_CANCEL_TIMEOUT_SECONDS`
+and never awaited on the control-processing task. A timeout branch awaits
+`stop` before its own cleanup and report. The room's next
+turn waits for `settled(room_id)`, and teardown for `settled` or `drain()`,
+before reacquiring or closing the backend.
+
 ## Working-state lifetime
 
 The activity owner is the originating turn scope, independently of the current
