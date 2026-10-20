@@ -446,20 +446,21 @@ class CodexApprovalRoom:
         self, approval_id: str, *, request_id: int
     ) -> asyncio.Task[ApprovalDecision]:
         params = {"approvalId": approval_id, "command": "npm test"}
-        self.asks.append(
-            ask := asyncio.create_task(
-                self.adapter._resolve_manual_approval(
-                    tools=self.tools,
-                    msg=make_platform_message(room_id=ROOM_ID),
-                    room_id=ROOM_ID,
-                    event=event_request(
-                        request_id, CodexApprovalMethod.COMMAND_EXECUTION, params
-                    ),
-                    summary="npm test",
-                    params=params,
-                )
-            )
-        )
+
+        async def resolve() -> ApprovalDecision:
+            async with self.adapter._manual_approval(
+                tools=self.tools,
+                msg=make_platform_message(room_id=ROOM_ID),
+                room_id=ROOM_ID,
+                event=event_request(
+                    request_id, CodexApprovalMethod.COMMAND_EXECUTION, params
+                ),
+                summary="npm test",
+                params=params,
+            ) as decision:
+                return decision
+
+        self.asks.append(ask := asyncio.create_task(resolve()))
         return ask
 
     @asynccontextmanager
