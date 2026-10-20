@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 
 import pytest
@@ -31,6 +32,8 @@ class ScriptedPHXClient:
         self._script = Script(script)
         self.auto_reconnect: bool | None = None
         self.channel_socket_url = "wss://test/socket"
+        self.logger = logging.getLogger(__name__)
+        self.redact_diagnostic = str
 
     @property
     def attempts(self) -> int:
@@ -85,7 +88,12 @@ class ScriptedProbe:
         self.probed_urls: list[tuple[str, float]] = []
 
     def __call__(
-        self, url: str, *, additional_headers: Mapping[str, str], open_timeout: float
+        self,
+        url: str,
+        *,
+        additional_headers: Mapping[str, str],
+        open_timeout: float,
+        logger: logging.Logger,
     ) -> ScriptedProbeConnection:
         self.probed_urls.append((url, open_timeout))
         return ScriptedProbeConnection(self._script.next())
