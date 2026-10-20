@@ -55,6 +55,21 @@ class ActivityPlatform(LifecyclePlatform):
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "events" and request.method == "POST":
             self.event_bodies.append(json.loads(request.content))
+            if not self.stopped:
+                # A running room accepts narration; falling through to the
+                # lifecycle base would answer 403, which the platform client
+                # reads as a stopped execution and tears the turn machinery
+                # down around the first reported tool call.
+                return httpx.Response(
+                    201,
+                    json={
+                        "data": {
+                            "id": "e-1",
+                            "message_type": "event",
+                            "success": True,
+                        }
+                    },
+                )
         if tail == "activity":
             body = json.loads(request.content)
             self.activity_bodies.append(body)
