@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from inspect import getattr_static
 from typing import Protocol
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
+
+from band.runtime.tools.types import BandTool
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,9 @@ def names_only(activity: AgentActivityDetail) -> AgentActivityDetail:
 
 
 def _observer(tools: object) -> ActivityObserver | None:
+    # Dynamic attribute proxies do not opt into runtime instrumentation.
+    if getattr_static(tools, "_activity_observer", None) is None:
+        return None
     return getattr(tools, "_activity_observer", None)
 
 
@@ -67,6 +74,25 @@ async def report_memory_activity(tools: object) -> None:
 async def set_permission_wait(tools: object, waiting: bool) -> None:
     if observer := _observer(tools):
         await observer.set_manual_wait(waiting)
+
+
+@asynccontextmanager
+async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
+    try:
+        await report_tool_activity(tools, name)
+        yield
+    finally:
+        await end_tool_activity(tools)
+
+
+@asynccontextmanager
+async def model_tool_activity(tools: object, name: str) -> AsyncIterator[None]:
+    """Observe the dual-use event method only at its model invocation boundary."""
+    if name == BandTool.SEND_EVENT:
+        async with tool_activity(tools, name):
+            yield
+    else:
+        yield
 
 
 def _retrieve_task_error(task: asyncio.Task[None]) -> None:
@@ -119,6 +145,7 @@ class WorkingStateReporter:
             if self._active:
                 return
             self._active = True
+
             self._reset_detail()
             self._started_at = asyncio.get_running_loop().time()
             await self._report_locked(True)
@@ -147,6 +174,7 @@ class WorkingStateReporter:
                 self._manual_wait = waiting
             if self.activity != previous:
                 await self._report_locked(True)
+
 
     def defer_false_report(self) -> None:
         """Start ``working: false`` and return without waiting for it.
@@ -189,8 +217,13 @@ class WorkingStateReporter:
             task.exception()
         await self._finish_false_send()
 
+    def _reset_detail(self) -> None:
+        self._ordinary = AgentActivityDetail(kind="reasoning")
+        self._manual_wait = False
+
     def _arm_false_report(self) -> asyncio.Task[None] | None:
         self._active = False
+
         self._reset_detail()
         task, self._task = self._task, None
         if task is not None:

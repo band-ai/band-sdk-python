@@ -4,13 +4,20 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-  # Run on the merge queue's temporary branch so these required checks report
+  # Run on the merge queue's temporary branch so the required ci-status reports
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
 
 # Every job here only reads the repo; nothing uses GITHUB_TOKEN for writes.
 permissions:
   contents: read
+
+# A new push to a pull request supersedes its running CI. Merge-queue runs are
+# never cancelled: each one is the verdict for the commit that lands. They each
+# get their own group, since a requeue on the same base reuses the queue ref.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
 
@@ -63,10 +70,17 @@ jobs:
   test:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
+    strategy: &suite-strategy
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
+        # The merge queue re-checks only that the merged result still works; the full
+        # OS x Python grid already ran on the PR.
+        run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
+        exclude:
+        - {run-for: queue, os: windows-latest}
+        - {run-for: queue, python-version: '3.11'}
+        - {run-for: queue, python-version: '3.13'}
       fail-fast: false
 
     # Use bash on every OS so these steps stay identical (Git Bash ships on the
@@ -115,11 +129,7 @@ jobs:
   test-crewai:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -191,13 +201,9 @@ jobs:
 
 
   test-strands-nooa:
-    if: *not-draft
+    if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -273,11 +279,7 @@ jobs:
   test-parlant:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -349,7 +351,7 @@ jobs:
 
 
   packaging:
-    if: *not-draft
+    if: *pr-only
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -474,7 +476,7 @@ jobs:
 
 
   wheel-extra-cases:
-    if: *not-draft
+    if: *pr-only
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}
@@ -513,13 +515,14 @@ jobs:
     # The one required CI check. Every other job in this file is in needs and in
     # the loop below with the results it may end in
     # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
-    # lint must succeed, so a draft run, which skips every job, is red.
+    # lint must succeed, so a draft run, which skips every job, is red. The jobs
+    # allowed to skip are the ones that run on pull requests only.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
     needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
     runs-on: ubuntu-latest
     steps:
-    - name: Verify every CI job passed
+    - name: Verify every CI job passed or was skipped
       run: |
         set -euo pipefail
         failed=0
@@ -527,11 +530,11 @@ jobs:
           "lint:${{ needs.lint.result }}:success" \
           "test:${{ needs.test.result }}:success" \
           "test-crewai:${{ needs.test-crewai.result }}:success" \
-          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success" \
+          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \
           "test-parlant:${{ needs.test-parlant.result }}:success" \
-          "packaging:${{ needs.packaging.result }}:success" \
-          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success" \
-          "wheel-extras:${{ needs.wheel-extras.result }}:success"; do
+          "packaging:${{ needs.packaging.result }}:success|skipped" \
+          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success|skipped" \
+          "wheel-extras:${{ needs.wheel-extras.result }}:success|skipped"; do
           job="${entry%%:*}"
           remainder="${entry#*:}"
           result="${remainder%%:*}"
@@ -545,4 +548,4 @@ jobs:
           echo "::error::one or more CI jobs did not pass"
           exit 1
         fi
-        echo "All CI jobs passed."
+        echo "All CI jobs passed or were skipped."

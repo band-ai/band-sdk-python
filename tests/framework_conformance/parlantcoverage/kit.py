@@ -4,7 +4,6 @@ from tests.framework_conformance import venv_job_coverage as vjc
 
 _PARLANT_ONLY_MODULES = {
     "parlant": "parlant",
-    "pytest-randomly": "pytest_randomly",
     "werkzeug": "werkzeug",
 }
 

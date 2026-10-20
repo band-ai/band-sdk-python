@@ -15,9 +15,18 @@ the workflow files cannot say for themselves.
   joins the contract by being listed in `ci-status.needs` and in that table;
   `tests/framework_conformance/test_ci_status_coverage.py` fails until it is. The same gate
   shape runs in `band-sdk-typescript`.
-- **`main` uses a merge queue**, so every required workflow needs a `merge_group:` trigger
-  (`ci.yml`, `pr-title.yml`, `release-gate.yml` and `python-core-coverage.yml` have one).
-  Without it the queue waits forever for a check that never starts.
+- **`main` uses a merge queue**, so every workflow whose check the queue waits for needs a
+  `merge_group:` trigger (`ci.yml` and `pr-title.yml`; `release-gate.yml` reports there too).
+  Without it the queue waits forever for a check that never starts. `main` fast-forwards to
+  the exact commit the queue validated, so CI does not run again on a push to `main`.
+- **A new push to a pull request cancels its running CI.** Merge-queue runs are never
+  cancelled or queued behind one another: each one is the verdict for the commit that
+  lands, in a concurrency group of its own.
+- **The merge queue runs a slim `ci.yml`:** `lint` plus the `test`, `test-crewai` and
+  `test-parlant` suites on Ubuntu with Python 3.12. The full OS × Python grid,
+  `test-strands-nooa`, `packaging` and `wheel-extras` run on the PR only, and
+  `python-core-coverage.yml` does not run in the queue. A break that shows only on a lane the
+  queue skips reaches `main` and surfaces in the next PR's CI.
 
 ## Private Core coverage
 
