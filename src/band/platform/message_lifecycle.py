@@ -16,11 +16,11 @@ from typing import Any, TypeVar
 
 from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
-from band_rest.core.parse_error import ParsingError
 from band_rest.core.request_options import RequestOptions
 from band_rest.types.chat_message import ChatMessage
 from band_rest.types.error import Error as PlatformError
 from band_rest.types.validation_error import ValidationError as ErrorEnvelope
+from pydantic import BaseModel
 from pydantic import ValidationError as ModelValidationError
 
 from band.client.rest import (
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 ResponseData = TypeVar("ResponseData")
+SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 # The platform renders a terminal write against a message with no current
 # processing attempt as HTTP 422 with this code and one detail under this
@@ -70,31 +71,34 @@ def _accepted_response(
     return data
 
 
-def _names_missing_attempt(body: object) -> bool:
+def _validated(schema: type[SchemaT], body: object) -> SchemaT | None:
     try:
-        error = ErrorEnvelope.model_validate(body).error
+        return schema.model_validate(body)
     except ModelValidationError:
-        return False
-    return error.code == VALIDATION_ERROR_CODE and bool(
-        error.details.get(PROCESSING_ATTEMPT_POINTER)
+        return None
+
+
+def _names_missing_attempt(body: object) -> bool:
+    envelope = _validated(ErrorEnvelope, body)
+    return (
+        envelope is not None
+        and envelope.error.code == VALIDATION_ERROR_CODE
+        and bool(envelope.error.details.get(PROCESSING_ATTEMPT_POINTER))
     )
 
 
 def _names_missing_resource(body: object) -> bool:
-    try:
-        error = PlatformError.model_validate(body).error
-    except ModelValidationError:
-        return False
-    return error.code == NOT_FOUND_ERROR_CODE
+    envelope = _validated(PlatformError, body)
+    return envelope is not None and envelope.error.code == NOT_FOUND_ERROR_CODE
 
 
 def _failure_result(error: Exception) -> SettlementResult:
     """Classify a failed terminal write from the public status and error body.
 
-    ``ParsingError`` is not an ``ApiError``: the generated client raises it for
-    an error body that misses its schema, but it still carries the status.
+    ``ParsingError`` (a body that misses the generated schema) is
+    UNCONFIRMED: the envelope checks below would reject that body too.
     """
-    if not isinstance(error, ApiError | ParsingError):
+    if not isinstance(error, ApiError):
         return SettlementResult.UNCONFIRMED
     match error.status_code:
         case HTTPStatus.NOT_FOUND if _names_missing_resource(error.body):
@@ -272,9 +276,9 @@ class MessageLifecycle:
         result: SettlementResult,
         error: Exception,
     ) -> None:
-        unconfirmed = result is SettlementResult.UNCONFIRMED
         key = (message_id, action)
         cause = (type(error), getattr(error, "status_code", None))
+        unconfirmed = result is SettlementResult.UNCONFIRMED
         repeated = unconfirmed and self._unconfirmed_writes.get(key) == cause
         level = logging.DEBUG if repeated else logging.WARNING
         logger.log(
@@ -286,12 +290,19 @@ class MessageLifecycle:
             error,
         )
         if unconfirmed:
-            self._unconfirmed_writes[key] = cause
-            self._unconfirmed_writes.move_to_end(key)
-            if len(self._unconfirmed_writes) > UNCONFIRMED_WRITE_LIMIT:
-                self._unconfirmed_writes.popitem(last=False)
+            self._remember_unconfirmed(key, cause)
         else:
             self._unconfirmed_writes.pop(key, None)
+
+    def _remember_unconfirmed(
+        self,
+        key: tuple[str, DeliveryStatus],
+        cause: tuple[type[Exception], int | None],
+    ) -> None:
+        self._unconfirmed_writes[key] = cause
+        self._unconfirmed_writes.move_to_end(key)
+        if len(self._unconfirmed_writes) > UNCONFIRMED_WRITE_LIMIT:
+            self._unconfirmed_writes.popitem(last=False)
 
     async def report_activity(
         self,
@@ -326,8 +337,8 @@ class MessageLifecycle:
                 chat_id=room_id,
                 working=working,
                 request_options={
+                    **NO_RETRY_REQUEST_OPTIONS,
                     "timeout_in_seconds": timeout_seconds,
-                    "max_retries": 0,
                 },
             )
             stopped = working and response.data.working is False

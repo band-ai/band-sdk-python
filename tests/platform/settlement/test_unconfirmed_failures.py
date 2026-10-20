@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from band_rest.core import ParsingError
 
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
@@ -45,19 +44,6 @@ class TestUnconfirmedFailures:
             result = await terminal.detailed(link_over(rest))
 
         assert result is SettlementResult.UNCONFIRMED
-
-    async def test_a_parsing_error_without_a_status_is_unconfirmed(
-        self, terminal: Terminal, link: BandLink, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The generated client always sets a status, so this boundary cannot be
-        # reached over the wire.
-        async def unparsable(**_: object) -> None:
-            raise ParsingError(body={"error": "not found"})
-
-        raw = link.rest.agent_api_messages.with_raw_response
-        monkeypatch.setattr(raw, f"mark_agent_message_{terminal.action}", unparsable)
-
-        assert await terminal.detailed(link) is SettlementResult.UNCONFIRMED
 
     async def test_a_lost_success_is_not_retried_into_a_missing_attempt_refusal(
         self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
