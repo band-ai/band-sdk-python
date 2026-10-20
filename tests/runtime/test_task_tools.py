@@ -1,7 +1,8 @@
 """Tests for AgentTools' task-board methods (list_tasks, create_task,
 get_task, update_task, get_task_history, get_board, set_board).
 
-Most cases mirror tests/runtime/test_tools.py's TestMemoryTools/TestFileTools
+Most cases mirror tests/runtime/tooltests/test_memory_tools.py and
+tests/runtime/tooltests/test_file_tools.py
 pattern: mock_rest_client is an autospec of the real Fern client, so an
 assertion here fails immediately if band-client-rest renames a method or
 drops a parameter, rather than passing silently against a hand-rolled fake.

@@ -166,8 +166,9 @@ def page(data: list[dict[str, Any]]) -> httpx.Response:
 class LifecyclePlatform:
     """A controlled HTTP peer for the real Fern lifecycle and posting client."""
 
-    def __init__(self, *, stopped: bool = False) -> None:
+    def __init__(self, *, stopped: bool = False, page_size: int | None = None) -> None:
         self.stopped = stopped
+        self.page_size = page_size
         self.messages: list[dict[str, Any]] = []
         self.accepted_marks: list[tuple[str, str]] = []
         self.requested_marks: list[tuple[str, str]] = []
@@ -228,6 +229,8 @@ class LifecyclePlatform:
                 (i + 1 for i, m in enumerate(self.messages) if m["id"] == cursor), 0
             )
             limit = int(request.url.params.get("limit", "100"))
+            if self.page_size is not None:
+                limit = min(limit, self.page_size)
             window = self.messages[start : start + limit]
             has_more = start + limit < len(self.messages)
             return httpx.Response(
@@ -296,13 +299,16 @@ class PostingPlatform(LifecyclePlatform):
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "participants":
-            return page([ALICE])
+            return page([{**ALICE, "role": "member", "status": "active"}])
         if request.method == "POST" and tail == "events":
             return httpx.Response(
-                201, json={"data": {"id": "e-1", "message_type": "event"}}
+                201,
+                json={"data": {"id": "e-1", "message_type": "event", "success": True}},
             )
         if request.method == "POST" and tail == "messages":
-            return httpx.Response(201, json={"data": {"id": "m-1", "recipients": []}})
+            return httpx.Response(
+                201, json={"data": {"id": "m-1", "recipients": [], "success": True}}
+            )
         return super().answer(request)
 
 

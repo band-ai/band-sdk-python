@@ -3,23 +3,25 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
+from dataclasses import dataclass
 from typing import ClassVar, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory
 from a2a.helpers import get_message_text, new_text_message
 from a2a.types import (
-    Message as A2AMessage,
-)
-from a2a.types import (
+    CancelTaskRequest,
     Role,
     SendMessageRequest,
     StreamResponse,
     SubscribeToTaskRequest,
     Task,
     TaskState,
+)
+from a2a.types import (
+    Message as A2AMessage,
 )
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
@@ -37,6 +39,7 @@ from band.core.protocols import (
     send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import BackendTurns
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
     RETRYABLE_TASK_FAILURE_STATES,
@@ -52,6 +55,52 @@ from band.integrations.a2a.types import A2AAdapterConfig, A2ASessionState
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "a2a"
+
+
+@dataclass
+class A2ATaskRun:
+    """The remote task a room's turn is running, and where to cancel it."""
+
+    client: Client
+    room_id: str
+    task_id: str
+    # Set once the remote reports a terminal state: nothing is left to cancel,
+    # even while this turn is still delivering that state.
+    finished: bool = False
+
+
+async def _prepended(
+    read: list[StreamResponse], rest: AsyncIterator[StreamResponse]
+) -> AsyncIterator[StreamResponse]:
+    """Replay events already read from a stream ahead of the rest of it."""
+    for event in read:
+        yield event
+    async for event in rest:
+        yield event
+
+
+async def _reveal_task(
+    client: Client,
+    room_id: str,
+    events: AsyncIterator[StreamResponse],
+    read: list[StreamResponse],
+) -> A2ATaskRun | None:
+    """Read the stream's first event, which reveals a new turn's task.
+
+    The event is appended to ``read`` for the turn to deliver. A message
+    reply reveals no task.
+    """
+    first = await anext(events, None)
+    if first is None:
+        return None
+    read.append(first)
+    task = apply_task_stream_event(None, first)
+    if task is None:
+        return None
+    return A2ATaskRun(
+        client, room_id, task.id, finished=task.status.state in TERMINAL_TASK_STATES
+    )
+
 
 # httpx's read timeout resets on every chunk received, so this bounds the gap
 # between SSE events, not the turn as a whole. Generous enough for the
@@ -119,6 +168,9 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._http_client: httpx.AsyncClient | None = None
         self._contexts: dict[str, str] = {}  # room_id → A2A context_id
         self._tasks: dict[str, str] = {}  # room_id → last task_id
+        self._backend_turns = BackendTurns[A2ATaskRun](
+            self._cancel_task, provider=_PROVIDER
+        )
         self._task_cache: dict[tuple[str, str], Task] = {}
         # Track sender per task for mentions: (room_id, task_id) → sender info
         self._task_senders: dict[tuple[str, str], dict[str, str]] = {}
@@ -151,6 +203,10 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             bool(headers),
         )
 
+    @property
+    def backend_turns(self) -> BackendTurns[A2ATaskRun]:
+        return self._backend_turns
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -173,21 +229,39 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             history,
         )
 
-        # Rehydrate session state on bootstrap
+        # A pending tasks/cancel deletes the local continuation, then waits
+        # on the remote. Rehydration and the outgoing message must run after
+        # that wait, or a still-nonterminal resubscribe restores the task
+        # the cancel is about to finish.
+        await self.backend_turns.settled(room_id)
         if is_session_bootstrap and history:
             await self._rehydrate_from_history(room_id, history)
 
-        # Convert Band message to A2A format
         a2a_message = self._to_a2a_message(msg, room_id)
+        # A continued task is known before the remote answers; a new one only
+        # once its first event arrives.
+        continued = (
+            A2ATaskRun(self._client, room_id, a2a_message.task_id)
+            if a2a_message.task_id
+            else None
+        )
 
         try:
-            # Send to remote A2A agent and process events
-            async for event in self._client.send_message(
-                SendMessageRequest(message=a2a_message)
-            ):
-                await self._handle_event(
-                    event, tools, room_id, msg.sender_id, msg.sender_name
+            # Send to remote A2A agent and process events. A task paused on
+            # INPUT_REQUIRED ends the stream normally and stays for the next turn.
+            async with self.backend_turns.running(room_id, continued):
+                events = self._client.send_message(
+                    SendMessageRequest(message=a2a_message)
                 )
+                run, read = continued, []
+                if run is None:
+                    run = await self.backend_turns.started(
+                        room_id, _reveal_task(self._client, room_id, events, read)
+                    )
+                async for event in _prepended(read, events):
+                    await self._handle_event(
+                        event, tools, room_id, msg.sender_id, msg.sender_name, run
+                    )
 
         except DeliveryFailedError as e:
             reraise_delivery_cause(e)
@@ -207,6 +281,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         room_id: str,
         sender_id: str,
         sender_name: str | None,
+        run: A2ATaskRun | None = None,
     ) -> None:
         """Handle A2A event and forward to Band platform."""
         if event.HasField("message"):
@@ -221,6 +296,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
         state = task.status.state
+        if run is not None and state in TERMINAL_TASK_STATES:
+            run.finished = True
         try:
             await self._deliver_task_update(task, tools, self._task_senders[key])
             if state == TaskState.TASK_STATE_INPUT_REQUIRED:
@@ -269,6 +346,13 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             self._task_cache[(room_id, task.id)] = task
         return task
 
+    async def _cancel_task(self, run: A2ATaskRun) -> None:
+        """Release the turn's task and cancel it remotely unless it finished;
+        a cancelled task is never continued."""
+        self._finalize_task(run.room_id, run.task_id)
+        if not run.finished:
+            await run.client.cancel_task(CancelTaskRequest(id=run.task_id))
+
     def _remember_task(self, room_id: str, task: Task) -> None:
         """Record task identity needed for subsequent turns and resumption."""
         self._tasks[room_id] = task.id
@@ -311,10 +395,12 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 raise TurnResultAlreadyReported(error_text)
 
     def _finalize_task(self, room_id: str, task_id: str) -> None:
-        """Release a terminal task after its Band output and state are persisted."""
+        """Release a finished or cancelled task; the room's task pointer moves
+        on only if it still names this task."""
         self._task_senders.pop((room_id, task_id), None)
         self._task_cache.pop((room_id, task_id), None)
-        self._tasks.pop(room_id, None)
+        if self._tasks.get(room_id) == task_id:
+            del self._tasks[room_id]
 
     def _to_a2a_message(self, msg: PlatformMessage, room_id: str) -> A2AMessage:
         """Convert Band message to A2A format."""
@@ -351,6 +437,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up A2A context for room."""
+        await self.backend_turns.settled(room_id)
         self._contexts.pop(room_id, None)
         self._tasks.pop(room_id, None)
         # A resubscribed task may live in the cache without a sender entry,
@@ -367,6 +454,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def cleanup_all(self) -> None:
         """Close the owned A2A client and its HTTP transport."""
+        await self.backend_turns.drain()
         client, self._client = self._client, None
         http_client, self._http_client = self._http_client, None
         try:

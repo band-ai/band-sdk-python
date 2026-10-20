@@ -6,14 +6,17 @@ the real engine is covered by ``tests/integrations/parlant`` and the E2E smoke.
 
 from __future__ import annotations
 
+import asyncio
 import sys
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from band.adapters.parlant import ParlantAdapter, ParlantAdapterConfig
+from band.adapters.parlant.messages import process_session_tag
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
 from tests.adapters.parlant.helpers import (
@@ -23,6 +26,7 @@ from tests.adapters.parlant.helpers import (
     MESSAGE_KIND,
     SENDER_NAME,
     SESSION_ID,
+    RecordingBackgroundTasks,
 )
 from tests.integrations.parlant.sessions import (
     clear_session_tools,  # noqa: F401 -- autouse fixture
@@ -78,6 +82,47 @@ def application_class(mock_app: MagicMock) -> Iterator[MagicMock]:
 
 
 @pytest.fixture
+def background_tasks() -> RecordingBackgroundTasks:
+    """The engine's background-task service, recording what it cancels."""
+    return RecordingBackgroundTasks()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def processing_session(
+    background_tasks: RecordingBackgroundTasks,
+) -> AsyncIterator[asyncio.Task[None]]:
+    """A session whose processing can finish only when cancelled."""
+    entered = asyncio.Event()
+
+    async def process() -> None:
+        entered.set()
+        await asyncio.Future[None]()
+
+    task = await background_tasks.start(process(), tag=process_session_tag(SESSION_ID))
+    try:
+        await entered.wait()
+        yield task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.fixture
+def background_task_service_class() -> Iterator[MagicMock]:
+    """Fake ``parlant.core.background_tasks`` so on_started's import resolves."""
+    service_class = MagicMock(name="BackgroundTaskService")
+    with patch.dict(
+        sys.modules,
+        {
+            "parlant.core.background_tasks": MagicMock(
+                BackgroundTaskService=service_class
+            )
+        },
+    ):
+        yield service_class
+
+
+@pytest.fixture
 def parlant_sessions() -> Iterator[None]:
     """Fake the Parlant session modules a turn imports."""
     with patch.dict(
@@ -97,10 +142,19 @@ def parlant_sessions() -> Iterator[None]:
 
 
 @pytest.fixture
-def mock_parlant_server(mock_app: MagicMock, application_class: MagicMock) -> MagicMock:
-    """A Parlant server whose container holds ``mock_app``."""
+def mock_parlant_server(
+    mock_app: MagicMock,
+    application_class: MagicMock,
+    background_tasks: RecordingBackgroundTasks,
+    background_task_service_class: MagicMock,
+) -> MagicMock:
+    """A Parlant server whose container holds ``mock_app`` and the recording
+    background-task service."""
     server = MagicMock()
-    server.container = {application_class: mock_app}
+    server.container = {
+        application_class: mock_app,
+        background_task_service_class: background_tasks,
+    }
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
     created_agent = MagicMock()
     created_agent.id = "parlant-agent-created"

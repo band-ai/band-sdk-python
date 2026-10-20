@@ -40,8 +40,8 @@ class ControlSignalHandler:
         # Control-signal dedup. The server does not deduplicate agent.control
         # pushes, so a stale duplicate could otherwise reach out and cancel
         # whatever unrelated new task now occupies a room slot. Bounded LRU;
-        # only touched from the WebSocket receive task (same as AgentRuntime's
-        # _seen_control_ids on the long-running SDK path).
+        # BandLink delivers control signals one at a time (as for
+        # AgentRuntime's ControlDeduplicator on the long-running SDK path).
         self._seen_control_ids: OrderedDict[str, bool] = OrderedDict()
 
     async def handle(self, payload: AgentControlPayload) -> None:
@@ -76,7 +76,8 @@ class ControlSignalHandler:
                     self._runner._cancel_active_forward(room_id)
             case "play":
                 # Nudge in the background so a following stop/interrupt isn't
-                # blocked behind this /next + forward on the WS receive task.
+                # queued behind this /next + forward: BandLink applies control
+                # signals one at a time.
                 self._runner._spawn_play_nudge(room_ids)
             case _:
                 logger.warning(

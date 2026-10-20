@@ -36,7 +36,12 @@ since the ask carries its own `approval_wait_timeout_s` expiry.
 A manual ask also releases the turn's delivery early (it is marked processed
 while the human decides), so the adapter judges that turn itself when OpenCode
 finishes it: a turn that ends without a reply then posts one missing-reply
-failure. A turn cancelled by cleanup or an interrupt posts nothing.
+failure. A turn ended by cleanup, a STOP or an interrupt, even one already
+released for approval, posts nothing: its watcher is cancelled first, then its
+OpenCode session is aborted once through the adapter's `backend_turns`. A turn
+that already ended on its own, by finishing or by timing out, still posts that
+outcome when a STOP lands while it is being posted; the STOP only finishes the
+abort.
 
 New ordinary work remains outstanding while the session is occupied. Approval,
 status and question replies remain reachable through the shared control hook;

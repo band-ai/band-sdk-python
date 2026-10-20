@@ -49,7 +49,10 @@ While working-state reporting is active, its existing activity keep-alive also
 recovers a missed STOP: the platform answers a `working: true` report with
 `working: false` when the room execution is stopped. The runtime cancels the
 originating turn through the same platform-stop path as a refused claim or post,
-leaving its message PROCESSING for later replay. Responses from before PLAY,
+leaving an unsettled message PROCESSING for later replay. A provider worker
+released for approval retains its originating activity scope across later
+deliveries; a late heartbeat STOP cancels that provider without changing the
+original message's settled acknowledgement. Responses from before PLAY,
 a replacement turn, or shutdown cannot stop newer work. Request failures never
 count as STOP, and the public activity-report boolean still means request success.
 
@@ -94,7 +97,9 @@ never interprets approval syntax or drains model context for a control.
 
 Room admission and control revisions belong to the execution context; a turn
 scope owns termination intent and delivery disposition. Each concrete task has
-one cancellation owner, including explicitly bound Codex/Claude workers.
+one cancellation owner, including explicitly bound Claude, Codex and OpenCode
+workers. Activity follows that scope until its handler and registered workers
+finish, independently of current delivery admission.
 Shutdown takes precedence; otherwise the latest accepted native STOP/INTERRUPT
 before settlement determines delivery. An observed REST refusal cannot replace
 an accepted native disposition. PLAY advances admission without reviving an

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from band_rest import (
@@ -117,7 +117,7 @@ class TestBandLinkConnection:
         mock_ws_client.__aenter__.assert_called_once()
         mock_ws_client.join_agent_control_channel.assert_called_once_with(
             link.agent_id,
-            on_supersede=link._on_supersede,
+            on_supersede=ANY,
             on_control=link._on_control,
         )
         assert link.is_connected is True
@@ -313,7 +313,7 @@ class TestBandLinkConnection:
             correlation_id="evict-123",
         )
 
-        await link._on_supersede(payload)
+        await link._on_supersede(mock_ws_client, payload)
 
         mock_ws_client.record_terminal_disconnect.assert_called_once_with(
             link.last_disconnect_reason
@@ -350,7 +350,7 @@ class TestBandLinkConnection:
             correlation_id="evict-123",
         )
 
-        await link._on_supersede(payload)
+        await link._on_supersede(mock_ws_client, payload)
 
         mock_ws_client.record_terminal_disconnect.assert_not_called()
         assert link.is_connected is True
@@ -374,7 +374,7 @@ class TestBandLinkConnection:
             correlation_id="evict-123",
         )
 
-        await link._on_supersede(payload)
+        await link._on_supersede(mock_ws_client, payload)
         await link.disconnect()
 
         mock_ws_client.__aexit__.assert_called_once_with(None, None, None)

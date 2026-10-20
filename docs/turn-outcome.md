@@ -132,11 +132,29 @@ itself. Already accepted detached work retains its original tools until its
 actual end and follows the existing acknowledgement and judgment rules.
 
 The default preprocessor prepares bootstrap, participant and system context
-without consuming it. A rejected attempt leaves that context owed; every other
-outcome commits it conservatively, preserving updates that arrived during the
-attempt. Custom preprocessors that consume context must defer that consumption
-through `AgentInput.commit_context` to support this contract. This waiting is
+without consuming it. A rejected attempt leaves that context owed. History
+conversion and NOOA setup also retain it when they fail or are cancelled before
+context handoff. All other outcomes commit conservatively, preserving updates
+that arrived during the attempt. Custom preprocessors that consume context must
+defer that consumption through `AgentInput.commit_context` to support this contract. This waiting is
 process-local recovery, not an exactly-once guarantee across crashes.
+
+## Setup and context consumption
+
+`band.core.handoff.context_handoff` distinguishes context consumption from turn
+outcome. Known setup runs inside its guard and calls `handoff.consume()`
+immediately before framework execution. An abnormal exit before consumption
+leaves prepared context owed to the next delivery; the original exception and
+cancellation propagate unchanged. Ordinary setup errors still spend the normal
+retry budget and produce failed acknowledgements.
+
+`Agent` scopes this decision to one delivery. Nested deliveries restore their
+caller's decision, and detached tasks cannot change the parent decision. Once
+framework execution is entered, subsequent failures cannot undo consumption.
+Adapters without an explicit handoff keep conservative commitment. The shared
+history conversion path adopts this contract; NOOA also adopts it for room-agent
+construction, transcript installation, prompt preparation, observation and tool
+binding. The preprocessor remains the sole owner of pending context.
 
 ## Declining with `band_no_reply`
 
@@ -356,7 +374,7 @@ refusal instead of returning `DONE`; a drain records only accepted messages.
 
 ## Cancellation ownership
 
-Each runtime handler and SDK-managed Codex/Claude worker has one task owner.
+Each runtime handler and SDK-managed Claude, Codex or OpenCode worker has one task owner.
 The originating turn scope coordinates termination and fixes one absolute cleanup
 deadline using the existing one-second grace. Repeated controls still notify the
 adapter and update the unsettled delivery outcome, but never cancel its cleanup
@@ -366,9 +384,9 @@ A stopped tool or auxiliary claim first revokes that scope's posting permission
 and raises cancellation in its caller. Bound workers and the handler get the same
 cleanup grace to unwind cooperatively; an unfinished task receives cancellation
 once at expiry if none was delivered, even when nothing waits for it. Native
-controls, heartbeat refusal, watchdog expiry and shutdown cancel a running turn
-immediately; a worker already released for approval is left to the adapter's
-room cleanup. Provider execution and recovery timeouts retain their adapter
+STOP and INTERRUPT controls, heartbeat refusal and watchdog expiry cancel the
+originating turn, including a worker released for approval. Leave and shutdown
+clear reporting while released worker cleanup remains with adapter residency. Provider execution and recovery timeouts retain their adapter
 policy and coordinate with that same owner.
 
 Unfinished tasks remain owned after grace expires. They cannot post late replies,
@@ -378,3 +396,31 @@ a later existing host cleanup retry completes retirement. Worker completion alon
 does not readmit the room. Successful approval release retains its original tools
 and judgment until the worker actually finishes; `Turn.detach()` is still only
 an outcome-ledger operation.
+
+Stopping the work an external backend runs for the turn is the adapter's half,
+owned by one `BackendTurns` (`band.core.turn_lifecycle`) per adapter. The task
+that owns the backend call holds `running(room_id)` around it, outside any
+timeout scope, and binds the handle the backend reveals; when the call that
+starts the turn reveals it, `started(room_id, call)` lets that call finish after
+a stop so the accepted turn is still stopped. The adapter supplies only the
+cancel call for that handle. A cancelled turn, `on_interrupt` (STOP or
+INTERRUPT, including for a detached turn), the watchdog and shutdown all stop it
+once, in a task the primitive owns, bounded by `BACKEND_CANCEL_TIMEOUT_SECONDS`
+and never awaited on the control-processing task. A timeout branch awaits
+`stop` before its own cleanup and report. The room's next
+turn waits for `settled(room_id)`, and teardown for `settled` or `drain()`,
+before reacquiring or closing the backend.
+
+## Working-state lifetime
+
+The activity owner is the originating turn scope, independently of the current
+message delivery. A registered provider worker keeps its reporter alive after
+the handler settles, including while waiting for human approval. Later approval
+replies and busy deliveries do not replace that owner or restart its duration
+cap. Reporting ends when both the handler and its workers finish.
+
+An echoed heartbeat STOP can cancel that detached provider and notify its adapter
+once. It does not rewrite the original delivery's settled acknowledgement.
+Explicit interruption invalidates its activity; leave and shutdown clear the
+indicator while adapter residency retains responsibility for released workers.
+The authoritative idle report finishes before a replacement reports working.

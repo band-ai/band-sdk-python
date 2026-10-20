@@ -39,7 +39,11 @@ from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 from tests.adapters.waiting import until
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
+from tests.integrations.acp.acp_toolkit.agent import (
+    EXIT_RECORD,
+    FakeACPAgent,
+    Gate,
+)
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
@@ -598,8 +602,11 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
                 agent, writer_a, reader_a, use_unstable_protocol=True
             )
             stack.push_async_callback(close_connection, agent_conn)
-            conn = connect_to_agent(client, writer_c, reader_c)
+            conn = connect_to_agent(
+                client, writer_c, reader_c, observers=[agent.record_client_send]
+            )
             stack.push_async_callback(close_connection, conn)
+            stack.callback(agent.lifecycle.append, EXIT_RECORD)
             agent.hang_up = writer_a.close
             try:
                 yield conn, agent_conn

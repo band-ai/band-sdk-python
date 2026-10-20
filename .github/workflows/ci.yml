@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   # Run on the merge queue's temporary branch so these required checks report
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
@@ -14,6 +15,8 @@ permissions:
 jobs:
 
   lint:
+    # Drafts get no CI; ready_for_review above fires the first real run.
+    if: &not-draft github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -58,6 +61,7 @@ jobs:
 
 
   test:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -109,6 +113,7 @@ jobs:
 
 
   test-crewai:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -160,6 +165,9 @@ jobs:
       run: |
         uv run --all-packages pytest \
           tests/adapters/test_crewai_flow_phase3.py \
+          tests/adapters/crewaiworker/test_native_settlement.py \
+          tests/adapters/crewaiworker/test_flow_admission.py \
+          tests/adapters/crewaiworker/test_parallel_settlement.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
           tests/integrations/test_crewai_real_tools.py \
           tests/integrations/test_crewai_completion.py \
@@ -178,6 +186,7 @@ jobs:
 
 
   test-strands-nooa:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -226,7 +235,7 @@ jobs:
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
-          tests/adapters/test_strands_adapter.py \
+          tests/adapters/strands/ \
           tests/adapters/nooa/ \
           tests/converters/test_strands.py \
           tests/framework_conformance/ -k 'strands or nooa or legacy or probe_registry'
@@ -251,6 +260,7 @@ jobs:
 
 
   test-parlant:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -307,6 +317,8 @@ jobs:
           tests/integrations/parlant/test_customtools.py \
           tests/integrations/parlant/test_filetools.py \
           tests/integrations/parlant/test_guard.py \
+          tests/integrations/parlant/test_preambletask.py \
+          tests/integrations/parlant/test_selection.py \
           tests/integrations/parlant/test_server.py \
           tests/integrations/parlant/test_tasktools.py \
           tests/integrations/parlant/test_vocabulary.py \
@@ -321,6 +333,7 @@ jobs:
 
 
   packaging:
+    if: *not-draft
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -445,6 +458,7 @@ jobs:
 
 
   wheel-extra-cases:
+    if: *not-draft
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}

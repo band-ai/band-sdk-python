@@ -32,7 +32,7 @@ from tests.integrations.acp.clientadapter.kit import (
     advertise_session_load,
     room_runtime,
 )
-from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.acp.serverkit import make_platform_message
 
 
 class TestACPClientAdapterOnMessage:
@@ -372,6 +372,7 @@ class TestACPClientAdapterOnMessage:
         prompt_started = asyncio.Event()
         cancel_started = asyncio.Event()
         release_cancel = asyncio.Event()
+        cancel_finished = asyncio.Event()
 
         async def endless_prompt(**_: object) -> None:
             prompt_started.set()
@@ -380,6 +381,7 @@ class TestACPClientAdapterOnMessage:
         async def slow_cancel(session_id: str) -> None:
             cancel_started.set()
             await release_cancel.wait()
+            cancel_finished.set()
 
         conn = mock_spawn.conn
         conn.prompt = AsyncMock(side_effect=endless_prompt)
@@ -399,12 +401,15 @@ class TestACPClientAdapterOnMessage:
         turn.cancel()
         await cancel_started.wait()
         turn.cancel()
-        await asyncio.sleep(0)
-        assert not turn.done()
-        release_cancel.set()
-        with pytest.raises(asyncio.CancelledError):
-            await turn
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+            assert adapter_with_mocks.backend_turns.stopping("room-123")
+        finally:
+            release_cancel.set()
+            await adapter_with_mocks.backend_turns.drain()
 
+        assert cancel_finished.is_set()
         conn.cancel.assert_awaited_once_with("acp-session-123")
 
     @pytest.mark.asyncio
