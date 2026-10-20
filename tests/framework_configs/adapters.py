@@ -267,7 +267,7 @@ def _langgraph_factory(**kw: Any) -> Any:
 # The CrewAI conformance instance is config-only: safe for inspecting its config
 # and on_cleanup, never for runtime work — the
 # factories below guard the methods that would build a Crew or hit an LLM.
-# For runtime tests, use monkeypatch fixtures in tests/adapters/test_crewai_adapter.py.
+# For runtime tests, use monkeypatch fixtures in tests/adapters/crewai/conftest.py.
 
 
 def _crewai_installed() -> bool:
@@ -282,7 +282,7 @@ def _crewai_installed() -> bool:
 async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
     raise RuntimeError(
         "CrewAI conformance instance is config-only — "
-        "use tests/adapters/test_crewai_adapter.py fixtures for runtime tests."
+        "use tests/adapters/crewai/conftest.py fixtures for runtime tests."
     )
 
 

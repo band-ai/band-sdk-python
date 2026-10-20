@@ -33,7 +33,7 @@
   },
   "cells": [
     {
-      "test": "tests/e2e/baseline/guards/test_adapter_cell.py::test_build_uses_cell_default_then_override",
+      "test": "tests/e2e/baseline/guards/adaptercell/test_adaptercell.py::TestAdapterCell::test_build_uses_cell_default_then_override",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -49,7 +49,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_adapter_cell.py::test_run_as_forwards_override",
+      "test": "tests/e2e/baseline/guards/adaptercell/test_adaptercell.py::TestAdapterCell::test_run_as_forwards_override",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -65,7 +65,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_adapter_cell.py::test_running_forwards_override",
+      "test": "tests/e2e/baseline/guards/adaptercell/test_adaptercell.py::TestAdapterCell::test_running_forwards_override",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -951,7 +951,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-accept-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-accept-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -960,7 +960,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-decline-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-decline-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -969,7 +969,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[dont-ask-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[dont-ask-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -978,7 +978,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_question_is_answered_in_free_text_from_the_room",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_question_is_answered_in_free_text_from_the_room",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -987,7 +987,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -996,7 +996,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1005,7 +1005,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1014,7 +1014,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1023,7 +1023,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -1032,7 +1032,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1041,7 +1041,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1050,7 +1050,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_only_an_authorized_member_decides_an_ask",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_only_an_authorized_member_decides_an_ask",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1059,7 +1059,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_only_an_authorized_member_decides_an_ask",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_only_an_authorized_member_decides_an_ask",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1068,7 +1068,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1077,7 +1077,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -1086,7 +1086,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1095,7 +1095,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1104,7 +1104,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-codex]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-codex]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1113,7 +1113,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-cursor_acp]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1122,7 +1122,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-opencode]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-opencode]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1131,7 +1131,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1140,7 +1140,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-codex]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-codex]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1149,7 +1149,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-cursor_acp]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1158,7 +1158,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-opencode]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-opencode]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1167,7 +1167,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1176,7 +1176,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-codex]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-codex]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1185,7 +1185,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-cursor_acp]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1194,7 +1194,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-opencode]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-opencode]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1361,7 +1361,16 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::test_room_survives_real_transport_reconnect",
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_a_normal_close_reconnect",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_real_transport_reconnect",
       "adapter": "anthropic",
       "lanes": [
         "core"
@@ -1419,6 +1428,15 @@
       "adapter": "omp_acp",
       "lanes": [
         "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_supersede.py::TestSupersede::test_a_newer_session_ends_the_running_one_for_good",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
       ],
       "status": "pass",
       "reason": null

@@ -65,9 +65,11 @@ def mock_ws_client():
     ws.joined_topics.return_value = AllTopicsJoined()
 
     ws.last_disconnect_reason = None
+    ws.transport_ended = False
 
     def record_terminal_disconnect(reason):
         ws.last_disconnect_reason = reason
+        ws.transport_ended = True
 
     ws.record_terminal_disconnect.side_effect = record_terminal_disconnect
 
