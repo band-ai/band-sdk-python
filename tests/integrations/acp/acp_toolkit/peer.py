@@ -1,19 +1,52 @@
-"""Configure an ACP client to drive the real stdio peer."""
+"""A real stdio ACP peer with scripted process exits and stderr."""
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+import os
+import subprocess
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from band.integrations.acp.client_adapter import ACPClientAdapterConfig
-from tests.integrations.acp.stdiopeer import (
-    CRASH_MARKER_ARG,
-    HOLDER_RELEASE_ARG,
-    PEER_EXIT_CODE,
-    PEER_MODULE,
-    ExitStage,
+from acp import run_agent
+from acp.schema import (
+    InitializeResponse,
+    LoadSessionResponse,
+    NewSessionResponse,
+    SetSessionConfigOptionResponse,
 )
+
+from band.integrations.acp.client_adapter import ACPClientAdapterConfig
+from band.runtime.tools import BandTool
+from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.pipepeer import (
+    CONTROL_HOST,
+    CONTROL_PORT_ARG,
+    PipeCommand,
+    PipeRole,
+    control_line,
+)
+
+INITIALIZE_PENDING_LINE = "initialization pending"
+PEER_EXIT_CODE = 3
+CRASH_MARKER_ARG = "--crash-marker"
+RECOVERED_REPLY = "Recovered after the connection failed."
+
+
+class ExitStage(StrEnum):
+    INITIALIZE = "initialize"
+    INITIALIZE_WAIT = "initialize-wait"
+    PROMPT = "prompt"
+    PROTOCOL_ERROR = "protocol-error"
+    NEW_SESSION_PROTOCOL_ERROR = "new-session-protocol-error"
+    LOAD_SESSION_PROTOCOL_ERROR = "load-session-protocol-error"
+    CONFIG_PROTOCOL_ERROR = "config-protocol-error"
+    STDOUT_EOF = "stdout-eof"
+    EOF = "eof"
 
 
 def stdio_peer_config(
@@ -21,27 +54,163 @@ def stdio_peer_config(
     lines: list[str],
     *,
     crash_marker: Path | None = None,
-    holder_release: Path | None = None,
+    control_port: int | None = None,
     **settings: Any,
 ) -> ACPClientAdapterConfig:
-    """``holder_release`` makes the peer leave a descendant holding its pipes
-    until that file exists."""
     # Windows' venv redirector keeps stdout open until the peer exits.
     command = [
         sys._base_executable,
         "-m",
-        PEER_MODULE,
+        "tests.integrations.acp.acp_toolkit.peer",
         stage,
         str(PEER_EXIT_CODE),
         *lines,
     ]
     if crash_marker is not None:
         command.extend((CRASH_MARKER_ARG, str(crash_marker)))
-    if holder_release is not None:
-        command.extend((HOLDER_RELEASE_ARG, str(holder_release)))
+    if control_port is not None:
+        command.extend((CONTROL_PORT_ARG, str(control_port)))
     return ACPClientAdapterConfig(
         command=command,
         env={"__PYVENV_LAUNCHER__": sys.executable},
         inject_band_tools=crash_marker is not None,
         **settings,
     )
+
+
+def spawn_pipe_holder(port: int) -> None:
+    """The control connection releases the descendant even after its agent exits."""
+    subprocess.Popen(
+        # Not sys.executable: under __PYVENV_LAUNCHER__ that is Windows' venv
+        # redirector, whose pid is not the child holding the pipes.
+        [sys._base_executable, str(Path(__file__).with_name("pipepeer.py")), str(port)],
+        stdin=subprocess.DEVNULL,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+
+
+async def controlled_exit(peer: StdioPeer, port: int) -> asyncio.Task[None]:
+    reader, writer = await asyncio.open_connection(CONTROL_HOST, port)
+    writer.write(control_line(PipeRole.AGENT))
+    await writer.drain()
+    command = await reader.readline()
+    if command != control_line(PipeCommand.START):
+        peer.exit_process()
+    spawn_pipe_holder(port)
+
+    async def exit_when_requested() -> None:
+        try:
+            command = await reader.readline()
+            if command not in (b"", control_line(PipeCommand.EXIT)):
+                raise ValueError(f"Unexpected agent command: {command!r}")
+        finally:
+            writer.close()
+            peer.exit_process()
+
+    return asyncio.create_task(exit_when_requested())
+
+
+class StdioPeer(FakeACPAgent):
+    def __init__(
+        self, stage: ExitStage, code: int, lines: list[str], crash_marker: Path | None
+    ) -> None:
+        super().__init__(supports_session_load=True)
+        self.stage = stage
+        self.code = code
+        self.lines = lines
+        self.crash_marker = crash_marker
+        self.on_prompt(self.exit_on_prompt)
+
+    def exit_process(self) -> None:
+        sys.stderr.write("\n".join(self.lines) + "\n")
+        sys.stderr.flush()
+        # Exit inside a request without letting ACP turn the failure into a reply.
+        os._exit(self.code)
+
+    async def initialize(
+        self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
+    ) -> InitializeResponse:
+        match self.stage:
+            case ExitStage.INITIALIZE:
+                self.exit_process()
+            case ExitStage.INITIALIZE_WAIT:
+                sys.stderr.write(INITIALIZE_PENDING_LINE + "\n")
+                sys.stderr.flush()
+                await asyncio.Future[None]()
+        return await super().initialize(protocol_version, client_capabilities, **kwargs)
+
+    async def fail_protocol(self) -> None:
+        sys.stdout.write("[]\n")
+        sys.stdout.flush()
+        await asyncio.Future[None]()
+
+    async def new_session(
+        self, cwd: str, mcp_servers: Any = None, **kwargs: Any
+    ) -> NewSessionResponse:
+        if self.stage == ExitStage.NEW_SESSION_PROTOCOL_ERROR:
+            await self.fail_protocol()
+        return await super().new_session(cwd, mcp_servers, **kwargs)
+
+    async def load_session(
+        self, cwd: str, session_id: str, mcp_servers: Any = None, **kwargs: Any
+    ) -> LoadSessionResponse:
+        if self.stage == ExitStage.LOAD_SESSION_PROTOCOL_ERROR:
+            await self.fail_protocol()
+        return await super().load_session(cwd, session_id, mcp_servers, **kwargs)
+
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: str, **kwargs: Any
+    ) -> SetSessionConfigOptionResponse:
+        if self.stage == ExitStage.CONFIG_PROTOCOL_ERROR:
+            await self.fail_protocol()
+        return await super().set_config_option(config_id, session_id, value, **kwargs)
+
+    async def exit_on_prompt(self, agent: FakeACPAgent, session_id: str) -> None:
+        del agent
+        if self.crash_marker is not None:
+            if self.crash_marker.exists():
+                await self.call_mcp_tool(
+                    session_id=session_id,
+                    server=BAND_MCP_SERVER_NAME,
+                    tool_name=BandTool.SEND_MESSAGE,
+                    arguments={"content": RECOVERED_REPLY, "mentions": ["@user-456"]},
+                )
+                return
+            self.crash_marker.touch()
+        match self.stage:
+            case ExitStage.PROMPT:
+                self.exit_process()
+            case ExitStage.PROTOCOL_ERROR:
+                sys.stdout.write("[]\n")
+                sys.stdout.flush()
+            case ExitStage.STDOUT_EOF:
+                os.close(sys.stdout.fileno())
+            case _:
+                return
+        # Keep stderr alive until runtime cleanup closes the agent's stdin.
+        await asyncio.Future[None]()
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", type=ExitStage, choices=list(ExitStage))
+    parser.add_argument("code", type=int)
+    parser.add_argument("lines", nargs="*")
+    parser.add_argument(CRASH_MARKER_ARG, type=Path)
+    parser.add_argument(CONTROL_PORT_ARG, type=int)
+    args = parser.parse_args()
+    peer = StdioPeer(args.stage, args.code, args.lines, args.crash_marker)
+    control = (
+        await controlled_exit(peer, args.control_port)
+        if args.control_port is not None
+        else None
+    )
+    await run_agent(peer)
+    if control is not None:
+        control.cancel()
+    peer.exit_process()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

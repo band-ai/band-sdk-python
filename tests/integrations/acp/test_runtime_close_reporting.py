@@ -12,8 +12,7 @@ import pytest
 from band.integrations.acp.client_runtime import ACPRuntime
 from tests.adapters.roompeer import CLEANUP_FAILURE
 from tests.integrations.acp.acp_toolkit.lifecycle import FailingExits
-from tests.integrations.acp.acp_toolkit.peer import stdio_peer_config
-from tests.integrations.acp.stdiopeer import ExitStage
+from tests.integrations.acp.acp_toolkit.peer import ExitStage, stdio_peer_config
 from tests.paths import REPO_ROOT
 
 RefusingRuntime = Callable[[ExitStage], AbstractAsyncContextManager[ACPRuntime]]

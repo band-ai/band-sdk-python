@@ -15,12 +15,9 @@ from acp.schema import SessionConfigOptionSelect, ToolCallUpdate
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
 from band.client.streaming import ControlMode
 from band.core.model_catalog import ModelSelection
-from band.core.retention import ReleaseCause, RoomRetentionConfig
+from band.core.retention import ReleaseCause
 from band.integrations.acp import client_runtime
-from band.integrations.acp.client_adapter import (
-    ACPClientAdapter,
-    ACPClientAdapterConfig,
-)
+from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPRoom
 from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.model_selection import MODEL_CATEGORY
@@ -45,8 +42,6 @@ from tests.integrations.acp.acp_toolkit.agent import (
 )
 
 CANCELLED = {"outcome": {"outcome": "cancelled"}}
-# A transition bound short enough that waiting it out costs nothing.
-SHORT_TRANSITION_S = 0.05
 # A guard on a wait that should finish at once, so a hang fails clearly.
 TEST_GUARD_S = 5
 
@@ -109,14 +104,6 @@ def question_token(reply: Reply) -> str:
     """The token of the one question decision ``reply`` asked the room."""
     [prompt] = questions(reply)
     return decision_token(prompt)
-
-
-def stop_budget() -> ACPClientAdapterConfig:
-    """Band tools on, with a transition bound short enough to outlast."""
-    return fake_agent_config(
-        inject_band_tools=True,
-        retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S),
-    )
 
 
 def holds_prompt(agent: FakeACPAgent, number: int) -> Gate:
@@ -213,6 +200,28 @@ async def stop(session: AcpSession, handler: asyncio.Task[Reply]) -> None:
 async def restart(session: AcpSession) -> None:
     """Start the adapter again, as ``Agent.start()`` does after a stop."""
     await session.adapter.on_started("Fake Agent", "in-process fake")
+
+
+@asynccontextmanager
+async def restart_waiting_for_cleanup(session: AcpSession) -> AsyncIterator[None]:
+    """Observe the restart joining real cleanup; cancel its caller on exit."""
+    joined = asyncio.Event()
+    stop_retention = session.adapter._retention.stop
+
+    async def join_retention() -> None:
+        joined.set()
+        await stop_retention()
+
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(session.adapter._retention, "stop", join_retention)
+        restarting = asyncio.create_task(restart(session))
+        try:
+            await joined.wait()
+            yield
+        finally:
+            restarting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await restarting
 
 
 def answered(option: str) -> dict[str, object]:

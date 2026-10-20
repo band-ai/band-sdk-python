@@ -354,6 +354,18 @@ class BlockingHandler:
 # =============================================================================
 
 
+# The platform's eviction of an older same-key session (``agent_control``
+# ``supersede``), as the wire carries it.
+TERMINAL_SUPERSEDE: dict[str, Any] = {
+    "reason": "session.already_connected",
+    "message": "Superseded by a newer session",
+    "retryable": False,
+    "retry_after": 15,
+    "target_socket_id": "agent_socket:agent-123",
+    "correlation_id": "evict-1",
+}
+
+
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
     """Arm a spy on ``_drain_reconciliation`` -- the last step
     ``_on_reconnected`` runs -- and return an event set the instant the real

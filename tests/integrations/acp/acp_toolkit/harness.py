@@ -39,7 +39,11 @@ from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 from tests.adapters.waiting import until
-from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, Gate
+from tests.integrations.acp.acp_toolkit.agent import (
+    EXIT_RECORD,
+    FakeACPAgent,
+    Gate,
+)
 
 # The room ``AcpSession.send`` talks to unless told otherwise.
 DEFAULT_ROOM = "room-1"
@@ -596,7 +600,9 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
             reader_a,
             use_unstable_protocol=True,
         )
-        conn = connect_to_agent(client, writer_c, reader_c)
+        conn = connect_to_agent(
+            client, writer_c, reader_c, observers=[agent.record_client_send]
+        )
         agent.hang_up = writer_a.close
         try:
             yield conn, agent_conn
@@ -604,6 +610,7 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
             try:
                 await _exit(agent)
             finally:
+                agent.lifecycle.append(EXIT_RECORD)
                 for closable in (conn, agent_conn):
                     with contextlib.suppress(Exception):
                         await closable.close()

@@ -111,7 +111,12 @@ def _execute_tool(
                 await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
-    result = run_async(_execute(), fallback_loop=fallback_loop)
+    execution = (
+        _execute()
+        if context.tool_turn is None
+        else context.tool_turn.run_tool(_execute)
+    )
+    result = run_async(execution, fallback_loop=fallback_loop)
 
     if context.reply_tracker is not None:
         _note_tool_activity(context.reply_tracker, tool_name, result, arguments)

@@ -4,13 +4,11 @@ set -uo pipefail
 
 : "${FINAL:?FINAL scorecard path is required}"
 
-# INFO live and in the failure capture, on every nightly and dispatch run.
-# HTTP client loggers stay at WARNING (baseline conftest) so those lines
-# stay readable.
+log_level="${BAND_E2E_LOG_LEVEL:-INFO}"
 pytest_args=(
   -p no:rerunfailures
-  --log-cli-level=INFO
-  --log-level=INFO
+  --log-cli-level="$log_level"
+  --log-level="$log_level"
 )
 if [ -n "${BAND_E2E_TEST_SELECTOR:-}" ]; then
   if [ "${BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS:-false}" != "true" ]; then

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from band_sdk_core import AgentTopicKind, SessionState
@@ -20,6 +20,7 @@ from band.client.streaming import (
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
 )
+from band.client.streaming.client import ControlHook
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.exceptions import AgentAlreadyRunningError
 from band.core.types import ConflictPolicy, PlatformConnection
@@ -134,10 +135,13 @@ class BandLink:
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
 
         # Preemptive control-signal hook (interrupt/stop/play). Set by the
-        # runtime. Invoked DIRECTLY from the WebSocket receive task — never via
-        # the serialized _event_queue — so a control signal can act on a cycle
-        # already in flight instead of queuing behind it.
-        self.on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None
+        # runtime. Never run via the serialized _event_queue, so a control
+        # signal can act on a cycle already in flight instead of queuing
+        # behind it. Signals apply one at a time, so a hook that never
+        # returns holds every later signal until disconnect().
+        self.on_control: ControlHook | None = None
+        # Control signals still being applied, in arrival order.
+        self._control_lane: list[asyncio.Task[None]] = []
 
     @property
     def is_connected(self) -> bool:
@@ -232,6 +236,7 @@ class BandLink:
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Error unsubscribing from agent_control: %s", e)
 
+        await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)
         self._ws = None
         self._is_connected = False
@@ -416,18 +421,57 @@ class BandLink:
     async def _on_control(self, payload: AgentControlPayload) -> None:
         """Handle an ``agent.control`` push (interrupt/stop/play).
 
-        Invoked directly from the WebSocket receive task. Forwards to the
-        registered ``on_control`` hook WITHOUT touching the serialized event
-        queue, so the signal can preempt a cycle already in flight. If no hook
-        is registered, the push is a safe no-op.
+        Runs the ``on_control`` hook on a task ordered after every earlier
+        signal. The hook can take seconds (a STOP drains every room's turn),
+        and awaiting it here would hold a ``supersede`` queued behind it on
+        the same topic, where a reconnect discards queued messages unseen.
+        If no hook is registered, the push is a safe no-op.
         """
-        if self.on_control is None:
+        hook = self.on_control
+        if hook is None:
             logger.debug(
                 "agent.control received (mode=%s) but no on_control hook registered",
                 payload.mode,
             )
             return
-        await self.on_control(payload)
+        previous = self._control_lane[-1] if self._control_lane else None
+        task = asyncio.create_task(
+            self._apply_control(previous, hook, payload),
+            name=f"agent.control {payload.mode} correlation_id={payload.correlation_id}",
+        )
+        self._control_lane.append(task)
+        task.add_done_callback(self._control_lane.remove)
+
+    @staticmethod
+    async def _apply_control(
+        previous: asyncio.Task[None] | None,
+        hook: ControlHook,
+        payload: AgentControlPayload,
+    ) -> None:
+        if previous is not None:
+            await asyncio.wait({previous})
+        try:
+            await hook(payload)
+        except Exception:
+            logger.exception(
+                "agent.control %s failed (correlation_id=%s room_id=%s)",
+                payload.mode,
+                payload.correlation_id,
+                payload.room_id,
+            )
+
+    async def _cancel_control_lane(self) -> None:
+        if not self._control_lane:
+            return
+        pending = list(self._control_lane)
+        logger.info(
+            "Cancelling %d unfinished control signal(s) on disconnect: %s",
+            len(pending),
+            ", ".join(task.get_name() for task in pending),
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.wait(pending)
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
