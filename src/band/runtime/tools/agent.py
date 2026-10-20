@@ -73,8 +73,8 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
-from band.runtime.turn import records_turn_effects, reports_tool_activity
-from band.runtime.working_state import ActivityObserver, model_tool_activity
+from band.runtime.turn import records_turn_effects
+from band.runtime.working_state import ActivityObserver
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -286,7 +286,6 @@ class AttachmentCache(Protocol):
 
 
 @records_turn_effects
-@reports_tool_activity
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -2043,8 +2042,7 @@ class AgentTools(AgentToolsProtocol):
 
         try:
             method = getattr(self, definition.method_name)
-            async with model_tool_activity(self, tool_name):
-                result = await method(**arguments)
+            result = await method(**arguments)
             return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
         except (BandToolError, RoomExecutionStoppedError):
             # Stopped execution must escape ordinary tool-error conversion.

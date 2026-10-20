@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 from itertools import groupby
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
-from tests.runtime.helpers import PostingPlatform
+from tests.runtime.helpers import ALICE, LifecyclePlatform, page
 
 
-class ActivityPlatform(PostingPlatform):
+class ActivityPlatform(LifecyclePlatform):
     def __init__(self) -> None:
         super().__init__()
         self.activity_bodies: list[dict[str, Any]] = []
@@ -60,4 +60,23 @@ class ActivityPlatform(PostingPlatform):
             self.activity_bodies.append(body)
             if self.reject_detail and "activity" in body:
                 return httpx.Response(422, json={"error": "unsupported activity"})
+        if tail == "participants":
+            return page([{**ALICE, "role": "member", "status": "active"}])
+        if request.method == "POST" and tail == "messages":
+            return httpx.Response(
+                201, json={"data": {"id": "m-1", "success": True, "recipients": []}}
+            )
         return super().answer(request)
+
+
+class ObservedIdle(asyncio.Event):
+    """The idle event a graceful stop waits on, announcing that wait."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set()
+        self.awaited = asyncio.Event()
+
+    async def wait(self) -> Literal[True]:
+        self.awaited.set()
+        return await super().wait()
