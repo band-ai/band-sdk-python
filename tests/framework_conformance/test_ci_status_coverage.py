@@ -13,7 +13,8 @@ from typing import Any
 from tests.framework_conformance.venv_job_coverage import ci_jobs
 
 GATE_JOB = "ci-status"
-# The `if` of jobs that run on ready pull requests and never in the merge queue.
+# The `&pr-only` anchor in ci.yml, the source of this `if`: jobs that run on ready
+# pull requests and never in the merge queue.
 PR_ONLY = (
     "github.event_name == 'pull_request' && github.event.pull_request.draft == false"
 )

@@ -13,9 +13,10 @@ permissions:
   contents: read
 
 # A new push to a pull request supersedes its running CI. Merge-queue runs are
-# never cancelled: each one is the verdict for the commit that lands.
+# never cancelled: each one is the verdict for the commit that lands. They each
+# get their own group, since a requeue on the same base reuses the queue ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

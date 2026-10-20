@@ -20,7 +20,8 @@ the workflow files cannot say for themselves.
   Without it the queue waits forever for a check that never starts. `main` fast-forwards to
   the exact commit the queue validated, so CI does not run again on a push to `main`.
 - **A new push to a pull request cancels its running CI.** Merge-queue runs are never
-  cancelled: each one is the verdict for the commit that lands.
+  cancelled or queued behind one another: each one is the verdict for the commit that
+  lands, in a concurrency group of its own.
 - **The merge queue runs a slim `ci.yml`:** `lint` plus the `test`, `test-crewai` and
   `test-parlant` suites on Ubuntu with Python 3.12. The full OS × Python grid,
   `test-strands-nooa`, `packaging` and `wheel-extras` run on the PR only, and
