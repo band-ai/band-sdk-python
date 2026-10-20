@@ -21,64 +21,6 @@ class TestAgentToolsContextSyncBack:
     """
 
     @pytest.mark.asyncio
-    async def test_add_participant_syncs_back_to_ctx(self, mock_rest_client):
-        """add_participant() must call ctx.add_participant() with full dict."""
-        mock_ctx = MagicMock()
-        mock_ctx.room_id = "room-456"
-        mock_ctx.link = MagicMock()
-        mock_ctx.link.rest = mock_rest_client
-        mock_ctx.participants = []
-        mock_ctx.hub_room_id = None
-        mock_ctx.add_participant = MagicMock()
-
-        # Override list_agent_chat_participants to return empty (avoid "already_in_room")
-        mock_rest_client.agent_api_participants.list_agent_chat_participants = (
-            AsyncMock(return_value=MagicMock(data=[]))
-        )
-
-        tools = AgentTools.from_context(mock_ctx)
-        assert tools._ctx is mock_ctx
-
-        await tools.add_participant("Agent Two")
-
-        mock_ctx.add_participant.assert_called_once()
-        added = mock_ctx.add_participant.call_args.args[0]
-        assert added["id"] == "agent-2"
-        assert added["name"] == "Agent Two"
-        assert added["type"] == "Agent"
-        assert added["handle"] == "agent-two"
-        assert added["description"] == "Another agent"
-
-    @pytest.mark.asyncio
-    async def test_remove_participant_syncs_back_to_ctx(self, mock_rest_client):
-        """remove_participant() must call ctx.remove_participant() with correct ID."""
-        participant = {
-            "id": "user-1",
-            "name": "User One",
-            "type": "User",
-            "handle": "user-one",
-        }
-
-        mock_ctx = MagicMock()
-        mock_ctx.room_id = "room-456"
-        mock_ctx.link = MagicMock()
-        mock_ctx.link.rest = mock_rest_client
-        mock_ctx.participants = [participant]
-        mock_ctx.hub_room_id = None
-        mock_ctx.remove_participant = MagicMock()
-
-        # Return same participant from REST so snapshot matches
-        p_mock = make_participant_mock("user-1", "User One", "User", handle="user-one")
-        mock_rest_client.agent_api_participants.list_agent_chat_participants = (
-            AsyncMock(return_value=MagicMock(data=[p_mock]))
-        )
-
-        tools = AgentTools.from_context(mock_ctx)
-        await tools.remove_participant("User One")
-
-        mock_ctx.remove_participant.assert_called_once_with("user-1")
-
-    @pytest.mark.asyncio
     async def test_add_participant_persists_across_recreated_tools(
         self, mock_rest_client
     ):
@@ -103,8 +45,17 @@ class TestAgentToolsContextSyncBack:
         tools1 = AgentTools.from_context(ctx)
         await tools1.add_participant("Agent Two")
 
+        added = ctx.participants[0]
         assert len(ctx.participants) == 1
-        assert ctx.participants[0]["id"] == "agent-2"
+        assert {
+            key: added[key] for key in ("id", "name", "type", "handle", "description")
+        } == {
+            "id": "agent-2",
+            "name": "Agent Two",
+            "type": "Agent",
+            "handle": "agent-two",
+            "description": "Another agent",
+        }
 
         # Turn 2: recreate tools — participant must still be there
         tools2 = AgentTools.from_context(ctx)

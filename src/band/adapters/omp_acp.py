@@ -278,6 +278,7 @@ class OmpACPAdapter(ACPClientAdapter[OmpACPAdapterConfig]):
                 options=options,
                 room_id=room_id,
                 session_id=session_id,
+                emitter=emitter,
             )
             if option_id == OMP_APPROVE_OPTION_ID:
                 return AcceptElicitationResponse(

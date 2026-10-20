@@ -32,6 +32,8 @@ class TestStrandsNooaJobCoverage:
         assert expected <= {config.framework_id for config in ADAPTER_CONFIGS}
         assert expected <= {config.framework_id for config in CONVERTER_CONFIGS}
 
+    # Three collect-only subprocesses; each is slow to start on Windows runners.
+    @pytest.mark.timeout(120)
     def test_job_selects_every_required_node(self, framework_environment: None) -> None:
         needed = coverage.tests_needing_venv(
             coverage.needs_venv_pattern(frozenset({"strands", "nooa"}))
@@ -42,6 +44,11 @@ class TestStrandsNooaJobCoverage:
             coverage.job_command("test-strands-nooa", "Run Strands and NOOA tests")
         )
         selected = coverage.selected_nodes(arguments)
+        activity_arguments = coverage.pytest_arguments(
+            coverage.job_command("test-strands-nooa", "Run Strands activity tests")
+        )
+        assert "-k" not in activity_arguments
+        selected |= coverage.selected_nodes(activity_arguments)
         # Directory collection honors NOOA's supported-platform conftest gate.
         nooa_tests = REPO_ROOT / "tests/adapters/nooa"
         targets = {

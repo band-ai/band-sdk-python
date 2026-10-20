@@ -153,6 +153,11 @@ jobs:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
+    - name: Run CrewAI activity tests
+      env:
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+      run: uv run --all-packages pytest tests/integrations/crewai/activity/
+
     - name: Run crewai tests
       env:
         # dev-crewai venv lacks langgraph/anthropic/parlant/pydantic-ai/etc.;
@@ -161,7 +166,7 @@ jobs:
       # Only the tests that *need* this venv. Every other crewai test fakes the
       # package through sys.modules, so the `test` job above already runs it and
       # a second pass here would add no signal — just a path to forget.
-      # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
+      # tests/framework_conformance/crewaicoverage/ keeps this honest.
       run: |
         uv run --all-packages pytest \
           tests/adapters/test_crewai_flow_phase3.py \
@@ -226,6 +231,12 @@ jobs:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
+
+    - name: Run Strands activity tests
+      env:
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+        BAND_TEST_EXTRA: "dev-strands-nooa"
+      run: uv run --all-packages pytest tests/adapters/strands/activity/
 
     - name: Run Strands and NOOA tests
       env:
@@ -300,6 +311,11 @@ jobs:
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
+    - name: Run Parlant activity tests
+      env:
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+      run: uv run --all-packages pytest tests/integrations/parlant/activity/
+
     - name: Run parlant tests
       env:
         # dev-parlant venv lacks langgraph/anthropic-adapter/pydantic-ai/etc.;
@@ -308,7 +324,7 @@ jobs:
       # Only the tests that *need* this venv. Every other parlant test fakes the
       # package through sys.modules, so the `test` job above already runs it and
       # a second pass here would add no signal — just a path to forget.
-      # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
+      # tests/framework_conformance/parlantcoverage/ keeps this honest.
       run: |
         uv run --all-packages pytest \
           tests/integrations/parlant/test_catalog.py \
@@ -492,3 +508,41 @@ jobs:
       run: uv build --wheel
     - name: Check published extras and provider startup
       run: python3 .github/scripts/check-wheel-extras.py dist/band_sdk-*.whl --case ${{ matrix.case }}
+
+  ci-status:
+    # The one required CI check. Every other job in this file is in needs and in
+    # the loop below with the results it may end in
+    # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
+    # lint must succeed, so a draft run, which skips every job, is red.
+    # always(), not !cancelled(): a skipped required check counts as passing.
+    if: always()
+    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Verify every CI job passed
+      run: |
+        set -euo pipefail
+        failed=0
+        for entry in \
+          "lint:${{ needs.lint.result }}:success" \
+          "test:${{ needs.test.result }}:success" \
+          "test-crewai:${{ needs.test-crewai.result }}:success" \
+          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success" \
+          "test-parlant:${{ needs.test-parlant.result }}:success" \
+          "packaging:${{ needs.packaging.result }}:success" \
+          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success" \
+          "wheel-extras:${{ needs.wheel-extras.result }}:success"; do
+          job="${entry%%:*}"
+          remainder="${entry#*:}"
+          result="${remainder%%:*}"
+          allowed="${remainder#*:}"
+          case "|$allowed|" in
+            *"|$result|"*) printf 'ok      %-18s %s\n' "$job" "$result" ;;
+            *) printf 'FAILED  %-18s %s (expected %s)\n' "$job" "$result" "$allowed"; failed=1 ;;
+          esac
+        done
+        if [ "$failed" -ne 0 ]; then
+          echo "::error::one or more CI jobs did not pass"
+          exit 1
+        fi
+        echo "All CI jobs passed."
