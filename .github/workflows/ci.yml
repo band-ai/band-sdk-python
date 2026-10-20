@@ -505,7 +505,7 @@ jobs:
     needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
     runs-on: ubuntu-latest
     steps:
-    - name: Verify every CI job passed
+    - name: Verify every CI job passed or was skipped
       run: |
         set -euo pipefail
         failed=0
@@ -531,4 +531,4 @@ jobs:
           echo "::error::one or more CI jobs did not pass"
           exit 1
         fi
-        echo "All CI jobs passed."
+        echo "All CI jobs passed or were skipped."
