@@ -24,9 +24,7 @@ from tests.integrations.acp.clientbehavior.kit import rehydration_history
 
 
 class TestTransportContract:
-    @pytest.mark.parametrize(
-        "adapter_class", [CopilotACPAdapter, CursorACPAdapter]
-    )
+    @pytest.mark.parametrize("adapter_class", [CopilotACPAdapter, CursorACPAdapter])
     @pytest.mark.parametrize(
         "selection, expected",
         [
