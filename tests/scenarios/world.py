@@ -3,17 +3,19 @@ server and a stateful REST peer. Only the network is simulated."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-from band.client.streaming import ControlMode
+from band.client.streaming import ControlMode, WireEvent
 from band.platform.link import BandLink
 from band.runtime.execution import Execution, ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.testing import fake_phoenix_server
 from band.testing.phoenix_server import FakePhoenixServer
+from tests.conftest import TERMINAL_SUPERSEDE
 from tests.runtime.helpers import rest_client_over
 from tests.scenarios.observations import Observations
 from tests.scenarios.peer import AGENT_ID, BandPeer, room_json
@@ -21,6 +23,8 @@ from tests.scenarios.script import BareExecution, Script
 
 ROOMS_TOPIC = f"agent_rooms:{AGENT_ID}"
 CONTROL_TOPIC = f"agent_control:{AGENT_ID}"
+# Journal subject for the agent's connection, beside the per-room stories.
+SESSION_SUBJECT = "session"
 
 SESSION = SessionConfig(enable_context_hydration=False, enable_working_state=False)
 
@@ -107,6 +111,30 @@ class BandWorld:
         }
         await self.server.push(CONTROL_TOPIC, "agent.control", payload)
 
+    async def supersede(self) -> None:
+        """A newer process connects with the same key; the platform evicts
+        this one with a terminal supersede."""
+        await self.server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+
+    async def close_connection(self, code: int) -> None:
+        """The platform closes the socket with ``code``."""
+        await self.server.close_connection(code=code)
+
+    @asynccontextmanager
+    async def running(self) -> AsyncIterator[None]:
+        """The host blocked on ``run_forever``, journaled when it returns."""
+
+        async def run() -> None:
+            await self.runtime.link.run_forever(install_signal_handlers=False)
+            self.observations.record(f"{SESSION_SUBJECT}: ended")
+
+        task = asyncio.create_task(run())
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.wait({task})
+
     async def drop_connection(self) -> None:
         """Sever the socket; returns once the agent has reconciled its rooms."""
         listings = self.peer.listings
@@ -163,6 +191,11 @@ async def band_world(
             on_control=script.on_control,
         )
         link.on_control = runtime.handle_control
+
+        async def disconnected() -> None:
+            observations.record(f"{SESSION_SUBJECT}: disconnected")
+
+        runtime.presence.on_disconnected = disconnected
         await runtime.start()
         try:
             yield BandWorld(

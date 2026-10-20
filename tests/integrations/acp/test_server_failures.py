@@ -14,11 +14,11 @@ from band.core.types import MessageType
 from band.integrations.acp.failure import prompt_timeout_failure
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from tests.integrations.acp.conftest import (
+from tests.integrations.acp.conftest import make_tool_call_message
+from tests.integrations.acp.serverkit import (
     deliver_server_message,
     failure_event,
     make_platform_message,
-    make_tool_call_message,
     wait_for_pending_prompt,
 )
 

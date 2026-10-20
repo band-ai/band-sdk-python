@@ -16,6 +16,7 @@ from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     accepted_work_finished,
 )
+from tests.integrations.acp.acp_toolkit.agent import CANCEL_RECORD
 from tests.integrations.acp.acp_toolkit.harness import (
     SlowFailureReports,
     TranscriptTools,
@@ -72,7 +73,10 @@ class TestCursorTurns:
 
             with pytest.raises(asyncio.CancelledError):
                 await turn
-            assert agent.cancelled_sessions == [session.session_id(DEFAULT_ROOM)]
+            await session.adapter.backend_turns.drain()
+            assert agent.lifecycle == [
+                f"{CANCEL_RECORD} {session.session_id(DEFAULT_ROOM)}"
+            ]
             prompting.release.set()
 
     @pytest.mark.asyncio

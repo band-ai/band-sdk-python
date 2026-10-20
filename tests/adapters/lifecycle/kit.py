@@ -261,9 +261,13 @@ class RetentionHost:
 
 @asynccontextmanager
 async def hosted(
-    profile: LifecycleProfile, root: Path, monkeypatch: pytest.MonkeyPatch
+    profile: LifecycleProfile,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    start: bool = True,
 ) -> AsyncIterator[RetentionHost]:
-    """A started ``profile`` adapter whose children are released and closed on exit."""
+    """Prepare a provider; default startup/cleanup exercise framework hooks only."""
     host = RetentionHost(
         profile=profile,
         root=root,
@@ -271,7 +275,8 @@ async def hosted(
         hold_startup=root / "hold-startup",
     )
     host.bridge = profile.install(host, monkeypatch)
-    await host.adapter.on_started("Peer", "A subprocess under test")
+    if start:
+        await host.adapter.on_started("Peer", "A subprocess under test")
     try:
         yield host
     finally:

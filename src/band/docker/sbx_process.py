@@ -24,14 +24,20 @@ def run_sbx_subprocess(
     piped via `input` or embedded in `argv`), is stripped from the raised
     message should it ever surface in `sbx`'s own output.
     """
-    result = subprocess.run(
-        argv,
-        input=input,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            argv,
+            input=input,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        command = " ".join(argv)
+        if redact:
+            command = command.replace(redact, "***")
+        raise RuntimeError(f"{command} timed out after {timeout}s") from None
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         command = " ".join(argv)

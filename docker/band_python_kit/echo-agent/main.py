@@ -27,7 +27,9 @@ class EchoAgentSettings(BaseSettings):
     """Band identity and endpoints, injected by the launcher as BAND_* env
     vars. A missing variable fails loud with a clear validation error."""
 
-    model_config = SettingsConfigDict(env_prefix="BAND_", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_prefix="BAND_", extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
     agent_id: str  # BAND_AGENT_ID
     api_key: str  # BAND_API_KEY
@@ -59,8 +61,8 @@ async def main() -> None:
         ws_url=settings.ws_url,
         rest_url=settings.rest_url,
     )
-    # Signals reach this process directly (the launcher execs into it), so
-    # SIGTERM from `sbx stop` shuts the agent down gracefully.
+    # The launcher exec preserves signals delivered to this process;
+    # sandbox stop does not guarantee a graceful signal.
     await run_with_graceful_shutdown(agent)
 
 

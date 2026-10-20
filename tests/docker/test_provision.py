@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,7 +29,6 @@ from band.docker.provision import (
     _check_registration_after_timeout,
     _describe_register_error,
     _describe_registration_timeout,
-    _table_targets,
     build_parser,
     inject_agent_key,
     main,
@@ -49,23 +49,18 @@ from tests.docker.launcher.fakes import (
 
 
 def _empty_ls_output(scope: str) -> str:
-    return f'No secrets found for scope "{scope}".\n'
+    return json.dumps({"custom_secrets": []})
 
 
 def _ls_table(*, scope: str, host: str) -> str:
-    """A realistic `sbx secret ls` table (verified against sbx v0.35.0)."""
-    return (
-        "CUSTOM SECRETS\n"
-        "SCOPE   TARGETS   ENV            PLACEHOLDER     SECRET\n"
-        f"{scope}   {host}   BAND_API_KEY   proxy-managed   ******\n"
-    )
+    return json.dumps({"custom_secrets": [{"scope": scope, "targets": [host]}]})
 
 
 @dataclass
 class FakeSbx:
     """Records every `sbx` invocation and returns scripted results."""
 
-    ls_output: str = ""
+    ls_output: str = '{"custom_secrets": []}'
     sandbox_ls_json: str = '{"sandboxes": []}'
     set_custom_returncode: int = 0
     set_custom_stderr: str = ""
@@ -378,18 +373,6 @@ class TestAgentIdRoundTrip:
 
 
 # --- sbx secret ls table parsing ---
-
-
-class TestTableTargets:
-    def test_empty_when_no_secrets(self):
-        assert _table_targets(_empty_ls_output("my-agent")) == set()
-
-    def test_finds_target_host(self):
-        targets = _table_targets(_ls_table(scope="my-agent", host="**.band.ai"))
-        assert "**.band.ai" in targets
-
-    def test_garbage_output_is_empty(self):
-        assert _table_targets("not a table\njust noise\n") == set()
 
 
 class TestSandboxHasBandSecret:
@@ -853,8 +836,8 @@ class TestRun:
         assert "do-not-log-me" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_key_persist_failure_prints_recovery_banner(
-        self, tmp_path, monkeypatch, capsys
+    async def test_key_persist_failure_logs_recovery_without_secret(
+        self, tmp_path, monkeypatch, capsys, caplog
     ):
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root)
@@ -872,7 +855,8 @@ class TestRun:
             with pytest.raises(RuntimeError, match="daemon unreachable"):
                 await run(args)
 
-        assert "unrecoverable-key" in capsys.readouterr().err
+        assert "unrecoverable-key" not in capsys.readouterr().err + caplog.text
+        assert "Agent agent-1 requires recovery" in caplog.text
 
 
 # --- main() ---
