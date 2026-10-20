@@ -104,8 +104,8 @@ async def pending_approval() -> AsyncIterator[ApprovalTurn]:
         try:
             await run_single_turn(adapter, tools, content="run it")
             await adapter.watcher_started.wait()
-            watcher = adapter._rooms["room-1"].turn_task
-            assert watcher is not None
-            yield ApprovalTurn(clock, client, tools, adapter, finishing, watcher)
+            turn = adapter._rooms["room-1"].turn
+            assert turn is not None and turn.watcher is not None
+            yield ApprovalTurn(clock, client, tools, adapter, finishing, turn.watcher)
         finally:
             finishing.released.set()

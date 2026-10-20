@@ -14,6 +14,11 @@ from band.runtime.custom_tools import CustomToolDef
 from tests.adapters.opencode.helpers import FakeOpencodeClient, ObservedOpencodeAdapter
 
 
+def turn_watchers(adapter: ObservedOpencodeAdapter) -> set[asyncio.Task[None]]:
+    turns = (room.turn for room in adapter._rooms.values())
+    return {turn.watcher for turn in turns if turn and turn.watcher}
+
+
 async def close_adapter(
     adapter: ObservedOpencodeAdapter, client: FakeOpencodeClient, *, virtual: bool
 ) -> None:
@@ -26,9 +31,7 @@ async def close_adapter(
         else nullcontext()
     )
     with mode:
-        tasks = adapter.background_tasks | {
-            room.turn_task for room in adapter._rooms.values() if room.turn_task
-        }
+        tasks = adapter.background_tasks | turn_watchers(adapter)
         if adapter._event_task is not None:
             tasks.add(adapter._event_task)
         try:

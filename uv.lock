@@ -1135,7 +1135,6 @@ requires-dist = [
     { name = "pytest-randomly", marker = "extra == 'dev'", specifier = "==5.0.0" },
     { name = "pytest-randomly", marker = "extra == 'dev-crewai'", specifier = "==5.0.0" },
     { name = "pytest-randomly", marker = "extra == 'dev-parlant'", specifier = "==5.0.0" },
-    { name = "pytest-randomly", marker = "extra == 'dev-parlant'", specifier = ">=5.0.0" },
     { name = "pytest-randomly", marker = "extra == 'dev-strands-nooa'", specifier = "==5.0.0" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev'", specifier = ">=14.0.0" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev-crewai'", specifier = ">=14.0.0" },
