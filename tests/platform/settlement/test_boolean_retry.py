@@ -7,6 +7,9 @@ import pytest
 from band.platform.link import BandLink
 from tests.platform.settlement.kit import Reply, SettlementPeer, Terminal
 
+# Retries the boolean writes have always had; independent of the shared constant.
+TRANSIENT_RETRIES = 3
+
 
 class TestBooleanRetry:
     @pytest.mark.parametrize("status", [408, 409, 429, 503])
@@ -21,3 +24,11 @@ class TestBooleanRetry:
 
         assert await terminal.legacy(link) is True
         assert settlement_peer.writes == [terminal.write] * 2
+
+    async def test_a_persistent_outage_ends_after_the_default_retries(
+        self, terminal: Terminal, settlement_peer: SettlementPeer, link: BandLink
+    ) -> None:
+        settlement_peer.reply = Reply(503)
+
+        assert await terminal.legacy(link) is False
+        assert settlement_peer.writes == [terminal.write] * (1 + TRANSIENT_RETRIES)
