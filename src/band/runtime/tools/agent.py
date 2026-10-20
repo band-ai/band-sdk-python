@@ -73,7 +73,8 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
-from band.runtime.turn import records_turn_effects
+from band.runtime.turn import records_turn_effects, reports_tool_activity
+from band.runtime.working_state import ActivityObserver, model_tool_activity
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -285,6 +286,7 @@ class AttachmentCache(Protocol):
 
 
 @records_turn_effects
+@reports_tool_activity
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -344,6 +346,7 @@ class AgentTools(AgentToolsProtocol):
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
+        self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
     @property
@@ -384,6 +387,7 @@ class AgentTools(AgentToolsProtocol):
         )
         tools._ctx = ctx
         tools._scope = ctx.current_scope if bind_scope else None
+        tools._activity_observer = ctx.activity_observer(tools._scope)
         tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 
@@ -2039,7 +2043,8 @@ class AgentTools(AgentToolsProtocol):
 
         try:
             method = getattr(self, definition.method_name)
-            result = await method(**arguments)
+            async with model_tool_activity(self, tool_name):
+                result = await method(**arguments)
             return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
         except (BandToolError, RoomExecutionStoppedError):
             # Stopped execution must escape ordinary tool-error conversion.

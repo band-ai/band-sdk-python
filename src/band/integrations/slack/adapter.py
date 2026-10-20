@@ -162,6 +162,7 @@ class SlackTeeingTools(AgentTools):
         # adapter judging ``wrap`` sees what the brain did through this tee.
         self._ctx = wrap._ctx
         self._scope = wrap._scope
+        self._activity_observer = wrap._activity_observer
         self.turn = wrap.turn
         self._slack = slack
         self._binding = binding

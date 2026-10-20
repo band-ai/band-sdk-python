@@ -82,6 +82,7 @@ from band.runtime.tools import (
     strip_handle_prefix,
 )
 from band.runtime.turn import record_tool_result, records_turn_effects
+from band.runtime.working_state import ActivityObserver
 
 # Synthetic identity FakeAgentTools uses for the "joins you to the task on
 # first status/active_form write" semantics band_update_task documents.
@@ -326,6 +327,7 @@ class FakeAgentTools:
         self._held_messages: list[HeldMessage] = []
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
+        self._activity_observer: ActivityObserver | None = None
 
     @property
     def agent_id(self) -> str | None:

@@ -10,6 +10,8 @@ from typing import Any, ClassVar, cast
 from band_sdk_core import AgentFailure
 from pydantic import BaseModel
 
+from band.runtime.working_state import end_tool_activity, report_tool_activity
+
 try:
     from strands import Agent
     from strands.agent import AgentResult
@@ -383,6 +385,7 @@ class BandTurnHooks(HookProvider):
         registry.add_callback(AfterToolCallEvent, self._on_after_tool)
 
     async def _on_before_tool(self, event: BeforeToolCallEvent) -> None:
+        await report_tool_activity(self._tools, event.tool_use["name"])
         call: dict[ToolEventKey, object] = {
             ToolEventKey.NAME: event.tool_use["name"],
             ToolEventKey.ARGS: redact_tool_call_args(
@@ -399,6 +402,7 @@ class BandTurnHooks(HookProvider):
         )
 
     async def _on_after_tool(self, event: AfterToolCallEvent) -> None:
+        await end_tool_activity(self._tools)
         name = event.tool_use["name"]
         output = _result_text(event.result)
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
