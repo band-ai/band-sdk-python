@@ -503,9 +503,16 @@ jobs:
     steps:
     - name: Fail if any job failed or was cancelled
       if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-      run: exit 1
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        echo "$RESULTS"
+        echo "::error::A required job failed or was cancelled"
+        exit 1
 
     - name: Fail if nothing ran
       # lint runs on every ready PR and every queue entry; skipped means a draft run.
       if: needs.lint.result != 'success'
-      run: exit 1
+      run: |
+        echo "::error::lint did not succeed: a draft pull request runs no CI"
+        exit 1

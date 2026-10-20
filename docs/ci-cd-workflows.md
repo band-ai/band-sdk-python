@@ -7,9 +7,11 @@ the workflow files cannot say for themselves.
 
 - **Rules live in GitHub Rulesets, not in the repo.** Read them with
   `gh api repos/band-ai/band-sdk-python/rulesets` instead of a hand-kept table.
-- **The required checks are `ci-status` and `Validate PR Title`.** `ci-status` is the last job
-  in `ci.yml` and fails when any job it `needs` failed or was cancelled, so no matrix cell is
-  named in the ruleset and `ci.yml` may run a different job set per event. A new `ci.yml` job
+- **`ci-status` is the rollup CI check, meant to be required alongside `Validate PR Title`.**
+  It is the last job in `ci.yml` and fails when any job it `needs` failed or was cancelled, or
+  when `lint` did not succeed (a draft pull request runs no CI). Requiring it instead of each
+  job means no matrix cell is named in the ruleset and `ci.yml` may run a different job set
+  per event. A new `ci.yml` job
   joins the contract by being listed in `ci-status.needs`;
   `tests/framework_conformance/test_ci_status_coverage.py` fails until it is.
 - **`main` uses a merge queue**, so every required workflow needs a `merge_group:` trigger

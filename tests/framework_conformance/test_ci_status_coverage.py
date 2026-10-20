@@ -6,17 +6,9 @@ as green, since GitHub counts a skipped required check as passing.
 
 from __future__ import annotations
 
-from typing import Any
-
-import yaml
-
-from tests.framework_conformance.venv_job_coverage import CI_WORKFLOW
+from tests.framework_conformance.venv_job_coverage import ci_jobs
 
 GATE_JOB = "ci-status"
-
-
-def ci_jobs() -> dict[str, Any]:
-    return yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
 
 
 class TestCiStatusCoverage:
@@ -26,3 +18,14 @@ class TestCiStatusCoverage:
 
     def test_gate_runs_whatever_its_needs_concluded(self) -> None:
         assert ci_jobs()[GATE_JOB]["if"] == "always()"
+
+    def test_gate_fails_on_a_failed_job_or_a_draft_run(self) -> None:
+        failing_conditions = [
+            step["if"]
+            for step in ci_jobs()[GATE_JOB]["steps"]
+            if step["run"].rstrip().endswith("exit 1")
+        ]
+        assert failing_conditions == [
+            "contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
+            "needs.lint.result != 'success'",
+        ]
