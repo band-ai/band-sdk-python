@@ -1892,7 +1892,7 @@ class ExecutionContext:
         return await self.link.report_activity(
             self.room_id,
             working,
-            **({"activity": detail} if detail is not None else {}),
+            activity=detail,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
