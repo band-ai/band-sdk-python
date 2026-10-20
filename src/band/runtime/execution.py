@@ -1990,7 +1990,6 @@ class ExecutionContext:
             waiting=waiting,
         )
 
-
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
         scope.bind(owner)
