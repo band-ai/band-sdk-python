@@ -22,6 +22,7 @@ from tests.adapters.opencode.helpers import (
     event_message_updated,
     event_session_idle,
     event_text_part,
+    idle_client,
     make_platform_message,
     run_single_turn,
     tools_protocol,
@@ -596,9 +597,7 @@ class TestLifecycle:
         self,
         tools,
     ) -> None:
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
         backend = FakeBandMCPBackend()
 

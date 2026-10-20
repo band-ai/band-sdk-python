@@ -7,6 +7,8 @@ import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 
+from band_rest.types.agent_activity_detail import AgentActivityDetail
+
 import band.runtime
 from band.client.streaming import (
     AgentControlPayload,
@@ -195,6 +197,7 @@ class ControlLink(BandLink):
         room_id: str,
         working: bool,
         *,
+        activity: AgentActivityDetail | None = None,
         timeout_seconds: int = 2,
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
@@ -205,7 +208,11 @@ class ControlLink(BandLink):
                 on_stopped()
 
         accepted = await super().report_activity(
-            room_id, working, timeout_seconds=timeout_seconds, on_stopped=observe_stop
+            room_id,
+            working,
+            activity=activity,
+            timeout_seconds=timeout_seconds,
+            on_stopped=observe_stop,
         )
         if accepted and not working and room_id == self.control_room_id:
             self.control.activity_idle.set()
