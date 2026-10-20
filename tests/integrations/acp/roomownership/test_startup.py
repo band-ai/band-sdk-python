@@ -26,6 +26,7 @@ from tests.integrations.acp.roomownership.kit import (
     inline,
     stop,
 )
+from tests.toolkit.tasks import background
 
 
 def adapter_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -46,8 +47,10 @@ class TestStartup:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         config = fake_agent_config()
-        async with acp_adapter(agent, config) as session:
-            first = asyncio.create_task(session.send("hello"))
+        async with (
+            acp_adapter(agent, config) as session,
+            background(session.send("hello")) as first,
+        ):
             await starting.received.wait()
             await loop_clock.advance(config.retention.transition_timeout_s)
             with pytest.raises(TimeoutError):
@@ -75,8 +78,10 @@ class TestStartup:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         # The default start bound is far away: the stop, not the bound, frees it.
-        async with opened(agent) as session:
-            first = asyncio.create_task(session.send("hello"))
+        async with (
+            opened(agent) as session,
+            background(session.send("hello")) as first,
+        ):
             await starting.received.wait()
 
             await stop(session, first)
@@ -94,8 +99,10 @@ class TestStartup:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         config = fake_agent_config()
-        async with acp_adapter(agent, config) as session:
-            first = asyncio.create_task(session.send("hello"))
+        async with (
+            acp_adapter(agent, config) as session,
+            background(session.send("hello")) as first,
+        ):
             await starting.received.wait()
             await loop_clock.advance(config.retention.transition_timeout_s)
             with pytest.raises(TimeoutError):
