@@ -20,7 +20,7 @@ RESULT_ENTRY = re.compile(
 
 def allowed_results() -> dict[str, set[str]]:
     """The results the gate accepts per job, read from its verification loop."""
-    script = "\n".join(step["run"] for step in ci_jobs()[GATE_JOB]["steps"])
+    script = "\n".join(step.get("run", "") for step in ci_jobs()[GATE_JOB]["steps"])
     return {
         job: set(allowed.split("|")) for job, allowed in RESULT_ENTRY.findall(script)
     }
