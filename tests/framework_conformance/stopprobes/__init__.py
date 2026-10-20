@@ -17,6 +17,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 
+import pytest
+
 from band.client.streaming import ControlMode
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn_lifecycle import BackendTurns
@@ -47,6 +49,7 @@ class StopCase:
 
     run: Callable[[], Awaitable[list[str]]]
     expected: list[str]
+    marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
 STOP_WAITS = frozenset({BackendTurns.settled.__code__, BackendTurns.drain.__code__})

@@ -1,12 +1,14 @@
-"""Adapters using the shared cancellation owner stop their backend turns."""
+"""Every adapter that drives a backend stops that backend's turn when the
+room's turn ends early; every other adapter states why it has none."""
 
 from __future__ import annotations
 
 import pytest
 
+import band.adapters
 from band.core.simple_adapter import SimpleAdapter
 from tests.framework_conformance.outcomeprobes import band_adapters
-from tests.framework_conformance.stopprobes import StopCase
+from tests.framework_conformance.stopprobes import NoBackendTurn, StopCase
 from tests.framework_conformance.stopprobes import a2a as a2a_probe
 from tests.framework_conformance.stopprobes import acp as acp_probe
 from tests.framework_conformance.stopprobes import claudesdk as claudesdk_probe
@@ -15,6 +17,7 @@ from tests.framework_conformance.stopprobes import copilotsdk as copilotsdk_prob
 from tests.framework_conformance.stopprobes import cursoracp as cursoracp_probe
 from tests.framework_conformance.stopprobes import letta as letta_probe
 from tests.framework_conformance.stopprobes import opencode as opencode_probe
+from tests.framework_conformance.stopprobes import parlant as parlant_probe
 
 #: The stop cases of each adapter that drives a backend, by class name.
 STOP_PROBES: dict[str, dict[str, StopCase]] = {
@@ -26,6 +29,7 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
     "CursorACPAdapter": cursoracp_probe.CASES,
     "LettaAdapter": letta_probe.CASES,
     "OpencodeAdapter": opencode_probe.CASES,
+    "ParlantAdapter": parlant_probe.CASES,
 }
 
 #: Subclasses that keep a probed parent's ``backend_turns`` and ``on_message``,
@@ -33,6 +37,23 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
 INHERITED_PROBES: dict[str, str] = {
     "CopilotACPAdapter": "ACPClientAdapter",
     "OmpACPAdapter": "ACPClientAdapter",
+}
+
+#: Adapters with no backend turn to stop, and why.
+NO_BACKEND_TURN: dict[str, NoBackendTurn] = {
+    "AgnoAdapter": NoBackendTurn.IN_PROCESS,
+    "AnthropicAdapter": NoBackendTurn.IN_PROCESS,
+    "CrewAIAdapter": NoBackendTurn.IN_PROCESS,
+    "CrewAIFlowAdapter": NoBackendTurn.IN_PROCESS,
+    "GeminiAdapter": NoBackendTurn.IN_PROCESS,
+    "GoogleADKAdapter": NoBackendTurn.IN_PROCESS,
+    "LangGraphAdapter": NoBackendTurn.IN_PROCESS,
+    "NooaAdapter": NoBackendTurn.IN_PROCESS,
+    "PydanticAIAdapter": NoBackendTurn.IN_PROCESS,
+    "StrandsAdapter": NoBackendTurn.IN_PROCESS,
+    "A2AGatewayAdapter": NoBackendTurn.GATEWAY,
+    "BandACPServerAdapter": NoBackendTurn.GATEWAY,
+    "SlackAdapter": NoBackendTurn.CHANNEL,
 }
 
 #: The module each probe needs beyond the dev venv's always-installed core;
@@ -43,13 +64,17 @@ REQUIRED_MODULES: dict[str, str] = {
     "CopilotSDKAdapter": "copilot",
     "CursorACPAdapter": "acp",
     "LettaAdapter": "letta_client",
+    "ParlantAdapter": "parlant.sdk",
 }
 
 CASES = [
-    pytest.param(adapter, case, id=f"{adapter}-{name}")
+    pytest.param(adapter, case, id=f"{adapter}-{name}", marks=case.marks)
     for adapter, cases in STOP_PROBES.items()
     for name, case in cases.items()
 ]
+
+
+ACCOUNTED = STOP_PROBES.keys() | INHERITED_PROBES.keys() | NO_BACKEND_TURN.keys()
 
 
 def runs_parents_stop(cls: type[SimpleAdapter], parent: type[SimpleAdapter]) -> bool:
@@ -61,14 +86,18 @@ def runs_parents_stop(cls: type[SimpleAdapter], parent: type[SimpleAdapter]) -> 
 
 
 class TestBackendStop:
-    def test_every_migrated_adapter_is_probed(self) -> None:
-        migrated = {
-            name
-            for name, cls in band_adapters().items()
-            if cls.backend_turns is not SimpleAdapter.backend_turns
-        }
+    def test_every_band_adapter_is_probed_or_pinned(self) -> None:
+        adapters = band_adapters()
 
-        assert migrated - (STOP_PROBES.keys() | INHERITED_PROBES.keys()) == set()
+        assert adapters.keys() - ACCOUNTED == set()
+        assert not STOP_PROBES.keys() & NO_BACKEND_TURN.keys()
+
+    def test_every_exported_adapter_is_probed_or_pinned_even_without_its_extra(
+        self,
+    ) -> None:
+        exported = {name for name in band.adapters.__all__ if name.endswith("Adapter")}
+
+        assert exported - ACCOUNTED == set()
 
     def test_inherited_probes_really_run_the_parents_stop(self) -> None:
         adapters = band_adapters()
