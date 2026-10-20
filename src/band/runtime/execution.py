@@ -47,7 +47,6 @@ from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
 )
-from band.core.activity import ToolNamesObserver
 from band.core.exceptions import (
     CleanupIncompleteError,
     InputNotAccepted,
@@ -432,10 +431,6 @@ class ExecutionContext:
         self._activity_owner: TurnScope | None = None
         self._activity_stop_scope: TurnScope | None = None
         self._activity_completion: asyncio.Task[None] | None = None
-        # Tool names follow the adapter's tool-narration choice; the default
-        # matches emit's opt-out semantics, so only adapters that drop
-        # Emit.TOOL_CALLS (via sync_activity_tool_names) hide them.
-        self._activity_tool_names = True
         self._control_revision = 0
         self._on_platform_stop = on_platform_stop
         self._shutdown_task: asyncio.Task[bool] | None = None
@@ -450,10 +445,6 @@ class ExecutionContext:
         self._stopped: bool = False
         # The first stop's graceful result; a retry only settles retained work.
         self._stop_graceful = True
-
-        self._on_activity_clear: Callable[[], Awaitable[None]] | None = (
-            self._clear_scope_activity
-        )
 
     @property
     def thread_id(self) -> str:
@@ -887,17 +878,6 @@ class ExecutionContext:
             raise CleanupIncompleteError(
                 f"ExecutionContext {self.room_id}: {unfinished} cancelled "
                 "task(s) still running"
-            )
-
-    async def _clear_activity(self) -> None:
-        """Invoke the optional activity-clear seam after an aborted cycle."""
-        if self._on_activity_clear is None:
-            return
-        try:
-            await self._on_activity_clear()
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: activity-clear hook failed", self.room_id
             )
 
     # --- Participant management ---
@@ -1893,11 +1873,10 @@ class ExecutionContext:
 
     async def _report_working_state(self, working: bool) -> bool:
         """Report the room's boolean working state (wired into the reporter)."""
-        detail = self._working_reporter.activity if working else None
         return await self.link.report_activity(
             self.room_id,
             working,
-            **({"activity": detail} if detail is not None else {}),
+            activity=self._working_reporter.activity,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
@@ -1928,7 +1907,6 @@ class ExecutionContext:
     ) -> None:
         scope = self.current_scope
         if scope is not None:
-            scope.activity_allowed = True
             await self._acquire_activity(scope)
         if scope is not None and scope.terminating:
             raise asyncio.CancelledError
@@ -1949,8 +1927,6 @@ class ExecutionContext:
         await self._start_activity(scope)
 
     async def _start_activity(self, scope: TurnScope) -> None:
-        if not scope.activity_allowed:
-            return
         previous = self._activity_owner
         if previous is not None and previous is not scope:
             if not previous.aborted and any(
@@ -1964,23 +1940,10 @@ class ExecutionContext:
         if self._activity_owner is not scope:
             self._activity_stop_scope = None
         self._activity_owner = scope
-        await self._working_reporter.start(owner=scope)
-
-    def set_activity_tool_names(self, enabled: bool) -> None:
-        """Gate tool names in room activity to match tool-call narration.
-
-        Permission waits and memory activity are unaffected: they name no
-        content. Observers created after a change pick it up immediately.
-        """
-        self._activity_tool_names = enabled
+        await self._working_reporter.start()
 
     def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
-        if scope is None or not scope.activity_allowed:
-            return None
-        observer: ActivityObserver = ScopeActivityObserver(self, scope)
-        if not self._activity_tool_names:
-            observer = ToolNamesObserver(observer)
-        return observer
+        return ScopeActivityObserver(self, scope) if scope is not None else None
 
     def owns_activity(self, scope: TurnScope) -> bool:
         return self._activity_owner is scope and not scope.aborted and not self._closing
@@ -1992,8 +1955,6 @@ class ExecutionContext:
         activity: AgentActivityDetail | None = None,
         waiting: bool | None = None,
     ) -> None:
-        if not scope.activity_allowed:
-            return
         if (
             self._activity_owner is None
             and scope is self.current_scope
@@ -2006,22 +1967,11 @@ class ExecutionContext:
             waiting=waiting,
         )
 
-    async def _clear_scope_activity(self) -> None:
-        scope = self.current_scope
-        if scope is not None:
-            await self._working_reporter.clear_detail(
-                current=partial(self.owns_activity, scope)
-            )
-
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
         scope.bind(owner)
         owner.task.add_done_callback(lambda _: self._finish_activity(scope))
-        if (
-            scope.activity_allowed
-            and scope is self.current_scope
-            and self._activity_owner is None
-        ):
+        if scope is self.current_scope and self._activity_owner is None:
             previous = self._activity_completion
 
             async def acquire() -> None:
@@ -2227,7 +2177,6 @@ class ExecutionContext:
         # poisoned into permanently_failed before it's ever actually attempted.
         if msg_id:
             self._retry_tracker.discard_attempt(msg_id)
-        await self._clear_activity()
         if kind is ControlMode.INTERRUPT and msg_id:
             # Consume the message so the idle /next resync does not re-return it
             # (excludes-only-processed) and re-fire the cycle the user just
