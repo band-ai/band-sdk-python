@@ -15,11 +15,7 @@ async def background(
     operation: Coroutine[Any, Any, Result] | asyncio.Task[Result],
 ) -> AsyncIterator[asyncio.Task[Result]]:
     """Cancel and join on every exit; the caller observes the operation's result."""
-    task = (
-        operation
-        if isinstance(operation, asyncio.Task)
-        else asyncio.create_task(operation)
-    )
+    task = asyncio.ensure_future(operation)
     try:
         yield task
     finally:

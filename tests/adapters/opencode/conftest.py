@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import AbstractAsyncContextManager
 
 import pytest
 import pytest_asyncio
 
 from band.adapters.opencode import OpencodeAdapter
 from band.testing import FakeAgentTools
-from tests.adapters.opencode.approvalclock import ApprovalTurn, pending_approval
 from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls
 from tests.adapters.opencode.ownership import AdapterOwner
 from tests.mcpbackends import BackendStarts, backends_created_by
-
-
-@pytest.fixture
-def approval_turn() -> Callable[[], AbstractAsyncContextManager[ApprovalTurn]]:
-    return pending_approval
 
 
 @pytest.fixture

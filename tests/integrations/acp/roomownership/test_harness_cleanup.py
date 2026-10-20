@@ -35,7 +35,7 @@ class TestHarnessCleanup:
                 return reader, writer
 
             with (
-                patch("asyncio.open_connection", side_effect=opening),
+                patch("asyncio.open_connection", opening),
                 pytest.raises((OSError, AssertionError), match="injected"),
             ):
                 async with acp_adapter(FakeACPAgent().will_say("ok")) as session:

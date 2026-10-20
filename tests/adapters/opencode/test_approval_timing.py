@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-
 import pytest
 
-from tests.adapters.opencode.approvalclock import REPLY, ApprovalTurn
+from tests.adapters.opencode.approvalclock import REPLY, pending_approval
 from tests.toolkit.clock import binary_clock_resolution
 
 
@@ -22,12 +19,9 @@ class TestApprovalTiming:
         ],
     )
     async def test_human_time_is_excluded_from_the_compute_budget(
-        self,
-        approval_turn: Callable[[], AbstractAsyncContextManager[ApprovalTurn]],
-        deliberation: float,
-        computation: float,
+        self, deliberation: float, computation: float
     ) -> None:
-        async with approval_turn() as turn:
+        async with pending_approval() as turn:
             await turn.clock.elapse(deliberation)
             assert turn.aborted_sessions == []
 

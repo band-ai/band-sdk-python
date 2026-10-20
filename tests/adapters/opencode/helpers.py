@@ -430,6 +430,11 @@ class FakeOpencodeClient:
         await self._queue.put(None)
 
 
+def idle_client() -> FakeOpencodeClient:
+    """A client whose single prompt goes straight to idle."""
+    return FakeOpencodeClient(prompt_event_sequences=[[event_session_idle("sess-1")]])
+
+
 class AnyHTTPStatusError(httpx.HTTPStatusError):
     def __init__(self, status_code: int, session_id: str) -> None:
         request = httpx.Request("GET", f"http://localhost/session/{session_id}")

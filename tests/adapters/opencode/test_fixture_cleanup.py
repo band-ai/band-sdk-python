@@ -7,11 +7,7 @@ import asyncio
 import pytest
 
 from band.testing import FakeAgentTools
-from tests.adapters.opencode.helpers import (
-    FakeOpencodeClient,
-    event_session_idle,
-    run_single_turn,
-)
+from tests.adapters.opencode.helpers import idle_client, run_single_turn
 from tests.adapters.opencode.ownership import AdapterOwner
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 from tests.toolkit.clock import binary_clock_resolution
@@ -24,12 +20,7 @@ class TestFixtureCleanup:
     async def test_every_adapter_is_closed_after_a_failure(self, failure: str) -> None:
         async with controlled_clock():
             before = asyncio.all_tasks()
-            clients = [
-                FakeOpencodeClient(
-                    prompt_event_sequences=[[event_session_idle("sess-1")]]
-                )
-                for _ in range(2)
-            ]
+            clients = [idle_client(), idle_client()]
             healthy, faulty = FakeBandMCPBackend(), FakeBandMCPBackend()
             if failure == "backend-close":
                 faulty.fail_stops = 1
@@ -50,9 +41,7 @@ class TestFixtureCleanup:
             assert asyncio.all_tasks() == before
 
             async with AdapterOwner() as adapters:
-                independent = FakeOpencodeClient(
-                    prompt_event_sequences=[[event_session_idle("sess-1")]]
-                )
+                independent = idle_client()
                 await run_single_turn(adapters.create(independent), FakeAgentTools())
             assert independent.closed
             assert asyncio.all_tasks() == before
@@ -60,9 +49,7 @@ class TestFixtureCleanup:
     async def test_a_failed_explicit_close_keeps_its_reader_owned(self) -> None:
         async with controlled_clock():
             before = asyncio.all_tasks()
-            client = FakeOpencodeClient(
-                prompt_event_sequences=[[event_session_idle("sess-1")]]
-            )
+            client = idle_client()
             backend = FakeBandMCPBackend()
             with backends_created_by(backend):
                 async with AdapterOwner() as adapters:
