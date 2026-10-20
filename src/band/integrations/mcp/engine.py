@@ -64,6 +64,7 @@ from band.runtime.tools import (
 )
 from band.runtime.tools.inputs.chat import require_visible_content
 from band.runtime.tools.inputs.identifiers import ResourceId
+from band.runtime.working_state import model_tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +220,8 @@ async def dispatch_tool(
     """
     method = resolve_tool_method(tools, definition)
     try:
-        return await method(**arguments)
+        async with model_tool_activity(tools, definition.name):
+            return await method(**arguments)
     except (ValueError, BandToolError) as error:
         raise enrich_send_message_error(definition, tools, error) from error
 

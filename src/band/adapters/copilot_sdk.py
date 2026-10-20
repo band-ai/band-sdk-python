@@ -9,6 +9,7 @@ history, memory, and context stay isolated per room.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -59,6 +60,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.working_state import set_permission_wait, tool_activity
 
 try:
     from copilot import (
@@ -100,6 +102,8 @@ if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
     from band.core.types import FeatureKwargs, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
+
+ASK_USER_TOOL_NAME = "ask_user"
 
 logger = logging.getLogger(__name__)
 
@@ -652,13 +656,40 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         if self._ask_user is not None:
             # ask_user is session-isolated (no shell/file/host access), so
             # allowing it does not weaken the approve_all stance above.
-            available_tools.append("ask_user")
-            kwargs["on_user_input_request"] = (
-                self._ask_user
-                if callable(self._ask_user)
-                else self._make_room_ask_user_handler(room_id)
-            )
+            available_tools.append(ASK_USER_TOOL_NAME)
+            kwargs["on_user_input_request"] = self._activity_user_input_handler(room_id)
         return kwargs
+
+    def _activity_user_input_handler(self, room_id: str) -> UserInputHandler:
+        ask_user = self._ask_user
+        if callable(ask_user):
+            handler: UserInputHandler = ask_user
+            manual = True
+        else:
+            handler = self._make_room_ask_user_handler(room_id)
+            manual = False
+        pending = 0
+
+        async def handle(
+            request: UserInputRequest, context: dict[str, str]
+        ) -> UserInputResponse:
+            nonlocal pending
+            tools = self._room_tools.get(room_id)
+            async with tool_activity(tools, ASK_USER_TOOL_NAME):
+                result = handler(request, context)
+                if not inspect.isawaitable(result):
+                    return result
+                if not manual:
+                    return await result
+                pending += 1
+                try:
+                    await set_permission_wait(tools, True)
+                    return await result
+                finally:
+                    pending -= 1
+                    await set_permission_wait(tools, pending > 0)
+
+        return handle
 
     def _make_room_ask_user_handler(self, room_id: str) -> UserInputHandler:
         """Bind the room id for the session's ask_user → room bridge."""
@@ -775,46 +806,47 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = Emit.TOOL_CALLS in self.features.emit
-        if should_report:
-            await self._report_tool_call(room_tools, invocation, arguments)
+        async with tool_activity(room_tools, tool_name):
+            should_report = Emit.TOOL_CALLS in self.features.emit
+            if should_report:
+                await self._report_tool_call(room_tools, invocation, arguments)
 
-        try:
-            custom_tool = find_custom_tool(self._custom_tools, tool_name)
-            if custom_tool:
-                result = await execute_custom_tool(
-                    custom_tool, arguments, turn=room_tools.turn
-                )
-            else:
-                # Structured variant: a base tool (e.g. band_send_message) can fail
-                # without raising (bad args, API error) — that surfaces as ok=False,
-                # not an exception, and must reach the model as a failed call.
-                outcome = await room_tools.execute_tool_call_structured(
-                    tool_name, arguments
-                )
-                if not outcome.ok:
-                    return await self._fail_tool_call(
-                        room_tools,
-                        invocation,
-                        outcome.error_message or str(outcome.value),
-                        report=should_report,
+            try:
+                custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                if custom_tool:
+                    result = await execute_custom_tool(
+                        custom_tool, arguments, turn=room_tools.turn
                     )
-                result = outcome.value
-        except ValidationError as exc:
-            logger.error("Validation error for tool %s: %s", tool_name, exc)
-            error_text = (
-                f"Invalid arguments for {tool_name}: {format_validation_error(exc)}"
-            )
-            return await self._fail_tool_call(
-                room_tools, invocation, error_text, report=should_report
-            )
-        except Exception as exc:
-            logger.exception("Tool execution failed for %s", tool_name)
-            return await self._fail_tool_call(
-                room_tools, invocation, f"Error: {exc}", report=should_report
-            )
+                else:
+                    # Structured variant: a base tool (e.g. band_send_message) can fail
+                    # without raising (bad args, API error) — that surfaces as ok=False,
+                    # not an exception, and must reach the model as a failed call.
+                    outcome = await room_tools.execute_tool_call_structured(
+                        tool_name, arguments
+                    )
+                    if not outcome.ok:
+                        return await self._fail_tool_call(
+                            room_tools,
+                            invocation,
+                            outcome.error_message or str(outcome.value),
+                            report=should_report,
+                        )
+                    result = outcome.value
+            except ValidationError as exc:
+                logger.error("Validation error for tool %s: %s", tool_name, exc)
+                error_text = (
+                    f"Invalid arguments for {tool_name}: {format_validation_error(exc)}"
+                )
+                return await self._fail_tool_call(
+                    room_tools, invocation, error_text, report=should_report
+                )
+            except Exception as exc:
+                logger.exception("Tool execution failed for %s", tool_name)
+                return await self._fail_tool_call(
+                    room_tools, invocation, f"Error: {exc}", report=should_report
+                )
 
-        binary_results: list[ToolBinaryResult] | None = None
+            binary_results: list[ToolBinaryResult] | None = None
         if is_image_passthrough_result(tool_name, result):
             # Same failure path as the tool-execution try/except above: a
             # malformed or future-extended content block must still route

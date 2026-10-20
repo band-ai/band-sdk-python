@@ -240,7 +240,7 @@ class TestManualApproval:
         self, claude_room: OpenRoom, decision: str, bash_output: str
     ) -> None:
         """A reply landing while the timeout notice is still being sent is told
-        the token is gone, not "resolved"."""
+        the token is no longer pending, not "resolved"."""
         room = await claude_room(
             with_approvals(wait_timeout_s=60, timeout_decision=decision)
         )
@@ -254,7 +254,7 @@ class TestManualApproval:
 
         assert room.chat == [
             prompt("a-1", "Bash: `ls`"),
-            "Unknown approval token `a-1`. Available: none.",
+            "Approval `a-1` is no longer pending.",
             APPROVAL_TIMED_OUT_TEMPLATE.format(token="a-1", decision=decision),
             "Done waiting.",
         ]

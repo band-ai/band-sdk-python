@@ -46,6 +46,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
     serialize_tool_result,
 )
+from band.runtime.working_state import tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -158,34 +159,37 @@ class RoomTools:
         self, tools: AgentToolsProtocol, name: str, arguments: dict[str, Any]
     ) -> Any:
         """Run one tool call and report it, inside the turn that owns it."""
-        call_id = uuid4().hex
-        await self._report(
-            tools,
-            MessageType.TOOL_CALL,
-            {
-                ToolEventKey.NAME: name,
-                ToolEventKey.ARGS: redact_tool_call_args(name, arguments),
-                ToolEventKey.TOOL_CALL_ID: call_id,
-            },
-        )
-        try:
-            value = serialize_tool_result(await self._specs[name].run(tools, arguments))
-        except asyncio.CancelledError:
-            message = f"{name} was cancelled because its turn ended first"
-            await self._report_result(tools, name, call_id, message, is_error=True)
-            raise
-        except Exception as error:
-            message = f"{name} failed: {error}"
-            logger.warning("Band tool %s failed: %s", name, error)
-            await self._report_result(tools, name, call_id, message, is_error=True)
-            raise BandToolError(message) from error
-        if (image_result := image_passthrough_result(name, value)) is not None:
-            images = images_from_result(image_result)
-            output = image_block_placeholder(len(images))
-            await self._report_result(tools, name, call_id, output, is_error=False)
-            return images
-        await self._report_result(tools, name, call_id, value, is_error=False)
-        return value
+        async with tool_activity(tools, name):
+            call_id = uuid4().hex
+            await self._report(
+                tools,
+                MessageType.TOOL_CALL,
+                {
+                    ToolEventKey.NAME: name,
+                    ToolEventKey.ARGS: redact_tool_call_args(name, arguments),
+                    ToolEventKey.TOOL_CALL_ID: call_id,
+                },
+            )
+            try:
+                value = serialize_tool_result(
+                    await self._specs[name].run(tools, arguments)
+                )
+            except asyncio.CancelledError:
+                message = f"{name} was cancelled because its turn ended first"
+                await self._report_result(tools, name, call_id, message, is_error=True)
+                raise
+            except Exception as error:
+                message = f"{name} failed: {error}"
+                logger.warning("Band tool %s failed: %s", name, error)
+                await self._report_result(tools, name, call_id, message, is_error=True)
+                raise BandToolError(message) from error
+            if (image_result := image_passthrough_result(name, value)) is not None:
+                images = images_from_result(image_result)
+                output = image_block_placeholder(len(images))
+                await self._report_result(tools, name, call_id, output, is_error=False)
+                return images
+            await self._report_result(tools, name, call_id, value, is_error=False)
+            return value
 
     async def _report_result(
         self,

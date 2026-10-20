@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from typing import NamedTuple
 
 from acp.interfaces import Client
 from acp.schema import ConfigOptionUpdate, DeclineElicitationResponse
 
+from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.client_profiles import ACPClientProfile, NoopACPClientProfile
 from band.integrations.acp.permissions import (
     ElicitationHandler,
@@ -18,10 +20,31 @@ from band.integrations.acp.permissions import (
 )
 from band.integrations.acp.session_config import SessionConfigOption
 from band.integrations.acp.stream import ACPChunkStream, ChunkSink
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import (
+    ACPToolCall,
+    ChunkType,
+    CollectedChunk,
+    ToolStatus,
+)
 from band.integrations.acp.updates import ACPUpdateParser
+from band.runtime.working_state import (
+    UNKNOWN_ACTIVITY_TOOL_NAME,
+    end_tool_activity,
+    report_tool_activity,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _ActivityCall(NamedTuple):
+    name: str
+    ended: bool
+
+
+def _recorded_activity_name(call: _ActivityCall | None) -> str:
+    if call is None:
+        return UNKNOWN_ACTIVITY_TOOL_NAME
+    return call.name
 
 
 class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP Client has optional methods treated as abstract by pyrefly
@@ -44,6 +67,8 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
         self._stream = ACPChunkStream()
         self._permission_handlers: dict[str, PermissionHandler] = {}
         self._elicitation_handlers: dict[str, ElicitationHandler] = {}
+        self._activity_tools: dict[str, AgentToolsProtocol] = {}
+        self._activity_calls: dict[str, dict[str, _ActivityCall]] = {}
         # Retain locks while a straggler can still hold one.
         self._session_locks: dict[str, asyncio.Lock] = {}
         # Each session's latest advertised config catalog; like the locks,
@@ -76,7 +101,46 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
         async with self._session_lock(session_id):
             chunk = self._chunk_from_update(update)
             if chunk is not None:
+                await self._observe_activity(session_id, update, chunk)
                 await self._stream.ingest(session_id, chunk)
+
+    def set_activity_tools(
+        self, session_id: str, tools: AgentToolsProtocol | None
+    ) -> None:
+        if tools is None:
+            self._activity_tools.pop(session_id, None)
+            self._activity_calls.pop(session_id, None)
+        else:
+            self._activity_tools[session_id] = tools
+            self._activity_calls[session_id] = {}
+
+    async def _observe_activity(
+        self, session_id: str, update: object, chunk: CollectedChunk
+    ) -> None:
+        tools = self._activity_tools.get(session_id)
+        if tools is None or chunk.chunk_type not in {
+            ChunkType.TOOL_CALL,
+            ChunkType.TOOL_RESULT,
+        }:
+            return
+        call_id = str(getattr(update, "tool_call_id", ""))
+        calls = self._activity_calls[session_id]
+        previous = calls.get(call_id)
+        status = getattr(update, "status", None)
+        if status in {ToolStatus.COMPLETED, ToolStatus.FAILED}:
+            if previous is None or not previous.ended:
+                calls[call_id] = _ActivityCall(_recorded_activity_name(previous), True)
+                await end_tool_activity(tools)
+            return
+        if previous is not None and previous.ended:
+            return
+        name = _recorded_activity_name(previous)
+        call = chunk.tool
+        if isinstance(call, ACPToolCall) and call.mcp_server is not None:
+            name = call.name
+        if previous is None or previous.name != name:
+            calls[call_id] = _ActivityCall(name, False)
+            await report_tool_activity(tools, name)
 
     async def request_permission(  # type: ignore[override]  # ACP Client uses specific types; we widen to object
         self,
@@ -155,6 +219,7 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
 
     def forget_session(self, session_id: str) -> None:
         """Drop a closed session's catalog and any state its profile keeps."""
+        self.set_activity_tools(session_id, None)
         self._config_options.pop(session_id, None)
         # A custom profile written before this hook has none.
         forget = getattr(self._profile, ACPClientProfile.forget_session.__name__, None)
@@ -162,6 +227,7 @@ class ACPCollectingClient(ACPUpdateParser, Client):  # type: ignore[misc]  # ACP
             forget(session_id)
 
     def reset_session(self, session_id: str) -> None:
+        self.set_activity_tools(session_id, None)
         self._stream.reset_session(session_id)
         self._permission_handlers.pop(session_id, None)
         self._elicitation_handlers.pop(session_id, None)

@@ -29,6 +29,7 @@ from band.runtime.tools import (
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.working_state import model_tool_activity
 
 # --- Rendering a tool result as the text CrewAI hands the model ---
 
@@ -288,9 +289,10 @@ async def _send_event(call: Invocation, **kwargs: Any) -> Any:
     # bypassing args_schema, and _execute_tool turns the ValueError into the
     # error result the caller expects.
     args = validate_tool_arguments(BandTool.SEND_EVENT, SEND_EVENT_ARGS_SCHEMA, kwargs)
-    await call.tools.send_event(
-        args["content"], args["message_type"], metadata=args.get("metadata")
-    )
+    async with model_tool_activity(call.tools, BandTool.SEND_EVENT):
+        await call.tools.send_event(
+            args["content"], args["message_type"], metadata=args.get("metadata")
+        )
     return succeeded("Event sent")
 
 

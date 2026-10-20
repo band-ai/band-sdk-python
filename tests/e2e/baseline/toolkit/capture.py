@@ -39,12 +39,13 @@ import logging
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from band_rest import AsyncRestClient
 from phoenix_channels_python_client.exceptions import PHXClientError
+from phoenix_channels_python_client.phx_messages import PHXMessage
 
 from band.client.streaming import (
     DeliveryStatus,
@@ -53,6 +54,12 @@ from band.client.streaming import (
 )
 from band.core.types import MessageType, metadata_to_dict
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.activity import (
+    Activities,
+    ActivityEvent,
+    ActivityFrame,
+    activity_subscription,
+)
 from tests.e2e.baseline.toolkit.observations import (
     Errors,
     Events,
@@ -116,6 +123,7 @@ class ReplyCapture:
         # One agent-auth REST client per agent id, reused across memory reads.
         self._agent_clients: dict[str, AsyncRestClient] = {}
         self.messages: Replies = Replies()
+        self.activities = Activities()
         # message_id -> {recipient_id: delivery-state dict}, fed by
         # ``message_updated`` events. The authoritative "agent finished this
         # message" signal, independent of any LLM reply text.
@@ -251,6 +259,21 @@ class ReplyCapture:
             durable.value if durable else None,
             error,
         )
+
+    async def wait_for_tool_activity(
+        self, agent_id: str, names: Iterable[str]
+    ) -> Activities:
+        accepted = frozenset(names)
+        await self.wait_until(lambda _: self.activities.has_tool(agent_id, accepted))
+        return self.activities
+
+    async def wait_for_activity_stop(
+        self, agent_id: str, *, since: int = 0
+    ) -> Activities:
+        await self.wait_until(
+            lambda _: self.activities.has_stopped(agent_id, since=since)
+        )
+        return self.activities
 
     async def wait_until(
         self,
@@ -645,6 +668,7 @@ async def reply_capture(
     user_ops: UserOps | None = None,
     settings: BaselineSettings | None = None,
     deadline_s: float = DEFAULT_DEADLINE_S,
+    observe_activity: bool = False,
 ) -> AsyncIterator[ReplyCapture]:
     """Subscribe to a room before sending, yield a capture, leave on exit."""
     capture = ReplyCapture(
@@ -657,9 +681,22 @@ async def reply_capture(
     async def updated_handler(payload: MessageCreatedPayload) -> None:
         capture._on_message_updated(payload)
 
+    async def activity_handler(message: PHXMessage) -> None:
+        try:
+            event = ActivityEvent(message.event)
+        except ValueError:
+            return
+        capture.activities.append(ActivityFrame(event, dict(message.payload)))
+        capture._nudge.set()
+
     await ws.join_chat_room_channel(room_id, handler, updated_handler)
     try:
-        yield capture
+        async with (
+            activity_subscription(ws, room_id, activity_handler)
+            if observe_activity
+            else nullcontext()
+        ):
+            yield capture
     finally:
         # Best-effort, but only for the transport: a leave the server never acks
         # (``PHXTopicError``) or one attempted while the socket is down (
@@ -680,4 +717,7 @@ async def reply_capture(
 # Type of the ``reply_capture`` fixture: call with a room id, get a
 # ``ReplyCapture`` async context manager. Shared so smokes type their fixture
 # parameter without each redefining the same alias.
-CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
+class CaptureFactory(Protocol):
+    def __call__(
+        self, room_id: str, *, observe_activity: bool = False
+    ) -> AbstractAsyncContextManager[ReplyCapture]: ...

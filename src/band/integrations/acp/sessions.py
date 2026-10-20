@@ -16,6 +16,7 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
 )
 
+from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.collecting import ACPCollectingClient
 from band.integrations.acp.permissions import ElicitationHandler, PermissionHandler
 from band.integrations.acp.session_config import (
@@ -234,6 +235,12 @@ class ACPSessionOperations(ABC):
     def reset_session(self, session_id: str) -> None:
         if self._client is not None:
             self._client.reset_session(session_id)
+
+    def set_activity_tools(
+        self, session_id: str, tools: AgentToolsProtocol | None
+    ) -> None:
+        if self._client is not None:
+            self._client.set_activity_tools(session_id, tools)
 
     def set_permission_handler(
         self,
