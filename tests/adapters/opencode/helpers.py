@@ -463,6 +463,9 @@ class BandMCPCalls:
 #: Virtual seconds an ask waits for a human in looptime tests.
 ASK_DEADLINE_S = 60.0
 
+#: Virtual ``turn_timeout_s`` compute budget in looptime turn tests.
+COMPUTE_BUDGET_S = 8.0
+
 
 async def time_passes(seconds: float) -> None:
     """Let ``seconds`` of virtual time pass under ``@pytest.mark.looptime``:

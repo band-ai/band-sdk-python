@@ -30,6 +30,7 @@ from band.testing import (
 )
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.adapters.opencode.helpers import (
+    COMPUTE_BUDGET_S,
     AnyHTTPStatusError,
     BandMCPCalls,
     FakeOpencodeClient,
@@ -57,7 +58,6 @@ from tests.toolkit.tasks import background
 from tests.toolkit.timecontrol import controlled_clock
 
 DELIBERATION_S = 4.0
-TURN_TIMEOUT_S = 8.0
 
 
 class TestTurns:
@@ -893,7 +893,7 @@ class TestTurns:
             prompt_event_sequences=[[]],  # no events at all; the turn never finishes
         )
         adapter = make_adapter(
-            fake_client, config=OpencodeAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S)
+            fake_client, config=OpencodeAdapterConfig(turn_timeout_s=COMPUTE_BUDGET_S)
         )
 
         async with (
@@ -901,7 +901,7 @@ class TestTurns:
             background(run_single_turn(adapter, tools)) as turn,
         ):
             await adapter.watcher_started.wait()
-            await clock.elapse(TURN_TIMEOUT_S - 1)
+            await clock.elapse(COMPUTE_BUDGET_S - 1)
             assert fake_client.aborted_sessions == []
 
             await clock.elapse(2)

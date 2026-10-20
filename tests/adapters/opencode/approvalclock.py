@@ -9,10 +9,11 @@ from dataclasses import dataclass
 
 from band.adapters.opencode import OpencodeAdapterConfig
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools, failure_reports
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.hold import Hold
 from tests.adapters.opencode.helpers import (
+    COMPUTE_BUDGET_S,
     FakeOpencodeClient,
     ObservedOpencodeAdapter,
     event_message_updated,
@@ -26,7 +27,8 @@ from tests.adapters.opencode.helpers import (
 from tests.adapters.opencode.ownership import AdapterOwner
 from tests.toolkit.timecontrol import ControlledClock, controlled_clock
 
-COMPUTE_BUDGET_S = 8.0
+# Long enough that no deliberation in these scenarios expires the ask.
+APPROVAL_WINDOW_S = 8 * COMPUTE_BUDGET_S
 REPLY = "Approved and done."
 
 
@@ -48,8 +50,8 @@ class ApprovalTurn:
         return self.tools.chat[-1]
 
     @property
-    def failures(self) -> list[tuple[str, str]]:
-        return failure_reports(self.tools)
+    def failure_codes(self) -> list[str]:
+        return [failure["code"] for failure in reported_failures(self.tools)]
 
     @property
     def complete(self) -> bool:
@@ -97,7 +99,7 @@ async def pending_approval() -> AsyncIterator[ApprovalTurn]:
             config=OpencodeAdapterConfig(
                 approval_mode="manual",
                 turn_timeout_s=COMPUTE_BUDGET_S,
-                approval_wait_timeout_s=64.0,
+                approval_wait_timeout_s=APPROVAL_WINDOW_S,
             ),
         )
         tools = FakeAgentTools()
