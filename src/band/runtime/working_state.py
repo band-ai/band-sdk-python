@@ -175,7 +175,6 @@ class WorkingStateReporter:
             if self.activity != previous:
                 await self._report_locked(True)
 
-
     def defer_false_report(self) -> None:
         """Start ``working: false`` and return without waiting for it.
 
