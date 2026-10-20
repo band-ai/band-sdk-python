@@ -223,7 +223,8 @@ class BandLink:
                 raise
 
             self._ws = ws
-            self._is_connected = True
+            # A supersede handled during the join has already ended it.
+            self._is_connected = not ws.transport_ended
             logger.info("Connected to platform")
         finally:
             self._connecting = False
@@ -232,10 +233,11 @@ class BandLink:
         if not self._ws:
             return
 
-        try:
-            await self._ws.leave_agent_control_channel(self.agent_id)
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Error unsubscribing from agent_control: %s", e)
+        if not self._ws.transport_ended:
+            try:
+                await self._ws.leave_agent_control_channel(self.agent_id)
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
+                logger.warning("Error unsubscribing from agent_control: %s", e)
 
         await self._cancel_control_lane()
         await self._ws.__aexit__(None, None, None)

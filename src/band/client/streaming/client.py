@@ -34,7 +34,7 @@ from band.client.streaming.errors import (
 )
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
-from band.core.retention.cleanup import spawn_owned
+from band.core.retention.cleanup import report_owned, spawn_owned
 from band.core.types import ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
@@ -422,6 +422,11 @@ class WebSocketClient:
     def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
         """Most recent terminal disconnect reason reported by the platform."""
         return self._last_disconnect_reason
+
+    @property
+    def transport_ended(self) -> bool:
+        """Whether a terminal disconnect has shut the transport down for good."""
+        return self._transport_shutdown is not None
 
     def reset_validation_error_count(self) -> int:
         """Reset the validation error counter and return the previous value.
@@ -1011,8 +1016,6 @@ class WebSocketClient:
         """
         client = self._require_client()
         if self._transport_shutdown is not None:
-            # Joins the scheduled shutdown; awaiting its task directly would
-            # let this caller's cancellation abort it.
-            await client.shutdown(TERMINAL_SHUTDOWN_REASON)
+            await report_owned(self._transport_shutdown, None)
             return
         await client.run_forever(install_signal_handlers=install_signal_handlers)

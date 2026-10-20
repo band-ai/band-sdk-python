@@ -45,21 +45,53 @@ sequences = st.lists(st.sampled_from(Step), max_size=6)
 
 
 @dataclass
+class Tally:
+    """Correlation ids seen so far, in order, and a wake-up for a waiter."""
+
+    ids: list[str] = field(default_factory=list)
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def add(self, correlation_id: str) -> None:
+        self.ids.append(correlation_id)
+        self.changed.set()
+
+    async def until(self, correlation_id: str) -> None:
+        while correlation_id not in self.ids:
+            self.changed.clear()
+            await self.changed.wait()
+
+
+def tally_arrivals(link: BandLink) -> Tally:
+    """Tally each control signal once the link has queued it on its lane.
+    Arm before ``connect()``, which binds the handler."""
+    arrived = Tally()
+    on_control = link._on_control
+
+    async def spy(payload: AgentControlPayload) -> None:
+        await on_control(payload)
+        assert payload.correlation_id is not None
+        arrived.add(payload.correlation_id)
+
+    link._on_control = spy
+    return arrived
+
+
+@dataclass
 class LinkSession:
     """One connected link, its running host, and what it has seen."""
 
     server: FakePhoenixServer
     link: BandLink
     run: asyncio.Task[None]
+    arrived: Tally
     ended: bool = False
     connections_at_end: int = 0
     pushed: list[str] = field(default_factory=list)
-    applied: list[str] = field(default_factory=list)
+    applied: Tally = field(default_factory=Tally)
     hooks_running: int = 0
     held_id: str | None = None
     release_held: asyncio.Event = field(default_factory=asyncio.Event)
     held_entered: asyncio.Event = field(default_factory=asyncio.Event)
-    applied_changed: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def hook(self, payload: AgentControlPayload) -> None:
         self.hooks_running += 1
@@ -68,8 +100,7 @@ class LinkSession:
                 self.held_entered.set()
                 await self.release_held.wait()
             assert payload.correlation_id is not None
-            self.applied.append(payload.correlation_id)
-            self.applied_changed.set()
+            self.applied.add(payload.correlation_id)
         finally:
             self.hooks_running -= 1
 
@@ -122,15 +153,12 @@ class LinkSession:
         await self.server.push(
             CONTROL_TOPIC, WireEvent.AGENT_CONTROL, control_wire_payload(correlation_id)
         )
+        # Queued behind a held signal, it is in the lane before the next step.
+        await asyncio.wait_for(self.arrived.until(correlation_id), STEP_GUARD_S)
         if held:
             await asyncio.wait_for(self.held_entered.wait(), STEP_GUARD_S)
         elif self.held_id is None:
-            await asyncio.wait_for(self.until_applied(correlation_id), STEP_GUARD_S)
-
-    async def until_applied(self, correlation_id: str) -> None:
-        while correlation_id not in self.applied:
-            self.applied_changed.clear()
-            await self.applied_changed.wait()
+            await asyncio.wait_for(self.applied.until(correlation_id), STEP_GUARD_S)
 
     async def release_held_control(self) -> None:
         """Let the slow signal finish; the lane then applies everything pushed
@@ -138,8 +166,8 @@ class LinkSession:
         if self.held_id is None:
             return
         self.release_held.set()
-        await asyncio.wait_for(self.until_applied(self.pushed[-1]), STEP_GUARD_S)
-        assert self.applied == self.pushed
+        await asyncio.wait_for(self.applied.until(self.pushed[-1]), STEP_GUARD_S)
+        assert self.applied.ids == self.pushed
         self.held_id = None
         self.held_entered.clear()
         self.release_held.clear()
@@ -170,9 +198,10 @@ class LinkSession:
 async def link_session() -> AsyncIterator[LinkSession]:
     async with fake_phoenix_server() as server:
         link = make_link(server.url)
+        arrived = tally_arrivals(link)
         await link.connect()
         run = asyncio.create_task(link.run_forever(install_signal_handlers=False))
-        session = LinkSession(server=server, link=link, run=run)
+        session = LinkSession(server=server, link=link, run=run, arrived=arrived)
         link.on_control = session.hook
         try:
             yield session

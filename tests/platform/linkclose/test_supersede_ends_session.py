@@ -5,6 +5,7 @@ disconnect cleanly."""
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from websockets.frames import CloseCode
@@ -57,6 +58,24 @@ class TestSupersedeEndsSession:
             )
 
             assert server.connection_count == 1
+
+    async def test_disconnecting_an_ended_session_logs_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async with fake_phoenix_server() as server:
+            link = make_link(server.url)
+            await link.connect()
+            await server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)
+            await asyncio.wait_for(anext(link), HANG_GUARD_S)
+            await asyncio.wait_for(
+                link.run_forever(install_signal_handlers=False), HANG_GUARD_S
+            )
+            caplog.clear()
+
+            with caplog.at_level(logging.WARNING):
+                await asyncio.wait_for(link.disconnect(), HANG_GUARD_S)
+
+            assert caplog.records == []
 
     async def test_a_cancelled_run_does_not_abort_the_shutdown(self) -> None:
         """The host gives up on ``run_forever`` while the transport is still
@@ -119,4 +138,5 @@ class TestSupersedeEndsSession:
                 await asyncio.wait_for(run, HANG_GUARD_S)
 
                 assert link.last_disconnect_reason == SUPERSEDED
+                assert not link.is_connected
                 assert server.connection_count == 1

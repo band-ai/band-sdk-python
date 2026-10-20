@@ -39,7 +39,7 @@ async def assert_invariants(session: LinkSession) -> None:
     await asyncio.wait_for(asyncio.shield(session.run), STEP_GUARD_S)
 
     assert session.hooks_running == 0
-    assert session.applied == session.pushed[: len(session.applied)]
+    assert session.applied.ids == session.pushed[: len(session.applied.ids)]
 
     connections = server.connection_count
     await asyncio.wait_for(link.connect(), STEP_GUARD_S)
