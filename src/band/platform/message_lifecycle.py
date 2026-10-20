@@ -116,6 +116,57 @@ def _failure_result(error: Exception) -> SettlementResult:
             return SettlementResult.UNCONFIRMED
 
 
+def _first_rejected_field(body: object) -> str:
+    """A content-free cause: the first JSON pointer a validation error names."""
+    envelope = _validated(ErrorEnvelope, body)
+    if envelope is None:
+        return "unparsed"
+    return next(iter(envelope.error.details), "unnamed")
+
+
+async def _post_activity(
+    rest: AsyncRestClient,
+    room_id: str,
+    working: bool,
+    activity: AgentActivityDetail | None,
+    timeout_seconds: int,
+) -> AgentActivityResponse:
+    detail = activity if activity_support.supported else None
+    try:
+        response = await _send_activity(rest, room_id, working, detail, timeout_seconds)
+    except ApiError as error:
+        if detail is None or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+            raise
+        activity_support.disable(
+            room_id=room_id, field=_first_rejected_field(error.body)
+        )
+        logger.debug("Activity 422 body for room %s: %r", room_id, error.body)
+        response = await _send_activity(rest, room_id, working, None, timeout_seconds)
+    activity_support.observe(response.headers)
+    return response.data.data
+
+
+async def _send_activity(
+    rest: AsyncRestClient,
+    room_id: str,
+    working: bool,
+    activity: AgentActivityDetail | None,
+    timeout_seconds: int,
+) -> AsyncHttpResponse[ReportAgentChatActivityResponse]:
+    kwargs: dict[str, Any] = {}
+    if activity is not None:
+        kwargs["activity"] = activity
+    return await rest.agent_api_activity.with_raw_response.report_agent_chat_activity(
+        chat_id=room_id,
+        working=working,
+        request_options={
+            **NO_RETRY_REQUEST_OPTIONS,
+            "timeout_in_seconds": timeout_seconds,
+        },
+        **kwargs,
+    )
+
+
 def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
     return PlatformMessage(
         id=item.id,
@@ -337,7 +388,7 @@ class MessageLifecycle:
         """
         try:
             async with asyncio.timeout(timeout_seconds):
-                response = await self._post_activity(
+                response = await _post_activity(
                     rest,
                     room_id,
                     working,
@@ -369,52 +420,6 @@ class MessageLifecycle:
         if stopped and on_stopped is not None:
             on_stopped()
         return True
-
-    @staticmethod
-    async def _post_activity(
-        rest: AsyncRestClient,
-        room_id: str,
-        working: bool,
-        activity: AgentActivityDetail | None,
-        timeout_seconds: int,
-    ) -> AgentActivityResponse:
-        detail = activity if activity_support.supported else None
-        try:
-            response = await MessageLifecycle._send_activity(
-                rest, room_id, working, detail, timeout_seconds
-            )
-        except ApiError as error:
-            if detail is None or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
-                raise
-            activity_support.disable(room_id=room_id, reason=error.body)
-            response = await MessageLifecycle._send_activity(
-                rest, room_id, working, None, timeout_seconds
-            )
-        activity_support.observe(response.headers)
-        return response.data.data
-
-    @staticmethod
-    async def _send_activity(
-        rest: AsyncRestClient,
-        room_id: str,
-        working: bool,
-        activity: AgentActivityDetail | None,
-        timeout_seconds: int,
-    ) -> AsyncHttpResponse[ReportAgentChatActivityResponse]:
-        kwargs: dict[str, Any] = {}
-        if activity is not None:
-            kwargs["activity"] = activity
-        return (
-            await rest.agent_api_activity.with_raw_response.report_agent_chat_activity(
-                chat_id=room_id,
-                working=working,
-                request_options={
-                    **NO_RETRY_REQUEST_OPTIONS,
-                    "timeout_in_seconds": timeout_seconds,
-                },
-                **kwargs,
-            )
-        )
 
     async def get_next_message(
         self, rest: AsyncRestClient, room_id: str

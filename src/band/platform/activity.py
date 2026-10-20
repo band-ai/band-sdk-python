@@ -50,16 +50,16 @@ class ActivitySupport:
         with self._lock:
             self._learned = True
 
-    def disable(self, *, room_id: str, reason: object) -> None:
+    def disable(self, *, room_id: str, field: str) -> None:
         with self._lock:
             already_disabled = self._disabled
             self._disabled = True
         if not already_disabled:
             logger.info(
-                "Activity detail rejected in room %s (%s); "
+                "Activity report with detail returned 422 in room %s (field %s); "
                 "using boolean reporting for this process",
                 room_id,
-                reason,
+                field,
             )
 
 
