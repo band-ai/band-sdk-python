@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "5.1.0"
+version = "6.0.0"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -63,7 +63,10 @@ opencode = [
     "mcp>=1.28.1,<2",
 ]
 letta = [
-    "letta-client>=1.0.0",
+    # Floor is `conversations.cancel` (shared-mode STOP), first shipped in
+    # 1.7.1; the `conversations` resource itself arrived in 1.6.5 -- checked
+    # against the PyPI wheels 2026-10-19.
+    "letta-client>=1.7.1",
     # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
     "mcp>=1.28.1,<2",
 ]
@@ -191,6 +194,7 @@ nooa = [
 # tool.uv.conflicts. To run crewai tests: uv sync --extra dev-crewai. To run
 # parlant tests: uv sync --extra dev-parlant.
 dev = [
+    "aiosqlite>=0.21.0",  # Exercise the shared-database customer example.
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -244,7 +248,7 @@ dev = [
     # Include Agno for testing
     "agno>=2.6.0",
     # Include letta-client for testing
-    "letta-client>=1.0.0",
+    "letta-client>=1.7.1",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
@@ -306,6 +310,7 @@ dev-parlant = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-randomly>=5.0.0",
     "looptime>=0.7",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",

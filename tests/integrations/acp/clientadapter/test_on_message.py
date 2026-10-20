@@ -32,7 +32,7 @@ from tests.integrations.acp.clientadapter.kit import (
     advertise_session_load,
     room_runtime,
 )
-from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.acp.serverkit import make_platform_message
 
 
 class TestACPClientAdapterOnMessage:

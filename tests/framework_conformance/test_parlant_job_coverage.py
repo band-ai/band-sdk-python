@@ -17,6 +17,7 @@ from tests.paths import REPO_ROOT
 # dep fails there rather than silently narrowing what this guard detects.
 _PARLANT_ONLY_MODULES = {
     "parlant": "parlant",
+    "pytest-randomly": "pytest_randomly",
     "werkzeug": "werkzeug",
 }
 
@@ -66,6 +67,7 @@ class TestParlantJobCoverage:
             Path("tests/integrations/parlant/test_customtools.py"),
             Path("tests/integrations/parlant/test_filetools.py"),
             Path("tests/integrations/parlant/test_guard.py"),
+            Path("tests/integrations/parlant/test_preambletask.py"),
             Path("tests/integrations/parlant/test_selection.py"),
             Path("tests/integrations/parlant/test_server.py"),
             Path("tests/integrations/parlant/test_tasktools.py"),

@@ -23,6 +23,8 @@ class Script:
         self._held_turns: dict[str, asyncio.Event] = {}
         self._cleanup_release = asyncio.Event()
         self._cleanup_release.set()
+        self._control_release = asyncio.Event()
+        self._control_release.set()
 
     def hold_turn(self, text: str) -> None:
         self._held_turns[text] = asyncio.Event()
@@ -36,12 +38,20 @@ class Script:
     def release_cleanups(self) -> None:
         self._cleanup_release.set()
 
+    def hold_controls(self) -> None:
+        """Hold the adapter's control hook, as a backend slow to cancel does."""
+        self._control_release.clear()
+
+    def release_controls(self) -> None:
+        self._control_release.set()
+
     def release_everything(self) -> None:
         for held in self._held_turns.values():
             held.set()
         self._held_turns.clear()
         self.failing_cleanups.clear()
         self._cleanup_release.set()
+        self._control_release.set()
 
     async def on_execute(self, ctx: ExecutionContext, event: PlatformEvent) -> None:
         if not isinstance(event, MessageEvent) or event.payload is None:
@@ -58,6 +68,11 @@ class Script:
     async def on_control(self, room_id: str, mode: ControlMode) -> None:
         """The adapter's own control hook, as the runtime notifies it."""
         self.observations.record(f"{room_id}: control {mode.value}")
+        try:
+            await self._control_release.wait()
+        except asyncio.CancelledError:
+            self.observations.record(f"{room_id}: control {mode.value} cancelled")
+            raise
 
     async def cleanup(self, room_id: str) -> None:
         self.observations.record(f"{room_id}: cleanup started")

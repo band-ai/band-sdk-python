@@ -33,10 +33,10 @@ from band.integrations.slack.adapter import SlackAdapter, SlackAdapterConfig
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
-from tests.integrations.slack.test_wrapping import (
+from tests.integrations.slack.wrappingkit import (
+    SlackReplyBrain,
     _make_rest_mock,
     _mention_event,
-    _SlackReplyBrain,
 )
 
 # Lenient p95 bar; see module docstring. Target is 50 ms; this is
@@ -74,7 +74,7 @@ async def test_adapter_overhead_p95_under_threshold():
         slug="dev", bot_token="xoxb-dev", signing_secret="test-secret"
     )
     # A no-op brain so the timed window measures the adapter, not the LLM.
-    inner = _SlackReplyBrain(reply=None)
+    inner = SlackReplyBrain(reply=None)
     rest = _make_rest_mock([f"room-{i}" for i in range(SAMPLES + 5)])
     adapter = SlackAdapter(
         SlackAdapterConfig(apps=(app_config,)),

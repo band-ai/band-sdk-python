@@ -262,6 +262,9 @@ class AgentControlPayload(WirePayload):
     correlation_id: str | None = None
 
 
+ControlHook = Callable[[AgentControlPayload], Awaitable[None]]
+
+
 class SupersedePayload(WirePayload):
     """Payload for terminal agent_control supersede events."""
 
@@ -768,7 +771,7 @@ class WebSocketClient:
         self,
         agent_id: str,
         on_supersede: Callable[[SupersedePayload], Awaitable[None]],
-        on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None,
+        on_control: ControlHook | None = None,
     ):
         """Subscribe to agent-control events for this agent.
 

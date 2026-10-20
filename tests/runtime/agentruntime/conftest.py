@@ -38,6 +38,7 @@ def mock_link():
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    link.report_activity = AsyncMock(return_value=True)
 
     # Make link iterable for async for
     async def empty_aiter():

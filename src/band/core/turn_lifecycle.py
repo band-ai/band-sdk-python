@@ -63,7 +63,7 @@ async def finished_within_grace(task: asyncio.Task[Any]) -> bool:
 class TurnTask:
     """Own cancellation and bounded draining for one concrete turn task."""
 
-    def __init__(self, task: asyncio.Task[None]) -> None:
+    def __init__(self, task: asyncio.Task[Any]) -> None:
         self.task = task
         if task.done():
             self._retrieve_result(task)
@@ -76,7 +76,7 @@ class TurnTask:
         self._cleanup_timer = False
 
     @staticmethod
-    def _retrieve_result(task: asyncio.Task[None]) -> None:
+    def _retrieve_result(task: asyncio.Task[Any]) -> None:
         if not task.cancelled():
             task.exception()
 
@@ -188,7 +188,7 @@ def start_releasable_turn(
     return retained.start_owned(run)
 
 
-def bind_turn_task(tools: object, task: asyncio.Task[None]) -> TurnTask:
+def bind_turn_task(tools: object, task: asyncio.Task[Any]) -> TurnTask:
     """Bind SDK-owned work when tools expose a runtime scope."""
     owner = TurnTask(task)
     register = getattr(tools, "register_turn_task", None)

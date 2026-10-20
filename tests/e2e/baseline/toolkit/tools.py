@@ -12,7 +12,7 @@ derived from the model, so prompts and assertions can't drift.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,15 +23,16 @@ from band.runtime.custom_tools import (
     declared_effect,
     declares_turn_effect,
     get_custom_tool_name,
+    invoke_validated_custom_tool,
 )
 
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """A custom tool: a Pydantic input ``model`` plus a ``handler(model) -> str``."""
+    """A Pydantic input model plus a sync or async string-returning handler."""
 
     model: type[BaseModel]
-    handler: Callable[[BaseModel], str]
+    handler: Callable[[BaseModel], str | Awaitable[str]]
 
     @property
     def name(self) -> str:
@@ -56,7 +57,7 @@ class ToolSpec:
         we'd bake ``None`` into the signature and fail the model's validation when
         the arg is omitted.
         """
-        ns: dict[str, Any] = {"_handler": self.handler, "_model": self.model}
+        ns: dict[str, Any] = {"_model": self.model}
         params: list[str] = []
         if ctx_annotation is not None:
             # The pydantic-ai path injects a leading ``ctx`` param; a model field
@@ -96,8 +97,10 @@ class ToolSpec:
         annotations["return"] = str
         return annotations
 
-    def as_callable(self, *, ctx_annotation: Any = None) -> Callable[..., str]:
-        """A native tool function with a real signature built from the model fields.
+    def as_callable(
+        self, *, ctx_annotation: Any = None
+    ) -> Callable[..., Awaitable[str]]:
+        """An async native tool with a real signature built from the model fields.
 
         For frameworks that take plain callables (pydantic-ai, agno). When
         ``ctx_annotation`` is given a leading ``ctx`` parameter is prepended with
@@ -110,10 +113,15 @@ class ToolSpec:
         both derive the tool's arg schema from a synthesized-then-``exec``'d def.
         """
         params, ns = self._build_signature(ctx_annotation)
+        ns["_invoke"] = invoke_validated_custom_tool
+        ns["_tool"] = self.as_custom_tool_def()
         construct = ", ".join(f"{f}={f}" for f in self.model.model_fields)
-        src = f"def {self.name}({', '.join(params)}):\n    return _handler(_model({construct}))\n"
+        src = (
+            f"async def {self.name}({', '.join(params)}):\n"
+            f"    return await _invoke(_tool, _model({construct}), turn=None)\n"
+        )
         exec(src, ns)  # noqa: S102 - synthesize a real signature the frameworks introspect
-        tool: Callable[..., str] = ns[self.name]
+        tool: Callable[..., Awaitable[str]] = ns[self.name]
         tool.__annotations__ = self._annotations(ctx_annotation)
         tool.__doc__ = self.description
         # Carry the declared turn effect so the callable path (pydantic-ai/agno)
