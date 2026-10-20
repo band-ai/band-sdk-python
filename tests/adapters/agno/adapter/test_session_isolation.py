@@ -21,7 +21,7 @@ class TestSessionIsolation:
             room_id="room-A",
         )
 
-        assert agent.arun.await_args.kwargs["session_id"] == "room-A"
+        assert agent.arun.call_args.kwargs["session_id"] == "room-A"
 
     async def test_custom_session_id_factory_is_used(self, make_agno_agent):
         agent = make_agno_agent()
@@ -40,7 +40,7 @@ class TestSessionIsolation:
             room_id="room-A",
         )
 
-        assert agent.arun.await_args.kwargs["session_id"] == "sess::room-A"
+        assert agent.arun.call_args.kwargs["session_id"] == "sess::room-A"
 
     async def test_two_rooms_get_isolated_sessions_and_inputs(
         self, make_started_adapter
@@ -66,7 +66,7 @@ class TestSessionIsolation:
             room_id="room-B",
         )
 
-        calls = agent.arun.await_args_list
+        calls = agent.arun.call_args_list
         assert calls[0].kwargs["session_id"] == "room-A"
         assert calls[1].kwargs["session_id"] == "room-B"
 

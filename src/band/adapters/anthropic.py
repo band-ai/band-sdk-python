@@ -40,6 +40,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
 )
 from band.runtime.tools.schema import is_failed_tool_output
+from band.runtime.working_state import tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -478,61 +479,62 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
             logger.debug("Executing tool: %s with input: %s", tool_name, tool_input)
 
-            # Report tool call if enabled (JSON format with tool_call_id for linking)
-            # Best-effort: event reporting must never crash tool execution
-            if Emit.TOOL_CALLS in self.features.emit:
-                try:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.ARGS: redact_tool_call_args(
-                                    tool_name, tool_input
-                                ),
-                                ToolEventKey.TOOL_CALL_ID: tool_use_id,
-                            }
-                        ),
-                        message_type="tool_call",
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    logger.warning(
-                        "Failed to send tool_call event: %s",
-                        e,
-                    )
+            async with tool_activity(tools, tool_name):
+                # Report tool call if enabled (JSON format with tool_call_id for linking)
+                # Best-effort: event reporting must never crash tool execution
+                if Emit.TOOL_CALLS in self.features.emit:
+                    try:
+                        await tools.send_event(
+                            content=json.dumps(
+                                {
+                                    ToolEventKey.NAME: tool_name,
+                                    ToolEventKey.ARGS: redact_tool_call_args(
+                                        tool_name, tool_input
+                                    ),
+                                    ToolEventKey.TOOL_CALL_ID: tool_use_id,
+                                }
+                            ),
+                            message_type="tool_call",
+                        )
+                    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                        logger.warning(
+                            "Failed to send tool_call event: %s",
+                            e,
+                        )
 
-            # Execute tool (check custom tools first, then platform tools)
-            try:
-                custom_tool = find_custom_tool(self._custom_tools, tool_name)
-                if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, tool_input, turn=tools.turn
-                    )
-                    succeeded = not is_failed_tool_output(result)
-                else:
-                    outcome = await tools.execute_tool_call_structured(
-                        tool_name, tool_input
-                    )
-                    result = outcome.value
-                    succeeded = outcome.ok
-                if succeeded and tool_name == BandTool.NO_REPLY:
-                    declined = True
-                if not succeeded:
+                # Execute tool (check custom tools first, then platform tools)
+                try:
+                    custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                    if custom_tool:
+                        result = await execute_custom_tool(
+                            custom_tool, tool_input, turn=tools.turn
+                        )
+                        succeeded = not is_failed_tool_output(result)
+                    else:
+                        outcome = await tools.execute_tool_call_structured(
+                            tool_name, tool_input
+                        )
+                        result = outcome.value
+                        succeeded = outcome.ok
+                    if succeeded and tool_name == BandTool.NO_REPLY:
+                        declined = True
+                    if not succeeded:
+                        failed = True
+                    if is_image_passthrough_result(tool_name, result):
+                        content = _image_tool_result_content(result)
+                        result_str = image_block_placeholder(len(content))
+                    else:
+                        content = result_str = (
+                            json.dumps(result, default=str)
+                            if not isinstance(result, str)
+                            else result
+                        )
+                    is_error = False
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     failed = True
-                if is_image_passthrough_result(tool_name, result):
-                    content = _image_tool_result_content(result)
-                    result_str = image_block_placeholder(len(content))
-                else:
-                    content = result_str = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-                is_error = False
-            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                failed = True
-                content = result_str = f"Error: {e}"
-                is_error = True
-                logger.error("Tool %s failed: %s", tool_name, e)
+                    content = result_str = f"Error: {e}"
+                    is_error = True
+                    logger.error("Tool %s failed: %s", tool_name, e)
 
             # Report tool result if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution

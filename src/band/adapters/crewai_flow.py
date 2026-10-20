@@ -77,6 +77,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
+from band.runtime.working_state import tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -610,16 +611,17 @@ class CrewAIFlowCustomTools:
     async def _execute_tool(
         self, name: str, tool: CustomToolDef, input_data: dict[str, Any]
     ) -> Any:
-        await self._report_call(name, input_data)
-        try:
-            result = await execute_custom_tool(
-                tool=tool, arguments=input_data, turn=self._tools.turn
-            )
-        except Exception as exc:
-            await self._report_result(name, str(exc), is_error=True)
-            raise
-        await self._report_result(name, result)
-        return result
+        async with tool_activity(self._tools, name):
+            await self._report_call(name, input_data)
+            try:
+                result = await execute_custom_tool(
+                    tool=tool, arguments=input_data, turn=self._tools.turn
+                )
+            except Exception as exc:
+                await self._report_result(name, str(exc), is_error=True)
+                raise
+            await self._report_result(name, result)
+            return result
 
     async def _report_call(self, tool_name: str, input_data: dict[str, Any]) -> None:
         await self._reporter.report_call(self._tools, tool_name, input_data)
