@@ -41,5 +41,5 @@ class TestOnStarted:
             room_id="room-1",
         )
 
-        agent.arun.assert_awaited_once()
+        agent.arun.assert_called_once()
         tools.assert_no_messages_sent()

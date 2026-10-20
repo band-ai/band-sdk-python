@@ -2,8 +2,7 @@
 
 Mock builders for Letta API objects (messages, responses, agents,
 conversations, MCP servers/tools, async streams) and platform messages, used
-by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
-``test_letta_orgscope.py``.
+by the Letta adapter and MCP suites.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 from uuid import uuid4
 
 from letta_client import AsyncLetta
+from letta_client.types.agents.letta_streaming_response import LettaUsageStatistics
 from letta_client.types.agents.tool_call import ToolCall
 from letta_client.types.agents.tool_call_message import ToolCallMessage
 from letta_client.types.agents.tool_return import ToolReturn
@@ -151,6 +151,21 @@ def make_letta_response(*messages: Any) -> MagicMock:
     """Create a fake Letta API response."""
     resp = MagicMock()
     resp.messages = list(messages)
+
+    async def stream() -> Any:
+        for message in resp.messages:
+            yield message
+        if usage := resp.__dict__.get("usage"):
+            values = {
+                name: value
+                for name in LettaUsageStatistics.model_fields
+                if isinstance(value := getattr(usage, name, None), int)
+            }
+            yield LettaUsageStatistics(message_type="usage_statistics", **values)
+
+    resp.__aiter__.side_effect = stream
+    resp.__aenter__.return_value = resp
+    resp.__aexit__.return_value = None
     return resp
 
 
@@ -331,15 +346,7 @@ def mock_org_user_provisioned(
 def make_mock_async_stream(*messages: MagicMock) -> Any:
     """Create a mock async stream yielding Letta messages."""
 
-    class _AsyncStream:
-        def __init__(self, stream_messages: list[MagicMock]) -> None:
-            self._messages = stream_messages
-
-        async def __aiter__(self) -> Any:
-            for stream_message in self._messages:
-                yield stream_message
-
-    return _AsyncStream(list(messages))
+    return make_letta_response(*messages)
 
 
 class RecordingLettaClient:
@@ -386,7 +393,7 @@ class RecordingLettaClient:
         return [entry for entry in self.journal if entry.startswith("cancel ")]
 
     async def _create_agent_turn(
-        self, *, agent_id: str, messages: list[dict[str, str]]
+        self, *, agent_id: str, messages: list[dict[str, str]], **stream_options: Any
     ) -> MagicMock:
         self.journal.append(f"send agent {agent_id}")
         await self.release.wait()

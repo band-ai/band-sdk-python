@@ -16,6 +16,7 @@ from band.integrations.parlant.mentions import (
 )
 from band.integrations.parlant.sessiontools import require_session_tools
 from band.runtime.tools import ParticipantAddStatus, serialize_tool_result
+from band.runtime.working_state import model_tool_activity
 
 EVENT_MESSAGE_TYPES: tuple[str, ...] = get_args(EventMessageType)
 
@@ -27,6 +28,8 @@ LOOKUP_PEERS_RETURN_NOTE = (
     "\n\nThis tool returns a formatted text summary of matching agents, not "
     "the 'data'/'metadata' dict described above."
 )
+
+from band.runtime.tools.types import BandTool
 
 
 @band_tool(
@@ -59,7 +62,8 @@ async def band_send_event(
     if message_type not in EVENT_MESSAGE_TYPES:
         return invalid_choice("message_type", message_type, EVENT_MESSAGE_TYPES)
 
-    await tools.send_event(content, message_type, None)
+    async with model_tool_activity(tools, BandTool.SEND_EVENT):
+        await tools.send_event(content, message_type, None)
     return ToolResult(data=f"Event ({message_type}) sent successfully")
 
 

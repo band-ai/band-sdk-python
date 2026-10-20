@@ -37,6 +37,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 try:
     from agno.models.message import Message
@@ -451,10 +452,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     ) -> RunOutput | None:
         """Run the Agno agent with the room's tools bound for this call.
 
-        When ``Emit.TOOL_CALLS`` is enabled the run is streamed so tool_call /
-        tool_result events are emitted *as each tool runs* (see
-        :meth:`_run_streamed`), matching the other adapters' live reporting.
-        Otherwise it runs non-streaming, exactly as before.
+        Consume provider progress as it happens, independently of chat narration.
         """
         try:
             agent = self._agent
@@ -469,17 +467,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 session_id,
             )
             with _bind_room_tools(tools):
-                if Emit.TOOL_CALLS in self.features.emit:
-                    response = await self._run_streamed(
-                        agent,
-                        messages,
-                        tools,
-                        session_id=session_id,
-                        room_id=room_id,
-                        msg_id=msg_id,
-                    )
-                else:
-                    response = await agent.arun(input=messages, session_id=session_id)
+                response = await self._run_streamed(
+                    agent,
+                    messages,
+                    tools,
+                    session_id=session_id,
+                    room_id=room_id,
+                    msg_id=msg_id,
+                )
             # Agno swallows run exceptions into a normal-looking return value
             # (status=error); surface it so the shared except path below treats
             # the turn as failed rather than as a silent empty reply.
@@ -532,9 +527,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 # None, which would read as a successful turn with no output.
                 raise AgnoRunError(_error_summary(item.content))
             else:
-                await self._emit_stream_event(
-                    item, tools, room_id=room_id, msg_id=msg_id
-                )
+                if isinstance(item, ToolCallStartedEvent) and item.tool is not None:
+                    await report_tool_activity(tools, item.tool.tool_name or "")
+                elif isinstance(item, ToolCallCompletedEvent):
+                    await end_tool_activity(tools)
+                if Emit.TOOL_CALLS in self.features.emit:
+                    await self._emit_stream_event(
+                        item, tools, room_id=room_id, msg_id=msg_id
+                    )
         return final
 
     def _persist_turn(self, room_id: str, response: RunOutput) -> None:
