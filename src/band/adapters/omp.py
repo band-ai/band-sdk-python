@@ -87,6 +87,11 @@ from band.runtime.tools import (
     redact_tool_call_args,
     turn_effect,
 )
+from band.runtime.working_state import (
+    end_tool_activity,
+    report_tool_activity,
+    set_permission_wait,
+)
 from band.workspaces import RoomWorkspaces, WorkspaceResolver, workspace_resolver_for
 
 logger = logging.getLogger(__name__)
@@ -677,14 +682,18 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         options = tuple(request.options or ())
         choice = None
         if self._resolve_permission is not None:
-            choice = await self._resolve_permission(
-                OmpPermissionRequest(
-                    room_id=room_id,
-                    session_id=session_id,
-                    title=request.title or "",
-                    options=options,
+            await set_permission_wait(tools, True)
+            try:
+                choice = await self._resolve_permission(
+                    OmpPermissionRequest(
+                        room_id=room_id,
+                        session_id=session_id,
+                        title=request.title or "",
+                        options=options,
+                    )
                 )
-            )
+            finally:
+                await set_permission_wait(tools, False)
         elif options == ("Approve", "Deny"):
             choice = "Approve"
         response = (
@@ -757,6 +766,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     event.toolName, args, preserve_native_semantics=True
                 )
                 turn.calls[event.toolCallId] = (name, arguments)
+                await report_tool_activity(turn.tools, name)
                 if Emit.TOOL_CALLS in self.features.emit:
                     await send_event_safe(
                         turn.tools,
@@ -768,6 +778,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if call is None:
                     return
                 name, _arguments = call
+                await end_tool_activity(turn.tools)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if Emit.TOOL_CALLS in self.features.emit:
