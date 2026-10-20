@@ -494,9 +494,14 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
     )
     await wait_for(lambda: bool(fake_client.prompt_calls))
 
+    watcher = (await adapter._get_or_create_room_state("room-1")).turn.watcher
     interrupted.cancel()
     with suppress(asyncio.CancelledError):
         await interrupted
+    # Cancelling on_message only schedules the watcher's cancellation; the abort
+    # is spawned once the watcher has unwound.
+    with suppress(asyncio.CancelledError):
+        await watcher
 
     # The abort is sent from its own task, which the room's next turn joins.
     await adapter.backend_turns.drain()
