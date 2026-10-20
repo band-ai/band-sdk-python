@@ -16,8 +16,12 @@ the workflow files cannot say for themselves.
   `tests/framework_conformance/test_ci_status_coverage.py` fails until it is. The same gate
   shape runs in `band-sdk-typescript`.
 - **`main` uses a merge queue**, so every required workflow needs a `merge_group:` trigger
-  (`ci.yml`, `pr-title.yml`, `release-gate.yml` and `python-core-coverage.yml` have one).
+  (`ci.yml`, `pr-title.yml` and `release-gate.yml` have one).
   Without it the queue waits forever for a check that never starts.
+- **The merge queue runs a slim `ci.yml`:** `lint` plus the `test`, `test-crewai` and
+  `test-parlant` suites on Ubuntu with Python 3.12. The full OS × Python grid,
+  `test-strands-nooa`, `packaging` and `wheel-extras` run on the PR only. A break that shows
+  only on a lane the queue skips reaches `main` and surfaces in the next PR's CI.
 
 ## PyPI publish
 

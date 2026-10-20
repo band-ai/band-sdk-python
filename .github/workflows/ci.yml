@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-  # Run on the merge queue's temporary branch so these required checks report
+  # Run on the merge queue's temporary branch so the required ci-status reports
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
 
@@ -63,10 +63,17 @@ jobs:
   test:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
+    strategy: &suite-strategy
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
+        # The merge queue re-checks only that the merged result still works; the full
+        # OS x Python grid already ran on the PR.
+        run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
+        exclude:
+        - {run-for: queue, os: windows-latest}
+        - {run-for: queue, python-version: '3.11'}
+        - {run-for: queue, python-version: '3.13'}
       fail-fast: false
 
     # Use bash on every OS so these steps stay identical (Git Bash ships on the
@@ -115,11 +122,7 @@ jobs:
   test-crewai:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -186,13 +189,9 @@ jobs:
 
 
   test-strands-nooa:
-    if: *not-draft
+    if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -262,11 +261,7 @@ jobs:
   test-parlant:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -333,7 +328,7 @@ jobs:
 
 
   packaging:
-    if: *not-draft
+    if: *pr-only
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -458,7 +453,7 @@ jobs:
 
 
   wheel-extra-cases:
-    if: *not-draft
+    if: *pr-only
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}
