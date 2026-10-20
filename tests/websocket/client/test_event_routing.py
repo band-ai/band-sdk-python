@@ -8,7 +8,6 @@ from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
 
 from band.client.streaming import RoomDeletedPayload, WebSocketClient
 from tests.websocket.client.kit import (
@@ -19,35 +18,6 @@ from tests.websocket.client.kit import (
 
 
 class TestEventRouting:
-    async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(
-        self, caplog
-    ):
-        """A real OpenTelemetry span's traceparent reaches the real band_sdk_core
-        call, comes back on the raised ValueError, and lands on the seam's own
-        log record -- through the actual OTel propagation and band_sdk_core
-        binding, neither faked. Uses a standalone TracerProvider instance (never
-        ``trace.set_tracer_provider``), so this doesn't touch the process-global
-        provider other tests may depend on.
-        """
-        tracer = TracerProvider().get_tracer("test")
-        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-
-        with (
-            caplog.at_level(logging.ERROR),
-            tracer.start_as_current_span("probe") as span,
-        ):
-            span_context = span.get_span_context()
-            # Missing required fields -- a genuine band_sdk_core rejection.
-            received = await dispatch(client, "message_created", {"id": "msg-123"})
-
-        assert received is None
-        record = next(
-            r for r in caplog.records if "Invalid message_created" in r.getMessage()
-        )
-        assert record.trace_context is not None
-        assert format(span_context.trace_id, "032x") in record.trace_context
-        assert format(span_context.span_id, "016x") in record.trace_context
-
     async def test_routes_message_created_and_updated_to_distinct_handlers(self):
         """When both handlers are registered, each event reaches only its own one."""
         client = WebSocketClient("ws://localhost", "test-key", "agent-123")

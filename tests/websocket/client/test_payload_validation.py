@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 import band.client.streaming.wire as wire_module
 from band.client.streaming import (
@@ -296,6 +297,35 @@ class TestPayloadValidation:
         extra_fields = {"extra_field_1": "some value", "extra_field_2": 42}
         received = await dispatch(client, event_name, {**base_payload, **extra_fields})
         assert isinstance(received, expected_type)
+
+    async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(
+        self, caplog
+    ):
+        """A real OpenTelemetry span's traceparent reaches the real band_sdk_core
+        call, comes back on the raised ValueError, and lands on the seam's own
+        log record -- through the actual OTel propagation and band_sdk_core
+        binding, neither faked. Uses a standalone TracerProvider instance (never
+        ``trace.set_tracer_provider``), so this doesn't touch the process-global
+        provider other tests may depend on.
+        """
+        tracer = TracerProvider().get_tracer("test")
+        client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+        with (
+            caplog.at_level(logging.ERROR),
+            tracer.start_as_current_span("probe") as span,
+        ):
+            span_context = span.get_span_context()
+            # Missing required fields -- a genuine band_sdk_core rejection.
+            received = await dispatch(client, "message_created", {"id": "msg-123"})
+
+        assert received is None
+        record = next(
+            r for r in caplog.records if "Invalid message_created" in r.getMessage()
+        )
+        assert record.trace_context is not None
+        assert format(span_context.trace_id, "032x") in record.trace_context
+        assert format(span_context.span_id, "016x") in record.trace_context
 
     async def test_validation_error_count_increments_on_invalid_payload(self, caplog):
         """Should increment validation_error_count when a payload fails validation."""
