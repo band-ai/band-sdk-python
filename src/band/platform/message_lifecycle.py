@@ -54,6 +54,10 @@ VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
 NOT_FOUND_ERROR_CODE = "not_found"
 
+# A tool name over this length is a 422 on the activity endpoint, which the
+# compatibility path would read as an old platform; clip first, never reject.
+MAX_ACTIVITY_NAME_CHARACTERS = 1024
+
 
 def _accepted_response(
     response: AsyncHttpResponse[ResponseData | None],
@@ -155,6 +159,12 @@ async def _send_activity(
 ) -> AsyncHttpResponse[ReportAgentChatActivityResponse]:
     kwargs: dict[str, Any] = {}
     if activity is not None:
+        if activity.name and len(activity.name) > MAX_ACTIVITY_NAME_CHARACTERS:
+            # I-08: clip before the POST, never let a long name read as an
+            # old platform (a detail-bearing 422 latches detail off).
+            activity = activity.model_copy(
+                update={"name": activity.name[:MAX_ACTIVITY_NAME_CHARACTERS]}
+            )
         kwargs["activity"] = activity
     return await rest.agent_api_activity.with_raw_response.report_agent_chat_activity(
         chat_id=room_id,
