@@ -124,6 +124,8 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
 
 
 ACTIONABLE_PAGE_SIZE = 100
+WriteKey = tuple[str, DeliveryStatus]
+FailureCause = tuple[type[Exception], int | None]
 # Diagnostic suppression stays bounded; evicted intents warn again on retry.
 UNCONFIRMED_WRITE_LIMIT = 256
 
@@ -149,9 +151,7 @@ class MessageLifecycle:
         self._activity_report_failing = False
         # Recent unconfirmed intents suppress repeat warnings without retaining
         # abandoned writes for the lifetime of the link.
-        self._unconfirmed_writes: OrderedDict[
-            tuple[str, DeliveryStatus], tuple[type[Exception], int | None]
-        ] = OrderedDict()
+        self._unconfirmed_writes: OrderedDict[WriteKey, FailureCause] = OrderedDict()
 
     async def mark_processing(
         self, rest: AsyncRestClient, room_id: str, message_id: str
@@ -294,11 +294,7 @@ class MessageLifecycle:
         else:
             self._unconfirmed_writes.pop(key, None)
 
-    def _remember_unconfirmed(
-        self,
-        key: tuple[str, DeliveryStatus],
-        cause: tuple[type[Exception], int | None],
-    ) -> None:
+    def _remember_unconfirmed(self, key: WriteKey, cause: FailureCause) -> None:
         self._unconfirmed_writes[key] = cause
         self._unconfirmed_writes.move_to_end(key)
         if len(self._unconfirmed_writes) > UNCONFIRMED_WRITE_LIMIT:

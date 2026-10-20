@@ -4,6 +4,7 @@ Band Platform Layer - Wire-level connection to Band platform.
 Components:
     BandLink: WebSocket connection + event dispatch (REST via .rest)
     PlatformEvent: Single event type for all platform events
+    SettlementResult: What a terminal processed/failed write established
 """
 
 from band.core.settlement import SettlementResult

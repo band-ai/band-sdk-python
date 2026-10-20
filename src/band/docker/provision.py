@@ -355,14 +355,8 @@ async def register_agent(
     """Register on the host with a user key. Returns (agent_id, agent_api_key)."""
     async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
         try:
-            # register_my_agent has no idempotency key and mints a key shown
-            # exactly once (band_rest's own docstring says so). A transport-level
-            # retry after the platform already committed the write (e.g. a 5xx on
-            # a lost response) would hit the duplicate-name path with the original
-            # response — and its key — already gone, orphaning an agent against
-            # the user's plan cap with no way to recover its credentials. Zero
-            # retries until the endpoint gains an idempotency key or an
-            # adopt-existing path.
+            # No idempotency key, and the minted key is shown once: a retry after
+            # a lost response would orphan the agent.
             response = await client.human_api_agents.register_my_agent(
                 agent=AgentRegisterRequest(name=name, description=description),
                 request_options=NO_RETRY_REQUEST_OPTIONS,
