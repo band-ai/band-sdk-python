@@ -76,7 +76,7 @@ jobs:
         python-version: ['3.11', '3.12', '3.13']
         # The merge queue re-checks only that the merged result still works; the full
         # OS x Python grid already ran on the PR.
-        run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
+        run-for: ["${{ github.event_name == 'pull_request' && 'queue' || 'pr' }}"]
         exclude:
         - {run-for: queue, os: windows-latest}
         - {run-for: queue, python-version: '3.11'}
