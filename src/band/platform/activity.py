@@ -1,95 +1,66 @@
 """Process-wide negotiation for optional room activity detail.
 
-The first endpoint defines support for the process. A detail rejection on any
-endpoint permanently downgrades every link; boolean liveness remains available.
+Every agent API response names its version in ``X-API-Version``. Detail is sent
+once any activity response reported a supporting version. A detail rejection on
+any link permanently downgrades every link; boolean liveness remains available.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from concurrent.futures import Future
+from collections.abc import Mapping
 from threading import Lock
 
-import httpx
-
 logger = logging.getLogger(__name__)
+# The first agent API that accepts ``activity``; older ones reject it with 422.
 MINIMUM_ACTIVITY_VERSION = (1, 25, 0)
+API_VERSION_HEADER = "x-api-version"
 RELEASE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 
+def _supports_detail(version: str | None) -> bool:
+    match = RELEASE_VERSION.fullmatch(version) if version is not None else None
+    return (
+        match is not None
+        and tuple(map(int, match.groups())) >= MINIMUM_ACTIVITY_VERSION
+    )
+
+
 class ActivitySupport:
-    """Share discovery without retaining primitives owned by an asyncio loop."""
+    """Learn detail support from response headers; a rejection latches it off."""
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._discovery: Future[bool] | None = None
+        self._learned = False
         self._disabled = False
 
     @property
     def supported(self) -> bool:
         with self._lock:
-            return (
-                not self._disabled
-                and self._discovery is not None
-                and self._discovery.done()
-                and self._discovery.result()
-            )
+            return self._learned and not self._disabled
 
-    def disable(self) -> None:
+    def observe(self, headers: Mapping[str, str]) -> None:
+        version = headers.get(API_VERSION_HEADER)
+        if not _supports_detail(version):
+            logger.debug(
+                "Agent API version %r does not advertise activity detail", version
+            )
+            return
+        with self._lock:
+            self._learned = True
+
+    def disable(self, *, room_id: str, field: str) -> None:
         with self._lock:
             already_disabled = self._disabled
             self._disabled = True
         if not already_disabled:
             logger.info(
-                "Activity detail rejected; using boolean reporting for this process"
+                "Activity report with detail returned 422 in room %s (field %s); "
+                "using boolean reporting for this process",
+                room_id,
+                field,
             )
-
-    async def allows(self, rest_url: str, budget: float) -> bool:
-        with self._lock:
-            if self._disabled:
-                return False
-            owner = self._discovery is None
-            if owner:
-                self._discovery = Future()
-            discovery = self._discovery
-        assert discovery is not None
-        if owner:
-            supported = False
-            try:
-                async with asyncio.timeout(budget):
-                    supported = await self._discover(rest_url, budget)
-            except asyncio.CancelledError:
-                raise
-            except (httpx.HTTPError, ValueError, TimeoutError):
-                pass
-            finally:
-                discovery.set_result(supported)
-                if not supported:
-                    logger.info(
-                        "Activity detail unavailable; using boolean reporting for this process"
-                    )
-        else:
-            try:
-                async with asyncio.timeout(budget):
-                    await asyncio.shield(asyncio.wrap_future(discovery))
-            except TimeoutError:
-                return False
-        return self.supported
-
-    @staticmethod
-    async def _discover(rest_url: str, budget: float) -> bool:
-        async with httpx.AsyncClient(timeout=budget) as client:
-            response = await client.get(f"{rest_url.rstrip('/')}/api/version")
-            response.raise_for_status()
-            data = response.json()
-        version = data.get("agent_version") if isinstance(data, dict) else None
-        match = RELEASE_VERSION.fullmatch(version) if isinstance(version, str) else None
-        return (
-            match is not None
-            and tuple(map(int, match.groups())) >= MINIMUM_ACTIVITY_VERSION
-        )
 
 
 activity_support = ActivitySupport()

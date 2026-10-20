@@ -200,6 +200,7 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
+    "pytest-randomly==5.0.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
@@ -281,6 +282,7 @@ dev-crewai = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
+    "pytest-randomly==5.0.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
@@ -312,9 +314,9 @@ dev-parlant = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "pytest-randomly>=5.0.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
+    "pytest-randomly==5.0.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
@@ -346,6 +348,7 @@ dev-strands-nooa = [
     "pytest-asyncio>=0.21.0",
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
+    "pytest-randomly==5.0.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",

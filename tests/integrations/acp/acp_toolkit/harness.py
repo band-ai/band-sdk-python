@@ -7,7 +7,7 @@ import contextlib
 import re
 import socket
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -565,8 +565,8 @@ async def started_acp_adapter(
     Yields an :class:`AcpSession`; tears the adapter down on exit.
     """
     pair_in_process(adapter, agent)
-    await adapter.on_started("Fake Agent", "in-process fake")
     try:
+        await adapter.on_started("Fake Agent", "in-process fake")
         yield AcpSession(adapter, agent)
     finally:
         await adapter.stop()
@@ -590,36 +590,41 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
         transport_kwargs: Any = None,
     ) -> AsyncIterator[tuple[Any, Any]]:
         del args, env, cwd, transport_kwargs
-        client_sock, agent_sock = socket.socketpair()
-        reader_c, writer_c = await asyncio.open_connection(sock=client_sock)
-        reader_a, writer_a = await asyncio.open_connection(sock=agent_sock)
-        # listening=True starts the agent's receive loop and fires agent.on_connect.
-        agent_conn = AgentSideConnection(
-            agent,
-            writer_a,
-            reader_a,
-            use_unstable_protocol=True,
-        )
-        conn = connect_to_agent(
-            client, writer_c, reader_c, observers=[agent.record_client_send]
-        )
-        agent.hang_up = writer_a.close
-        try:
-            yield conn, agent_conn
-        finally:
+        async with AsyncExitStack() as stack:
+            client_sock, agent_sock = socket.socketpair()
+            stack.callback(client_sock.close)
+            stack.callback(agent_sock.close)
+            reader_c, writer_c = await asyncio.open_connection(sock=client_sock)
+            stack.push_async_callback(close_stream, writer_c)
+            reader_a, writer_a = await asyncio.open_connection(sock=agent_sock)
+            stack.push_async_callback(close_stream, writer_a)
+            agent_conn = AgentSideConnection(
+                agent, writer_a, reader_a, use_unstable_protocol=True
+            )
+            stack.push_async_callback(close_connection, agent_conn)
+            conn = connect_to_agent(
+                client, writer_c, reader_c, observers=[agent.record_client_send]
+            )
+            stack.push_async_callback(close_connection, conn)
+            stack.callback(agent.lifecycle.append, EXIT_RECORD)
+            agent.hang_up = writer_a.close
             try:
-                await _exit(agent)
+                yield conn, agent_conn
             finally:
-                agent.lifecycle.append(EXIT_RECORD)
-                for closable in (conn, agent_conn):
-                    with contextlib.suppress(Exception):
-                        await closable.close()
-                for writer in (writer_c, writer_a):
-                    writer.close()
-                    with contextlib.suppress(Exception):
-                        await writer.wait_closed()
+                await _exit(agent)
 
     return _spawn
+
+
+async def close_stream(writer: asyncio.StreamWriter) -> None:
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
+
+
+async def close_connection(connection: Any) -> None:
+    with contextlib.suppress(Exception):
+        await connection.close()
 
 
 async def _exit(agent: FakeACPAgent) -> None:

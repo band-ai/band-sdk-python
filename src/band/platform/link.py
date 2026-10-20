@@ -657,7 +657,6 @@ class BandLink:
             room_id,
             working,
             activity=activity,
-            rest_url=self.rest_url,
             timeout_seconds=timeout_seconds,
             on_stopped=on_stopped,
         )
