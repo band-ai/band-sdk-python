@@ -25,6 +25,7 @@ import asyncio
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import cache
 from itertools import count
@@ -50,6 +51,7 @@ from band.client.streaming import (
     RoomDeletedPayload,
     RoomRemovedPayload,
 )
+from band.client.streaming.client import RECONNECT_POLICY
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -364,6 +366,17 @@ TERMINAL_SUPERSEDE: dict[str, Any] = {
     "target_socket_id": "agent_socket:agent-123",
     "correlation_id": "evict-1",
 }
+
+
+@pytest.fixture(scope="class")
+def millisecond_reconnects() -> Iterator[None]:
+    """The transport's reconnect backoff shrunk to milliseconds, so a test that
+    reconnects spends its time on the scenario, not on the transport's timers.
+    Class-scoped because Hypothesis rejects function-scoped fixtures."""
+    fast = replace(RECONNECT_POLICY, base_delay_s=0.001, rapid_disconnect_uptime_s=0.0)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("band.client.streaming.client.RECONNECT_POLICY", fast)
+        yield
 
 
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:

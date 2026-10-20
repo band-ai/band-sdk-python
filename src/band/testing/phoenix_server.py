@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
@@ -215,18 +215,26 @@ class FakePhoenixServer:
         await self._protocol.send_message(self._connection, message)  # pyrefly: ignore[bad-argument-type]
 
     async def close_connection(self, *, code: int = 1000, reason: str = "") -> None:
-        """Graceful close with a specific close code -- e.g. 1000, which
-        BandLink's reconnect policy treats as intentional and never
-        reconnects from."""
+        """Server-initiated close handshake with a specific close code."""
         await self._connection_ready.wait()
         assert self._connection is not None
         await self._connection.close(code=code, reason=reason)
 
+    @contextmanager
+    def stalled(self) -> Iterator[None]:
+        """Stop reading from the client, as a slow peer does: whatever the
+        client sends meanwhile, close handshake included, waits unanswered."""
+        assert self._connection is not None
+        transport = self._connection.transport
+        transport.pause_reading()
+        try:
+            yield
+        finally:
+            transport.resume_reading()
+
     async def abort_connection(self) -> None:
         """Sever the connection with no close handshake -- what a real
-        network drop looks like to the client, so its own reconnect logic
-        actually triggers (unlike a graceful close, which the client's
-        policy reads as intentional and never reconnects from)."""
+        network drop looks like to the client."""
         await self._connection_ready.wait()
         assert self._connection is not None
         self._connection.transport.abort()

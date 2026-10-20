@@ -1361,7 +1361,16 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::test_room_survives_real_transport_reconnect",
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_a_normal_close_reconnect",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_real_transport_reconnect",
       "adapter": "anthropic",
       "lanes": [
         "core"
@@ -1419,6 +1428,15 @@
       "adapter": "omp_acp",
       "lanes": [
         "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_supersede.py::TestSupersede::test_a_newer_session_ends_the_running_one_for_good",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
       ],
       "status": "pass",
       "reason": null
