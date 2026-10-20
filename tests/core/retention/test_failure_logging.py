@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 import pytest
 
@@ -17,6 +16,9 @@ from tests.core.retention.kit import (
     retention_logs,
     retention_records,
 )
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
+from tests.toolkit.timecontrol import controlled_clock
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -67,23 +69,44 @@ class TestFailureLogging:
         )
         assert record.exc_info is not None
 
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_a_failure_raised_as_its_wait_times_out_is_left_to_its_caller(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The wait's timeout and the task's failure land in one loop step, so
-        the done callback runs after the caller stopped waiting."""
+        loop = asyncio.get_running_loop()
+        gate: asyncio.Future[None] = loop.create_future()
+        order: list[str] = []
 
         async def failing_cleanup() -> None:
-            await asyncio.sleep(0.05)
+            await gate
+            order.append("cleanup failed")
             raise RuntimeError("close failed")
 
-        cleanup = spawn_owned(failing_cleanup(), label="cleanup")
-        # Blocks the loop until both the cleanup's sleep and the wait's timeout expire.
-        asyncio.get_running_loop().call_soon(time.sleep, 0.2)
-        with pytest.raises(RuntimeError, match="close failed"):
-            await report_owned(cleanup, 0.1)
-        await asyncio.sleep(0)
-        assert retention_logs(caplog.records) == []
+        async with (
+            controlled_clock() as clock,
+            background(spawn_owned(failing_cleanup(), label="cleanup")) as cleanup,
+        ):
+            cleanup.add_done_callback(lambda _: order.append("done callback"))
+            release = loop.call_later(1, gate.set_result, None)
+            # Both distinct timers become due in one step; equal deadlines have
+            # no guaranteed callback order in asyncio's timer heap.
+            jump = loop.call_soon(clock.advance, 3)
+            try:
+                with pytest.raises(RuntimeError, match="close failed"):
+                    try:
+                        await report_owned(cleanup, 2)
+                    finally:
+                        order.append("caller stopped waiting")
+                await spin()
+                assert order == [
+                    "cleanup failed",
+                    "caller stopped waiting",
+                    "done callback",
+                ]
+                assert retention_logs(caplog.records) == []
+            finally:
+                release.cancel()
+                jump.cancel()
 
     async def test_a_failure_its_cancelled_caller_never_saw_is_logged_once(
         self, caplog: pytest.LogCaptureFixture

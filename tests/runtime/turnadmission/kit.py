@@ -19,6 +19,7 @@ class TurnRecorder(SimpleAdapter[Any]):
     def __init__(self) -> None:
         super().__init__()
         self.completed: list[str] = []
+        self._completions: asyncio.Queue[str] = asyncio.Queue()
         self.controls: list[str] = []
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
@@ -35,6 +36,10 @@ class TurnRecorder(SimpleAdapter[Any]):
         await self.release.wait()
         self.completed.append(msg.id)
         tools.turn.settle()
+        self._completions.put_nowait(msg.id)
+
+    async def next_completion(self) -> str:
+        return await self._completions.get()
 
 
 def queued_synthetic(ctx: ExecutionContext) -> list[str]:
