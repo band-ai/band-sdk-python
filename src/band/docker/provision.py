@@ -40,12 +40,11 @@ from typing import Any, Final
 
 from band_rest import AgentRegisterRequest, AsyncRestClient
 from band_rest.core.api_error import ApiError
-from band_rest.core.request_options import RequestOptions
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from ruamel.yaml import YAML
 
 from band import LogSettings, LogStream
-from band.client.rest import aclose_rest_client
+from band.client.rest import NO_RETRY_REQUEST_OPTIONS, aclose_rest_client
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.config import (
     DEFAULT_REST_URL,
@@ -57,14 +56,6 @@ from band.docker.sbx_process import run_sbx_subprocess
 logger = logging.getLogger(__name__)
 
 DEFAULT_BAND_HOST = "**.band.ai"
-# register_my_agent has no idempotency key and mints a key shown exactly once
-# (band_rest's own docstring says so). A transport-level retry after the
-# platform already committed the write (e.g. a 5xx on a lost response) would
-# hit the duplicate-name path with the original response — and its key —
-# already gone, orphaning an agent against the user's plan cap with no way to
-# recover its credentials. Zero retries until the endpoint gains an
-# idempotency key or an adopt-existing path.
-NO_RETRY_REQUEST_OPTIONS: Final[RequestOptions] = {"max_retries": 0}
 DEFAULT_TIMEOUT: Final[int] = 120
 SBX_SECRET_TIMEOUT_S: Final[int] = 60
 SBX_CREATE_TIMEOUT_S: Final[int] = 600
@@ -364,6 +355,8 @@ async def register_agent(
     """Register on the host with a user key. Returns (agent_id, agent_api_key)."""
     async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
         try:
+            # No idempotency key, and the minted key is shown once: a retry after
+            # a lost response would orphan the agent.
             response = await client.human_api_agents.register_my_agent(
                 agent=AgentRegisterRequest(name=name, description=description),
                 request_options=NO_RETRY_REQUEST_OPTIONS,
