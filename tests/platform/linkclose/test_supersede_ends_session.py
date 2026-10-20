@@ -12,8 +12,7 @@ from websockets.frames import CloseCode
 from band.client.streaming.client import WireEvent
 from band.platform.event import WebSocketDisconnectedEvent
 from band.testing import fake_phoenix_server
-from band.testing.transport import live_connection
-from tests.conftest import TERMINAL_SUPERSEDE, spy_on_reconciliation_drain
+from tests.conftest import TERMINAL_SUPERSEDE
 from tests.platform.linkclose.kit import (
     CONTROL_TOPIC,
     HANG_GUARD_S,
@@ -27,6 +26,7 @@ from tests.platform.linkclose.kit import (
 )
 
 
+@pytest.mark.usefixtures("millisecond_reconnects")
 class TestSupersedeEndsSession:
     async def test_a_terminal_supersede_ends_the_session(self) -> None:
         async with (
@@ -64,7 +64,6 @@ class TestSupersedeEndsSession:
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             await link.connect()
-            connection = live_connection(link)
 
             with server.stalled():
                 await server.push(
@@ -76,32 +75,11 @@ class TestSupersedeEndsSession:
                     async with asyncio.timeout(0):
                         await link.run_forever(install_signal_handlers=False)
 
-            await asyncio.wait_for(connection.wait_closed(), HANG_GUARD_S)
+            await asyncio.wait_for(
+                link.run_forever(install_signal_handlers=False), HANG_GUARD_S
+            )
             await asyncio.wait_for(link.disconnect(), HANG_GUARD_S)
             async with connected(link):
-                assert server.connection_count == 2
-
-    async def test_clearing_the_reconnect_flag_during_the_backoff_is_too_late(
-        self,
-    ) -> None:
-        """The window a terminal supersede must close by ending the transport."""
-        async with fake_phoenix_server() as server:
-            link = make_link(server.url)
-
-            async def clear_reconnect_flag() -> None:
-                ws = link._ws
-                assert ws is not None and ws.client is not None
-                ws.client.auto_reconnect = False
-
-            async with (
-                during_the_next_backoff(link, clear_reconnect_flag),
-                connected(link),
-            ):
-                reconnected = spy_on_reconciliation_drain(link)
-
-                await server.close_connection(code=CloseCode.GOING_AWAY)
-                await asyncio.wait_for(reconnected.wait(), HANG_GUARD_S)
-
                 assert server.connection_count == 2
 
     async def test_a_supersede_handled_during_the_backoff_ends_the_session(

@@ -409,7 +409,8 @@ class WebSocketClient:
         self._session = Session(self._watchdog.policy)
         self._probed_failure_message: str | None = None
         self._cached_connect_failure: WebSocketUpgradeError | None = None
-        # Holds the scheduled terminal shutdown so it is never garbage-collected.
+        # The scheduled terminal shutdown: held so it stays alive, and its
+        # presence tells run_forever the transport has been ended.
         self._transport_shutdown: asyncio.Task[None] | None = None
 
     @property
@@ -767,6 +768,8 @@ class WebSocketClient:
         because the caller runs inside a topic processor that it stops.
         """
         client = self.client
+        # auto_reconnect is False until the first connect finalizes, while
+        # __aenter__'s own Session loop owns the outcome, and after an earlier end.
         if client is None or not client.auto_reconnect:
             return
         client.auto_reconnect = False

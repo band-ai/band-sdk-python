@@ -61,6 +61,9 @@ if TYPE_CHECKING:
     from band.testing.transport import (
         force_transport_disconnect as force_transport_disconnect,
     )
+    from band.testing.transport import (
+        live_connection as live_connection,
+    )
 
 __all__, __getattr__ = lazy_exports(
     __name__,
@@ -85,5 +88,5 @@ __all__, __getattr__ = lazy_exports(
         "TextTurn",
         "ToolTurn",
     ],
-    transport=["close_transport", "force_transport_disconnect"],
+    transport=["close_transport", "force_transport_disconnect", "live_connection"],
 )

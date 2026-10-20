@@ -16,6 +16,7 @@ def make_link() -> BandLink:
     return BandLink(agent_id="agent-123", api_key="test-key")
 
 
+@pytest.mark.usefixtures("millisecond_reconnects")
 class TestForceTransportDisconnect:
     async def test_the_aborted_link_reconnects(self) -> None:
         """An abort carries no close handshake -- what a real network drop

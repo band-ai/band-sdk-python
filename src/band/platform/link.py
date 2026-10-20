@@ -398,10 +398,9 @@ class BandLink:
         if outcome.state is not SessionState.Dead:
             # outcome.retry_after_s is computed but intentionally not
             # applied here: enforcing it would mean this SDK taking over
-            # firing the actual reconnect attempt, which is the vendored
-            # PHXChannelsClient auto_reconnect loop's job today (see the
-            # design doc's out-of-scope boundary) -- untouched reconnect
-            # keeps working exactly as it does for any other disconnect.
+            # firing the actual reconnect attempt, which is the phoenix
+            # client's auto_reconnect loop's job -- untouched reconnect keeps
+            # working exactly as it does for any other disconnect.
             logger.info(
                 "Supersede reported retryable=True; Session kept the "
                 "connection reconnecting (state=%s, retry_after_s=%s), "

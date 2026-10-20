@@ -31,17 +31,39 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 class TestReconnect:
     @per_adapter(Adapter.ANTHROPIC, prompt=REPLY_PROMPT)
-    @pytest.mark.parametrize(
-        "drop_transport",
-        [force_transport_disconnect, close_transport],
-        ids=["abort", "normal-close"],
-    )
     @pytest.mark.timeout(extra=60)
     @pytest.mark.asyncio(loop_scope="session")
     async def test_room_survives_real_transport_reconnect(
         self,
         cell: AdapterCell,
+        resource_manager: ResourceManager,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+    ) -> None:
+        """An aborted socket, with no close handshake."""
+        await self._room_survives(
+            force_transport_disconnect, cell, resource_manager, user_ops, reply_capture
+        )
+
+    @per_adapter(Adapter.ANTHROPIC, prompt=REPLY_PROMPT)
+    @pytest.mark.timeout(extra=60)
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_room_survives_a_normal_close_reconnect(
+        self,
+        cell: AdapterCell,
+        resource_manager: ResourceManager,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+    ) -> None:
+        """A client-started normal close, which the platform answers with 1000."""
+        await self._room_survives(
+            close_transport, cell, resource_manager, user_ops, reply_capture
+        )
+
+    async def _room_survives(
+        self,
         drop_transport: Callable[[BandLink], Awaitable[None]],
+        cell: AdapterCell,
         resource_manager: ResourceManager,
         user_ops: UserOps,
         reply_capture: CaptureFactory,

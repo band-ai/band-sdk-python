@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from websockets.frames import CloseCode
 
 from band.platform.event import RoomAddedEvent
 from band.platform.link import BandLink
-from band.testing import JoinOutcome, fake_phoenix_server
-from band.testing.transport import live_connection
+from band.testing import JoinOutcome, fake_phoenix_server, live_connection
 from tests.conftest import spy_on_reconciliation_drain
 
 
@@ -27,6 +27,7 @@ def make_link(server_url: str) -> BandLink:
     )
 
 
+@pytest.mark.usefixtures("millisecond_reconnects")
 class TestFakePhoenixServer:
     async def test_default_join_outcome_is_ok(self) -> None:
         """No declared policy -- every join succeeds, observed on both sides."""

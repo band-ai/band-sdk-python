@@ -1361,8 +1361,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_real_transport_reconnect[abort-anthropic]",
-      "adapter": "suite",
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_a_normal_close_reconnect",
+      "adapter": "anthropic",
       "lanes": [
         "core"
       ],
@@ -1370,8 +1370,8 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_real_transport_reconnect[normal-close-anthropic]",
-      "adapter": "suite",
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_real_transport_reconnect",
+      "adapter": "anthropic",
       "lanes": [
         "core"
       ],
