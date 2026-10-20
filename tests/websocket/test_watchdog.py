@@ -1,6 +1,6 @@
 """Tests for HeartbeatWatchdog in isolation (no real socket needed -- the
 wiring between it and WebSocketClient/PHXChannelsClient is covered by the
-real-wire tests in test_client.py)."""
+real-wire tests in client/test_watchdog_real_wire.py)."""
 
 from __future__ import annotations
 
