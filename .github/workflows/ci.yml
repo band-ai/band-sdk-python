@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its running CI. Merge-queue runs are
+# never cancelled: each one is the verdict for the commit that lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
 
   lint:
@@ -492,7 +498,8 @@ jobs:
     # The one required CI check. Every other job in this file is in needs and in
     # the loop below with the results it may end in
     # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
-    # lint must succeed, so a draft run, which skips every job, is red.
+    # lint must succeed, so a draft run, which skips every job, is red. The jobs
+    # allowed to skip are the ones that run on pull requests only.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
     needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
@@ -506,11 +513,11 @@ jobs:
           "lint:${{ needs.lint.result }}:success" \
           "test:${{ needs.test.result }}:success" \
           "test-crewai:${{ needs.test-crewai.result }}:success" \
-          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success" \
+          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \
           "test-parlant:${{ needs.test-parlant.result }}:success" \
-          "packaging:${{ needs.packaging.result }}:success" \
-          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success" \
-          "wheel-extras:${{ needs.wheel-extras.result }}:success"; do
+          "packaging:${{ needs.packaging.result }}:success|skipped" \
+          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success|skipped" \
+          "wheel-extras:${{ needs.wheel-extras.result }}:success|skipped"; do
           job="${entry%%:*}"
           remainder="${entry#*:}"
           result="${remainder%%:*}"
