@@ -34,9 +34,10 @@ from band_rest import (
 
 import band.platform.message_lifecycle as lifecycle
 from band.core.types import PlatformConnection, PlatformMessage
-from band.platform.activity import ActivitySupport
+from band.platform.activity import API_VERSION_HEADER, ActivitySupport
 from band.runtime.presence import RoomPresence
 from tests.conftest import make_participant_mock
+from tests.platform.activity.kit import SUPPORTED_VERSION
 from tests.runtime.helpers import AGENT_ID
 
 
@@ -265,11 +266,7 @@ def link(mock_rest_client: MagicMock) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def runtime_activity_support(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep deployment discovery independent of runtime scheduling regressions."""
+    """Start every runtime test on a platform that already advertised detail."""
     support = ActivitySupport()
-
-    async def discover(rest_url: str, budget: float) -> bool:
-        return True
-
-    monkeypatch.setattr(support, "_discover", discover)
+    support.observe({API_VERSION_HEADER: SUPPORTED_VERSION})
     monkeypatch.setattr(lifecycle, "activity_support", support)

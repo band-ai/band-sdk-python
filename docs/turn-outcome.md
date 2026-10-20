@@ -430,8 +430,9 @@ detail, independently of chat narration and tool capabilities. Changes and
 keep-alives share one serialized reporter. The duration cap stops both kinds
 of refresh without cancelling provider work; actual completion still clears.
 
-Detail compatibility is negotiated once per process using the first platform's
-`agent_version`. Failed or unsupported discovery preserves boolean reporting.
-A detail-bearing HTTP 422 permanently disables detail across all links in the
-process and retries that report once without detail, within its original budget.
-The version lookup uses at most half that budget, reserving time for liveness.
+Detail compatibility is learned from the `X-API-Version` header the platform
+puts on every activity response. Reports stay boolean until a response in the
+process advertises agent API 1.25.0 or later; a missing or older version keeps
+boolean reporting. A detail-bearing HTTP 422 permanently disables detail across
+all links in the process and retries that report once without detail, within
+its original deadline.

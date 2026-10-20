@@ -13,7 +13,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
-from math import ceil
 from typing import Any, TypeVar
 
 from band_rest.agent_api_activity.types.report_agent_chat_activity_response import (
@@ -23,6 +22,7 @@ from band_rest.core.api_error import ApiError
 from band_rest.core.http_response import AsyncHttpResponse
 from band_rest.core.request_options import RequestOptions
 from band_rest.types.agent_activity_detail import AgentActivityDetail
+from band_rest.types.agent_activity_response import AgentActivityResponse
 from band_rest.types.chat_message import ChatMessage
 from band_rest.types.error import Error as PlatformError
 from band_rest.types.validation_error import ValidationError as ErrorEnvelope
@@ -314,7 +314,6 @@ class MessageLifecycle:
         working: bool,
         *,
         activity: AgentActivityDetail | None = None,
-        rest_url: str | None = None,
         timeout_seconds: int = 2,
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
@@ -327,9 +326,10 @@ class MessageLifecycle:
         the backstop and activity reporting must never break message
         processing.
 
-        One deadline bounds discovery, POST and the sole compatibility retry.
-        A rejected detail permanently downgrades the process to boolean reports;
-        other failures wait for the next keep-alive or platform TTL.
+        Detail is attached once a response reported a supporting agent API
+        version. One deadline bounds the POST and its sole compatibility retry:
+        a rejected detail permanently downgrades the process to boolean
+        reports; other failures wait for the next keep-alive or platform TTL.
 
         A successful ``working=True`` report echoed as ``False`` identifies a
         stopped execution. Notify ``on_stopped`` separately from the request's
@@ -337,17 +337,14 @@ class MessageLifecycle:
         """
         try:
             async with asyncio.timeout(timeout_seconds):
-                deadline = asyncio.get_running_loop().time() + timeout_seconds
-                detail = activity if working else None
-                if detail is not None and (
-                    rest_url is None
-                    or not await activity_support.allows(rest_url, timeout_seconds / 2)
-                ):
-                    detail = None
                 response = await self._post_activity(
-                    rest, room_id, working, detail, deadline
+                    rest,
+                    room_id,
+                    working,
+                    activity if working else None,
+                    timeout_seconds,
                 )
-                stopped = working and response.data.working is False
+            stopped = working and response.working is False
         except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             if not self._activity_report_failing:
                 self._activity_report_failing = True
@@ -379,20 +376,22 @@ class MessageLifecycle:
         room_id: str,
         working: bool,
         activity: AgentActivityDetail | None,
-        deadline: float,
-    ) -> ReportAgentChatActivityResponse:
+        timeout_seconds: int,
+    ) -> AgentActivityResponse:
         detail = activity if activity_support.supported else None
         try:
-            return await MessageLifecycle._send_activity(
-                rest, room_id, working, detail, deadline
+            response = await MessageLifecycle._send_activity(
+                rest, room_id, working, detail, timeout_seconds
             )
         except ApiError as error:
             if detail is None or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
                 raise
-        activity_support.disable()
-        return await MessageLifecycle._send_activity(
-            rest, room_id, working, None, deadline
-        )
+            activity_support.disable(room_id=room_id, reason=error.body)
+            response = await MessageLifecycle._send_activity(
+                rest, room_id, working, None, timeout_seconds
+            )
+        activity_support.observe(response.headers)
+        return response.data.data
 
     @staticmethod
     async def _send_activity(
@@ -400,20 +399,21 @@ class MessageLifecycle:
         room_id: str,
         working: bool,
         activity: AgentActivityDetail | None,
-        deadline: float,
-    ) -> ReportAgentChatActivityResponse:
+        timeout_seconds: int,
+    ) -> AsyncHttpResponse[ReportAgentChatActivityResponse]:
         kwargs: dict[str, Any] = {}
         if activity is not None:
             kwargs["activity"] = activity
-        remaining = deadline - asyncio.get_running_loop().time()
-        return await rest.agent_api_activity.report_agent_chat_activity(
-            chat_id=room_id,
-            working=working,
-            request_options={
-                **NO_RETRY_REQUEST_OPTIONS,
-                "timeout_in_seconds": max(1, ceil(remaining)),
-            },
-            **kwargs,
+        return (
+            await rest.agent_api_activity.with_raw_response.report_agent_chat_activity(
+                chat_id=room_id,
+                working=working,
+                request_options={
+                    **NO_RETRY_REQUEST_OPTIONS,
+                    "timeout_in_seconds": timeout_seconds,
+                },
+                **kwargs,
+            )
         )
 
     async def get_next_message(
