@@ -47,6 +47,7 @@ from tests.adapters.opencode.helpers import (
     event_text_part,
     event_tool_part,
     event_user_message_updated,
+    idle_client,
     make_platform_message,
     run_single_turn,
     tools_protocol,
@@ -64,9 +65,7 @@ class TestTurns:
     async def test_forwards_configured_model_and_variant(
         self, make_adapter, tools
     ) -> None:
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = make_adapter(
             fake_client,
             config=OpencodeAdapterConfig(
@@ -94,9 +93,7 @@ class TestTurns:
     async def test_omits_model_for_incomplete_configuration(
         self, make_adapter, tools, provider_id: str | None, model_id: str | None
     ) -> None:
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = make_adapter(
             fake_client,
             config=OpencodeAdapterConfig(
