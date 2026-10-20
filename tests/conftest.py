@@ -25,7 +25,6 @@ import asyncio
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 from datetime import UTC, datetime
 from functools import cache
 from itertools import count
@@ -373,7 +372,9 @@ def millisecond_reconnects() -> Iterator[None]:
     """The transport's reconnect backoff shrunk to milliseconds, so a test that
     reconnects spends its time on the scenario, not on the transport's timers.
     Class-scoped because Hypothesis rejects function-scoped fixtures."""
-    fast = replace(RECONNECT_POLICY, base_delay_s=0.001, rapid_disconnect_uptime_s=0.0)
+    fast = RECONNECT_POLICY.model_copy(
+        update={"base_delay_s": 0.001, "rapid_disconnect_uptime_s": 0.0}
+    )
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("band.client.streaming.client.RECONNECT_POLICY", fast)
         yield
