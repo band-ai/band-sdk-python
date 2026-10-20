@@ -104,3 +104,39 @@ class TestActivityDetail:
         finally:
             await reporter.stop()
         assert reports == [True, False]
+
+    async def test_observation_queued_behind_a_report_is_rechecked_under_the_lock(
+        self,
+    ) -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        reports: list[str] = []
+
+        async def report(working: bool) -> None:
+            if working:
+                reports.append(reporter.activity.kind)
+            if reporter.activity.kind == "tool_call":
+                entered.set()
+                await release.wait()
+
+        reporter = WorkingStateReporter(report)
+        owned = True
+        try:
+            await reporter.start()
+            change = asyncio.create_task(
+                reporter.update(
+                    current=lambda: owned,
+                    activity=AgentActivityDetail(kind="tool_call", name="Bash"),
+                )
+            )
+            await entered.wait()
+            stale = asyncio.create_task(
+                reporter.update(
+                    current=lambda: owned, activity=AgentActivityDetail(kind="memory")
+                )
+            )
+            owned = False
+            release.set()
+            await asyncio.gather(change, stale)
+        finally:
+            await reporter.stop()
+        assert reports == ["reasoning", "tool_call"]

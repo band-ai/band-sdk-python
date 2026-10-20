@@ -446,10 +446,6 @@ class ExecutionContext:
         # The first stop's graceful result; a retry only settles retained work.
         self._stop_graceful = True
 
-        self._on_activity_clear: Callable[[], Awaitable[None]] | None = (
-            self._clear_scope_activity
-        )
-
     @property
     def thread_id(self) -> str:
         """LangGraph thread_id = room_id."""
@@ -882,17 +878,6 @@ class ExecutionContext:
             raise CleanupIncompleteError(
                 f"ExecutionContext {self.room_id}: {unfinished} cancelled "
                 "task(s) still running"
-            )
-
-    async def _clear_activity(self) -> None:
-        """Invoke the optional activity-clear seam after an aborted cycle."""
-        if self._on_activity_clear is None:
-            return
-        try:
-            await self._on_activity_clear()
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: activity-clear hook failed", self.room_id
             )
 
     # --- Participant management ---
@@ -1983,13 +1968,6 @@ class ExecutionContext:
             waiting=waiting,
         )
 
-    async def _clear_scope_activity(self) -> None:
-        scope = self.current_scope
-        if scope is not None:
-            await self._working_reporter.clear_detail(
-                current=partial(self.owns_activity, scope)
-            )
-
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
         scope.bind(owner)
@@ -2200,7 +2178,6 @@ class ExecutionContext:
         # poisoned into permanently_failed before it's ever actually attempted.
         if msg_id:
             self._retry_tracker.discard_attempt(msg_id)
-        await self._clear_activity()
         if kind is ControlMode.INTERRUPT and msg_id:
             # Consume the message so the idle /next resync does not re-return it
             # (excludes-only-processed) and re-fire the cycle the user just

@@ -20,6 +20,7 @@ ReportFn = Callable[[bool], Awaitable[object]]
 
 
 UNKNOWN_ACTIVITY_TOOL_NAME = "unknown"
+REASONING = AgentActivityDetail(kind="reasoning")
 
 
 class ActivityObserver(Protocol):
@@ -28,22 +29,25 @@ class ActivityObserver(Protocol):
     async def set_manual_wait(self, waiting: bool) -> None: ...
 
 
+def tool_call_activity(name: str | None) -> AgentActivityDetail:
+    """The platform requires a name on every ``tool_call`` detail."""
+    return AgentActivityDetail(
+        kind="tool_call", name=name or UNKNOWN_ACTIVITY_TOOL_NAME
+    )
+
+
 def _observer(tools: object) -> ActivityObserver | None:
     return getattr(tools, "_activity_observer", None)
 
 
 async def report_tool_activity(tools: object, name: str) -> None:
     if observer := _observer(tools):
-        await observer.update(
-            AgentActivityDetail(
-                kind="tool_call", name=name or UNKNOWN_ACTIVITY_TOOL_NAME
-            )
-        )
+        await observer.update(tool_call_activity(name))
 
 
 async def end_tool_activity(tools: object) -> None:
     if observer := _observer(tools):
-        await observer.update(AgentActivityDetail(kind="reasoning"))
+        await observer.update(REASONING)
 
 
 async def report_memory_activity(tools: object) -> None:
@@ -83,7 +87,7 @@ class WorkingStateReporter:
 
         self._active = False
         self._cycle: object | None = None
-        self._ordinary = AgentActivityDetail(kind="reasoning")
+        self._ordinary = REASONING
         self._manual_wait = False
         self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
@@ -112,8 +116,7 @@ class WorkingStateReporter:
             self._active = True
             cycle = owner if owner is not None else object()
             self._cycle = cycle
-            self._ordinary = AgentActivityDetail(kind="reasoning")
-            self._manual_wait = False
+            self._reset_detail()
             self._started_at = asyncio.get_running_loop().time()
             await self._report_locked(True)
             if self._cycle is cycle and self._active:
@@ -128,7 +131,7 @@ class WorkingStateReporter:
         activity: AgentActivityDetail | None = None,
         waiting: bool | None = None,
     ) -> None:
-        if not current() or not self._enabled:
+        if not self._enabled:
             return
         async with self._lock:
             if not current() or not self._active or self._cap_reached():
@@ -136,10 +139,7 @@ class WorkingStateReporter:
             previous = self.activity
             if activity is not None:
                 self._ordinary = (
-                    AgentActivityDetail(
-                        kind="tool_call",
-                        name=activity.name or UNKNOWN_ACTIVITY_TOOL_NAME,
-                    )
+                    tool_call_activity(activity.name)
                     if activity.kind == "tool_call"
                     else AgentActivityDetail(kind=activity.kind)
                 )
@@ -147,12 +147,6 @@ class WorkingStateReporter:
                 self._manual_wait = waiting
             if self.activity != previous:
                 await self._report_locked(True)
-
-    async def clear_detail(self, *, current: Callable[[], bool]) -> None:
-        async with self._lock:
-            if current():
-                self._ordinary = AgentActivityDetail(kind="reasoning")
-                self._manual_wait = False
 
     def defer_false_report(self) -> None:
         """Start ``working: false`` and return without waiting for it.
@@ -198,13 +192,16 @@ class WorkingStateReporter:
     def _arm_false_report(self) -> asyncio.Task[None] | None:
         self._active = False
         self._cycle = None
-        self._ordinary = AgentActivityDetail(kind="reasoning")
-        self._manual_wait = False
+        self._reset_detail()
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
         self._false_send = asyncio.ensure_future(self._safe_report(False))
         return task
+
+    def _reset_detail(self) -> None:
+        self._ordinary = REASONING
+        self._manual_wait = False
 
     async def _finish_false_send(self) -> None:
         send = self._false_send
