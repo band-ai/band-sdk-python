@@ -90,7 +90,8 @@ class TestSessionConfiguration:
         await run_message(adapter, tools)
 
         kwargs = client.sessions[0].kwargs
-        assert kwargs["on_user_input_request"] is ask_operator
+        response = await kwargs["on_user_input_request"]({"question": "Question?"}, {})
+        assert response == {"answer": "beta", "wasFreeform": False}
         # ask_user must be allowlisted alongside the bridged Band tools,
         # or the built-in tool stays filtered out and the handler is dead.
         assert "ask_user" in kwargs["available_tools"]

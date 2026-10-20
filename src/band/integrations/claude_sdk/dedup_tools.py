@@ -42,6 +42,8 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from band.runtime.working_state import ActivityObserver, _observer
+
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
 
@@ -198,6 +200,10 @@ class DedupingAgentTools:
         return result
 
     # --- transparent passthrough --------------------------------------
+
+    @property
+    def _activity_observer(self) -> ActivityObserver | None:
+        return _observer(self._inner)
 
     def __getattr__(self, name: str) -> Any:
         # ``__getattr__`` only runs for attributes not found via the

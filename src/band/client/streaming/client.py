@@ -301,7 +301,7 @@ class WireEvent(StrEnum):
     `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary
     (kept as literals, not derived, since `EventType` is an opaque PyO3 type
     that can't be a `StrEnum` member's value; a drift-guard test in
-    `tests/websocket/test_client.py` keeps the two in sync).
+    `tests/websocket/client/test_wire_vocabulary.py` keeps the two in sync).
     `TASK_CREATED`/`TASK_UPDATED` are outside it entirely (the `tasks:*`
     channel's raw-dict passthrough never calls `validate_event_payload`, and
     has no band-sdk-typescript counterpart to justify a core module).
