@@ -15,7 +15,7 @@ name: Release baseline gate
 # it meaningful (non-green blocks; a stale green stops vouching) live in
 # .github/scripts/check-release-baseline.sh.
 #
-# Both triggers mirror ci.yml's required checks: `pull_request` for immediate
+# Both triggers mirror ci.yml's triggers: `pull_request` for immediate
 # feedback while the PR is open, `merge_group` so the check also reports against the
 # merge queue's temporary merge commit — without it the queue would wait forever once
 # this job's name is added as a required status check.
