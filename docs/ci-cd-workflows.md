@@ -7,8 +7,11 @@ the workflow files cannot say for themselves.
 
 - **Rules live in GitHub Rulesets, not in the repo.** Read them with
   `gh api repos/band-ai/band-sdk-python/rulesets` instead of a hand-kept table.
-- **A matrix job reports one check context per cell**, named `test (<os>, <python-version>)`.
-  Require the exact string: a name that matches no real context silently never gates.
+- **The required checks are `ci-status` and `Validate PR Title`.** `ci-status` is the last job
+  in `ci.yml` and fails when any job it `needs` failed or was cancelled, so no matrix cell is
+  named in the ruleset and `ci.yml` may run a different job set per event. A new `ci.yml` job
+  joins the contract by being listed in `ci-status.needs`;
+  `tests/framework_conformance/test_ci_status_coverage.py` fails until it is.
 - **`main` uses a merge queue**, so every required workflow needs a `merge_group:` trigger
   (`ci.yml`, `pr-title.yml`, `release-gate.yml` and `python-core-coverage.yml` have one).
   Without it the queue waits forever for a check that never starts.
