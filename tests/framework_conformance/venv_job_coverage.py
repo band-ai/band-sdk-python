@@ -12,6 +12,7 @@ import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -96,10 +97,14 @@ def tests_needing_venv(pattern: re.Pattern[str]) -> set[Path]:
     }
 
 
+def ci_jobs() -> dict[str, Any]:
+    """ci.yml's jobs, keyed by job id."""
+    return yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+
 def job_command(job_name: str, step_name: str) -> str:
     """The shell command of ``step_name`` in ci.yml's ``job_name`` job."""
-    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"][job_name]["steps"]
+    steps = ci_jobs()[job_name]["steps"]
     command = next(step["run"] for step in steps if step.get("name") == step_name)
     return command.replace("\\\n", " ")
 
