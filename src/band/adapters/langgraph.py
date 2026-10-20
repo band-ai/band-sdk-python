@@ -35,10 +35,12 @@ from band.runtime.tools import (
     image_block_placeholder,
     redact_tool_call_args,
 )
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
     from langgraph.checkpoint.base import BaseCheckpointSaver
+
 
 logger = logging.getLogger(__name__)
 
@@ -437,6 +439,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
+            await report_tool_activity(tools, event.get("name") or "")
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
@@ -459,6 +462,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type in {"on_tool_end", "on_tool_error"}:
+            await end_tool_activity(tools)
             if Emit.TOOL_CALLS not in self.features.emit:
                 return
 

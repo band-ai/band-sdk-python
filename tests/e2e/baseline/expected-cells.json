@@ -618,6 +618,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/activity/test_native_reporting.py::TestNativeActivity::test_native_shell_reports_privately_without_narration",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/activity/test_sdk_reporting.py::TestSDKActivity::test_held_sdk_tool_reports_privately_without_narration",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/copilotsdk/test_handler.py::TestAskUserHandler::test_copilot_ask_user_handler_round_trips_to_room_reply",
       "adapter": "suite",
       "lanes": [

@@ -379,7 +379,7 @@ refusal instead of returning `DONE`; a drain records only accepted messages.
 
 ## Cancellation ownership
 
-Each runtime handler and SDK-managed Codex/Claude worker has one task owner.
+Each runtime handler and SDK-managed Claude, Codex or OpenCode worker has one task owner.
 The originating turn scope coordinates termination and fixes one absolute cleanup
 deadline using the existing one-second grace. Repeated controls still notify the
 adapter and update the unsettled delivery outcome, but never cancel its cleanup
@@ -389,9 +389,9 @@ A stopped tool or auxiliary claim first revokes that scope's posting permission
 and raises cancellation in its caller. Bound workers and the handler get the same
 cleanup grace to unwind cooperatively; an unfinished task receives cancellation
 once at expiry if none was delivered, even when nothing waits for it. Native
-controls, heartbeat refusal, watchdog expiry and shutdown cancel a running turn
-immediately; a worker already released for approval is left to the adapter's
-room cleanup. Provider execution and recovery timeouts retain their adapter
+STOP and INTERRUPT controls, heartbeat refusal and watchdog expiry cancel the
+originating turn, including a worker released for approval. Leave and shutdown
+clear reporting while released worker cleanup remains with adapter residency. Provider execution and recovery timeouts retain their adapter
 policy and coordinate with that same owner.
 
 Unfinished tasks remain owned after grace expires. They cannot post late replies,
@@ -415,3 +415,28 @@ and never awaited on the control-processing task. A timeout branch awaits
 `stop` before its own cleanup and report. The room's next
 turn waits for `settled(room_id)`, and teardown for `settled` or `drain()`,
 before reacquiring or closing the backend.
+
+## Working-state lifetime
+
+The activity owner is the originating turn scope, independently of the current
+message delivery. A registered provider worker keeps its reporter alive after
+the handler settles, including while waiting for human approval. Later approval
+replies and busy deliveries do not replace that owner or restart its duration
+cap. Reporting ends when both the handler and its workers finish.
+
+An echoed heartbeat STOP can cancel that detached provider and notify its adapter
+once. It does not rewrite the original delivery's settled acknowledgement.
+Explicit interruption invalidates its activity; leave and shutdown clear the
+indicator while adapter residency retains responsibility for released workers.
+The authoritative idle report finishes before a replacement reports working.
+
+`SessionConfig.enable_working_state` controls both the indicator and activity
+detail, independently of chat narration and tool capabilities. Changes and
+keep-alives share one serialized reporter. The duration cap stops both kinds
+of refresh without cancelling provider work; actual completion still clears.
+
+Detail compatibility is negotiated once per process using the first platform's
+`agent_version`. Failed or unsupported discovery preserves boolean reporting.
+A detail-bearing HTTP 422 permanently disables detail across all links in the
+process and retries that report once without detail, within its original budget.
+The version lookup uses at most half that budget, reserving time for liveness.

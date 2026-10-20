@@ -47,6 +47,7 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     redact_tool_call_args,
 )
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
@@ -660,12 +661,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         event.error_code, event.error_message
                     )
 
-                # Report tool calls/results if enabled
-                if Emit.TOOL_CALLS in self.features.emit:
-                    try:
-                        await self._report_event(event, tools)
-                    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                        logger.warning("Failed to report event: %s", e)
+                try:
+                    await self._report_event(event, tools)
+                except Exception as e:  # noqa: BLE001 -- best-effort tool narration
+                    logger.warning("Failed to report event: %s", e)
 
                 if event.is_final_response():
                     # Extract text from the final response for history tracking
@@ -788,6 +787,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         function_calls = event.get_function_calls()
         if function_calls:
             for fc in function_calls:
+                await report_tool_activity(tools, getattr(fc, "name", "") or "")
+                if Emit.TOOL_CALLS not in self.features.emit:
+                    continue
                 try:
                     tool_name = getattr(fc, "name", "unknown")
                     try:
@@ -812,6 +814,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         function_responses = event.get_function_responses()
         if function_responses:
             for fr in function_responses:
+                await end_tool_activity(tools)
+                if Emit.TOOL_CALLS not in self.features.emit:
+                    continue
                 try:
                     tool_name = getattr(fr, "name", "unknown")
                     await tools.send_event(

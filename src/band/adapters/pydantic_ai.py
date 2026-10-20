@@ -83,6 +83,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
 )
 from band.runtime.tools.schema import is_failed_tool_output
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -626,6 +627,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     if event_count & (event_count - 1) == 0:
                         _log_native_progress("stream_progress", events=event_count)
                     if isinstance(event, FunctionToolCallEvent):
+                        await report_tool_activity(tools, event.part.tool_name)
                         _log_native_progress(
                             "tool_started",
                             events=event_count,
@@ -650,6 +652,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
+                        await end_tool_activity(tools)
                         tool_succeeded = isinstance(
                             event.part, ToolReturnPart
                         ) and not is_failed_tool_output(event.part.content)

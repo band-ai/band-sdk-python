@@ -52,6 +52,7 @@ from band.runtime.tools import (
     redact_tool_call_args,
     turn_effect,
 )
+from band.runtime.working_state import end_tool_activity, report_tool_activity
 
 __all__ = [
     "LettaAdapter",
@@ -491,10 +492,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         Returns the list of assistant text parts collected during the turn.
         """
         messages = [{"role": "user", "content": content}]
-        # Per-turn token usage. Reachable only on the per_room path, where the
-        # non-streamed LettaResponse carries an aggregate .usage; the shared-mode
-        # Conversations stream exposes no such aggregate, so it stays empty (N-A).
-        # Emitted on every exit via the finally.
+        # Shared Conversations has no aggregate usage; per-room step streams do.
         turn_usage = TurnUsage()
 
         run = LettaRun(self._client, agent_id, self._shared_conversation(room_ctx))
@@ -510,7 +508,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     room_ctx.tools = tools
                     try:
                         response_messages, turn_usage = await asyncio.wait_for(
-                            self._call_provider(run, messages),
+                            self._call_provider(run, messages, tools),
                             timeout=self.config.turn_timeout_s,
                         )
                     except TimeoutError:
@@ -556,22 +554,55 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         return room_ctx.conversation_id if self.config.mode == "shared" else None
 
     async def _call_provider(
-        self, run: LettaRun, messages: list[dict[str, str]]
+        self, run: LettaRun, messages: list[dict[str, str]], tools: AgentToolsProtocol
     ) -> tuple[list[Any], TurnUsage]:
-        """Round-trip to the Letta API -- no response processing or delivery."""
-        if run.conversation_id:
-            conversation_stream = await run.client.conversations.messages.create(
+        """Stream the provider response and return its messages and usage.
+
+        Records tool activity as events arrive. Does not narrate or deliver.
+        """
+        per_room = not run.conversation_id
+        if per_room:
+            stream = await run.client.agents.messages.create(
+                agent_id=run.agent_id,
+                messages=messages,
+                streaming=True,
+                stream_tokens=False,
+            )
+        else:
+            stream = await run.client.conversations.messages.create(
                 conversation_id=run.conversation_id,
                 messages=messages,
             )
-            response_messages = [resp_msg async for resp_msg in conversation_stream]
-            return response_messages, TurnUsage()
+        response_messages: list[Any] = []
+        usage = TurnUsage()
+        async with stream:
+            async for message in stream:
+                await self._observe_provider_message(message, tools)
+                if (
+                    per_room
+                    and getattr(message, "message_type", None) == "usage_statistics"
+                ):
+                    usage = TurnUsage.from_object(
+                        message,
+                        input="prompt_tokens",
+                        output="completion_tokens",
+                        cache_read="cached_input_tokens",
+                        cache_write="cache_write_tokens",
+                    )
+                else:
+                    response_messages.append(message)
+        return response_messages, usage
 
-        response = await run.client.agents.messages.create(
-            agent_id=run.agent_id,
-            messages=messages,
-        )
-        return list(response.messages), self._usage_from_response(response)
+    @staticmethod
+    async def _observe_provider_message(
+        message: Any, tools: AgentToolsProtocol
+    ) -> None:
+        match getattr(message, "message_type", None):
+            case "tool_call_message":
+                for call in message.tool_calls or [message.tool_call]:
+                    await report_tool_activity(tools, call.name)
+            case "tool_return_message":
+                await end_tool_activity(tools)
 
     @staticmethod
     async def _cancel_runs(run: LettaRun) -> None:
@@ -1211,22 +1242,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _usage_from_response(response: Any) -> TurnUsage:
-        """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
-
-        Field names verified against letta-client: ``prompt_tokens`` /
-        ``completion_tokens`` / ``cached_input_tokens`` / ``cache_write_tokens``.
-        A missing ``usage`` yields empty usage.
-        """
-        return TurnUsage.from_object(
-            getattr(response, "usage", None),
-            input="prompt_tokens",
-            output="completion_tokens",
-            cache_read="cached_input_tokens",
-            cache_write="cache_write_tokens",
-        )
 
     @staticmethod
     def _format_time_ago(dt: datetime) -> str:
