@@ -241,7 +241,7 @@ def isolated_adapter_config_env(request, monkeypatch):
 def _reset_leaked_threading_instrumentation() -> None:
     """Undo OpenTelemetry's ThreadingInstrumentor if a test left it patched.
 
-    Constructing a real Strands ``Tracer`` (tests/adapters/test_strands_adapter.py
+    Constructing a real Strands ``Tracer`` (tests/adapters/strands/
     and friends, which build a live strands.Agent) unconditionally calls
     ``ThreadingInstrumentor().instrument()`` and never undoes it -- correct for a
     long-lived process, but it globally monkeypatches ``threading.Thread.start``
