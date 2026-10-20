@@ -20,9 +20,9 @@ from tests.platform.linkclose.kit import (
     SUPERSEDED,
     connected,
     during_connect,
-    during_the_next_backoff,
     handle_supersede,
     make_link,
+    parked_backoff,
     running,
 )
 
@@ -107,11 +107,15 @@ class TestSupersedeEndsSession:
         async with fake_phoenix_server() as server:
             link = make_link(server.url)
             async with (
-                during_the_next_backoff(link, lambda: handle_supersede(link)),
                 connected(link),
+                parked_backoff(link) as backoff,
                 running(link) as run,
             ):
                 await server.close_connection(code=CloseCode.GOING_AWAY)
+                await asyncio.wait_for(backoff.entered.wait(), HANG_GUARD_S)
+
+                await handle_supersede(link)
+                # Never released: only ending the transport can end the run.
                 await asyncio.wait_for(run, HANG_GUARD_S)
 
                 assert link.last_disconnect_reason == SUPERSEDED
