@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import MessageMetadata
+from band.runtime import resync
 from band.runtime.execution import (
     ExecutionContext,
     ResyncOutcome,
@@ -1069,8 +1071,9 @@ class TestCrashRecoverySync:
         )
 
         monkeypatch.setattr(
-            "band.runtime.resync.random.uniform",
-            lambda lower, upper: initial_recovery_delay,
+            resync,
+            "random",
+            SimpleNamespace(uniform=lambda lower, upper: initial_recovery_delay),
         )
 
         await ctx.on_event(
