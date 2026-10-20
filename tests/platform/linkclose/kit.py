@@ -13,6 +13,7 @@ from band_sdk_core import AgentTopicKind, DeadReason
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.client.streaming.client import (
     SupersedePayload,
+    WebSocketClient,
     WebSocketDisconnectReason,
 )
 from band.platform.link import BandLink
@@ -69,6 +70,38 @@ def agent_control(mode: ControlMode, correlation_id: str) -> AgentControlPayload
     )
 
 
+def control_wire_payload(correlation_id: str) -> dict[str, object]:
+    """An ``agent.control`` push body as the platform sends it."""
+    return {
+        "mode": ControlMode.INTERRUPT,
+        "scope": "agent",
+        "agent_id": AGENT_ID,
+        "execution_id": None,
+        "room_id": None,
+        "correlation_id": correlation_id,
+    }
+
+
+@asynccontextmanager
+async def during_connect(
+    link: BandLink, action: Callable[[], Coroutine[object, object, None]]
+) -> AsyncIterator[None]:
+    """Run ``action`` once the control channel is joined and before
+    ``connect()`` returns, while the link has no ``_ws`` yet. Enter before
+    ``connect()``."""
+    join = link._join_agent_control_channel
+
+    async def join_then_act(ws: WebSocketClient) -> None:
+        await join(ws)
+        await action()
+
+    link._join_agent_control_channel = join_then_act
+    try:
+        yield
+    finally:
+        del link._join_agent_control_channel
+
+
 @asynccontextmanager
 async def during_the_next_backoff(
     link: BandLink, action: Callable[[], Coroutine[object, object, None]]
@@ -97,4 +130,7 @@ async def during_the_next_backoff(
 
 
 async def handle_supersede(link: BandLink) -> None:
-    await link._on_supersede(SupersedePayload.model_validate(TERMINAL_SUPERSEDE))
+    assert link._ws is not None
+    await link._on_supersede(
+        link._ws, SupersedePayload.model_validate(TERMINAL_SUPERSEDE)
+    )

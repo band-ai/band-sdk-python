@@ -34,6 +34,7 @@ from band.client.streaming.errors import (
 )
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
+from band.core.retention.cleanup import spawn_owned
 from band.core.types import ConflictPolicy
 from band.logging_config import core_issues, trace_context_extra
 
@@ -626,6 +627,7 @@ class WebSocketClient:
         self._session = Session(self._watchdog.policy)
         self._probed_failure_message = None
         self._cached_connect_failure = None
+        self._transport_shutdown = None
         while True:
             now = asyncio.get_running_loop().time()
             epoch = self._session.begin_attempt(now)
@@ -759,20 +761,18 @@ class WebSocketClient:
     def end_transport(self) -> None:
         """Shut the transport down for good, so it never reconnects.
 
-        ``auto_reconnect`` is set only once the initial connect succeeds, so
-        a client without it has no loop to stop. Clearing the flag alone loses
-        a race: the transport reads it once per close, before its backoff, so
-        a supersede handled during the backoff would still reconnect. The
-        shutdown is started, not awaited, because the caller runs inside a
-        topic processor that it stops; waiters join it through
-        ``client.shutdown``, which one waiter's cancellation never aborts.
+        Clearing ``auto_reconnect`` alone loses a race: the transport reads it
+        once per close, before its backoff, so a supersede handled during the
+        backoff would still reconnect. The shutdown is scheduled, not awaited,
+        because the caller runs inside a topic processor that it stops.
         """
         client = self.client
         if client is None or not client.auto_reconnect:
             return
         client.auto_reconnect = False
-        self._transport_shutdown = asyncio.create_task(
-            client.shutdown(TERMINAL_SHUTDOWN_REASON)
+        self._transport_shutdown = spawn_owned(
+            client.shutdown(TERMINAL_SHUTDOWN_REASON),
+            label="Terminal transport shutdown",
         )
 
     def handle_supersede(
@@ -1008,6 +1008,8 @@ class WebSocketClient:
         """
         client = self._require_client()
         if self._transport_shutdown is not None:
+            # Joins the scheduled shutdown; awaiting its task directly would
+            # let this caller's cancellation abort it.
             await client.shutdown(TERMINAL_SHUTDOWN_REASON)
             return
         await client.run_forever(install_signal_handlers=install_signal_handlers)
