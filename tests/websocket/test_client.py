@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -268,23 +269,13 @@ def test_ignores_generic_auth_upgrade_error_without_json_contract():
     assert err is None
 
 
-async def test_aenter_wraps_upgrade_error(monkeypatch):
+async def test_aenter_wraps_upgrade_error(scripted_connect):
     upgrade_exc = _upgrade_exception(
         409,
         _connection_conflict_error_body(),
     )
 
-    class FailingPHXClient:
-        def __init__(self, *args, **kwargs):
-            self.channel_socket_url = "wss://test/socket"
-            self.auto_reconnect = kwargs["auto_reconnect"]
-
-        async def __aenter__(self):
-            raise upgrade_exc
-
-    monkeypatch.setattr(
-        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
-    )
+    scripted_connect(upgrade_exc)
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
@@ -294,10 +285,9 @@ async def test_aenter_wraps_upgrade_error(monkeypatch):
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == CONNECTION_CONFLICT_CODE
     assert exc_info.value.request_id == "req-409"
-    # WebSocketUpgradeError is a new object distinct from the raw exception
-    # PHXChannelsClient raised -- explicit chaining keeps that link visible
-    # in tracebacks and error trackers.
-    assert exc_info.value.__cause__ is upgrade_exc
+    # Raw upgrade responses must not reappear in consumer tracebacks.
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__
 
 
 async def test_aenter_probes_initial_phx_connection_error_then_retries_and_succeeds(
@@ -588,7 +578,13 @@ async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
 
     probe_delay_s = 0.1
 
-    async def slow_probe(websocket_url, headers):
+    async def slow_probe(
+        websocket_url: str,
+        headers: Mapping[str, str],
+        *,
+        logger: logging.Logger,
+        redact: Callable[[str], str],
+    ) -> None:
         await asyncio.sleep(probe_delay_s)
 
     monkeypatch.setattr(
@@ -672,19 +668,10 @@ async def test_resolve_failed_connect_attempt_raises_when_retry_after_s_missing(
         await client.__aenter__()
 
 
-async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
+async def test_aenter_reraises_unrecognized_upgrade_error(scripted_connect):
     original_exc = RuntimeError("socket exploded")
 
-    class FailingPHXClient:
-        def __init__(self, *args, **kwargs):
-            self.channel_socket_url = "wss://test/socket"
-
-        async def __aenter__(self):
-            raise original_exc
-
-    monkeypatch.setattr(
-        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
-    )
+    scripted_connect(original_exc)
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
@@ -695,11 +682,8 @@ async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
 # --- Upgrade wire-shape test: real SDK connect against the fake platform ---
 
 
-async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
-    """The proxy-managed sentinel rides both the `api_key` query parameter and
-    the `x-api-key` handshake header on the real upgrade (alongside vsn and
-    agent_id). The header is what the sandbox proxy substitutes and the platform
-    authenticates off (with precedence); the query is retained for back-compat."""
+async def test_upgrade_carries_api_key_only_in_x_api_key_header():
+    """The proxy-managed sentinel stays in the header on the real upgrade."""
     async with (
         fake_phoenix_server() as server,
         WebSocketClient(server.url, PROXY_MANAGED_API_KEY, "agent-xyz"),
@@ -707,7 +691,7 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
         pass
 
     [upgrade] = server.upgrades
-    assert upgrade.query["api_key"] == PROXY_MANAGED_API_KEY
+    assert "api_key" not in upgrade.query
     assert upgrade.query["agent_id"] == "agent-xyz"
     assert upgrade.query.get("vsn")  # protocol version retained alongside the sentinel
     assert upgrade.headers["x-api-key"] == PROXY_MANAGED_API_KEY
@@ -715,8 +699,8 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
 
 async def test_refused_upgrade_is_read_with_the_same_credentials_as_the_attempt():
     """The probe that reads a refusal's HTTP error authenticates through the
-    `x-api-key` header like the real upgrade. Under proxy-managed custody the
-    query holds only the sentinel, so a header-less probe is turned away
+    `x-api-key` header like the real upgrade. Under proxy-managed custody a
+    header-less probe is turned away
     unauthenticated and the platform's refusal is never seen."""
     async with fake_phoenix_server(refuse_upgrades=True) as server:
         with pytest.raises(WebSocketUpgradeError):
