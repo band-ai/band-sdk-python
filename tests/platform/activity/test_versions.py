@@ -5,9 +5,9 @@ import logging
 import pytest
 from band_rest import AgentActivityDetail
 
-from band.config.settings import DEFAULT_REST_URL
 from band.platform.link import BandLink
-from tests.platform.activity.kit import DETAIL, SUPPORTED_VERSION, ActivityPeer
+from tests.activitysupport import SUPPORTED_VERSION
+from tests.platform.activity.kit import DETAIL, ActivityPeer
 
 
 class TestActivityVersion:
@@ -15,7 +15,7 @@ class TestActivityVersion:
         ("version", "supported"),
         [
             ("1.24.99", False),
-            (SUPPORTED_VERSION, True),
+            pytest.param(SUPPORTED_VERSION, True, id="minimum-version-on-saas-default"),
             ("1.26.10", True),
             ("2.0.0", True),
             ("1.25.0-beta", False),
@@ -40,14 +40,6 @@ class TestActivityVersion:
             {"working": True, "activity": DETAIL} if supported else {"working": True}
         )
         assert activity_peer.reports == [{"working": True}, later]
-
-    async def test_default_saas_url_learns_detail_from_activity_responses(
-        self, link: BandLink, activity_peer: ActivityPeer, detail: AgentActivityDetail
-    ) -> None:
-        assert link.rest_url == DEFAULT_REST_URL
-        assert await link.report_activity("room", True, activity=detail)
-        assert await link.report_activity("room", True, activity=detail)
-        assert activity_peer.reports[-1] == {"working": True, "activity": DETAIL}
         assert all(
             request.url.path.endswith("/activity") for request in activity_peer.requests
         )

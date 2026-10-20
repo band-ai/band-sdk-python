@@ -7,9 +7,9 @@ from typing import Any
 
 import httpx
 
-from band.platform.activity import API_VERSION_HEADER, MINIMUM_ACTIVITY_VERSION
+from band.platform.activity import API_VERSION_HEADER
+from tests.activitysupport import SUPPORTED_VERSION
 
-SUPPORTED_VERSION = ".".join(map(str, MINIMUM_ACTIVITY_VERSION))
 DETAIL = {"kind": "tool_call", "name": "Bash"}
 
 
