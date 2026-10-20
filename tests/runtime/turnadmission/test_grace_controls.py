@@ -19,14 +19,13 @@ from tests.runtime.turnadmission.kit import (
     started,
     stop_room,
 )
-from tests.toolkit.clock import binary_clock_resolution
 
 # Inside the begin grace, so the observer finishing still lets the turn begin.
 WITHIN_GRACE = CYCLE_CANCEL_GRACE_SECONDS / 2
 
 
+# Real time avoids looptime rounding randomized reconciliation deadlines down.
 @pytest.mark.timeout(10)
-@pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestGraceControls:
     """STOP during the platform-stop observer's grace leaves the next turn unstarted."""
 
