@@ -209,11 +209,7 @@ class MessageLifecycle:
     ) -> SettlementResult:
         """Write the failed mark once and report what it established."""
         error = error.strip() or "Unknown error"
-        logger.debug(
-            "Marking message %s as failed: %s",
-            message_id,
-            error,
-        )
+        logger.debug("Marking message %s as failed: %s", message_id, error)
         return await self._settle(
             lambda: rest.agent_api_messages.with_raw_response.mark_agent_message_failed(
                 chat_id=room_id,
@@ -271,7 +267,7 @@ class MessageLifecycle:
             if len(self._unconfirmed_writes) > UNCONFIRMED_WRITE_LIMIT:
                 self._unconfirmed_writes.popitem(last=False)
         else:
-            self._unconfirmed_writes.pop((message_id, action), None)
+            self._unconfirmed_writes.pop(key, None)
 
     async def report_activity(
         self,
