@@ -50,18 +50,15 @@ class ActivitySupport:
         with self._lock:
             if self._disabled:
                 return False
-            owner = self._discovery is None
-            if owner:
-                self._discovery = Future()
             discovery = self._discovery
-        assert discovery is not None
+            owner = discovery is None
+            if discovery is None:
+                discovery = self._discovery = Future()
         if owner:
             supported = False
             try:
                 async with asyncio.timeout(budget):
                     supported = await self._discover(rest_url, budget)
-            except asyncio.CancelledError:
-                raise
             except (httpx.HTTPError, ValueError, TimeoutError):
                 pass
             finally:

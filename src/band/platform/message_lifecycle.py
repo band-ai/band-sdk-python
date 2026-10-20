@@ -381,32 +381,40 @@ class MessageLifecycle:
         activity: AgentActivityDetail | None,
         deadline: float,
     ) -> ReportAgentChatActivityResponse:
+        detail = activity if activity_support.supported else None
+        try:
+            return await MessageLifecycle._send_activity(
+                rest, room_id, working, detail, deadline
+            )
+        except ApiError as error:
+            if detail is None or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+                raise
+        activity_support.disable()
+        return await MessageLifecycle._send_activity(
+            rest, room_id, working, None, deadline
+        )
+
+    @staticmethod
+    async def _send_activity(
+        rest: AsyncRestClient,
+        room_id: str,
+        working: bool,
+        activity: AgentActivityDetail | None,
+        deadline: float,
+    ) -> ReportAgentChatActivityResponse:
         kwargs: dict[str, Any] = {}
-        if activity is not None and activity_support.supported:
+        if activity is not None:
             kwargs["activity"] = activity
-        for attempt in range(2):
-            try:
-                return await rest.agent_api_activity.report_agent_chat_activity(
-                    chat_id=room_id,
-                    working=working,
-                    request_options={
-                        **NO_RETRY_REQUEST_OPTIONS,
-                        "timeout_in_seconds": max(
-                            1, ceil(deadline - asyncio.get_running_loop().time())
-                        ),
-                    },
-                    **kwargs,
-                )
-            except ApiError as error:
-                if (
-                    attempt
-                    or "activity" not in kwargs
-                    or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY
-                ):
-                    raise
-                activity_support.disable()
-                kwargs.clear()
-        raise AssertionError("Activity compatibility retry did not return")
+        remaining = deadline - asyncio.get_running_loop().time()
+        return await rest.agent_api_activity.report_agent_chat_activity(
+            chat_id=room_id,
+            working=working,
+            request_options={
+                **NO_RETRY_REQUEST_OPTIONS,
+                "timeout_in_seconds": max(1, ceil(remaining)),
+            },
+            **kwargs,
+        )
 
     async def get_next_message(
         self, rest: AsyncRestClient, room_id: str
