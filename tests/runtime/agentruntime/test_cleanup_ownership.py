@@ -39,7 +39,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
 
         room_cleanup.release.set()
         await leaving
-        await asyncio.wait_for(until_admitted(runtime, "room-1"), timeout=1)
+        await until_admitted(runtime, "room-1")
         new = runtime.executions["room-1"]
         assert new is not old
         assert not old.is_running
@@ -69,7 +69,7 @@ class TestAgentRuntimeRoomCleanupOwnership:
                 )
             case "rejoin":
                 await runtime._on_room_joined("room-1", {})
-        await asyncio.wait_for(until_admitted(runtime, "room-1"), timeout=1)
+        await until_admitted(runtime, "room-1")
         assert room_cleanup.rooms == ["room-1"]
         assert runtime.unsettled_rooms == []
 
@@ -132,6 +132,6 @@ class TestAgentRuntimeRoomCleanupOwnership:
 
         finish.set()
         await runtime._on_reconnected()
-        await asyncio.wait_for(until_admitted(runtime, "room-1"), timeout=1)
+        await until_admitted(runtime, "room-1")
         assert room_cleanup.rooms == ["room-1"]
         await runtime.stop()

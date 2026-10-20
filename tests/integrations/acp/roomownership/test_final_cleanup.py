@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError, RoomClosingError
+from band.core.exceptions import RoomClosingError
 from tests.adapters.waiting import spin
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
@@ -15,7 +15,7 @@ from tests.integrations.acp.acp_toolkit import (
     fake_agent_config,
 )
 from tests.integrations.acp.acp_toolkit.agent import AGENT_EXIT_FAILURE
-from tests.integrations.acp.roomownership.kit import stop_budget
+from tests.integrations.acp.roomownership.kit import restart_waiting_for_cleanup
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 from tests.mcpclient import crash_backend
 
@@ -80,24 +80,30 @@ class TestFinalCleanup:
         self,
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
-        config = stop_budget()
+        config = fake_agent_config(inject_band_tools=True)
         with backends_created_by():
             async with acp_adapter(agent, config) as session:
                 await session.send("hello")
                 runtime = session.runtime()
                 exiting = agent.exits_slowly()
 
-                with pytest.raises(CleanupIncompleteError):
-                    await session.adapter.cleanup_all()
-                assert session.adapter._mcp.current is not None
-                assert not runtime.closed
-                # A restart retries the unfinished stop; it is still held.
-                with pytest.raises(CleanupIncompleteError, match="still running"):
-                    await session.adapter.on_started("Fake Agent", "too early")
-                assert DEFAULT_ROOM in session.adapter._rooms
-                assert not runtime.closed
+                cleanup = asyncio.create_task(session.adapter.cleanup_all())
+                try:
+                    await exiting.received.wait()
+                    cleanup.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await cleanup
+                    assert session.adapter._mcp.current is not None
+                    assert not runtime.closed
+                    assert DEFAULT_ROOM in session.adapter._rooms
+                    with pytest.raises(RoomClosingError):
+                        await session.send("while closing")
 
-                exiting.release.set()
+                    async with restart_waiting_for_cleanup(session):
+                        assert session.adapter._mcp.current is not None
+                        assert not runtime.closed
+                finally:
+                    exiting.release.set()
                 await session.adapter.cleanup_all()
 
                 assert runtime.closed
@@ -105,21 +111,25 @@ class TestFinalCleanup:
                 await session.adapter.on_started("Fake Agent", "restarted")
 
     @pytest.mark.asyncio
-    async def test_an_mcp_stop_past_the_budget_is_left_for_a_retry(self) -> None:
+    async def test_a_cancelled_mcp_stop_is_left_for_a_retry(self) -> None:
         agent = FakeACPAgent().will_say("ok")
-        stopping = asyncio.Event()
-        backend = FakeBandMCPBackend(stop_release=stopping)
-        config = stop_budget()
+        stopping, closing = asyncio.Event(), asyncio.Event()
+        backend = FakeBandMCPBackend(stop_started=closing, stop_release=stopping)
+        config = fake_agent_config(inject_band_tools=True)
         with backends_created_by(backend):
             async with acp_adapter(agent, config) as session:
                 await session.send("hello")
                 runtime = session.runtime()
 
-                with pytest.raises(CleanupIncompleteError, match="MCP backend"):
-                    await session.adapter.cleanup_all()
-                assert runtime.closed
-
-                stopping.set()
+                cleanup = asyncio.create_task(session.adapter.cleanup_all())
+                try:
+                    await closing.wait()
+                    cleanup.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await cleanup
+                    assert runtime.closed
+                finally:
+                    stopping.set()
                 await session.adapter.cleanup_all()
 
                 assert session.adapter._mcp.current is None

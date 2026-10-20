@@ -10,6 +10,7 @@ from typing import Any
 
 from acp import RequestError
 from acp.agent.connection import AgentSideConnection
+from acp.connection import StreamDirection, StreamEvent
 from acp.helpers import (
     plan_entry,
     start_tool_call,
@@ -50,12 +51,16 @@ from band.integrations.acp.model_selection import (
 from band.integrations.acp.permissions import ALLOW_ALWAYS_KIND, ALLOW_ONCE_KIND
 from band.integrations.acp.session_config import SessionConfigOption, find_select
 from band.integrations.mcp import BandMCPTransport
-from tests.mcpclient import mcp_session
+from tests.mcpclient import advertised_server, call_advertised_tool, mcp_session
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
     ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
 ]
+
+# How ``FakeACPAgent.lifecycle`` records a cancel and a connection exit.
+CANCEL_RECORD = "session/cancel"
+EXIT_RECORD = "connection exit"
 
 # The option ids Copilot CLI publishes its model and effort selects under.
 MODEL_OPTION_ID = "model"
@@ -136,6 +141,8 @@ class FakeACPAgent:
         self.closed_sessions: list[str] = []
         self.cancelled_sessions: list[str] = []
         self.approved: bool | None = None
+        # Each session/cancel received and each connection exit, in order.
+        self.lifecycle: list[str] = []
 
     # -- scripting ---------------------------------------------------------------
 
@@ -635,17 +642,7 @@ class FakeACPAgent:
 
     def mcp_server(self, session_id: str, server: str) -> Any:
         """The MCP server config named ``server`` advertised for this session."""
-        config = next(
-            (
-                config
-                for config in self._mcp_servers_by_session[session_id]
-                if getattr(config, "name", None) == server
-            ),
-            None,
-        )
-        if config is None:
-            raise ValueError(f"MCP server {server!r} was not advertised")
-        return config
+        return advertised_server(self._mcp_servers_by_session[session_id], server)
 
     async def call_mcp_tool(
         self,
@@ -656,13 +653,9 @@ class FakeACPAgent:
         arguments: dict[str, Any],
     ) -> Any:
         """Call a tool on an MCP server advertised for this session."""
-        config = self.mcp_server(session_id, server)
-        async with mcp_session(config.url, BandMCPTransport(config.type)) as client:
-            result = await client.call_tool(tool_name, arguments)
-
-        if result.isError:
-            raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
-        return result.content
+        return await call_advertised_tool(
+            self.mcp_server(session_id, server), tool_name, arguments
+        )
 
     async def list_mcp_tools(self, *, session_id: str, server: str) -> list[Tool]:
         """The tools a session's MCP server lists."""
@@ -694,6 +687,7 @@ class FakeACPAgent:
         )
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        """Record cancellation; scripts control how the prompt responds."""
         del kwargs
         self.cancelled_sessions.append(session_id)
 
@@ -770,6 +764,14 @@ class FakeACPAgent:
         """The value the agent currently has selected for ``option_id``."""
         option = find_select(self._config_options, option_id)
         return option.current_value if option is not None else None
+
+    def record_client_send(self, event: StreamEvent) -> None:
+        """Record cancellation sends in order with connection teardown."""
+        message = event.message
+        if event.direction is not StreamDirection.OUTGOING:
+            return
+        if message.get("method") == CANCEL_RECORD:
+            self.lifecycle.append(f"{CANCEL_RECORD} {message['params']['sessionId']}")
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""

@@ -17,7 +17,7 @@ timeouts, modes) and subclasses :class:`BaseAdapterConfig`, or
 :class:`EnvAdapterConfig` when its fields may also come from environment
 variables. Live objects stay keyword-only constructor arguments, so a config can
 always be loaded from YAML or JSON with ``XAdapterConfig.model_validate(data)``.
-``tests/framework_conformance/test_adapter_shape.py`` enforces this shape.
+``tests/framework_conformance/adaptershape/test_adaptershape.py`` enforces this shape.
 """
 
 from __future__ import annotations

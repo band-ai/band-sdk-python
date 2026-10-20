@@ -41,7 +41,7 @@ def _levels() -> dict[str, int]:
 
 
 _BASELINE_LOG_ITEM = (
-    "tests/e2e/baseline/guards/test_logs.py"
+    "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope"
     "::test_scope_restores_the_level_when_the_scenario_fails"
 )
 

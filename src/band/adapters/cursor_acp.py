@@ -268,6 +268,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         # moment a decision opens, while the task keeps the room's reservation
         # and lease through the turn's actual end.
         room = self._room(room_id)
+        await self.backend_turns.settled(room_id)
         loop = asyncio.get_running_loop()
         release: asyncio.Future[None] = loop.create_future()
         turn = CursorTurn(
@@ -451,6 +452,7 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         reported as a missing reply, and cancelled; a cancelled prompt sends
         ``session/cancel``.
         """
+        await super().on_interrupt(room_id, mode)
         if (turn := self._turns.get(room_id)) is not None:
             turn.tools.turn.settle()
             _cancel(turn)

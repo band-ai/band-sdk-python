@@ -116,7 +116,7 @@ jobs:
       ref: ${{ needs.release.outputs.tag_name }}
       version: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
       major: ${{ needs.release.outputs.major }}
-      move-floating: true
+      move-floating: false # First v3 release requires registry and supported-host acceptance.
 
   # After a band-sdk release, keep band-mcp's declared band-sdk floor honest:
   # it must track the version that was just published, since band-mcp is

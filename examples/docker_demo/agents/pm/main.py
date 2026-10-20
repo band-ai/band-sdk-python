@@ -50,6 +50,14 @@ def build_persona(architect_name: str) -> str:
     return f"{persona}\n\n{CONVERSATION_DISCIPLINE}"
 
 
+class ProviderCredentials(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+    anthropic_proxy_key: str = ""
+    anthropic_api_key: str = ""
+
+
 def expose_llm_key() -> None:
     """Copy the sbx-injected placeholder into the var the claude CLI reads.
 
@@ -57,7 +65,7 @@ def expose_llm_key() -> None:
     so the launcher injects the placeholder under ANTHROPIC_PROXY_KEY; the real
     key stays on the host and the proxy swaps the placeholder on the wire.
     """
-    if proxy := os.environ.get("ANTHROPIC_PROXY_KEY"):
+    if proxy := ProviderCredentials().anthropic_proxy_key:
         os.environ["ANTHROPIC_API_KEY"] = proxy
 
 

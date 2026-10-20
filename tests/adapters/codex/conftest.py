@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+import looptime
 import pytest
 import pytest_asyncio
 
@@ -17,6 +18,7 @@ from tests.adapters.codex.kit import (  # noqa: F401
     TRANSITION_TIMEOUT_S,
     CleaningTurn,
     CleaningTurnClient,
+    CleaningTurnInput,
     CodexApprovalRoom,
     CodexRoom,
     CountingCloseClient,
@@ -59,25 +61,30 @@ async def approval_room() -> AsyncIterator[Callable[..., Awaitable[CodexApproval
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def cleaning_turn() -> AsyncIterator[CleaningTurn]:
-    """A room whose turn was cancelled mid turn/start and is still cleaning up;
-    the cleanup finishes at teardown at the latest."""
-    client = CleaningTurnClient()
-    # A leave reports its unfinished cleanup within this bound.
-    config = CodexAdapterConfig(
-        retention=RoomRetentionConfig(transition_timeout_s=TRANSITION_TIMEOUT_S)
-    )
-    room = CodexRoom(make_codex_adapter(client, config=config), client)
-    sending = asyncio.create_task(room.send("work"))
-    await client.started.wait()
-    sending.cancel()
-    await client.cleaning.wait()
-    try:
-        yield CleaningTurn(room=room, client=client)
-    finally:
-        client.release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await sending
-        await room.adapter.cleanup_all()
+    """A room whose cancelled tool cleans up by fixture teardown at the latest."""
+    with looptime.enabled(strict=True):
+        client = CleaningTurnClient()
+        # A leave reports its unfinished cleanup within this bound.
+        config = CodexAdapterConfig(
+            retention=RoomRetentionConfig(transition_timeout_s=TRANSITION_TIMEOUT_S)
+        )
+        adapter = make_codex_adapter(
+            client,
+            config=config,
+            additional_tools=[(CleaningTurnInput, client.run_tool)],
+        )
+        room = CodexRoom(adapter, client)
+        sending = asyncio.create_task(room.send("work"))
+        await client.started.wait()
+        sending.cancel()
+        await client.cleaning.wait()
+        try:
+            yield CleaningTurn(room=room, client=client)
+        finally:
+            client.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await sending
+            await room.adapter.cleanup_all()
 
 
 @pytest_asyncio.fixture(loop_scope="function")
