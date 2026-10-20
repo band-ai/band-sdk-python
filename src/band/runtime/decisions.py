@@ -161,11 +161,16 @@ class DecisionRegistry(Mapping[str, T]):
         return self._drop_cancelled(self._core.cancel_all())
 
     async def wait(
-        self, entry: DecisionEntry[T], future: asyncio.Future[R], *, timeout_s: float
+        self,
+        entry: DecisionEntry[T],
+        future: asyncio.Future[R],
+        *,
+        timeout_s: float,
+        retain_entry: bool = False,
     ) -> R | Literal[Timeout.TIMED_OUT]:
         """The answer to ``entry``, or ``TIMED_OUT`` if the deadline claims it
         first or it was replaced; a reply that claimed it first is always
-        waited for."""
+        waited for. With ``retain_entry``, the caller retires it after delivery."""
         try:
             # asyncio.timeout(), not wait_for: on Python 3.11 wait_for returns
             # an answer that lands in the same tick as a cancel of this task
@@ -184,7 +189,8 @@ class DecisionRegistry(Mapping[str, T]):
                 return await future
             return Timeout.TIMED_OUT
         finally:
-            self.forget(entry)
+            if not retain_entry:
+                self.forget(entry)
 
     def _holds(self, entry: DecisionEntry[T]) -> bool:
         # Tickets are per registry, so an entry from a registry a room has

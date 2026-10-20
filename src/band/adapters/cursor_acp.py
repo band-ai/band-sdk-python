@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 from typing import ClassVar, Literal, Self
@@ -58,6 +58,7 @@ from band.integrations.acp.permissions import (
     permission_option_ids,
     select_allow_option_id,
 )
+from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.decisions import (
@@ -67,6 +68,7 @@ from band.runtime.decisions import (
 )
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools.registry import BAND_MCP_SERVER_NAME
+from band.runtime.working_state import set_permission_wait
 from band.workspaces import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -462,6 +464,12 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
         self._cancel_all_decisions()
         await super().cleanup_all()
 
+    def _permission_activity(
+        self, emitter: RoomTurnEmitter | None
+    ) -> AbstractAsyncContextManager[None]:
+        # Cursor's decision registry owns manual permission, question and plan waits.
+        return nullcontext()
+
     async def _resolve_cursor_permission(
         self, request: ACPPermissionRequest
     ) -> str | None:
@@ -628,28 +636,33 @@ class CursorACPAdapter(ACPClientAdapter[CursorACPAdapterConfig]):
             self._resolve_evicted_decision(registration.evicted)
         entry = registration.entry
         try:
-            await turn.tools.send_notice(
-                prompt.replace("{token}", entry.token),
-                mentions=_requester_mentions(turn),
-            )
-        except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
-            logger.warning("Could not deliver Cursor %s decision prompt", kind)
-            # A reply that claimed it meanwhile owns the answer; wait for it.
-            if decisions.withdraw(entry):
-                return None
-        finally:
-            # Release on_message here, not only in _run_turn's finally --
-            # the room needs its queue back the instant a decision is
-            # outstanding, whether or not the prompt itself landed.
-            _detach(turn)
+            await set_permission_wait(turn.tools, True)
+            try:
+                await turn.tools.send_notice(
+                    prompt.replace("{token}", entry.token),
+                    mentions=_requester_mentions(turn),
+                )
+            except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
+                logger.warning("Could not deliver Cursor %s decision prompt", kind)
+                # A reply that claimed it meanwhile owns the answer; wait for it.
+                if decisions.withdraw(entry):
+                    return None
+            finally:
+                # Release on_message here, not only in _run_turn's finally --
+                # the room needs its queue back the instant a decision is
+                # outstanding, whether or not the prompt itself landed.
+                _detach(turn)
 
-        result = await decisions.wait(
-            entry, future, timeout_s=self.config.decision_timeout_s
-        )
-        if result is Timeout.TIMED_OUT:
-            await self._notify_decision_timeout(turn, kind, entry.token)
-            return None
-        return result
+            result = await decisions.wait(
+                entry, future, timeout_s=self.config.decision_timeout_s
+            )
+            if result is Timeout.TIMED_OUT:
+                await self._notify_decision_timeout(turn, kind, entry.token)
+                return None
+            return result
+        finally:
+            decisions.forget(entry)
+            await set_permission_wait(turn.tools, bool(decisions))
 
     @staticmethod
     async def _notify_decision_timeout(

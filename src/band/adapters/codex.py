@@ -8,7 +8,7 @@ import logging
 import time as _time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
@@ -121,6 +121,13 @@ from band.runtime.tools import (
     image_block_placeholder,
     is_image_passthrough_result,
     redact_tool_call_args,
+)
+from band.runtime.working_state import (
+    end_tool_activity,
+    report_memory_activity,
+    report_tool_activity,
+    set_permission_wait,
+    tool_activity,
 )
 from band.workspaces import (
     RoomWorkspaces,
@@ -1654,6 +1661,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
                 # --- Phase 2: Context compaction events ---
                 if event.method == "context/compacted":
+                    await report_memory_activity(tools)
                     if (
                         self.config.emit_turn_lifecycle_events
                         and Emit.TASK_EVENTS in self.features.emit
@@ -1697,6 +1705,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
                 if event.method == "item/started":
                     item = params.get("item")
+                    if isinstance(item, dict) and item.get("type") in _TOOL_ITEM_TYPES:
+                        await report_tool_activity(
+                            tools, self._extract_tool_item(item["type"], item).name
+                        )
+                    elif isinstance(item, dict):
+                        await end_tool_activity(tools)
                     if (
                         isinstance(item, dict)
                         and item.get("type") == CodexItemType.AGENT_MESSAGE
@@ -1738,6 +1752,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
                 if event.method == "item/completed":
                     item = params.get("item")
+                    if isinstance(item, dict) and item.get("type") in _TOOL_ITEM_TYPES:
+                        await end_tool_activity(tools)
                     if isinstance(item, dict):
                         if item.get("type") == CodexItemType.AGENT_MESSAGE:
                             message = result.native_messages.setdefault(
@@ -2524,98 +2540,103 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 arguments = {}
             call_id = str(params.get("callId") or "")
 
-            # Don't emit reporting for codex-local slash commands — they already
-            # surface their outcome in the room themselves.
-            should_report = (
-                Emit.TOOL_CALLS in self.features.emit
-                and tool_name not in _SILENT_REPORTING_TOOLS
-            )
+            async with tool_activity(tools, tool_name):
+                # Don't emit reporting for codex-local slash commands — they already
+                # surface their outcome in the room themselves.
+                should_report = (
+                    Emit.TOOL_CALLS in self.features.emit
+                    and tool_name not in _SILENT_REPORTING_TOOLS
+                )
 
-            if should_report:
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: redact_tool_call_args(
-                                tool_name, arguments
+                if should_report:
+                    await tools.send_event(
+                        content=json.dumps(
+                            {
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, arguments
+                                ),
+                                ToolEventKey.TOOL_CALL_ID: call_id,
+                            }
+                        ),
+                        message_type="tool_call",
+                    )
+
+                try:
+                    custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                    if custom_tool:
+                        result = await execute_custom_tool(
+                            custom_tool, arguments, turn=tools.turn
+                        )
+                        success = True
+                    else:
+                        # Structured: a base tool (e.g. band_send_message) can fail without
+                        # raising (bad args, API error) via ok=False; the plain variant would
+                        # report that failure to Codex as success.
+                        outcome = await tools.execute_tool_call_structured(
+                            tool_name, arguments
+                        )
+                        result = outcome.value
+                        success = outcome.ok
+                    if success and is_image_passthrough_result(tool_name, result):
+                        content_items = _image_content_items(result)
+                        text_result = image_block_placeholder(len(content_items))
+                    else:
+                        text_result = (
+                            result
+                            if isinstance(result, str)
+                            else json.dumps(result, default=str)
+                        )
+                        content_items = [_text_item(text_result)]
+                    await client.respond(
+                        event.id, _tool_response(content_items, success=success)
+                    )
+                    if should_report:
+                        await tools.send_event(
+                            content=json.dumps(
+                                {
+                                    ToolEventKey.NAME: tool_name,
+                                    ToolEventKey.OUTPUT: text_result,
+                                    ToolEventKey.TOOL_CALL_ID: call_id,
+                                }
                             ),
-                            ToolEventKey.TOOL_CALL_ID: call_id,
-                        }
-                    ),
-                    message_type="tool_call",
-                )
-
-            try:
-                custom_tool = find_custom_tool(self._custom_tools, tool_name)
-                if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, arguments, turn=tools.turn
+                            message_type="tool_result",
+                        )
+                except ValidationError as exc:
+                    errors = format_validation_error(exc)
+                    error_text = f"Invalid arguments for {tool_name}: {errors}"
+                    logger.error("Validation error for tool %s: %s", tool_name, exc)
+                    await client.respond(
+                        event.id, _tool_result(error_text, success=False)
                     )
-                    success = True
-                else:
-                    # Structured: a base tool (e.g. band_send_message) can fail without
-                    # raising (bad args, API error) via ok=False; the plain variant would
-                    # report that failure to Codex as success.
-                    outcome = await tools.execute_tool_call_structured(
-                        tool_name, arguments
+                    if should_report:
+                        await tools.send_event(
+                            content=json.dumps(
+                                {
+                                    ToolEventKey.NAME: tool_name,
+                                    ToolEventKey.OUTPUT: error_text,
+                                    ToolEventKey.TOOL_CALL_ID: call_id,
+                                }
+                            ),
+                            message_type="tool_result",
+                        )
+                except Exception as exc:
+                    error_text = f"Error: {exc}"
+                    logger.exception("Tool execution failed for %s", tool_name)
+                    await client.respond(
+                        event.id, _tool_result(error_text, success=False)
                     )
-                    result = outcome.value
-                    success = outcome.ok
-                if success and is_image_passthrough_result(tool_name, result):
-                    content_items = _image_content_items(result)
-                    text_result = image_block_placeholder(len(content_items))
-                else:
-                    text_result = (
-                        result
-                        if isinstance(result, str)
-                        else json.dumps(result, default=str)
-                    )
-                    content_items = [_text_item(text_result)]
-                await client.respond(
-                    event.id, _tool_response(content_items, success=success)
-                )
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: text_result,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
-            except ValidationError as exc:
-                errors = format_validation_error(exc)
-                error_text = f"Invalid arguments for {tool_name}: {errors}"
-                logger.error("Validation error for tool %s: %s", tool_name, exc)
-                await client.respond(event.id, _tool_result(error_text, success=False))
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: error_text,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
-            except Exception as exc:
-                error_text = f"Error: {exc}"
-                logger.exception("Tool execution failed for %s", tool_name)
-                await client.respond(event.id, _tool_result(error_text, success=False))
-                if should_report:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.OUTPUT: error_text,
-                                ToolEventKey.TOOL_CALL_ID: call_id,
-                            }
-                        ),
-                        message_type="tool_result",
-                    )
+                    if should_report:
+                        await tools.send_event(
+                            content=json.dumps(
+                                {
+                                    ToolEventKey.NAME: tool_name,
+                                    ToolEventKey.OUTPUT: error_text,
+                                    ToolEventKey.TOOL_CALL_ID: call_id,
+                                }
+                            ),
+                            message_type="tool_result",
+                        )
 
             return
 
@@ -2659,89 +2680,98 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         room_session = self._session_approved.get(room_id)
         session_hit = bool(session_key and room_session and session_key in room_session)
 
-        if session_hit:
-            decision: ApprovalDecision = "acceptForSession"
-            decided_by = "session_policy"
-        elif self._room_closing(room_id):
-            decision = "decline"
-            decided_by = "room_cleanup"
-        elif self.config.approval_mode == "manual":
-            try:
-                decision = await self._resolve_manual_approval(
-                    tools=tools,
-                    msg=msg,
-                    room_id=room_id,
-                    event=event,
-                    summary=summary,
-                    params=params,
-                )
-                decided_by = msg.sender_name or msg.sender_type or "user"
-            except Exception:
-                # Ensure we still answer the server request even if the
-                # human-facing notification flow fails.
-                logger.exception("Manual approval flow failed; defaulting to decline")
+        async with AsyncExitStack() as approvals:
+            if session_hit:
+                decision: ApprovalDecision = "acceptForSession"
+                decided_by = "session_policy"
+            elif self._room_closing(room_id):
                 decision = "decline"
-                decided_by = "system_fallback"
-        else:
-            decision = (
-                "accept" if self.config.approval_mode == "auto_accept" else "decline"
-            )
-            decided_by = f"policy:{self.config.approval_mode}"
-
-        await client.respond(event.id, _approval_response(decision))
-
-        audit_entry = self._record_approval_audit(
-            room_id=room_id,
-            request_id=str(event.id),
-            method=event.method,
-            decision=decision,
-            decided_by=decided_by,
-            summary=summary,
-            session_level=session_hit,
-        )
-        await self._emit_approval_audit_event(
-            tools=tools,
-            room_id=room_id,
-            entry=audit_entry,
-        )
-
-        if (
-            self.config.approval_mode != "manual"
-            and self.config.approval_text_notifications
-        ):
-            mention = [
-                {
-                    "id": msg.sender_id,
-                    "name": msg.sender_name or msg.sender_type,
-                }
-            ]
-            try:
-                await tools.send_notice(
-                    f"Approval requested ({summary}). Policy decision: {decision}.",
-                    mentions=mention,
+                decided_by = "room_cleanup"
+            elif self.config.approval_mode == "manual":
+                try:
+                    decision = await approvals.enter_async_context(
+                        self._manual_approval(
+                            tools=tools,
+                            msg=msg,
+                            room_id=room_id,
+                            event=event,
+                            summary=summary,
+                            params=params,
+                        )
+                    )
+                    decided_by = msg.sender_name or msg.sender_type or "user"
+                except Exception:
+                    # Ensure we still answer the server request even if the
+                    # human-facing notification flow fails.
+                    logger.exception(
+                        "Manual approval flow failed; defaulting to decline"
+                    )
+                    decision = "decline"
+                    decided_by = "system_fallback"
+            else:
+                decision = (
+                    "accept"
+                    if self.config.approval_mode == "auto_accept"
+                    else "decline"
                 )
-            except Exception:
-                logger.exception("Failed to send approval policy notification")
+                decided_by = f"policy:{self.config.approval_mode}"
 
-        if Emit.THOUGHTS in self.features.emit:
-            # Best-effort telemetry — never fail the turn on thought emission
-            # failures.
-            await send_event_safe(
-                tools,
-                content=(f"Codex approval request handled automatically ({decision})."),
-                message_type="thought",
-                metadata={
-                    "codex_approval_method": event.method,
-                    "codex_approval_type": self._approval_type(event.method),
-                    "codex_approval_options": [
-                        "accept",
-                        "acceptForSession",
-                        "decline",
-                    ],
-                },
-                log_label="approval thought event",
-                log_level=logging.DEBUG,
+            await client.respond(event.id, _approval_response(decision))
+
+            audit_entry = self._record_approval_audit(
+                room_id=room_id,
+                request_id=str(event.id),
+                method=event.method,
+                decision=decision,
+                decided_by=decided_by,
+                summary=summary,
+                session_level=session_hit,
             )
+            await self._emit_approval_audit_event(
+                tools=tools,
+                room_id=room_id,
+                entry=audit_entry,
+            )
+
+            if (
+                self.config.approval_mode != "manual"
+                and self.config.approval_text_notifications
+            ):
+                mention = [
+                    {
+                        "id": msg.sender_id,
+                        "name": msg.sender_name or msg.sender_type,
+                    }
+                ]
+                try:
+                    await tools.send_notice(
+                        f"Approval requested ({summary}). Policy decision: {decision}.",
+                        mentions=mention,
+                    )
+                except Exception:
+                    logger.exception("Failed to send approval policy notification")
+
+            if Emit.THOUGHTS in self.features.emit:
+                # Best-effort telemetry — never fail the turn on thought emission
+                # failures.
+                await send_event_safe(
+                    tools,
+                    content=(
+                        f"Codex approval request handled automatically ({decision})."
+                    ),
+                    message_type="thought",
+                    metadata={
+                        "codex_approval_method": event.method,
+                        "codex_approval_type": self._approval_type(event.method),
+                        "codex_approval_options": [
+                            "accept",
+                            "acceptForSession",
+                            "decline",
+                        ],
+                    },
+                    log_label="approval thought event",
+                    log_level=logging.DEBUG,
+                )
 
     @staticmethod
     def _turn_usage(usage: CodexTokenUsage | None) -> TurnUsage:
@@ -3173,7 +3203,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             case _:
                 return None
 
-    async def _resolve_manual_approval(
+    @asynccontextmanager
+    async def _manual_approval(
         self,
         *,
         tools: AgentToolsProtocol,
@@ -3182,7 +3213,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         event: RpcEvent,
         summary: str,
         params: dict[str, Any],
-    ) -> ApprovalDecision:
+    ) -> AsyncIterator[ApprovalDecision]:
         mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
@@ -3207,7 +3238,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 pending.native_key,
                 room_id,
             )
-            return "decline"
+            yield "decline"
+            return
         entry = registration.entry
         token = entry.token
         for removed in registration.removed:
@@ -3220,6 +3252,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 self.config.max_pending_approvals_per_room,
             )
         try:
+            await set_permission_wait(tools, True)
             approval_msg = APPROVAL_REQUESTED_TEMPLATE.format(
                 summary=summary, token=token
             )
@@ -3286,10 +3319,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
 
             self._release_turn(room_id, tools)
             decision = await registry.wait(
-                entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
+                entry,
+                pending.future,
+                timeout_s=self.config.approval_wait_timeout_s,
+                retain_entry=True,
             )
             if decision is not Timeout.TIMED_OUT:
-                return decision
+                yield decision
+                return
             timeout_decision = self.config.approval_timeout_decision
             try:
                 await tools.send_notice(
@@ -3300,9 +3337,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 )
             except Exception:
                 logger.exception("Failed to send approval timeout notification")
-            return timeout_decision
+            yield timeout_decision
         finally:
             self._clear_pending_approval(room_id, entry)
+            await set_permission_wait(tools, bool(registry))
 
     async def _forward_raw_task_event(
         self,
@@ -3981,7 +4019,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if (decision_value := _APPROVAL_COMMAND_DECISIONS.get(command)) is None:
             return False
 
-        if not pending:
+        if not pending.has_unclaimed():
             await deliver_notice(
                 tools,
                 NO_APPROVALS_TO_RESOLVE_MESSAGE,
