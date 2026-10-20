@@ -19,7 +19,7 @@ from tests.adapters.opencode.helpers import (
 )
 from tests.conftest import make_message_event
 from tests.mcpbackends import backends_created_by
-from tests.runtime.helpers import IDLE, KEEP_ALIVE, ROOM_ID, LifecyclePlatform
+from tests.runtime.helpers import ROOM_ID, LifecyclePlatform
 
 
 class TestOpenCodeLifetime:
@@ -59,7 +59,7 @@ class TestOpenCodeLifetime:
             ctx = execution(handler)
             try:
                 await ctx._process_event(make_message_event(msg_id="original"))
-                assert activity_platform.activity_reports == [KEEP_ALIVE]
+                assert activity_platform.working_transitions == [True]
                 assert activity_platform.marked("processed") == ["original"]
                 assert ctx.interrupt(kind=mode)
                 notify = asyncio.create_task(adapter.on_interrupt(ROOM_ID, mode))
@@ -71,7 +71,7 @@ class TestOpenCodeLifetime:
                 await ctx._join_activity_completion()
                 assert client.aborted_sessions == ["sess-1"]
                 assert cleaned.is_set()
-                assert activity_platform.activity_reports == [KEEP_ALIVE, IDLE]
+                assert activity_platform.working_transitions == [True, False]
                 assert activity_platform.marked("processed") == ["original"]
             finally:
                 release.set()

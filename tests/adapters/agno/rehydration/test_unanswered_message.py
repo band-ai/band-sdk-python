@@ -60,7 +60,7 @@ class TestUnansweredMessage:
             )
         )
 
-        agent.arun.assert_awaited_once()
+        agent.arun.assert_called_once()
         assert run_input(agent)[-1].content == sample_platform_message.format_for_llm()
 
     async def test_trailing_unanswered_user_turns_are_preserved(

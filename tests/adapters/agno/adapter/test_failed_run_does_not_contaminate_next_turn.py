@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
-from agno.run.agent import RunOutput
 
 from band.adapters.agno import (
     AgnoAdapter,
@@ -21,9 +20,8 @@ class TestFailedRunDoesNotContaminateNextTurn:
         # Turn 1 raises mid-run; turn 2 succeeds. The injected system/user
         # messages from the failed turn must not survive into turn 2's input.
         agent = make_agno_agent()
-        agent.arun = AsyncMock(
-            side_effect=[RuntimeError("boom"), RunOutput(content="ok")]
-        )
+        succeeding = agent.arun.side_effect
+        agent.arun = MagicMock(side_effect=[RuntimeError("boom"), succeeding()])
         adapter = AgnoAdapter(agent=agent, emit=())
         await adapter.on_started("TestBot", "desc")
 
