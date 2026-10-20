@@ -23,7 +23,11 @@ from band_rest.types.error import Error as PlatformError
 from band_rest.types.validation_error import ValidationError as ErrorEnvelope
 from pydantic import ValidationError as ModelValidationError
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    NO_RETRY_REQUEST_OPTIONS,
+    AsyncRestClient,
+)
 from band.client.streaming.client import DeliveryStatus
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.settlement import SettlementResult
@@ -41,8 +45,6 @@ ResponseData = TypeVar("ResponseData")
 VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
 NOT_FOUND_ERROR_CODE = "not_found"
-# Retrying a committed write can turn a lost success into a missing-attempt refusal.
-TERMINAL_REQUEST_OPTIONS: RequestOptions = {"max_retries": 0}
 
 
 def _accepted_response(
@@ -176,27 +178,40 @@ class MessageLifecycle:
         self, rest: AsyncRestClient, room_id: str, message_id: str
     ) -> bool:
         """Mark message as processed, clearing it from the unprocessed queue."""
-        result = await self.mark_processed_result(rest, room_id, message_id)
+        result = await self.mark_processed_result(
+            rest, room_id, message_id, request_options=DEFAULT_REQUEST_OPTIONS
+        )
         return result is SettlementResult.ACCEPTED
 
     async def mark_failed(
         self, rest: AsyncRestClient, room_id: str, message_id: str, error: str
     ) -> bool:
         """Mark message as failed, recording the error for server-side retry logic."""
-        result = await self.mark_failed_result(rest, room_id, message_id, error)
+        result = await self.mark_failed_result(
+            rest, room_id, message_id, error, request_options=DEFAULT_REQUEST_OPTIONS
+        )
         return result is SettlementResult.ACCEPTED
 
     async def mark_processed_result(
-        self, rest: AsyncRestClient, room_id: str, message_id: str
+        self,
+        rest: AsyncRestClient,
+        room_id: str,
+        message_id: str,
+        *,
+        request_options: RequestOptions = NO_RETRY_REQUEST_OPTIONS,
     ) -> SettlementResult:
-        """Write the processed mark once and report what it established."""
+        """Write the processed mark and report what it established.
+
+        One attempt by default: retrying a committed write whose response was
+        lost reads back as a missing-attempt refusal.
+        """
         logger.debug("Marking message %s as processed", message_id)
         return await self._settle(
             lambda: (
                 rest.agent_api_messages.with_raw_response.mark_agent_message_processed(
                     chat_id=room_id,
                     id=message_id,
-                    request_options=TERMINAL_REQUEST_OPTIONS,
+                    request_options=request_options,
                 )
             ),
             room_id=room_id,
@@ -205,9 +220,18 @@ class MessageLifecycle:
         )
 
     async def mark_failed_result(
-        self, rest: AsyncRestClient, room_id: str, message_id: str, error: str
+        self,
+        rest: AsyncRestClient,
+        room_id: str,
+        message_id: str,
+        error: str,
+        *,
+        request_options: RequestOptions = NO_RETRY_REQUEST_OPTIONS,
     ) -> SettlementResult:
-        """Write the failed mark once and report what it established."""
+        """Write the failed mark and report what it established.
+
+        One attempt by default, as ``mark_processed_result``.
+        """
         error = error.strip() or "Unknown error"
         logger.debug("Marking message %s as failed: %s", message_id, error)
         return await self._settle(
@@ -215,7 +239,7 @@ class MessageLifecycle:
                 chat_id=room_id,
                 id=message_id,
                 error=error,
-                request_options=TERMINAL_REQUEST_OPTIONS,
+                request_options=request_options,
             ),
             room_id=room_id,
             message_id=message_id,
