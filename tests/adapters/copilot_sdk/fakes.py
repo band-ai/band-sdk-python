@@ -8,6 +8,7 @@ test double.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -31,7 +32,7 @@ requires_copilot_sdk = pytest.mark.skipif(
 )
 
 if _COPILOT_SDK_AVAILABLE:
-    from copilot.generated.session_events import SessionErrorData
+    from copilot.generated.session_events import SessionErrorData, SessionIdleData
 
 
 def make_platform_message(
@@ -101,6 +102,14 @@ class FakeCopilotSession:
         self.handlers: list[Any] = []
         self.aborted = False
         self.disconnected = False
+        # Every prompt, abort and disconnect, in the order the session saw them.
+        self.journal: list[str] = []
+        # While cleared, an abort stays in flight.
+        self.abort_released = asyncio.Event()
+        self.abort_released.set()
+        # While set, an abort is acknowledged but the idle that ends the aborted
+        # turn is withheld until ``deliver_aborted_idle``.
+        self.holds_aborted_idle = False
 
     def on(self, handler: Any) -> Any:
         self.handlers.append(handler)
@@ -113,6 +122,7 @@ class FakeCopilotSession:
         self, prompt: str, *, timeout: float = 60.0, **_: Any
     ) -> Any:
         self.prompts.append(prompt)
+        self.journal.append("prompt")
         if self.send_error:
             raise self.send_error
         for data in self.turn_events:
@@ -135,10 +145,22 @@ class FakeCopilotSession:
         return SimpleNamespace(data=SimpleNamespace(content=self.reply_content))
 
     async def abort(self) -> None:
+        await self.abort_released.wait()
         self.aborted = True
+        self.journal.append("abort")
+        if not self.holds_aborted_idle:
+            self.deliver_aborted_idle()
+
+    def deliver_aborted_idle(self) -> None:
+        """The CLI ends an aborted turn with an idle, as the real one does."""
+        self.journal.append("idle")
+        event = SimpleNamespace(data=SessionIdleData(aborted=True))
+        for handler in list(self.handlers):
+            handler(event)
 
     async def disconnect(self) -> None:
         self.disconnected = True
+        self.journal.append("disconnect")
 
 
 class FakeCopilotClient:

@@ -63,7 +63,10 @@ opencode = [
     "mcp>=1.28.1,<2",
 ]
 letta = [
-    "letta-client>=1.0.0",
+    # Floor is `conversations.cancel` (shared-mode STOP), first shipped in
+    # 1.7.1; the `conversations` resource itself arrived in 1.6.5 -- checked
+    # against the PyPI wheels 2026-10-19.
+    "letta-client>=1.7.1",
     # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
     "mcp>=1.28.1,<2",
 ]
@@ -245,7 +248,7 @@ dev = [
     # Include Agno for testing
     "agno>=2.6.0",
     # Include letta-client for testing
-    "letta-client>=1.0.0",
+    "letta-client>=1.7.1",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
