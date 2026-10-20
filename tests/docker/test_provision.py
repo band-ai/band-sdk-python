@@ -20,9 +20,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from band_rest.core.api_error import ApiError
 
+from band.client.rest import NO_RETRY_REQUEST_OPTIONS
 from band.docker.launcher.errors import LaunchError
 from band.docker.provision import (
-    NO_RETRY_REQUEST_OPTIONS,
     PLACEHOLDER_AGENT_ID,
     ProvisionSettings,
     RegistrationTimeoutOutcome,
