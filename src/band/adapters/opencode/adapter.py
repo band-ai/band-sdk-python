@@ -28,7 +28,7 @@ from band.core.protocols import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
-from band.core.turn_lifecycle import BackendTurns
+from band.core.turn_lifecycle import BackendTurns, bind_turn_task
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -495,6 +495,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._watch_turn_completion(room_state, room_id, turn)
             )
             turn.watcher = turn_task
+            bind_turn_task(tools, turn_task)
             try:
                 # Turn-phase diagnostics (classify a stuck turn from CI logs):
                 # if 'returned' never follows 'start', prompt_async is blocking

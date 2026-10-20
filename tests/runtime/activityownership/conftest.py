@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Awaitable, Callable
+from unittest.mock import AsyncMock
+
+import pytest
+
+from band.platform.event import PlatformEvent
+from band.platform.link import BandLink
+from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
+from band.runtime.sessionconfig import SessionConfig
+from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.helpers import (
+    AGENT_ID,
+    ROOM_ID,
+    LifecyclePlatform,
+    rest_client_over,
+)
+
+
+@pytest.fixture
+async def activity_platform() -> AsyncIterator[LifecyclePlatform]:
+    yield ActivityPlatform()
+
+
+@pytest.fixture
+async def execution(
+    activity_platform: LifecyclePlatform,
+) -> AsyncIterator[Callable[..., ExecutionContext]]:
+    contexts: list[ExecutionContext] = []
+    async with rest_client_over(activity_platform.answer) as rest:
+
+        def create(
+            handler: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
+            **settings: object,
+        ) -> ExecutionContext:
+            link = BandLink(agent_id=AGENT_ID, api_key="test-key")
+            link.rest = rest
+            runtime = AgentRuntime(
+                link=link, agent_id=AGENT_ID, on_execute=handler, on_control=AsyncMock()
+            )
+            ctx = ExecutionContext(
+                ROOM_ID,
+                link,
+                handler,
+                agent_id=AGENT_ID,
+                on_platform_stop=runtime._on_platform_stop,
+                config=SessionConfig(enable_context_hydration=False, **settings),
+            )
+            contexts.append(ctx)
+            return ctx
+
+        yield create
+        for ctx in contexts:
+            await ctx.stop()
