@@ -66,6 +66,7 @@ from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
+    BackendTurns,
     TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
@@ -386,6 +387,15 @@ class CodexClientProtocol(Protocol):
 
 class CodexContinuityError(RuntimeError):
     """A retained Codex thread cannot continue as it was; its id is kept."""
+
+
+@dataclass(frozen=True)
+class CodexTurn:
+    """What interrupting one room's running app-server turn needs."""
+
+    client: CodexClientProtocol
+    thread_id: str
+    turn_id: str
 
 
 _METHOD_NOT_FOUND = -32601
@@ -964,6 +974,9 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         # reply that resolves the approval arrives only after on_message returns.
         self._turn_release: dict[str, asyncio.Future[None]] = {}
         self._turn_tasks: dict[str, TurnTask] = {}
+        self._backend_turns = BackendTurns[CodexTurn](
+            self._interrupt_codex_turn, provider=CODEX_PROVIDER
+        )
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -981,6 +994,10 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         """Whether the room admits no more work; a forgotten room is closed."""
         room = self._room_clients.get(room_id)
         return room is None or room.retained.closing
+
+    @property
+    def backend_turns(self) -> BackendTurns[CodexTurn]:
+        return self._backend_turns
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
@@ -1187,7 +1204,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        self._admit_turn(room_id, "Codex")
+        await self._admit_turn(room_id, "Codex")
         room = self._room_client(room_id)
         self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
@@ -1338,8 +1355,14 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         turn_params: dict[str, Any] = {"threadId": thread_id, "input": turn_input}
         self._apply_turn_overrides(turn_params, room_id=room_id)
 
-        async with self._native_turn(room) as native:
-            await self._start_native_turn(room, native, turn_params)
+        async with (
+            self.backend_turns.running(room_id),
+            self._native_turn(room) as native,
+        ):
+            await self.backend_turns.started(
+                room_id,
+                self._reveal_codex_turn(room, native, turn_params, thread_id),
+            )
             if has_pending_prompt_injection:
                 self._prompt_injected_rooms.add(room_id)
             await self._emit_turn_started(
@@ -1409,7 +1432,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     turn_start=turn_start,
                 )
                 raise TurnResultAlreadyReported(TURN_PROCESSING_ERROR) from None
-
         await self._emit_turn_outcome(
             tools=tools,
             msg=msg,
@@ -1896,6 +1918,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         for room_id in list(self._room_clients):
             self._clear_pending_approvals_for_room(room_id)
         await self._retention.stop()
+        await self.backend_turns.drain()
 
     async def _acquire(
         self, room: RoomCodexClient, generation: int, resume: bool
@@ -2066,6 +2089,12 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 exc_info=True,
             )
 
+    async def _interrupt_codex_turn(self, turn: CodexTurn) -> None:
+        await turn.client.request(
+            CodexRequestMethod.TURN_INTERRUPT,
+            {"threadId": turn.thread_id, "turnId": turn.turn_id},
+        )
+
     @asynccontextmanager
     async def _native_turn(self, room: RoomCodexClient) -> AsyncIterator[NativeTurn]:
         """Bind the native turn this Band turn starts to it until the turn ends.
@@ -2098,6 +2127,16 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 "Room %s: Codex stopped reading; left native requests unanswered",
                 room.room_id,
             )
+
+    async def _reveal_codex_turn(
+        self,
+        room: RoomCodexClient,
+        native: NativeTurn,
+        params: dict[str, Any],
+        thread_id: str,
+    ) -> CodexTurn:
+        await self._start_native_turn(room, native, params)
+        return CodexTurn(room.require_client(), thread_id, native.turn_id or "")
 
     async def _start_native_turn(
         self, room: RoomCodexClient, native: NativeTurn, params: dict[str, Any]

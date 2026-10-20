@@ -17,6 +17,7 @@ on:
     - cron: "33 20 * * 0" # Sunday night: 23:33 Israel summer time, 22:33 winter time
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/actions/git-https-auth/**'
       - '.github/scripts/post-core-coverage-digest.py'
@@ -39,7 +40,8 @@ jobs:
   coverage:
     # Dependabot cannot read repository Actions secrets, so it cannot check
     # out the private Core repository with this workflow's token.
-    if: github.actor != 'dependabot[bot]'
+    # Drafts get no CI; ready_for_review above fires the first real run.
+    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

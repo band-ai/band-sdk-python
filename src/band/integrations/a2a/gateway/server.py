@@ -75,6 +75,7 @@ class GatewayServer:
         self.executor_factory = executor_factory
         self._app: Starlette | None = None
         self._runtime: ManagedUvicornServer | None = None
+        self._handlers: dict[str, DefaultRequestHandler] = {}
 
     def _agent_card(self, slug: str, peer: Peer) -> AgentCard:
         rpc_url = f"{self.gateway_url}/agents/{slug}"
@@ -117,11 +118,14 @@ class GatewayServer:
         for slug, peer in self.peers.items():
             # One handler — and one task store — per peer, shared by all its
             # aliases, so a task started on the slug stays visible on the UUID.
-            handler = DefaultRequestHandler(
-                agent_executor=self.executor_factory(slug),
-                task_store=InMemoryTaskStore(),
-                agent_card=self._agent_card(slug, peer),
-            )
+            handler = self._handlers.get(slug)
+            if handler is None:
+                handler = DefaultRequestHandler(
+                    agent_executor=self.executor_factory(slug),
+                    task_store=InMemoryTaskStore(),
+                    agent_card=self._agent_card(slug, peer),
+                )
+                self._handlers[slug] = handler
             for alias in dict.fromkeys((slug, peer.id)):
                 card = self._agent_card(alias, peer)
                 protocol_routes.extend(
@@ -256,8 +260,20 @@ class GatewayServer:
         )
 
     async def stop(self) -> None:
-        if self._runtime is None:
-            return
-        await self._runtime.stop()
-        self._runtime = None
+        """Stop ingress and join executors; retry unfinished closes on failure."""
+        if self._runtime is not None:
+            await self._runtime.stop()
+            self._runtime = None
+        errors: list[Exception] = []
+        for slug, handler in list(self._handlers.items()):
+            try:
+                await handler.aclose()
+            except Exception as exc:  # noqa: BLE001 -- report after independent handlers drain
+                errors.append(exc)
+            else:
+                del self._handlers[slug]
+        if errors:
+            raise ExceptionGroup(
+                "A2A request handlers failed to close; retry stop()", errors
+            )
         logger.info("A2A Gateway server stopped")

@@ -1,28 +1,52 @@
 from __future__ import annotations
 
-import asyncio
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
 
 
-async def _wait_for(predicate, timeout: float = 2.0) -> None:
-    """Poll until predicate() is truthy or raise on timeout (non-brittle wait)."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if predicate():
-            return
-        await asyncio.sleep(0.005)
-    raise AssertionError("condition not met within timeout")
+def _working_values(link) -> list[bool]:
+    """Sequence of `working` booleans passed to link.report_activity."""
+    return [
+        c.args[1] if len(c.args) > 1 else c.kwargs["working"]
+        for c in link.report_activity.call_args_list
+    ]
 
 
-class Recorder:
-    """Async report callback that records the sequence of working values."""
+_FAST = SessionConfig(working_keep_alive_seconds=4.0)
 
-    def __init__(self, *, fail: bool = False) -> None:
-        self.calls: list[bool] = []
-        self.fail = fail
 
-    async def __call__(self, working: bool) -> bool:
-        self.calls.append(working)
-        if self.fail:
-            raise RuntimeError("report failed")
-        return True
+def _backlog_message(
+    room_id: str = "room-123", msg_id: str = "msg-b1"
+) -> PlatformMessage:
+    return PlatformMessage(
+        id=msg_id,
+        room_id=room_id,
+        content="hi",
+        sender_id="user-1",
+        sender_type="User",
+        sender_name="User One",
+        message_type="text",
+        metadata={},
+        created_at=datetime.now(UTC),
+    )
+
+
+def _independent_link():
+    link = MagicMock()
+    link.agent_id = "agent-123"
+    link.rest = MagicMock()
+    p = MagicMock(id="user-1", name="User One", type="User")
+    link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        return_value=MagicMock(data=[p])
+    )
+    link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
+        return_value=MagicMock(data=[])
+    )
+    link.mark_processing = AsyncMock(return_value=True)
+    link.mark_processed = AsyncMock(return_value=True)
+    link.mark_failed = AsyncMock(return_value=True)
+    link.report_activity = AsyncMock(return_value=True)
+    return link

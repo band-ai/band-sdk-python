@@ -51,7 +51,9 @@ class A2AAdapterConfig(BaseAdapterConfig):
     Attributes:
         remote_url: Base URL of the remote A2A agent.
         auth: Credentials sent with every request to the remote agent.
-        streaming: Whether to use streaming mode (SSE) for responses.
+        streaming: Whether to use streaming mode (SSE) for responses. Without
+            it (or when the remote's card does not advertise it) a new task's
+            first event is its final answer, so a STOP cannot cancel that task.
     """
 
     remote_url: str

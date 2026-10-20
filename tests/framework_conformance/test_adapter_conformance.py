@@ -301,8 +301,8 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
 #   opencode      tests/mcp/test_engine.py (the shared MCP engine's ImageContent)
 #   gemini        test_gemini_adapter.py (FunctionResponseBlob inline_data)
 #   langgraph     test_langchain_tools.py (langchain_core ImageContentBlock)
-#   agno          tests/adapters/agno/test_adapter.py (agno.media.Image)
-#   strands       test_strands_adapter.py (ToolResultContent image block)
+#   agno          tests/adapters/agno/adapter/test_band_entrypoint_binding.py (agno.media.Image)
+#   strands       tests/adapters/strands/test_read_room_file_image_passthrough.py (ToolResultContent image block)
 #   nooa          tests/adapters/nooa/ (nooa.Image the model can show())
 #   copilot_sdk   copilot_sdk/test_tool_bridging.py (ToolBinaryResult)
 #   codex         codex/ ("inputImage" content item -- wire-shape

@@ -81,7 +81,7 @@ class TestAgentRuntimeStartupOwnership:
         await held_runtime._on_room_event(
             "room-1", make_message_event(room_id="room-1")
         )
-        await asyncio.wait_for(until_admitted(held_runtime, "room-1"), timeout=1)
+        await until_admitted(held_runtime, "room-1")
         failed, admitted = start_gate.built
         assert failed.stopped and not failed.started
         assert held_runtime.executions["room-1"] is admitted
@@ -120,7 +120,7 @@ class TestAgentRuntimeStartupOwnership:
 
         start_gate.release.set()
         await joining
-        await asyncio.wait_for(until_admitted(held_runtime, "room-1"), timeout=1)
+        await until_admitted(held_runtime, "room-1")
         withdrawn, admitted = start_gate.built
         assert withdrawn.stopped
         assert held_runtime.executions["room-1"] is admitted

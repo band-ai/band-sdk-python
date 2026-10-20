@@ -40,8 +40,7 @@ DEFAULT_SDK_HOME = "/opt/band"
 # provisioned even though `agent.id` is non-empty. `band.docker.provision`
 # imports this rather than defining its own copy.
 PLACEHOLDER_AGENT_ID = "replace-with-agent-id"
-# The startup chain inherits root's HOME across the privilege drop; every
-# process the launcher starts must see the agent user's home instead.
+# Every customer process uses the workload user's home.
 AGENT_HOME = "/home/agent"
 
 

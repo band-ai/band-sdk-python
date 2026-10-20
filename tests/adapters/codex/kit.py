@@ -671,28 +671,21 @@ class HeldTurnClient(CountingCloseClient):
         )
 
 
+class CleaningTurnInput(BaseModel):
+    """Run work whose cancellation needs asynchronous cleanup."""
+
+
 class CleaningTurnClient(FakeCodexClient):
-    """An app-server whose turn/start never answers; once cancelled it runs
-    a cleanup step that finishes only when ``release`` is set."""
+    """An app-server requesting a tool whose cancelled work needs cleanup."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(events=[tool_call_request(1, "cleaningturn")])
         self.started = asyncio.Event()
         self.cleaning = asyncio.Event()
         self.release = asyncio.Event()
         self.cleanups = 0
 
-    async def request(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        retry_on_overload: bool = True,
-    ) -> dict[str, Any]:
-        if method != CodexRequestMethod.TURN_START:
-            return await super().request(
-                method, params, retry_on_overload=retry_on_overload
-            )
+    async def run_tool(self, args: CleaningTurnInput) -> str:
         self.started.set()
         try:
             await asyncio.Future[None]()
@@ -700,7 +693,7 @@ class CleaningTurnClient(FakeCodexClient):
             self.cleaning.set()
             await self.release.wait()
             self.cleanups += 1
-        raise AssertionError("The cancelled turn cannot start")
+        raise AssertionError("The cancelled tool cannot finish")
 
 
 @dataclass

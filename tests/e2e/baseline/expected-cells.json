@@ -33,7 +33,7 @@
   },
   "cells": [
     {
-      "test": "tests/e2e/baseline/guards/test_adapter_cell.py::test_build_uses_cell_default_then_override",
+      "test": "tests/e2e/baseline/guards/adaptercell/test_adaptercell.py::TestAdapterCell::test_build_uses_cell_default_then_override",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -49,7 +49,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_adapter_cell.py::test_run_as_forwards_override",
+      "test": "tests/e2e/baseline/guards/adaptercell/test_adaptercell.py::TestAdapterCell::test_run_as_forwards_override",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -65,7 +65,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_adapter_cell.py::test_running_forwards_override",
+      "test": "tests/e2e/baseline/guards/adaptercell/test_adaptercell.py::TestAdapterCell::test_running_forwards_override",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -465,7 +465,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_restores_the_level_when_the_scenario_fails",
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_restores_the_level_when_the_scenario_fails",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -481,7 +481,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[debug-run-keeps-debug]",
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_shows_at_least_the_requested_level[debug-run-keeps-debug]",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -497,7 +497,23 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/guards/test_logs.py::test_scope_shows_at_least_the_requested_level[inherited-warning-is-raised]",
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_shows_at_least_the_requested_level[inherited-debug-is-preserved]",
+      "adapter": "suite",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/guards/test_logs.py::TestSdkLogScope::test_scope_shows_at_least_the_requested_level[inherited-warning-is-raised]",
       "adapter": "suite",
       "lanes": [
         "backends",
@@ -564,102 +580,6 @@
       "test": "tests/e2e/baseline/guards/test_strands_provider.py::TestStrandsProvider::test_strands_builder_executes_a_responses_tool_once",
       "adapter": "suite",
       "lanes": [
-        "strands"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_ctx_field_collision_raises_clear_error",
-      "adapter": "suite",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "nooa",
-        "parlant",
-        "strands"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_ctx_param_is_prepended_when_requested",
-      "adapter": "suite",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "nooa",
-        "parlant",
-        "strands"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_factory_default_is_not_shared_across_calls",
-      "adapter": "suite",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "nooa",
-        "parlant",
-        "strands"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_omitted_optionals_use_model_defaults",
-      "adapter": "suite",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "nooa",
-        "parlant",
-        "strands"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_optional_field_before_required_synthesizes_valid_signature",
-      "adapter": "suite",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "nooa",
-        "parlant",
-        "strands"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/guards/test_tool_spec.py::test_supplied_values_are_forwarded",
-      "adapter": "suite",
-      "lanes": [
-        "backends",
-        "core",
-        "crewai",
-        "google",
-        "letta",
-        "nooa",
-        "parlant",
         "strands"
       ],
       "status": "pass",
@@ -780,6 +700,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/adapters/test_a2a_roundtrip.py::test_band_to_band_round_trip_over_real_a2a",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_acp_server_cleanup.py::TestACPServerCleanup::test_embedding_closes_connections_before_its_rest_transport",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1013,6 +942,24 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_slack_cleanup.py::TestSlackCleanup::test_outer_registration_closes_inner_tool_resource[Agent-anthropic]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_slack_cleanup.py::TestSlackCleanup::test_outer_registration_closes_inner_tool_resource[OneShotInvoker-anthropic]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_agent_scenarios.py::test_two_agents_greet_each_other",
       "adapter": "suite",
       "lanes": [
@@ -1022,7 +969,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-accept-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-accept-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1031,7 +978,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-decline-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[auto-decline-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1040,7 +987,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_host_config_policy_settles_tool_use_with_nobody_asked[dont-ask-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_host_config_policy_settles_tool_use_with_nobody_asked[dont-ask-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1049,7 +996,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_question_is_answered_in_free_text_from_the_room",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_question_is_answered_in_free_text_from_the_room",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1058,7 +1005,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -1067,7 +1014,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1076,7 +1023,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_a_session_approval_covers_a_repeat_of_the_same_command",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_a_session_approval_covers_a_repeat_of_the_same_command",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1085,7 +1032,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1094,7 +1041,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -1103,7 +1050,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1112,7 +1059,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_each_of_two_gated_commands_is_decided_on_its_own",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_each_of_two_gated_commands_is_decided_on_its_own",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1121,7 +1068,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_only_an_authorized_member_decides_an_ask",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_only_an_authorized_member_decides_an_ask",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1130,7 +1077,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_only_an_authorized_member_decides_an_ask",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_only_an_authorized_member_decides_an_ask",
       "adapter": "cursor_acp",
       "lanes": [
         "backends"
@@ -1139,7 +1086,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
       "adapter": "claude_sdk",
       "lanes": [
         "core"
@@ -1148,7 +1095,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
       "adapter": "codex",
       "lanes": [
         "backends"
@@ -1157,7 +1104,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_pending_work_preserves_order_without_hiding_an_approval",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_pending_work_preserves_order_without_hiding_an_approval",
       "adapter": "opencode",
       "lanes": [
         "backends"
@@ -1166,7 +1113,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1175,7 +1122,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-codex]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-codex]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1184,7 +1131,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-cursor_acp]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1193,7 +1140,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[approve-opencode]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[approve-opencode]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1202,7 +1149,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1211,7 +1158,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-codex]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-codex]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1220,7 +1167,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-cursor_acp]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1229,7 +1176,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[decline-opencode]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[decline-opencode]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1238,7 +1185,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-claude_sdk]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-claude_sdk]",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1247,7 +1194,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-codex]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-codex]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1256,7 +1203,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-cursor_acp]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-cursor_acp]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1265,7 +1212,7 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_approvals.py::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-opencode]",
+      "test": "tests/e2e/baseline/smoke/behavior/approvals/test_approvals.py::TestApprovals::test_the_room_reply_decides_whether_the_gated_command_runs[timeout-opencode]",
       "adapter": "suite",
       "lanes": [
         "backends"
@@ -1432,7 +1379,16 @@
       "reason": null
     },
     {
-      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::test_room_survives_real_transport_reconnect",
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_a_normal_close_reconnect",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_reconnect.py::TestReconnect::test_room_survives_real_transport_reconnect",
       "adapter": "anthropic",
       "lanes": [
         "core"
@@ -1490,6 +1446,15 @@
       "adapter": "omp_acp",
       "lanes": [
         "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_supersede.py::TestSupersede::test_a_newer_session_ends_the_running_one_for_good",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
       ],
       "status": "pass",
       "reason": null
@@ -2130,6 +2095,303 @@
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
       "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cancellation.py::TestAdapterCancellation::test_cancelled_tool_settles_before_its_resource_closes",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-agno]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-anthropic]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-copilot_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-crewai]",
+      "adapter": "suite",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-gemini]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-google_adk]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-langgraph]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-nooa]",
+      "adapter": "suite",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-pydantic_ai]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[Agent-strands]",
+      "adapter": "suite",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-agno]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-anthropic]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-claude_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-copilot_sdk]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-crewai]",
+      "adapter": "suite",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-gemini]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-google_adk]",
+      "adapter": "suite",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-langgraph]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-nooa]",
+      "adapter": "suite",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-pydantic_ai]",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_cleanup.py::TestAdapterCleanup::test_shared_resource_closes_after_real_tool_turn_and_host_stop[OneShotInvoker-strands]",
+      "adapter": "suite",
       "lanes": [
         "strands"
       ],
@@ -4783,6 +5045,105 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_identity_and_roster.py::test_reports_peer_description_from_passive_roster",
+      "adapter": "strands",
+      "lanes": [
+        "strands"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "agno",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "anthropic",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "claude_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "copilot_sdk",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "crewai",
+      "lanes": [
+        "crewai"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "gemini",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "google_adk",
+      "lanes": [
+        "google"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "langgraph",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "nooa",
+      "lanes": [
+        "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
+      "adapter": "pydantic_ai",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_invoker_draining.py::TestInvokerDraining::test_shutdown_drains_tool_before_closing_its_resource",
       "adapter": "strands",
       "lanes": [
         "strands"

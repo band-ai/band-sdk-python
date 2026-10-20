@@ -67,6 +67,7 @@ class TestOpenCodeLifetime:
                 assert not cleaned.is_set()
                 release.set()
                 await notify
+                await adapter.backend_turns.settled(ROOM_ID)
                 await ctx._join_activity_completion()
                 assert client.aborted_sessions == ["sess-1"]
                 assert cleaned.is_set()

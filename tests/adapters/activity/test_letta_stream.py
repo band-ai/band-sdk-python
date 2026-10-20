@@ -8,7 +8,7 @@ import httpx
 import pytest
 from letta_client import AsyncLetta
 
-from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaRun
 from band.testing import FakeAgentTools
 from band.testing.activity import ActivityRecorder
 from tests.adapters.activity.kit import LettaActivityStream
@@ -41,9 +41,8 @@ class TestLettaStreamActivity:
             adapter._client = client
             task = asyncio.create_task(
                 adapter._call_provider(
-                    "agent",
+                    LettaRun(client, "agent", None),
                     [{"role": "user", "content": "hello"}],
-                    RoomContext(agent_id="agent"),
                     tools,
                 )
             )

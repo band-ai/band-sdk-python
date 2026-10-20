@@ -214,6 +214,11 @@ class AgentToolsProtocol(Protocol):
         ...
 
     @property
+    def agent_id(self) -> str | None:
+        """This agent's id, when the tools are bound to one."""
+        ...
+
+    @property
     def participants(self) -> list[Any]:
         """Read-only snapshot of cached room participants."""
         ...

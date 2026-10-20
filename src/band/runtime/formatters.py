@@ -42,6 +42,19 @@ def format_tokens(tokens: Iterable[str]) -> str:
     return ", ".join(f"`{token}`" for token in tokens)
 
 
+def mention_label(*, handle: str | None, name: str | None) -> str | None:
+    """The whitespace-free label a participant is mentioned as, without ``@``.
+
+    A handle wins. With none on file, whitespace in the display name collapses.
+    """
+    if handle:
+        return handle
+    if not name:
+        return None
+    collapsed = "-".join(name.split())
+    return collapsed or None
+
+
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
     """
     Replace UUID mentions in content with @handle (or @name) using participants list.
@@ -64,8 +77,7 @@ def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
 
     for p in participants:
         participant_id = p.get("id")
-        name = p.get("name")
-        label = p.get("handle") or ("-".join(name.split()) if name else None)
+        label = mention_label(handle=p.get("handle"), name=p.get("name"))
         if participant_id and label:
             content = content.replace(f"@[[{participant_id}]]", f"@{label}")
 
