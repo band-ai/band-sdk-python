@@ -4,10 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from unittest.mock import AsyncMock
 
 import pytest
-from pytest_httpx import HTTPXMock
 
-import band.platform.message_lifecycle as lifecycle
-from band.platform.activity import ActivitySupport
 from band.platform.event import PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
@@ -22,16 +19,8 @@ from tests.runtime.helpers import (
 
 
 @pytest.fixture
-async def activity_platform(
-    monkeypatch: pytest.MonkeyPatch, httpx_mock: HTTPXMock
-) -> AsyncIterator[ActivityPlatform]:
-    monkeypatch.setattr(lifecycle, "activity_support", ActivitySupport())
-    httpx_mock.add_response(
-        url="https://app.band.ai/api/version",
-        json={"agent_version": "1.25.0"},
-        is_optional=True,
-    )
-    yield ActivityPlatform()
+def activity_platform() -> ActivityPlatform:
+    return ActivityPlatform()
 
 
 @pytest.fixture
