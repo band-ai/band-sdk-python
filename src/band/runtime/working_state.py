@@ -1,26 +1,8 @@
-"""Boolean working-state keep-alive reporter.
+"""Serialized working-state and names-only activity for one provider turn.
 
-Owns the per-room "is the agent working" signal for a single reasoning cycle:
-sends ``working: true`` when a cycle starts, refreshes it on a keep-alive
-cadence while the cycle is active, and sends an authoritative ``working: false``
-when the cycle ends. The platform applies a short TTL, so if refreshes stop for
-any reason (crash, disconnect, loop-block) the indicator clears on its own — the
-keep-alive is a *liveness* signal, not a correctness signal.
-
-The reporter is transport-agnostic: it is given an async ``report(working)``
-callback (wired to ``BandLink.report_activity`` by the runtime) and never raises
-into the caller's reasoning loop.
-
-Contract: ``report`` MUST be time-bounded. The reporter awaits it (including the
-authoritative false-send during teardown), so an unbounded callback could wedge
-cycle teardown and cancellation propagation. ``BandLink.report_activity`` applies
-a per-POST timeout to satisfy this.
-
-Cadence accuracy: the keep-alive sleeps ``keep_alive_seconds`` and *then* reports,
-so the effective interval between successful refreshes is
-``keep_alive_seconds + report-latency``. The platform-TTL headroom is preserved by
-the ``cadence < TTL/2`` guard on ``SessionConfig`` (with the per-POST timeout kept
-below the cadence), so even one missed/slow ping stays within the TTL window.
+The boolean callback must be time bounded. It reads immutable detail under the
+same lock as changes and heartbeats. Terminal false is shielded; platform TTL
+backstops failed reports. A duration cap stops refreshes without cancelling work.
 """
 
 from __future__ import annotations
@@ -28,10 +10,63 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Protocol
+
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 
 logger = logging.getLogger(__name__)
 
 ReportFn = Callable[[bool], Awaitable[object]]
+
+
+UNKNOWN_ACTIVITY_TOOL_NAME = "unknown"
+REASONING = AgentActivityDetail(kind="reasoning")
+MEMORY = AgentActivityDetail(kind="memory")
+PERMISSION = AgentActivityDetail(kind="permission")
+
+
+class ActivityObserver(Protocol):
+    async def update(self, activity: AgentActivityDetail) -> None: ...
+
+    async def set_manual_wait(self, waiting: bool) -> None: ...
+
+
+def tool_call_activity(name: str | None) -> AgentActivityDetail:
+    """The platform requires a name on every ``tool_call`` detail."""
+    return AgentActivityDetail(
+        kind="tool_call", name=name or UNKNOWN_ACTIVITY_TOOL_NAME
+    )
+
+
+def names_only(activity: AgentActivityDetail) -> AgentActivityDetail:
+    """Keep only what the room may see: the kind and, for a tool, its name."""
+    if activity.kind == "tool_call":
+        return tool_call_activity(activity.name)
+    return AgentActivityDetail(kind=activity.kind)
+
+
+def _observer(tools: object) -> ActivityObserver | None:
+    return getattr(tools, "_activity_observer", None)
+
+
+async def report_tool_activity(tools: object, name: str) -> None:
+    if observer := _observer(tools):
+        await observer.update(tool_call_activity(name))
+
+
+async def end_tool_activity(tools: object) -> None:
+    if observer := _observer(tools):
+        await observer.update(REASONING)
+
+
+async def report_memory_activity(tools: object) -> None:
+    if observer := _observer(tools):
+        await observer.update(MEMORY)
+
+
+async def set_permission_wait(tools: object, waiting: bool) -> None:
+    if observer := _observer(tools):
+        await observer.set_manual_wait(waiting)
 
 
 def _retrieve_task_error(task: asyncio.Task[None]) -> None:
@@ -60,6 +95,8 @@ class WorkingStateReporter:
         self._enabled = enabled
 
         self._active = False
+        self._ordinary = REASONING
+        self._manual_wait = False
         self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
         self._false_send: asyncio.Future[None] | None = None
@@ -68,19 +105,48 @@ class WorkingStateReporter:
         # (boolean payload carries no sequence number to disambiguate).
         self._lock = asyncio.Lock()
 
+    @property
+    def activity(self) -> AgentActivityDetail:
+        """The immutable effective detail, read by the bool callback under its lock."""
+        return PERMISSION if self._manual_wait else self._ordinary
+
     async def start(self) -> None:
-        """Begin a reasoning cycle: send ``working: true`` and arm keep-alive."""
-        if not self._enabled or self._active:
-            # Re-entrant start while active is a no-op: the signal is already
-            # alive and the keep-alive task is already running.
+        """Begin a cycle after the previous false; a re-entrant start is a no-op."""
+        if not self._enabled:
             return
         await self._finish_false_send()
-        self._active = True
-        self._started_at = asyncio.get_running_loop().time()
-        await self._safe_report(True)
-        self._task = asyncio.create_task(
-            self._keep_alive(), name="working-state-keepalive"
-        )
+        async with self._lock:
+            if self._active:
+                return
+            self._active = True
+            self._reset_detail()
+            self._started_at = asyncio.get_running_loop().time()
+            await self._report_locked(True)
+            if self._active:
+                self._task = asyncio.create_task(
+                    self._keep_alive(), name="working-state-keepalive"
+                )
+
+    async def update(
+        self,
+        *,
+        current: Callable[[], bool],
+        activity: AgentActivityDetail | None = None,
+        waiting: bool | None = None,
+    ) -> None:
+        """Apply an observation; ``current`` rechecks ownership under the lock."""
+        if not self._enabled:
+            return
+        async with self._lock:
+            if not current() or not self._active or self._cap_reached():
+                return
+            previous = self.activity
+            if activity is not None:
+                self._ordinary = names_only(activity)
+            if waiting is not None:
+                self._manual_wait = waiting
+            if self.activity != previous:
+                await self._report_locked(True)
 
     def defer_false_report(self) -> None:
         """Start ``working: false`` and return without waiting for it.
@@ -125,11 +191,16 @@ class WorkingStateReporter:
 
     def _arm_false_report(self) -> asyncio.Task[None] | None:
         self._active = False
+        self._reset_detail()
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
         self._false_send = asyncio.ensure_future(self._safe_report(False))
         return task
+
+    def _reset_detail(self) -> None:
+        self._ordinary = REASONING
+        self._manual_wait = False
 
     async def _finish_false_send(self) -> None:
         send = self._false_send
@@ -176,13 +247,17 @@ class WorkingStateReporter:
         return elapsed >= self._max_working_state_seconds
 
     async def _safe_report(self, working: bool) -> None:
-        """Report under the serialization lock; never raise."""
         async with self._lock:
-            try:
-                await self._report(working)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception(
-                    "working-state report failed (working=%s); swallowing", working
-                )
+            if working and (not self._active or self._cap_reached()):
+                return
+            await self._report_locked(working)
+
+    async def _report_locked(self, working: bool) -> None:
+        try:
+            await self._report(working)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "working-state report failed (working=%s); swallowing", working
+            )

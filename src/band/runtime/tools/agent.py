@@ -74,6 +74,7 @@ from band.runtime.tools.schema import (
     validate_tool_arguments,
 )
 from band.runtime.turn import records_turn_effects
+from band.runtime.working_state import ActivityObserver
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -344,6 +345,7 @@ class AgentTools(AgentToolsProtocol):
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
+        self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
     @property
@@ -384,6 +386,7 @@ class AgentTools(AgentToolsProtocol):
         )
         tools._ctx = ctx
         tools._scope = ctx.current_scope if bind_scope else None
+        tools._activity_observer = ctx.activity_observer(tools._scope)
         tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 

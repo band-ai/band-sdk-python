@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import MessageMetadata
+from band.runtime import resync
 from band.runtime.execution import (
     ExecutionContext,
     ResyncOutcome,
@@ -1035,9 +1037,14 @@ class TestCrashRecoverySync:
         mock_handler.assert_awaited_once()
         assert not ctx._retry_tracker.is_permanently_failed(msg.id)
 
+    @pytest.mark.parametrize("initial_recovery_delay", [0.0, 10.0])
     async def test_startup_backlog_claim_failure_does_not_process_newer_ws_event(
-        self, mock_link_with_next, mock_handler
-    ):
+        self,
+        mock_link_with_next,
+        mock_handler,
+        monkeypatch: pytest.MonkeyPatch,
+        initial_recovery_delay: float,
+    ) -> None:
         """Startup sync should not switch to WebSocket after an unclaimable backlog message."""
 
         backlog_msg = PlatformMessage(
@@ -1063,6 +1070,12 @@ class TestCrashRecoverySync:
             ),
         )
 
+        monkeypatch.setattr(
+            resync,
+            "random",
+            SimpleNamespace(uniform=lambda lower, upper: initial_recovery_delay),
+        )
+
         await ctx.on_event(
             make_message_event(room_id="room-123", msg_id="msg-newer-ws")
         )
@@ -1071,8 +1084,10 @@ class TestCrashRecoverySync:
             lambda: mock_link_with_next.mark_processing.await_count >= 1
         )
 
-        mock_link_with_next.mark_processing.assert_awaited_once_with(
-            "room-123", "msg-older-claim-fails"
+        assert (
+            mock_link_with_next.mark_processing.await_args_list
+            == [call("room-123", "msg-older-claim-fails")]
+            * mock_link_with_next.mark_processing.await_count
         )
         mock_handler.assert_not_called()
         assert ctx._sync_complete is False

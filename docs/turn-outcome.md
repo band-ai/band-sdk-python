@@ -424,3 +424,15 @@ once. It does not rewrite the original delivery's settled acknowledgement.
 Explicit interruption invalidates its activity; leave and shutdown clear the
 indicator while adapter residency retains responsibility for released workers.
 The authoritative idle report finishes before a replacement reports working.
+
+`SessionConfig.enable_working_state` controls both the indicator and activity
+detail, independently of chat narration and tool capabilities. Changes and
+keep-alives share one serialized reporter. The duration cap stops both kinds
+of refresh without cancelling provider work; actual completion still clears.
+
+Detail compatibility is learned from the `X-API-Version` header the platform
+puts on every activity response. Reports stay boolean until a response in the
+process advertises agent API 1.25.0 or later; a missing or older version keeps
+boolean reporting. A detail-bearing HTTP 422 permanently disables detail across
+all links in the process and retries that report once without detail, within
+its original deadline.

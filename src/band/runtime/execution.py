@@ -19,6 +19,7 @@ import contextlib
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
@@ -30,6 +31,7 @@ from typing import (
     runtime_checkable,
 )
 
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_sdk_core import (
     AgentFailure,
     ClaimRegistry,
@@ -84,7 +86,7 @@ from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.resync import ResyncSchedule
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.working_state import WorkingStateReporter
+from band.runtime.working_state import ActivityObserver, WorkingStateReporter
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -282,6 +284,18 @@ class Execution(Protocol):
 ExecutionHandler = Callable[["ExecutionContext", PlatformEvent], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class ScopeActivityObserver:
+    context: ExecutionContext
+    scope: TurnScope
+
+    async def update(self, activity: AgentActivityDetail) -> None:
+        await self.context.observe_activity(self.scope, activity=activity)
+
+    async def set_manual_wait(self, waiting: bool) -> None:
+        await self.context.observe_activity(self.scope, waiting=waiting)
+
+
 class ExecutionContext:
     """
     Default execution: context accumulation model.
@@ -431,11 +445,6 @@ class ExecutionContext:
         self._stopped: bool = False
         # The first stop's graceful result; a retry only settles retained work.
         self._stop_graceful = True
-
-        # Optional seam for clearing user-visible activity state ("reasoning…")
-        # when a cycle is interrupted/stopped. Filled by the activity-signal
-        # work; a no-op (None) here.
-        self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
 
     @property
     def thread_id(self) -> str:
@@ -869,17 +878,6 @@ class ExecutionContext:
             raise CleanupIncompleteError(
                 f"ExecutionContext {self.room_id}: {unfinished} cancelled "
                 "task(s) still running"
-            )
-
-    async def _clear_activity(self) -> None:
-        """Invoke the optional activity-clear seam after an aborted cycle."""
-        if self._on_activity_clear is None:
-            return
-        try:
-            await self._on_activity_clear()
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: activity-clear hook failed", self.room_id
             )
 
     # --- Participant management ---
@@ -1878,6 +1876,7 @@ class ExecutionContext:
         return await self.link.report_activity(
             self.room_id,
             working,
+            activity=self._working_reporter.activity,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
@@ -1942,6 +1941,31 @@ class ExecutionContext:
             self._activity_stop_scope = None
         self._activity_owner = scope
         await self._working_reporter.start()
+
+    def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
+        return ScopeActivityObserver(self, scope) if scope is not None else None
+
+    def owns_activity(self, scope: TurnScope) -> bool:
+        return self._activity_owner is scope and not scope.aborted and not self._closing
+
+    async def observe_activity(
+        self,
+        scope: TurnScope,
+        *,
+        activity: AgentActivityDetail | None = None,
+        waiting: bool | None = None,
+    ) -> None:
+        if (
+            self._activity_owner is None
+            and scope is self.current_scope
+            and not scope.settled
+        ):
+            await self._acquire_activity(scope)
+        await self._working_reporter.update(
+            current=partial(self.owns_activity, scope),
+            activity=activity,
+            waiting=waiting,
+        )
 
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
@@ -2153,7 +2177,6 @@ class ExecutionContext:
         # poisoned into permanently_failed before it's ever actually attempted.
         if msg_id:
             self._retry_tracker.discard_attempt(msg_id)
-        await self._clear_activity()
         if kind is ControlMode.INTERRUPT and msg_id:
             # Consume the message so the idle /next resync does not re-return it
             # (excludes-only-processed) and re-fire the cycle the user just

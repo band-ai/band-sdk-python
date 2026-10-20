@@ -43,14 +43,13 @@ class SessionConfig(BaseSettings):
     # Queue traffic cannot postpone a check; active handlers remain serial.
     idle_resync_seconds: PositiveFiniteSeconds = 60.0
 
-    # --- Working-state (boolean "is the agent reasoning") reporting ---
-    # Kill-switch: disable all working-state reporting instantly if needed.
+    # Indicator and activity detail share this switch, including approval waits.
     enable_working_state: bool = True
     # Keep-alive cadence: how often working:true is refreshed while a cycle runs.
     # Must be < TTL/2 so a single missed/slow ping still lands inside the TTL.
     working_keep_alive_seconds: float = 3.0
-    # Per-POST deadline for each activity report (must be < cadence so a slow
-    # POST can't pile onto the next keep-alive tick).
+    # Total deadline for one report's POST and its compatibility fallback.
+    # Must be < cadence so a slow report cannot pile onto the next tick.
     working_request_timeout_seconds: int = 2
     # Optional upper bound on how long we keep asserting working:true for one
     # cycle. When exceeded we stop refreshing (platform TTL clears it); we never
