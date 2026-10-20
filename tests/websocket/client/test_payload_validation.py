@@ -49,7 +49,7 @@ class TestPayloadValidation:
         assert "Invalid room_added payload" in caplog.text
 
     async def test_rejects_room_added_missing_timestamps(self, caplog):
-        """Regression test for INT-186: room_added without inserted_at/updated_at must be rejected."""
+        """room_added without inserted_at/updated_at must be rejected."""
         client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
         with caplog.at_level(logging.ERROR):

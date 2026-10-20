@@ -3,8 +3,8 @@
 This is the REST half of header-based custody: given the sentinel as its
 ``api_key``, ``BandLink`` must send it in the ``X-API-Key`` request header — the
 slot the Docker Sandboxes proxy replaces with the real credential. The WS half
-(the sentinel riding the ``?api_key=`` query on the upgrade) is proven by the
-in-process peer in ``tests/websocket/client/test_upgrade_errors.py``.
+(the sentinel riding only the ``x-api-key`` header on the upgrade) is proven by
+the in-process peer in ``tests/websocket/client/test_upgrade_errors.py``.
 
 Interception is the maintained ``pytest-httpx`` ``httpx_mock`` fixture, which
 patches httpx globally — so it observes the Fern client's own internally-built
