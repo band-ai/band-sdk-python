@@ -785,6 +785,7 @@ dev = [
     { name = "agent-client-protocol" },
     { name = "agno" },
     { name = "aiohttp" },
+    { name = "aiosqlite" },
     { name = "anthropic" },
     { name = "band-testing-python" },
     { name = "beautifulsoup4" },
@@ -869,6 +870,7 @@ dev-parlant = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
+    { name = "pytest-randomly" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
     { name = "rich", version = "15.0.0", source = { registry = "https://pypi.org/simple" } },
@@ -986,6 +988,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'bridge-agentcore'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
+    { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0,<2" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0,<2" },
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0,<2" },
@@ -1050,8 +1053,8 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "langgraph", marker = "extra == 'dev-strands-nooa'", specifier = ">=1.0.0" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
-    { name = "letta-client", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "letta-client", marker = "extra == 'letta'", specifier = ">=1.0.0" },
+    { name = "letta-client", marker = "extra == 'dev'", specifier = ">=1.7.1" },
+    { name = "letta-client", marker = "extra == 'letta'", specifier = ">=1.7.1" },
     { name = "looptime", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "looptime", marker = "extra == 'dev-crewai'", specifier = ">=0.7" },
     { name = "looptime", marker = "extra == 'dev-parlant'", specifier = ">=0.7" },
@@ -1118,6 +1121,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'dev-crewai'", specifier = ">=3.10.0" },
     { name = "pytest-mock", marker = "extra == 'dev-parlant'", specifier = ">=3.10.0" },
     { name = "pytest-mock", marker = "extra == 'dev-strands-nooa'", specifier = ">=3.10.0" },
+    { name = "pytest-randomly", marker = "extra == 'dev-parlant'", specifier = ">=5.0.0" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev'", specifier = ">=14.0.0" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev-crewai'", specifier = ">=14.0.0" },
     { name = "pytest-rerunfailures", marker = "extra == 'dev-parlant'", specifier = ">=14.0.0" },
@@ -7352,6 +7356,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7a/7f/6ed29931d5c8cd396e7c0a55412e6cc88020373365c8685985dea53d26d7/pytest_mock-3.16.0.tar.gz", hash = "sha256:5a8395528b8f498205f3718f575228d0edaed7425fff638f87d1a6c3e0383636", size = 35362, upload-time = "2026-09-27T14:57:55.46Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/5b/b83a9bf1a3b4ec222f9fa083147ff6816245223da0ab92370e7e056f113f/pytest_mock-3.16.0-py3-none-any.whl", hash = "sha256:007cfeb257801d88d9c0b2a7b5a15a15e73b71968dfd72e7bf8c4a2f8393aec8", size = 10016, upload-time = "2026-09-27T14:57:54.283Z" },
+]
+
+[[package]]
+name = "pytest-randomly"
+version = "5.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/01/3b/6a40e1b9d925651e601e056a97f60d8a1daeddeac03d5609be60cb4362ce/pytest_randomly-5.0.0.tar.gz", hash = "sha256:e9c575a5873ef168ddbe340ed9e97ce9edb4492ccc821e4b2ac6bb1f0ed515d2", size = 8542, upload-time = "2026-09-01T22:34:20.441Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/b4/47e939285caad9a623d021512912ac08dc92a467ad075d179f43729d2934/pytest_randomly-5.0.0-py3-none-any.whl", hash = "sha256:8a0d4703115c0c25b38b6e129fc16b1947b9643ff26a41bc1d185d7e5a7689c1", size = 8920, upload-time = "2026-09-01T22:34:19.227Z" },
 ]
 
 [[package]]

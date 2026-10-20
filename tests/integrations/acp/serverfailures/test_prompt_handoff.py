@@ -8,13 +8,13 @@ from acp.exceptions import RequestError
 from band_sdk_core import AgentFailure
 
 from band.core.types import MessageType
-from tests.integrations.acp.conftest import (
+from tests.integrations.acp.serverfailures.kit import prompt, running_server
+from tests.integrations.acp.serverkit import (
     deliver_server_message,
     failure_event,
     make_platform_message,
     wait_for_pending_prompt,
 )
-from tests.integrations.acp.serverfailures.kit import prompt, running_server
 
 
 class TestPromptHandoff:

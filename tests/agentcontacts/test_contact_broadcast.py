@@ -9,7 +9,7 @@ from band.runtime.contacts import ContactEventConfig, ContactEventStrategy
 class TestAgentContactBroadcast:
     """Tests for Agent contact broadcast behavior."""
 
-    def test_agent_broadcast_enabled_with_disabled_strategy(self, mock_adapter):
+    def test_agent_broadcast_enabled_with_disabled_strategy(self, contact_adapter):
         """DISABLED + broadcast_changes=True should be valid."""
         config = ContactEventConfig(
             strategy=ContactEventStrategy.DISABLED,
@@ -17,7 +17,7 @@ class TestAgentContactBroadcast:
         )
 
         agent = Agent.create(
-            adapter=mock_adapter,
+            adapter=contact_adapter,
             agent_id="test-agent-id",
             api_key="test-api-key",
             contact_config=config,

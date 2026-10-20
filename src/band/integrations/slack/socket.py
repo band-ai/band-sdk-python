@@ -43,9 +43,7 @@ SocketDispatcher = Callable[["SlackApp", dict[str, Any]], Awaitable[None]]
 class SlackSocketListener:
     """One Slack app's Socket Mode websocket lifecycle.
 
-    Holds a started ``SocketModeClient`` and the ``SlackApp`` it belongs
-    to. ``stop()`` cleanly closes the websocket; failure is logged and
-    swallowed so a misbehaving app doesn't block adapter shutdown.
+    Holds the client until shutdown succeeds; the caller owns retries.
     """
 
     def __init__(self, *, app: SlackApp, client: SocketModeClient) -> None:
@@ -58,23 +56,25 @@ class SlackSocketListener:
         return self._client
 
     async def stop(self) -> None:
-        """Close the websocket. Idempotent enough for shutdown paths."""
-        await self._client.disconnect()
+        """Close the SDK client; retain failures for the caller to retry."""
+        await self._client.close()
 
 
 async def start_socket_listeners(
     *,
     apps: Sequence[SlackApp],
+    listeners: list[SlackSocketListener],
     web_client_factory: Callable[[SlackApp], AsyncWebClient],
     dispatcher: SocketDispatcher,
     client_factory: (
         Callable[[SlackApp, AsyncWebClient], SocketModeClient] | None
     ) = None,
     seen_events: SeenEvents | None = None,
-) -> list[SlackSocketListener]:
-    """Open one Socket Mode websocket per ``SlackApp`` and start listening.
+) -> None:
+    """Retain each client before connecting its Socket Mode websocket.
 
     Args:
+        listeners: Host-owned handles, including clients whose connection fails.
         apps: Configured Slack apps. Each must carry an ``app_token``
             (``xapp-...``); validation is the adapter's responsibility.
         web_client_factory: Returns the ``AsyncWebClient`` to use for
@@ -93,46 +93,42 @@ async def start_socket_listeners(
             redeliver the same event across reconnects, so we drop dupes
             before dispatching (parallel to the HTTP route's dedup).
 
-    Returns:
-        Connected listeners, in input order, so ``SlackAdapter`` can hold
-        the handles for ``close()`` teardown.
-
     Raises:
         ImportError: If ``slack-sdk`` or ``aiohttp`` is unavailable; only
             triggered when ``transport="socket"``.
     """
     factory = client_factory or _default_client_factory
     seen_events = seen_events or SeenEvents()
-    listeners: list[SlackSocketListener] = []
     for app in apps:
         web_client = web_client_factory(app)
         client = factory(app, web_client)
+        listeners.append(SlackSocketListener(app=app, client=client))
         client.socket_mode_request_listeners.append(
             _make_request_handler(
                 app=app, dispatcher=dispatcher, seen_events=seen_events
             )
         )
         await client.connect()
-        listeners.append(SlackSocketListener(app=app, client=client))
         logger.info(
             "Slack Socket Mode connected (app=%s)",
             app.slug,
         )
-    return listeners
 
 
 def _default_client_factory(
     app: SlackApp, web_client: AsyncWebClient
 ) -> SocketModeClient:
     try:
-        from slack_sdk.socket_mode.aiohttp import SocketModeClient  # noqa: PLC0415
+        from band.integrations.slack.socketclient import (  # noqa: PLC0415 -- optional Slack/aiohttp extra
+            SettlingSocketModeClient,
+        )
     except ImportError as exc:  # pragma: no cover — import-time guard
         raise ImportError(
             "Socket Mode requires aiohttp. Install with "
             "`uv add aiohttp` (or `pip install aiohttp`); slack-sdk's "
             "aiohttp Socket Mode client depends on it."
         ) from exc
-    return SocketModeClient(app_token=app.app_token, web_client=web_client)
+    return SettlingSocketModeClient(app_token=app.app_token, web_client=web_client)
 
 
 def _make_request_handler(

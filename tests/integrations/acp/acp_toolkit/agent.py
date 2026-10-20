@@ -10,6 +10,7 @@ from typing import Any
 
 from acp import RequestError
 from acp.agent.connection import AgentSideConnection
+from acp.connection import StreamDirection, StreamEvent
 from acp.helpers import (
     plan_entry,
     start_tool_call,
@@ -56,6 +57,10 @@ PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[
     ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
 ]
+
+# How ``FakeACPAgent.lifecycle`` records a cancel and a connection exit.
+CANCEL_RECORD = "session/cancel"
+EXIT_RECORD = "connection exit"
 
 # The option ids Copilot CLI publishes its model and effort selects under.
 MODEL_OPTION_ID = "model"
@@ -136,6 +141,8 @@ class FakeACPAgent:
         self.closed_sessions: list[str] = []
         self.cancelled_sessions: list[str] = []
         self.approved: bool | None = None
+        # Each session/cancel received and each connection exit, in order.
+        self.lifecycle: list[str] = []
 
     # -- scripting ---------------------------------------------------------------
 
@@ -694,6 +701,7 @@ class FakeACPAgent:
         )
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        """Record cancellation; scripts control how the prompt responds."""
         del kwargs
         self.cancelled_sessions.append(session_id)
 
@@ -770,6 +778,14 @@ class FakeACPAgent:
         """The value the agent currently has selected for ``option_id``."""
         option = find_select(self._config_options, option_id)
         return option.current_value if option is not None else None
+
+    def record_client_send(self, event: StreamEvent) -> None:
+        """Record cancellation sends in order with connection teardown."""
+        message = event.message
+        if event.direction is not StreamDirection.OUTGOING:
+            return
+        if message.get("method") == CANCEL_RECORD:
+            self.lifecycle.append(f"{CANCEL_RECORD} {message['params']['sessionId']}")
 
     async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Record that the client closed a session before prompting it."""

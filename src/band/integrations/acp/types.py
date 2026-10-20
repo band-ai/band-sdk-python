@@ -257,7 +257,8 @@ class PendingACPPrompt:
         session_id: The ACP session identifier.
         done_event: Signals when the prompt has ended.
         outcome: The first terminal result, once settled.
-        completion_task: Debounced completion task for multi-message replies.
+        completion_task: Debounced completion task for multi-message replies;
+            kept after the prompt ends so its request can join it.
         posted: True once the room accepted this prompt's post.
         reply_started: True once a text reply has opened the grace window.
     """
@@ -272,7 +273,6 @@ class PendingACPPrompt:
     def finish(self, outcome: PromptOutcome | None) -> None:
         """Stop the grace timer and mark the prompt as ended."""
         completion_task = self.completion_task
-        self.completion_task = None
         if (
             completion_task is not None
             and completion_task is not asyncio.current_task()

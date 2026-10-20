@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.exceptions import CleanupIncompleteError, RoomClosingError
+from band.core.exceptions import RoomClosingError
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,
@@ -15,7 +15,6 @@ from tests.integrations.acp.acp_toolkit import (
 from tests.integrations.acp.roomownership.kit import (
     TEST_GUARD_S,
     restart,
-    stop_budget,
 )
 from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
@@ -31,20 +30,20 @@ class TestDirectStop:
         agent = FakeACPAgent().will_say("ok")
         stopped, closing = asyncio.Event(), asyncio.Event()
         backend = FakeBandMCPBackend(stop_started=closing, stop_release=stopped)
+        config = fake_agent_config(inject_band_tools=True)
         with backends_created_by(backend) as starts:
-            async with acp_adapter(agent, stop_budget()) as session:
-                await session.send("hello")
-                stopping = asyncio.create_task(session.adapter.stop())
-                await closing.wait()
-                stopping.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await stopping
-
-                with pytest.raises(CleanupIncompleteError, match="MCP backend"):
-                    await session.adapter.stop()
-                assert len(starts.requested) == 1
-
-                stopped.set()
+            async with acp_adapter(agent, config) as session:
+                try:
+                    await session.send("hello")
+                    stopping = asyncio.create_task(session.adapter.stop())
+                    await closing.wait()
+                    stopping.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await stopping
+                    assert backend.stop_calls == 1
+                    assert len(starts.requested) == 1
+                finally:
+                    stopped.set()
                 await session.adapter.stop()
                 await restart(session)
                 reply = await session.send("again")
@@ -58,8 +57,9 @@ class TestDirectStop:
         agent = FakeACPAgent().will_say("ok")
         backend = FakeBandMCPBackend()
         backend.fail_stops = 1
+        config = fake_agent_config(inject_band_tools=True)
         with backends_created_by(backend) as starts:
-            async with acp_adapter(agent, stop_budget()) as session:
+            async with acp_adapter(agent, config) as session:
                 await session.send("hello")
                 with pytest.raises(OSError, match="stop failed"):
                     await session.adapter.stop()

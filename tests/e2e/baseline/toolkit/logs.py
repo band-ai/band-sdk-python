@@ -8,6 +8,22 @@ from contextlib import contextmanager
 from types import ModuleType
 
 from band.logging_config import more_verbose
+from tests.e2e.baseline.settings import BaselineSettings
+
+
+def apply_run_log_level() -> None:
+    """Raise the Band and Parlant loggers to this run's diagnostic level.
+
+    Parlant sets its own level while the server boots, so call this again after
+    the server is ready. An empty ``BAND_E2E_LOG_LEVEL`` leaves both loggers
+    alone.
+    """
+    level_name = BaselineSettings().run.log_level.strip()
+    if not level_name:
+        return
+    level = logging.getLevelNamesMapping()[level_name.upper()]
+    for name in ("band", "parlant"):
+        logging.getLogger(name).setLevel(level)
 
 
 @contextmanager
