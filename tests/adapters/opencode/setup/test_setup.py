@@ -19,6 +19,7 @@ from tests.adapters.opencode.helpers import (
     event_message_updated,
     event_session_idle,
     event_text_part,
+    idle_client,
     make_platform_message,
     run_single_turn,
     tools_protocol,
@@ -70,9 +71,7 @@ class TestSetup:
                 return "agent-123"
 
         fake_backend = FakeBandMCPBackend()
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
 
         with backends_created_by(fake_backend):
@@ -152,9 +151,7 @@ class TestSetup:
         registrations globally. Every turn therefore denies the shared `band_*`
         namespace and re-allows only this agent's own registration -- in that order,
         because OpenCode applies the LAST matching rule."""
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = make_adapter(fake_client)
 
         await run_single_turn(adapter, tools)
@@ -315,9 +312,7 @@ class TestSetup:
     async def test_replaces_session_from_another_mcp_registration(
         self, make_adapter, tools
     ) -> None:
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = make_adapter(fake_client)
 
         await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -387,9 +382,7 @@ class TestSetup:
         bare adapter (no capabilities) must not expose them."""
         with backends_created_by() as starts:
             bare_adapter = OpencodeAdapter(
-                client_factory=lambda _config: FakeOpencodeClient(
-                    prompt_event_sequences=[[event_session_idle("sess-1")]]
-                ),
+                client_factory=lambda _config: idle_client(),
             )
             await bare_adapter.on_started("OpenCode Agent", "A coding agent")
             await deliver_message(
@@ -405,9 +398,7 @@ class TestSetup:
             await bare_adapter.on_cleanup("room-1")
 
             full_adapter = OpencodeAdapter(
-                client_factory=lambda _config: FakeOpencodeClient(
-                    prompt_event_sequences=[[event_session_idle("sess-1")]]
-                ),
+                client_factory=lambda _config: idle_client(),
                 capabilities={Capability.MEMORY, Capability.CONTACTS},
             )
             await full_adapter.on_started("OpenCode Agent", "A coding agent")
@@ -459,9 +450,7 @@ class TestSetup:
         """The per-turn system prompt must name the current chat_id (band MCP
         tool schemas require a chat_id argument, so an untold model cannot
         call any platform tool) and the requester."""
-        fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_session_idle("sess-1")]]
-        )
+        fake_client = idle_client()
         adapter = make_adapter(fake_client)
 
         await run_single_turn(adapter, tools)
