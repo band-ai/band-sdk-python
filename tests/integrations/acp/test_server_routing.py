@@ -33,11 +33,8 @@ from acp.schema import (
 
 from band.integrations.acp.server import ACPServer, run_acp_server
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from tests.integrations.acp.conftest import (
-    has_pending_prompt,
-    wait_for_pending_prompt,
-    wait_for_prompt_post,
-)
+from tests.integrations.acp.conftest import has_pending_prompt, wait_for_prompt_post
+from tests.integrations.acp.serverkit import wait_for_pending_prompt
 
 # Substituted with the live session id at dispatch time.
 SESSION = "<session>"

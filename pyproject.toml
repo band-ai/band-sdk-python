@@ -194,6 +194,7 @@ nooa = [
 # tool.uv.conflicts. To run crewai tests: uv sync --extra dev-crewai. To run
 # parlant tests: uv sync --extra dev-parlant.
 dev = [
+    "aiosqlite>=0.21.0",  # Exercise the shared-database customer example.
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

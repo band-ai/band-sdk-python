@@ -14,7 +14,7 @@ from band.integrations.acp.client_adapter import (
 from band.integrations.mcp import BandMCPTransport
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from tests.integrations.acp.clientadapter.kit import CODEX
-from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.acp.serverkit import make_platform_message
 from tests.mcpbackends import backends_created_by
 from tests.mcpclient import endpoint_path
 

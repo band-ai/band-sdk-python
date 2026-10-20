@@ -304,13 +304,29 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         logger.debug("Cleaned up gateway resources for room %s", room_id)
 
     async def cleanup_all(self) -> None:
-        """Fail in-flight requests and stop the self-hosted HTTP server."""
-        for room_id in list(self._pending_tasks):
-            pending = self._pending_tasks.pop(room_id)
-            await pending.fail("Gateway shut down before the Band response completed")
+        """Fail responses and join the server's executors, retaining failed steps."""
+        errors: list[Exception] = []
+        for room_id, pending in list(self._pending_tasks.items()):
+            try:
+                await pending.fail(
+                    "Gateway shut down before the Band response completed"
+                )
+            except Exception as exc:  # noqa: BLE001 -- retain failed responses and continue teardown
+                errors.append(exc)
+            else:
+                if self._pending_tasks.get(room_id) is pending:
+                    del self._pending_tasks[room_id]
         if self._server:
-            await self._server.stop()
-            self._server = None
+            try:
+                await self._server.stop()
+            except Exception as exc:  # noqa: BLE001 -- preserve both response and server errors
+                errors.append(exc)
+            else:
+                self._server = None
+        if errors:
+            raise ExceptionGroup(
+                "A2A gateway cleanup failed; retry host shutdown", errors
+            )
         logger.info("Gateway adapter stopped")
 
     def _resolve_peer(self, peer_id: str) -> Peer | None:

@@ -43,4 +43,4 @@ class TestModelSelectionCheckOnStart:
         with pytest.raises(ModelSelectionError, match='model "gpt-9"'):
             await Agent(runtime=mock_runtime, adapter=adapter).start()
 
-        assert "Adapter cleanup_all failed" in caplog.text
+        assert "Adapter disposal failed" in caplog.text
