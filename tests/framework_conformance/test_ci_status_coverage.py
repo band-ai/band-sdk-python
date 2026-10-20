@@ -70,3 +70,11 @@ class TestCiStatusCoverage:
             job for job, allowed in allowed_results().items() if "skipped" in allowed
         }
         assert may_skip == pr_only_jobs()
+
+    def test_gate_requires_exactly_the_merge_queue_jobs(self) -> None:
+        must_pass = {
+            job
+            for job, allowed in allowed_results().items()
+            if "skipped" not in allowed
+        }
+        assert must_pass == {"lint", "test", "test-crewai", "test-parlant"}
