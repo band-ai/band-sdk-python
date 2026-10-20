@@ -18,6 +18,8 @@ from pydantic import (
 )
 from typing_extensions import Unpack
 
+from band.runtime.working_state import tool_activity
+
 try:
     from google import genai  # type: ignore[missing-module-attribute]
     from google.genai import types  # type: ignore[missing-import]
@@ -541,51 +543,54 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             tool_input = dict(function_call.args or {})
             tool_call_id = function_call.id or f"gemini_tool_call_{index}"
 
-            if Emit.TOOL_CALLS in self.features.emit:
-                try:
-                    await tools.send_event(
-                        content=json.dumps(
-                            {
-                                ToolEventKey.NAME: tool_name,
-                                ToolEventKey.ARGS: redact_tool_call_args(
-                                    tool_name, tool_input
-                                ),
-                                ToolEventKey.TOOL_CALL_ID: tool_call_id,
-                            }
-                        ),
-                        message_type="tool_call",
-                    )
-                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                    logger.warning("Failed to send tool_call event: %s", e)
+            async with tool_activity(tools, tool_name):
+                if Emit.TOOL_CALLS in self.features.emit:
+                    try:
+                        await tools.send_event(
+                            content=json.dumps(
+                                {
+                                    ToolEventKey.NAME: tool_name,
+                                    ToolEventKey.ARGS: redact_tool_call_args(
+                                        tool_name, tool_input
+                                    ),
+                                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
+                                }
+                            ),
+                            message_type="tool_call",
+                        )
+                    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                        logger.warning("Failed to send tool_call event: %s", e)
 
-            response_parts: list[types.FunctionResponsePart] | None = None
-            try:
-                custom_tool = find_custom_tool(self._custom_tools, tool_name)
-                if custom_tool:
-                    result = await execute_custom_tool(
-                        custom_tool, tool_input, turn=tools.turn
+                response_parts: list[types.FunctionResponsePart] | None = None
+                try:
+                    custom_tool = find_custom_tool(self._custom_tools, tool_name)
+                    if custom_tool:
+                        result = await execute_custom_tool(
+                            custom_tool, tool_input, turn=tools.turn
+                        )
+                    else:
+                        result = await tools.execute_tool_call(tool_name, tool_input)
+                    if is_image_passthrough_result(tool_name, result):
+                        response_parts = _image_function_response_parts(result)
+                        result_str = image_block_placeholder(len(response_parts))
+                    else:
+                        result_str = (
+                            json.dumps(result, default=str)
+                            if not isinstance(result, str)
+                            else result
+                        )
+                    is_error = False
+                except ValidationError as exc:
+                    errors = format_validation_error(exc)
+                    result_str = f"Invalid arguments for {tool_name}: {errors}"
+                    is_error = True
+                    logger.warning(
+                        "Validation error for tool %s: %s", tool_name, errors
                     )
-                else:
-                    result = await tools.execute_tool_call(tool_name, tool_input)
-                if is_image_passthrough_result(tool_name, result):
-                    response_parts = _image_function_response_parts(result)
-                    result_str = image_block_placeholder(len(response_parts))
-                else:
-                    result_str = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-                is_error = False
-            except ValidationError as exc:
-                errors = format_validation_error(exc)
-                result_str = f"Invalid arguments for {tool_name}: {errors}"
-                is_error = True
-                logger.warning("Validation error for tool %s: %s", tool_name, errors)
-            except Exception as e:
-                result_str = f"Error: {e}"
-                is_error = True
-                logger.exception("Tool %s failed", tool_name)
+                except Exception as e:
+                    result_str = f"Error: {e}"
+                    is_error = True
+                    logger.exception("Tool %s failed", tool_name)
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(

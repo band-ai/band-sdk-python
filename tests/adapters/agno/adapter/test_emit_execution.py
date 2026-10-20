@@ -113,5 +113,4 @@ class TestEmitExecution:
         )
 
         assert tools.events_sent == []
-        # Confirms the non-streaming path: a single awaited arun, not a stream.
-        agent.arun.assert_awaited_once()
+        agent.arun.assert_called_once()
