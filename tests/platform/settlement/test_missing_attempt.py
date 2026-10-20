@@ -15,12 +15,8 @@ from tests.platform.settlement.kit import (
     Reply,
     SettlementPeer,
     Terminal,
-    error_body,
+    unprocessable,
 )
-
-
-def unprocessable(code: str, details: dict[str, object]) -> Reply:
-    return Reply.of_json(422, error_body(code, details))
 
 
 class TestMissingAttempt:

@@ -6,7 +6,13 @@ import pytest
 
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
-from tests.platform.settlement.kit import Reply, SettlementPeer, Terminal, error_body
+from tests.platform.settlement.kit import (
+    NOT_FOUND,
+    Reply,
+    SettlementPeer,
+    Terminal,
+    error_body,
+)
 
 
 class TestNotFound:
@@ -14,11 +20,7 @@ class TestNotFound:
         ("reply", "expected"),
         [
             pytest.param(Reply(404), SettlementResult.UNCONFIRMED, id="empty-body"),
-            pytest.param(
-                Reply.of_json(404, error_body("not_found")),
-                SettlementResult.NOT_FOUND,
-                id="valid-error",
-            ),
+            pytest.param(NOT_FOUND, SettlementResult.NOT_FOUND, id="valid-error"),
             pytest.param(
                 Reply.of_json(404, error_body("route_not_found")),
                 SettlementResult.UNCONFIRMED,
@@ -41,7 +43,7 @@ class TestNotFound:
             ),
         ],
     )
-    async def test_a_404_is_not_found(
+    async def test_a_404_is_not_found_only_when_it_carries_the_not_found_error(
         self,
         terminal: Terminal,
         settlement_peer: SettlementPeer,

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import pytest
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -21,8 +22,12 @@ from band.client.streaming import DeliveryStatus
 from band.core.settlement import SettlementResult
 from band.platform.link import BandLink
 from band.platform.message_lifecycle import (
+    NOT_FOUND_ERROR_CODE,
     PROCESSING_ATTEMPT_POINTER,
     VALIDATION_ERROR_CODE,
+)
+from band.platform.message_lifecycle import (
+    logger as lifecycle_logger,
 )
 
 ROOM_ID = "room-1"
@@ -70,13 +75,27 @@ def accepted(action: DeliveryStatus, *, success: bool = True) -> Reply:
     )
 
 
-MISSING_ATTEMPT = Reply.of_json(
-    422,
-    error_body(
-        VALIDATION_ERROR_CODE,
-        {PROCESSING_ATTEMPT_POINTER: ["No active processing attempt."]},
-    ),
+MISSING_ATTEMPT_ERROR = error_body(
+    VALIDATION_ERROR_CODE,
+    {PROCESSING_ATTEMPT_POINTER: ["No active processing attempt."]},
 )
+NOT_FOUND_ERROR = error_body(NOT_FOUND_ERROR_CODE)
+MISSING_ATTEMPT = Reply.of_json(422, MISSING_ATTEMPT_ERROR)
+NOT_FOUND = Reply.of_json(404, NOT_FOUND_ERROR)
+
+
+def unprocessable(code: str, details: dict[str, Any]) -> Reply:
+    return Reply.of_json(422, error_body(code, details))
+
+
+def outcome_levels(caplog: pytest.LogCaptureFixture) -> list[int]:
+    """Levels of the terminal-write outcome records, identified by their result."""
+    return [
+        record.levelno
+        for record in caplog.records
+        if record.name == lifecycle_logger.name
+        and any(isinstance(arg, SettlementResult) for arg in record.args or ())
+    ]
 
 
 class SettlementPeer:

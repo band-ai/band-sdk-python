@@ -6,64 +6,85 @@ import logging
 
 import pytest
 
+from band.client.streaming import DeliveryStatus
 from band.platform.link import BandLink
-from band.platform.message_lifecycle import UNCONFIRMED_WRITE_LIMIT
+from band.platform.message_lifecycle import UNCONFIRMED_WRITE_LIMIT, logger
 from tests.platform.settlement.kit import (
     MESSAGE_ID,
+    MISSING_ATTEMPT,
+    NOT_FOUND,
     Reply,
     SettlementPeer,
     Terminal,
     accepted,
+    link_over,
+    outcome_levels,
+    refused_rest_client,
 )
 
-LIFECYCLE_LOGGER = "band.platform.message_lifecycle"
 OUTAGE = Reply(503)
 
 
 @pytest.fixture(autouse=True)
 def capture_lifecycle_log(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.DEBUG, logger=LIFECYCLE_LOGGER)
+    caplog.set_level(logging.DEBUG, logger=logger.name)
 
 
-def outcome_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record
-        for record in caplog.records
-        if record.name == LIFECYCLE_LOGGER and " ended " in record.getMessage()
-    ]
+async def record_distinct_intents(
+    terminal: Terminal, link: BandLink, count: int
+) -> list[Terminal]:
+    intents = [Terminal(terminal.action, f"intent-{index}") for index in range(count)]
+    for intent in intents:
+        await intent.detailed(link)
+    return intents
 
 
 class TestOutageLogging:
-    async def test_old_intents_expire_but_recent_retries_stay_quiet(
+    @pytest.mark.parametrize(
+        ("extra_intents", "expected"),
+        [
+            pytest.param(0, logging.DEBUG, id="at-the-limit"),
+            pytest.param(1, logging.WARNING, id="over-the-limit"),
+        ],
+    )
+    async def test_the_oldest_intent_is_forgotten_only_past_the_limit(
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        caplog: pytest.LogCaptureFixture,
+        extra_intents: int,
+        expected: int,
+    ) -> None:
+        settlement_peer.reply = OUTAGE
+        oldest, *_ = await record_distinct_intents(
+            terminal, link, UNCONFIRMED_WRITE_LIMIT + extra_intents
+        )
+        caplog.clear()
+
+        await oldest.detailed(link)
+
+        assert outcome_levels(caplog) == [expected]
+
+    async def test_a_recent_retry_keeps_its_intent_out_of_eviction(
         self,
         terminal: Terminal,
         settlement_peer: SettlementPeer,
         link: BandLink,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        settlement_peer.reply = Reply(400)
-        oldest = Terminal(terminal.action, "oldest")
-        await oldest.detailed(link)
-        await terminal.detailed(link)
-        for index in range(UNCONFIRMED_WRITE_LIMIT - 2):
-            await Terminal(terminal.action, f"pending-{index}").detailed(link)
-        await terminal.detailed(link)
-        await Terminal(terminal.action, "newest").detailed(link)
-        await Terminal(terminal.action, "next-newest").detailed(link)
+        settlement_peer.reply = OUTAGE
+        retried, evicted, *_ = await record_distinct_intents(
+            terminal, link, UNCONFIRMED_WRITE_LIMIT
+        )
+        await retried.detailed(link)
+        await Terminal(terminal.action, "overflow").detailed(link)
         caplog.clear()
 
-        await terminal.detailed(link)
+        await retried.detailed(link)
+        await evicted.detailed(link)
 
-        assert [record.levelno for record in outcome_records(caplog)] == [logging.DEBUG]
-
-        await oldest.detailed(link)
-
-        records = outcome_records(caplog)
-        assert [record.levelno for record in records] == [
-            logging.DEBUG,
-            logging.WARNING,
-        ]
-        assert "oldest" in records[-1].getMessage()
+        assert outcome_levels(caplog) == [logging.DEBUG, logging.WARNING]
 
     async def test_the_first_unconfirmed_write_of_an_intent_warns(
         self,
@@ -96,10 +117,36 @@ class TestOutageLogging:
         await terminal.detailed(link)
         await terminal.detailed(link)
 
-        assert [record.levelno for record in outcome_records(caplog)] == [
-            logging.DEBUG,
-            logging.DEBUG,
-        ]
+        assert outcome_levels(caplog) == [logging.DEBUG, logging.DEBUG]
+
+    async def test_repeated_transport_failures_of_the_same_intent_stay_quiet(
+        self, terminal: Terminal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async with refused_rest_client() as rest:
+            link = link_over(rest)
+            await terminal.detailed(link)
+            await terminal.detailed(link)
+
+        assert outcome_levels(caplog) == [logging.WARNING, logging.DEBUG]
+
+    async def test_the_two_terminal_actions_of_a_message_are_separate_intents(
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        settlement_peer.reply = OUTAGE
+        other_action = (
+            DeliveryStatus.FAILED
+            if terminal.action is DeliveryStatus.PROCESSED
+            else DeliveryStatus.PROCESSED
+        )
+
+        await terminal.detailed(link)
+        await Terminal(other_action).detailed(link)
+
+        assert outcome_levels(caplog) == [logging.WARNING, logging.WARNING]
 
     async def test_an_outage_after_a_recovered_write_warns_again(
         self,
@@ -117,9 +164,7 @@ class TestOutageLogging:
         settlement_peer.reply = OUTAGE
         await terminal.detailed(link)
 
-        assert [record.levelno for record in outcome_records(caplog)] == [
-            logging.WARNING
-        ]
+        assert outcome_levels(caplog) == [logging.WARNING]
 
     async def test_a_changed_failure_cause_warns_again(
         self,
@@ -136,7 +181,27 @@ class TestOutageLogging:
         await terminal.detailed(link)
         await terminal.detailed(link)
 
-        assert [record.levelno for record in outcome_records(caplog)] == [
-            logging.WARNING,
-            logging.DEBUG,
-        ]
+        assert outcome_levels(caplog) == [logging.WARNING, logging.DEBUG]
+
+    @pytest.mark.parametrize(
+        "definitive", [NOT_FOUND, MISSING_ATTEMPT], ids=["not-found", "rejected"]
+    )
+    async def test_a_definitive_result_always_warns_and_forgets_the_outage(
+        self,
+        terminal: Terminal,
+        settlement_peer: SettlementPeer,
+        link: BandLink,
+        caplog: pytest.LogCaptureFixture,
+        definitive: Reply,
+    ) -> None:
+        settlement_peer.reply = OUTAGE
+        await terminal.detailed(link)
+        caplog.clear()
+
+        settlement_peer.reply = definitive
+        await terminal.detailed(link)
+        await terminal.detailed(link)
+        settlement_peer.reply = OUTAGE
+        await terminal.detailed(link)
+
+        assert outcome_levels(caplog) == [logging.WARNING] * 3
