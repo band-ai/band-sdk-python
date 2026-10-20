@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter
-from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
+from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
 from band.adapters.opencode.approvals import DECLINED_QUESTION_ANSWER
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
@@ -240,6 +240,29 @@ def agent_input(content: str, tools: FakeAgentTools) -> AgentInput:
     )
 
 
+class ObservedOpencodeAdapter(OpencodeAdapter):
+    """Expose watcher readiness without replacing its deadline logic."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.watcher_started = asyncio.Event()
+        self.background_tasks: set[asyncio.Task[Any]] = set()
+
+    def record_background_task(self) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        self.background_tasks.add(task)
+
+    async def _run_event_loop(self) -> None:
+        self.record_background_task()
+        await super()._run_event_loop()
+
+    async def _await_turn(self, turn: TurnState) -> None:
+        self.record_background_task()
+        self.watcher_started.set()
+        await super()._await_turn(turn)
+
+
 class RaisingSendTools(FakeAgentTools):
     """FakeAgentTools whose send_notice always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
@@ -407,6 +430,11 @@ class FakeOpencodeClient:
         await self._queue.put(None)
 
 
+def idle_client() -> FakeOpencodeClient:
+    """A client whose single prompt goes straight to idle."""
+    return FakeOpencodeClient(prompt_event_sequences=[[event_session_idle("sess-1")]])
+
+
 class AnyHTTPStatusError(httpx.HTTPStatusError):
     def __init__(self, status_code: int, session_id: str) -> None:
         request = httpx.Request("GET", f"http://localhost/session/{session_id}")
@@ -434,6 +462,9 @@ class BandMCPCalls:
 
 #: Virtual seconds an ask waits for a human in looptime tests.
 ASK_DEADLINE_S = 60.0
+
+#: Virtual ``turn_timeout_s`` compute budget in looptime turn tests.
+COMPUTE_BUDGET_S = 8.0
 
 
 async def time_passes(seconds: float) -> None:

@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 import pytest
-from typing_extensions import Unpack
+import pytest_asyncio
 
-from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import FeatureKwargs
-from band.runtime.custom_tools import CustomToolDef
+from band.adapters.opencode import OpencodeAdapter
 from band.testing import FakeAgentTools
-from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls, FakeOpencodeClient
+from tests.adapters.opencode.helpers import AskFactory, BandMCPCalls
+from tests.adapters.opencode.ownership import AdapterOwner
 from tests.mcpbackends import BackendStarts, backends_created_by
 
 
@@ -27,25 +26,14 @@ def tools() -> FakeAgentTools:
     return FakeAgentTools()
 
 
-@pytest.fixture
-def make_adapter() -> Callable[..., OpencodeAdapter]:
+@pytest_asyncio.fixture(loop_scope="function")
+async def make_adapter(
+    fake_band_mcp_backends: BackendStarts,
+) -> AsyncIterator[Callable[..., OpencodeAdapter]]:
     """Build an adapter around the scenario's fake OpenCode client."""
 
-    def build(
-        client: FakeOpencodeClient,
-        *,
-        config: OpencodeAdapterConfig | None = None,
-        additional_tools: list[CustomToolDef] | None = None,
-        **features: Unpack[FeatureKwargs],
-    ) -> OpencodeAdapter:
-        return OpencodeAdapter(
-            config=config,
-            additional_tools=additional_tools,
-            client_factory=lambda _: client,
-            **features,
-        )
-
-    return build
+    async with AdapterOwner() as adapters:
+        yield adapters.create
 
 
 @pytest.fixture(autouse=True)
