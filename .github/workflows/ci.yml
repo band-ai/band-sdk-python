@@ -494,25 +494,39 @@ jobs:
       run: python3 .github/scripts/check-wheel-extras.py dist/band_sdk-*.whl --case ${{ matrix.case }}
 
   ci-status:
-    # The one required CI check: every other job in this file is listed in needs
-    # (tests/framework_conformance/test_ci_status_coverage.py enforces it).
+    # The one required CI check. Every other job in this file is in needs and in
+    # the loop below with the results it may end in
+    # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
+    # lint must succeed, so a draft run, which skips every job, is red.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
     needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
     runs-on: ubuntu-latest
     steps:
-    - name: Fail if any job failed or was cancelled
-      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-      env:
-        RESULTS: ${{ toJSON(needs) }}
+    - name: Verify every CI job passed
       run: |
-        echo "$RESULTS"
-        echo "::error::A required job failed or was cancelled"
-        exit 1
-
-    - name: Fail if nothing ran
-      # lint runs on every ready PR and every queue entry; skipped means a draft run.
-      if: needs.lint.result != 'success'
-      run: |
-        echo "::error::lint did not succeed: a draft pull request runs no CI"
-        exit 1
+        set -euo pipefail
+        failed=0
+        for entry in \
+          "lint:${{ needs.lint.result }}:success" \
+          "test:${{ needs.test.result }}:success" \
+          "test-crewai:${{ needs.test-crewai.result }}:success" \
+          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success" \
+          "test-parlant:${{ needs.test-parlant.result }}:success" \
+          "packaging:${{ needs.packaging.result }}:success" \
+          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success" \
+          "wheel-extras:${{ needs.wheel-extras.result }}:success"; do
+          job="${entry%%:*}"
+          remainder="${entry#*:}"
+          result="${remainder%%:*}"
+          allowed="${remainder#*:}"
+          case "|$allowed|" in
+            *"|$result|"*) printf 'ok      %-18s %s\n' "$job" "$result" ;;
+            *) printf 'FAILED  %-18s %s (expected %s)\n' "$job" "$result" "$allowed"; failed=1 ;;
+          esac
+        done
+        if [ "$failed" -ne 0 ]; then
+          echo "::error::one or more CI jobs did not pass"
+          exit 1
+        fi
+        echo "All CI jobs passed."
