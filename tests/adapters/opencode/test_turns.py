@@ -52,6 +52,12 @@ from tests.adapters.opencode.helpers import (
     wait_for,
 )
 from tests.adapters.usage_events import recorded_usage_payloads
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
+from tests.toolkit.timecontrol import controlled_clock
+
+DELIBERATION_S = 4.0
+TURN_TIMEOUT_S = 8.0
 
 
 class TestTurns:
@@ -788,6 +794,7 @@ class TestTurns:
         )
         await adapter.on_cleanup("room-1")
 
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_new_turn_does_not_inherit_previous_human_wait(
         self, make_adapter, tools
     ) -> None:
@@ -804,33 +811,27 @@ class TestTurns:
             config=OpencodeAdapterConfig(approval_mode="manual", turn_timeout_s=30.0),
         )
 
-        await adapter.on_started("OpenCode Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(content="run it"),
-            tools_protocol(tools),
-            OpencodeSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        await asyncio.sleep(0.15)
-        await deliver_message(
-            adapter,
-            make_platform_message(content="approve perm-1"),
-            tools_protocol(tools),
-            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
-        await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
-        room_state = await adapter._get_or_create_room_state("room-1")
-        await wait_for(
-            lambda: room_state.turn is not None and room_state.turn.turn_future.done()
-        )
+        async with controlled_clock() as clock:
+            await run_single_turn(adapter, tools, content="run it")
+            room_state = adapter._rooms["room-1"]
+            assert room_state.turn is not None and room_state.turn.watcher is not None
+            watcher = room_state.turn.watcher
+            await clock.elapse(DELIBERATION_S)
+            await deliver_message(
+                adapter,
+                make_platform_message(content="approve perm-1"),
+                tools_protocol(tools),
+                OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+            await adapter._handle_event(
+                parse_opencode_event(event_session_idle("sess-1"))
+            )
+            await watcher
+        assert room_state.approvals.human_wait_seconds == DELIBERATION_S
 
         await deliver_message(
             adapter,
@@ -882,31 +883,29 @@ class TestTurns:
         assert fake_client.closed
         assert "room-1" not in adapter._rooms
 
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_turn_timeout_aborts_session_and_emits_error(
-        self,
+        self, make_adapter, tools
     ) -> None:
         """A turn that never reaches session.idle times out, aborts the
         OpenCode session, and reports an error instead of hanging the room."""
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[[]],  # no events at all; the turn never finishes
         )
-        adapter = OpencodeAdapter(
-            config=OpencodeAdapterConfig(turn_timeout_s=0.05),
-            client_factory=lambda _config: fake_client,
+        adapter = make_adapter(
+            fake_client, config=OpencodeAdapterConfig(turn_timeout_s=TURN_TIMEOUT_S)
         )
-        tools = FakeAgentTools()
 
-        await adapter.on_started("OpenCode Agent", "A coding agent")
-        await deliver_message(
-            adapter,
-            make_platform_message(),
-            tools_protocol(tools),
-            OpencodeSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        async with (
+            controlled_clock() as clock,
+            background(run_single_turn(adapter, tools)) as turn,
+        ):
+            await adapter.watcher_started.wait()
+            await clock.elapse(TURN_TIMEOUT_S - 1)
+            assert fake_client.aborted_sessions == []
+
+            await clock.elapse(2)
+            await turn
 
         assert fake_client.aborted_sessions == ["sess-1"]
         failures = reported_failures(tools)
@@ -915,8 +914,6 @@ class TestTurns:
             for f in failures
         )
         assert any("timed out" in f["message"].lower() for f in failures)
-
-        await adapter.on_cleanup("room-1")
 
     async def test_emits_turn_usage_folding_reasoning_into_output(
         self, make_adapter, tools
