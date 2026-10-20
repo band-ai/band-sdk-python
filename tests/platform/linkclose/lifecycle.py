@@ -13,15 +13,15 @@ from enum import StrEnum
 from hypothesis import strategies as st
 from websockets.frames import CloseCode
 
-from band.client.streaming.client import AgentControlPayload, ControlMode, WireEvent
+from band.client.streaming.client import AgentControlPayload, WireEvent
 from band.platform.event import WebSocketDisconnectedEvent
 from band.platform.link import BandLink
 from band.testing import FakePhoenixServer, close_transport, fake_phoenix_server
 from tests.conftest import TERMINAL_SUPERSEDE, spy_on_reconciliation_drain
 from tests.platform.linkclose.kit import (
-    AGENT_ID,
     CONTROL_TOPIC,
     HANG_GUARD_S,
+    control_wire_payload,
     make_link,
 )
 
@@ -33,29 +33,13 @@ class Step(StrEnum):
     NETWORK_DROP = "network drops"
     CONTROL = "platform sends a control signal"
     HELD_CONTROL = "platform sends a control signal the adapter is slow to apply"
+    RELEASE_HELD_CONTROL = "adapter finishes the slow control signal"
     SUPERSEDE = "platform supersedes the session"
     HOST_CANCELS_RUN = "host gives up waiting on run_forever"
     HOST_RUNS_AGAIN = "host whose run returned calls run_forever again"
 
 
-RECONNECTING_STEPS = (
-    Step.SERVER_NORMAL_CLOSE,
-    Step.SERVER_GOING_AWAY,
-    Step.CLIENT_NORMAL_CLOSE,
-    Step.NETWORK_DROP,
-)
-SESSION_STEPS = tuple(step for step in Step if step not in RECONNECTING_STEPS)
-
-
-@st.composite
-def sequences(draw: st.DrawFn) -> list[Step]:
-    """Session steps with at most one reconnecting step among them: the
-    transport backs off for seconds after a second rapid disconnect."""
-    steps = draw(st.lists(st.sampled_from(SESSION_STEPS), max_size=5))
-    if draw(st.booleans()):
-        at = draw(st.integers(min_value=0, max_value=len(steps)))
-        steps.insert(at, draw(st.sampled_from(RECONNECTING_STEPS)))
-    return steps
+sequences = st.lists(st.sampled_from(Step), max_size=6)
 
 
 @dataclass
@@ -114,6 +98,8 @@ class LinkSession:
                 await self.send_control(held=False)
             case Step.HELD_CONTROL:
                 await self.send_control(held=self.held_id is None)
+            case Step.RELEASE_HELD_CONTROL:
+                await self.release_held_control()
             case Step.SUPERSEDE:
                 await self.supersede()
             case Step.HOST_CANCELS_RUN | Step.HOST_RUNS_AGAIN:
@@ -132,16 +118,7 @@ class LinkSession:
             self.held_id = correlation_id
         self.pushed.append(correlation_id)
         await self.server.push(
-            CONTROL_TOPIC,
-            WireEvent.AGENT_CONTROL,
-            {
-                "mode": ControlMode.INTERRUPT,
-                "scope": "agent",
-                "agent_id": AGENT_ID,
-                "execution_id": None,
-                "room_id": None,
-                "correlation_id": correlation_id,
-            },
+            CONTROL_TOPIC, WireEvent.AGENT_CONTROL, control_wire_payload(correlation_id)
         )
         if held:
             await asyncio.wait_for(self.held_entered.wait(), HANG_GUARD_S)
@@ -152,6 +129,18 @@ class LinkSession:
         while correlation_id not in self.applied:
             self.applied_changed.clear()
             await self.applied_changed.wait()
+
+    async def release_held_control(self) -> None:
+        """Let the slow signal finish; the lane then applies everything pushed
+        behind it, in the order it was pushed."""
+        if self.held_id is None:
+            return
+        self.release_held.set()
+        await asyncio.wait_for(self.until_applied(self.pushed[-1]), HANG_GUARD_S)
+        assert self.applied == self.pushed
+        self.held_id = None
+        self.held_entered.clear()
+        self.release_held.clear()
 
     async def supersede(self) -> None:
         await self.server.push(CONTROL_TOPIC, WireEvent.SUPERSEDE, TERMINAL_SUPERSEDE)

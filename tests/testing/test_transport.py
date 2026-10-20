@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
 from band.platform.link import BandLink
-from band.testing import force_transport_disconnect
+from band.testing import fake_phoenix_server, force_transport_disconnect
+from tests.conftest import spy_on_reconciliation_drain
 
 
 def make_link() -> BandLink:
@@ -15,18 +17,24 @@ def make_link() -> BandLink:
 
 
 class TestForceTransportDisconnect:
-    async def test_aborts_the_live_transport(self) -> None:
-        """The happy path: aborts the raw transport under a connected link --
-        no close handshake, matching a real network drop."""
-        link = make_link()
-        connection = MagicMock()
-        ws = MagicMock()
-        ws.client = MagicMock(connection=connection)
-        link._ws = ws
+    async def test_the_aborted_link_reconnects(self) -> None:
+        """An abort carries no close handshake -- what a real network drop
+        looks like -- so the transport's own reconnect runs."""
+        async with fake_phoenix_server() as server:
+            link = BandLink(
+                agent_id="agent-123",
+                api_key="test-key",
+                ws_url=server.url,
+                rest_url="https://test.invalid",
+            )
+            await link.connect()
+            reconnected = spy_on_reconciliation_drain(link)
 
-        await force_transport_disconnect(link)
+            await force_transport_disconnect(link)
+            await asyncio.wait_for(reconnected.wait(), timeout=5.0)
+            await link.disconnect()
 
-        connection.transport.abort.assert_called_once()
+            assert server.connection_count == 2
 
     async def test_raises_when_never_connected(self) -> None:
         """No ``_ws`` at all — a caller-side setup mistake, not a no-op."""

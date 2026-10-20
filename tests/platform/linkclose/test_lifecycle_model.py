@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from hypothesis import given, settings
 
 from tests.platform.linkclose.kit import HANG_GUARD_S
@@ -38,17 +39,17 @@ async def assert_invariants(session: LinkSession) -> None:
     await asyncio.wait_for(asyncio.shield(session.run), HANG_GUARD_S)
 
     assert session.hooks_running == 0
-    assert session.applied == [c for c in session.pushed if c in session.applied]
+    assert session.applied == session.pushed[: len(session.applied)]
 
     connections = server.connection_count
     await asyncio.wait_for(link.connect(), HANG_GUARD_S)
-    assert link.is_connected
     assert server.connection_count == connections + 1
 
 
+@pytest.mark.usefixtures("millisecond_reconnects")
 class TestLinkLifecycleModel:
     @settings(max_examples=30, deadline=None)
-    @given(steps=sequences())
+    @given(steps=sequences)
     def test_every_sequence_keeps_the_session_invariants(
         self, steps: list[Step]
     ) -> None:

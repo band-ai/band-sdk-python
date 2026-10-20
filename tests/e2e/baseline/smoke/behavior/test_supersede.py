@@ -33,54 +33,56 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 SUPERSEDED_REASON = "session.already_connected"
 
 
-@per_adapter(Adapter.ANTHROPIC, prompt=REPLY_PROMPT)
-@pytest.mark.timeout(extra=60)
-@pytest.mark.asyncio(loop_scope="session")
-async def test_a_newer_session_ends_the_running_one_for_good(
-    cell: AdapterCell,
-    resource_manager: ResourceManager,
-    user_ops: UserOps,
-    reply_capture: CaptureFactory,
-    baseline_settings: BaselineSettings,
-) -> None:
-    """The newer session runs through ``running_agent_with_handle`` rather than
-    the cell: the cell's ``track_running`` guard exists to forbid this overlap.
+class TestSupersede:
+    @per_adapter(Adapter.ANTHROPIC, prompt=REPLY_PROMPT)
+    @pytest.mark.timeout(extra=60)
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_newer_session_ends_the_running_one_for_good(
+        self,
+        cell: AdapterCell,
+        resource_manager: ResourceManager,
+        user_ops: UserOps,
+        reply_capture: CaptureFactory,
+        baseline_settings: BaselineSettings,
+    ) -> None:
+        """The newer session runs through ``running_agent_with_handle`` rather than
+        the cell: the cell's ``track_running`` guard exists to forbid this overlap.
 
-    ``run_forever`` returning proves the evicted transport has shut down, so
-    no later reconnect can follow; the newer session's reply then proves it
-    was never evicted back.
-    """
-    identity = await cell.provision(label=f"supersede-{cell.adapter_id}")
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-supersede-{cell.adapter_id}", participants=[identity.id]
-    )
+        ``run_forever`` returning proves the evicted transport has shut down, so
+        no later reconnect can follow; the newer session's reply then proves it
+        was never evicted back.
+        """
+        identity = await cell.provision(label=f"supersede-{cell.adapter_id}")
+        room_id = await resource_manager.provision_room(
+            title=f"e2e-supersede-{cell.adapter_id}", participants=[identity.id]
+        )
 
-    async with cell.run_as_with_handle(identity) as incumbent:
-        evicted = incumbent.runtime.link
-        async with running_agent_with_handle(
-            identity,
-            cell.build(),
-            cell.settings,
-            config=AgentConfig(single_instance=False),
-        ) as newer:
-            await asyncio.wait_for(
-                evicted.run_forever(install_signal_handlers=False),
-                baseline_settings.e2e_timeout,
-            )
-
-            assert evicted.last_disconnect_reason is not None
-            assert evicted.last_disconnect_reason.reason == SUPERSEDED_REASON
-
-            marker = unique_marker("newer")
-            async with reply_capture(room_id) as capture:
-                mark = capture.messages.snapshot()
-                mid = await user_ops.send_message(
-                    room_id,
-                    liveness_probe(marker),
-                    mention_id=identity.id,
-                    mention_name=identity.name,
+        async with cell.run_as_with_handle(identity) as incumbent:
+            evicted = incumbent.runtime.link
+            async with running_agent_with_handle(
+                identity,
+                cell.build(),
+                cell.settings,
+                config=AgentConfig(single_instance=False),
+            ) as newer:
+                await asyncio.wait_for(
+                    evicted.run_forever(install_signal_handlers=False),
+                    baseline_settings.e2e_timeout,
                 )
-                replies = await capture.wait_for_reply(mid, identity.id, since=mark)
-                replies.assert_contains_any([marker])
 
-            assert newer.runtime.link.last_disconnect_reason is None
+                assert evicted.last_disconnect_reason is not None
+                assert evicted.last_disconnect_reason.reason == SUPERSEDED_REASON
+
+                marker = unique_marker("newer")
+                async with reply_capture(room_id) as capture:
+                    mark = capture.messages.snapshot()
+                    mid = await user_ops.send_message(
+                        room_id,
+                        liveness_probe(marker),
+                        mention_id=identity.id,
+                        mention_name=identity.name,
+                    )
+                    replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+                    replies.assert_contains_any([marker])
+
+                assert newer.runtime.link.last_disconnect_reason is None
