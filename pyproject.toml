@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "band-client-rest==0.0.46",
+    "band-client-rest==0.0.49",
     "band-sdk-core==2.8.0",
     "phoenix-channels-python-client>=0.3.1,<0.4",
     "python-dotenv>=1.2.2",
@@ -103,7 +103,7 @@ parlant = [
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.15.27",
+    "crewai==1.15.28",
     "openai>=2.0.0,<3",  # CrewAI requires the legacy OpenAI client
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -289,7 +289,7 @@ dev-crewai = [
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.15.27",
+    "crewai==1.15.28",
     "openai>=2.0.0,<3",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
