@@ -63,6 +63,7 @@ from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.participants import log_roster_call, participant_snapshot
+from band.runtime.toolactivity import reports_tool_activity, tool_activity
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -286,6 +287,7 @@ class AttachmentCache(Protocol):
 
 
 @records_turn_effects
+@reports_tool_activity
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -2042,7 +2044,8 @@ class AgentTools(AgentToolsProtocol):
 
         try:
             method = getattr(self, definition.method_name)
-            result = await method(**arguments)
+            async with tool_activity(self, tool_name):
+                result = await method(**arguments)
             return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
         except (BandToolError, RoomExecutionStoppedError):
             # Stopped execution must escape ordinary tool-error conversion.

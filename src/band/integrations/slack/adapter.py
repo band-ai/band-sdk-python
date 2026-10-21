@@ -61,6 +61,7 @@ from band.runtime.startup import (
     dispose_adapter,
     dispose_framework,
 )
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import AgentTools, ToolCallOutcome, TurnEffect
 from band.runtime.tools.schema import is_failed_tool_output
 
@@ -162,6 +163,7 @@ class SlackTeeingTools(AgentTools):
         # adapter judging ``wrap`` sees what the brain did through this tee.
         self._ctx = wrap._ctx
         self._scope = wrap._scope
+        self._activity_observer = wrap._activity_observer
         self.turn = wrap.turn
         self._slack = slack
         self._binding = binding
@@ -214,11 +216,12 @@ class SlackTeeingTools(AgentTools):
         failed (e.g. the channel was deleted, the bot was kicked).
         """
         try:
-            await self._slack.chat_postMessage(
-                channel=self._binding.channel,
-                text=content,
-                thread_ts=self._binding.thread_ts,
-            )
+            async with tool_activity(self, SLACK_SEND_MESSAGE_TOOL_NAME):
+                await self._slack.chat_postMessage(
+                    channel=self._binding.channel,
+                    text=content,
+                    thread_ts=self._binding.thread_ts,
+                )
         except Exception as exc:
             logger.exception(
                 "slack_send_message failed (channel=%s thread_ts=%s)",

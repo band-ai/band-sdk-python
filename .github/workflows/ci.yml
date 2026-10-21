@@ -187,6 +187,8 @@ jobs:
           tests/integrations/test_crewai_flow_real_sdk.py \
           tests/integrations/test_crewai_real_tools.py \
           tests/integrations/test_crewai_completion.py \
+          tests/integrations/crewai/activity/test_execution.py \
+          tests/integrations/crewai/activity/test_send_event.py \
           tests/test_capability_gating_e2e.py \
           tests/framework_conformance/test_files_image_passthrough_matrix.py \
           tests/framework_conformance/ -k crewai
@@ -325,6 +327,8 @@ jobs:
           tests/integrations/parlant/test_customtools.py \
           tests/integrations/parlant/test_filetools.py \
           tests/integrations/parlant/test_guard.py \
+          tests/integrations/parlant/activity/test_execution.py \
+          tests/integrations/parlant/activity/test_send_event.py \
           tests/integrations/parlant/test_preambletask.py \
           tests/integrations/parlant/test_selection.py \
           tests/integrations/parlant/test_server.py \

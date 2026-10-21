@@ -437,6 +437,16 @@ change wakes the reporter's keep-alive, which sends the latest detail, so
 changes made while a report is in flight coalesce. The duration cap stops both kinds of refresh
 without cancelling provider work; actual completion still clears.
 
+Every Band tool call shows as a `tool_call` with its name, or `memory` while it
+saves a memory, then returns to reasoning when it ends, even on failure or
+cancellation. `band.runtime.toolactivity` owns that mapping: wrap any other tool
+call in its `tool_activity`. Only the outermost call reports, so a Band tool
+that calls other Band tools shows as itself throughout. `send_event` reports
+only where a model invoked it, since adapters also post their own events
+through it. A tool's end lands on the turn it started on, even if its tools are
+rebound to a newer turn meanwhile, and a failed report never changes the tool's
+outcome.
+
 Detail compatibility is learned from the `X-API-Version` header the platform
 puts on every activity response. Reports stay boolean until a response in the
 process advertises agent API 1.25.0 or later; a missing or older version keeps

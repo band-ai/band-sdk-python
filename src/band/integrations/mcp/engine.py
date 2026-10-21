@@ -49,6 +49,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
@@ -219,7 +220,8 @@ async def dispatch_tool(
     """
     method = resolve_tool_method(tools, definition)
     try:
-        return await method(**arguments)
+        async with tool_activity(tools, definition.name):
+            return await method(**arguments)
     except (ValueError, BandToolError) as error:
         raise enrich_send_message_error(definition, tools, error) from error
 

@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 from band.core.protocols import AgentToolsProtocol
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.integrations.crewai.reporting import CrewAIToolReporter
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     BandTool,
     file_content_placeholder,
@@ -288,9 +289,10 @@ async def _send_event(call: Invocation, **kwargs: Any) -> Any:
     # bypassing args_schema, and _execute_tool turns the ValueError into the
     # error result the caller expects.
     args = validate_tool_arguments(BandTool.SEND_EVENT, SEND_EVENT_ARGS_SCHEMA, kwargs)
-    await call.tools.send_event(
-        args["content"], args["message_type"], metadata=args.get("metadata")
-    )
+    async with tool_activity(call.tools, BandTool.SEND_EVENT):
+        await call.tools.send_event(
+            args["content"], args["message_type"], metadata=args.get("metadata")
+        )
     return succeeded("Event sent")
 
 

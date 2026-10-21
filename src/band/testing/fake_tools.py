@@ -66,6 +66,7 @@ from band.core.types import (
     ContactRequestStatus,
     MessageType,
 )
+from band.runtime.activity import ActivityObserver
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
@@ -326,6 +327,7 @@ class FakeAgentTools:
         self._held_messages: list[HeldMessage] = []
         self._observers: list[tuple[Callable[[], bool], asyncio.Future[None]]] = []
         self.turn = Turn()
+        self._activity_observer: ActivityObserver | None = None
 
     @property
     def agent_id(self) -> str | None:

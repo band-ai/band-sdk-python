@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,7 +14,8 @@ from band.client.streaming import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.platform.event import MessageEvent
-from band.runtime.context import ConversationContext
+from band.runtime.execution import ExecutionContext
+from band.runtime.sessionconfig import SessionConfig
 from band.testing.platform import platform_connection_stub
 
 
@@ -26,7 +27,9 @@ class TestStartupRaceCondition:
     """
 
     @pytest.mark.asyncio
-    async def test_adapter_on_started_before_first_message(self):
+    async def test_adapter_on_started_before_first_message(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """System prompt must be set before any message processing."""
 
         # Track the order of calls
@@ -93,20 +96,13 @@ class TestStartupRaceCondition:
                 self._on_execute = on_execute
 
                 # Create a proper MessageEvent that passes through preprocessor
-                mock_ctx = MagicMock()
-                mock_ctx.is_llm_initialized = False
-                mock_ctx.mark_llm_initialized = MagicMock()
-                mock_ctx.get_context = AsyncMock(
-                    return_value=ConversationContext(
-                        room_id="room-123",
-                        messages=[],
-                        participants=[],
-                        hydrated_at=datetime.now(UTC),
-                    )
+                mock_ctx = ExecutionContext(
+                    room_id="room-123",
+                    link=MagicMock(rest=mock_rest_client),
+                    on_execute=on_execute,
+                    agent_id="agent-123",
+                    config=SessionConfig(enable_context_hydration=False),
                 )
-                mock_ctx.participants = []
-                mock_ctx.participants_changed = MagicMock(return_value=False)
-                mock_ctx.room_id = "room-123"
 
                 # Create a proper MessageEvent (not a MagicMock)
                 message_event = MessageEvent(
@@ -139,8 +135,4 @@ class TestStartupRaceCondition:
         # This will fail if on_message is called before on_started
         await agent.start()
 
-        # Verify on_started was called first
-        assert len(call_order) >= 1, "No calls were made"
-        assert call_order[0] == "on_started", (
-            f"Expected on_started to be called first, but got: {call_order}"
-        )
+        assert call_order == ["on_started", "on_message"]

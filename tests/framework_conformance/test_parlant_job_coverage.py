@@ -66,6 +66,8 @@ class TestParlantJobCoverage:
             Path("tests/integrations/parlant/test_customtools.py"),
             Path("tests/integrations/parlant/test_filetools.py"),
             Path("tests/integrations/parlant/test_guard.py"),
+            Path("tests/integrations/parlant/activity/test_execution.py"),
+            Path("tests/integrations/parlant/activity/test_send_event.py"),
             Path("tests/integrations/parlant/test_preambletask.py"),
             Path("tests/integrations/parlant/test_selection.py"),
             Path("tests/integrations/parlant/test_server.py"),

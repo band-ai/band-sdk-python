@@ -7,13 +7,13 @@ import pytest
 
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.event import PlatformEvent
-from band.runtime.activity import (
+from band.runtime.activity import set_permission_wait
+from band.runtime.execution import ExecutionContext
+from band.runtime.toolactivity import (
     end_tool_activity,
     report_memory_activity,
     report_tool_activity,
-    set_permission_wait,
 )
-from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import (
     IDLE_BODY,
@@ -54,6 +54,8 @@ class TestOwnedDetail:
             PERMISSION_BODY,
             tool_body("Edit"),
             MEMORY_BODY,
+            # The reply is a Band tool call too; it ends back at reasoning.
+            REASONING_BODY,
             IDLE_BODY,
         ]
 

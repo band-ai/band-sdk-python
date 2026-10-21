@@ -15,7 +15,8 @@ from band.integrations.parlant.mentions import (
     split_mentions,
 )
 from band.integrations.parlant.sessiontools import require_session_tools
-from band.runtime.tools import ParticipantAddStatus, serialize_tool_result
+from band.runtime.toolactivity import tool_activity
+from band.runtime.tools import BandTool, ParticipantAddStatus, serialize_tool_result
 
 EVENT_MESSAGE_TYPES: tuple[str, ...] = get_args(EventMessageType)
 
@@ -59,7 +60,8 @@ async def band_send_event(
     if message_type not in EVENT_MESSAGE_TYPES:
         return invalid_choice("message_type", message_type, EVENT_MESSAGE_TYPES)
 
-    await tools.send_event(content, message_type, None)
+    async with tool_activity(tools, BandTool.SEND_EVENT):
+        await tools.send_event(content, message_type, None)
     return ToolResult(data=f"Event ({message_type}) sent successfully")
 
 

@@ -5,13 +5,13 @@ from collections.abc import Callable
 import pytest
 
 from band.platform.event import PlatformEvent
-from band.runtime.activity import (
+from band.runtime.activity import set_permission_wait
+from band.runtime.execution import ExecutionContext
+from band.runtime.toolactivity import (
     end_tool_activity,
     report_memory_activity,
     report_tool_activity,
-    set_permission_wait,
 )
-from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
 from tests.runtime.activityownership.kit import ActivityPlatform, past_a_keep_alive
