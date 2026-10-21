@@ -11,7 +11,7 @@ That turn-split is forced by how the two runtimes work, not a styling
 choice:
 
 - **Band** processes each room's messages strictly one at a time
-  (``ExecutionContext._process_loop``). A handler that blocked the turn
+  (``Scheduler.run``). A handler that blocked the turn
   waiting for the user's reply could never receive it — the reply sits
   in the room queue until the turn it is supposed to unblock finishes.
 - **Copilot** services ``ask_user`` as a ``userInput.request`` JSON-RPC

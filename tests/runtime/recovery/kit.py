@@ -15,13 +15,11 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from itertools import product
 from typing import Any
-from unittest.mock import MagicMock
 
 import httpx
 from starlette.requests import Request
 from starlette.responses import Response
 
-from band.agent import Agent
 from band.client.rest import NO_RETRY_REQUEST_OPTIONS, AsyncRestClient
 from band.client.streaming import DeliveryStatus
 from band.core.protocols import TURN_FAILURE_PROVIDER, AgentToolsProtocol
@@ -41,7 +39,7 @@ from tests.platform.settlement.kit import (
     accepted,
     link_over,
 )
-from tests.runtime.helpers import AGENT_ID, EPOCH, SENDER_ID
+from tests.runtime.helpers import AGENT_ID, EPOCH, SENDER_ID, agent_hooks
 
 # Requests the generated client spends on one logical write that keeps answering 5xx.
 HTTP_ATTEMPTS = NO_RETRY_REQUEST_OPTIONS["max_retries"] + 1
@@ -620,19 +618,14 @@ def wired_harness(
     config: SessionConfig | None = None,
 ) -> Harness:
     """The real runtime for ``shape`` over ``peer``'s REST surface."""
-    agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
     runtime = AgentRuntime(
         link=link_over(rest),
         agent_id=AGENT_ID,
-        on_execute=agent._on_execute,
         session_config=config
         or SessionConfig(
-            consume_all_queued=shape.batching,
             enable_context_hydration=False,
             enable_working_state=False,
         ),
-        on_execute_batch=agent._on_execute_batch if shape.batching else None,
-        on_message_control=agent._on_control,
-        is_message_control=agent._is_control,
+        **agent_hooks(adapter),
     )
     return Harness(peer=peer, adapter=adapter, runtime=runtime, shape=shape)

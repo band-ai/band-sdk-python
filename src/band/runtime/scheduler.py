@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -142,7 +142,7 @@ class Scheduler:
             self.control_cursor = None
 
     def request_resync(self) -> None:
-        self.owner.delivery.retry_not_before.clear()
+        self.owner.delivery.lift_write_backoff()
         if self.pending_resync is None:
             self.pending_resync = ResyncRequest()
             self.queue.put_nowait(self.pending_resync)
@@ -218,6 +218,19 @@ class Scheduler:
             yield active
         finally:
             self.current_pass = None
+
+    async def offer_control(
+        self, identity: str, handle: Callable[[], Awaitable[bool]]
+    ) -> bool:
+        """Offer a control to its handler once per pass and revision; a decline sticks."""
+        if self.declined(identity):
+            return False
+        active = self.current_pass
+        revision = self.owner.control_revision
+        handled = await handle()
+        if not handled:
+            self.record_decline(active, revision, identity)
+        return handled
 
     def declined(self, identity: str) -> bool:
         active = self.current_pass
@@ -308,7 +321,7 @@ class Scheduler:
 
     async def run_pass(self, *, recovery: bool = False) -> ResyncOutcome:
         if recovery:
-            self.owner.delivery.retry_not_before.clear()
+            self.owner.delivery.lift_write_backoff()
         self.handled_work = False
         self.scan_cursor = None
         self.next_fallback = False
@@ -476,7 +489,12 @@ class Scheduler:
         if self.owner.is_stopped or self.owner.is_closing:
             return ResyncOutcome.STOPPED
         recovery = active.recovery or not self.sync_complete
-        if not recovery and (local := self.next_local()) is not None:
+        local = self.next_local()
+        # A deferred head already holds its place ahead of any backlog read.
+        if local is not None and (
+            not recovery
+            or (self.deferred_id is not None and delivery_id(local) == self.deferred_id)
+        ):
             return (await self.dispatch_local(local)).scheduling
         read = await self.read_page(active, recovery)
         if isinstance(read, ResyncOutcome):

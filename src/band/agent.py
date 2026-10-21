@@ -642,12 +642,6 @@ class Agent:
         handler = getattr(self._adapter, "try_handle_control", None)
         if handler is None:
             return False
-        scheduler = ctx.scheduler
-        if scheduler.declined(inp.msg.id):
-            return False
-        active = scheduler.current_pass
-        revision = ctx.control_revision
-        handled = await handler(inp.msg, inp.tools)
-        if not handled:
-            scheduler.record_decline(active, revision, inp.msg.id)
-        return handled
+        return await ctx.scheduler.offer_control(
+            inp.msg.id, lambda: handler(inp.msg, inp.tools)
+        )

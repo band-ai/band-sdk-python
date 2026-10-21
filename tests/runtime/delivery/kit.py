@@ -365,7 +365,6 @@ class JournaledControls(ControlScript):
 
 def session_config(*, batching: bool, retries: int = 1) -> SessionConfig:
     return SessionConfig(
-        consume_all_queued=batching,
         max_message_retries=retries,
         enable_context_hydration=False,
         enable_working_state=False,

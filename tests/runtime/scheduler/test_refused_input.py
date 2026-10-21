@@ -6,8 +6,9 @@ import pytest
 
 from tests.runtime.delivery.kit import RestPeer, started_session
 
+pytestmark = pytest.mark.looptime
 
-@pytest.mark.looptime
+
 class TestRefusedInput:
     async def test_refusal_is_not_retried_inside_one_pass(self) -> None:
         peer = RestPeer()

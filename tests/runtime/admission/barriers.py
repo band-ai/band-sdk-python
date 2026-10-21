@@ -595,7 +595,7 @@ def build_context(
         ROOM_ID,
         link,
         model.single,
-        config=SessionConfig(consume_all_queued=case.batching, **settings),
+        config=SessionConfig(**settings),
         agent_id=AGENT_ID,
         on_execute_batch=model.batch if case.batching else None,
         on_message_control=controls.handle if controls else None,

@@ -105,7 +105,7 @@ class Selection:
 
 
 def merge(rest: Sequence[Candidate], retained: Sequence[Candidate]) -> list[Candidate]:
-    """Resolve identities in source order; an original in both appears once.
+    """Resolve identities and order them by position; an original in both appears once.
 
     The retained payload is the original that was delivered, so it wins; the
     REST disposition wins because it reflects the platform's delivery status.
@@ -123,7 +123,7 @@ def merge(rest: Sequence[Candidate], retained: Sequence[Candidate]) -> list[Cand
                 observed_metadata=seen.observed_metadata,
             )
         )
-    return list(merged.values())
+    return sorted(merged.values(), key=lambda candidate: candidate.key)
 
 
 def select_prefix(

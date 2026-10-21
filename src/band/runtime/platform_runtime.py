@@ -86,10 +86,6 @@ class PlatformRuntime:
         )
 
     @property
-    def session_config(self) -> SessionConfig:
-        return self._session_config
-
-    @property
     def agent_id(self) -> str:
         return self._agent_id
 

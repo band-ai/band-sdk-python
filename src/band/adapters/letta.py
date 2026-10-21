@@ -26,6 +26,7 @@ from band.core.protocols import (
     TurnResultAlreadyReported,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.timestamps import assume_utc
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     AdapterFeatures,
@@ -1232,10 +1233,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def _format_time_ago(dt: datetime) -> str:
         """Format a datetime as a human-readable time-ago string."""
         now = datetime.now(UTC)
-        # Ensure dt is timezone-aware for comparison
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        delta = now - dt
+        delta = now - assume_utc(dt)
         total_seconds = int(delta.total_seconds())
         if total_seconds < 60:
             return f"{total_seconds}s"
