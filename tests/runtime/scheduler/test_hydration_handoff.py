@@ -21,28 +21,82 @@ TARGET_WRITES = (write(PROCESSING, "target"), write(PROCESSED, "target"))
 ORDINARY_EFFECTS = (ORDINARY_EFFECT,)
 CONTROL_EFFECTS = (CONTROL_EFFECT,)
 
-# Only a cold, ordinary original whose history shows it processed is dropped.
+# Cold history informs admission; warm history cannot override fresh discovery.
 ORDINARY_OUTCOMES = [
     pytest.param(
-        False, PROCESSING, ORDINARY_EFFECTS, TARGET_WRITES, id="new-processing"
+        False,
+        False,
+        PROCESSING,
+        ORDINARY_EFFECTS,
+        TARGET_WRITES,
+        id="singleton-new-processing",
     ),
-    pytest.param(False, PROCESSED, (), (), id="new-processed"),
-    pytest.param(False, FAILED, ORDINARY_EFFECTS, TARGET_WRITES, id="new-failed"),
+    pytest.param(False, False, PROCESSED, (), (), id="singleton-new-processed"),
     pytest.param(
-        True, PROCESSING, ORDINARY_EFFECTS, TARGET_WRITES, id="old-processing"
+        False, False, FAILED, ORDINARY_EFFECTS, TARGET_WRITES, id="singleton-new-failed"
     ),
-    pytest.param(True, PROCESSED, ORDINARY_EFFECTS, TARGET_WRITES, id="old-processed"),
-    pytest.param(True, FAILED, ORDINARY_EFFECTS, TARGET_WRITES, id="old-failed"),
+    pytest.param(
+        False,
+        True,
+        PROCESSING,
+        ORDINARY_EFFECTS,
+        TARGET_WRITES,
+        id="singleton-old-processing",
+    ),
+    pytest.param(
+        False,
+        True,
+        PROCESSED,
+        ORDINARY_EFFECTS,
+        TARGET_WRITES,
+        id="singleton-old-processed",
+    ),
+    pytest.param(
+        False, True, FAILED, ORDINARY_EFFECTS, TARGET_WRITES, id="singleton-old-failed"
+    ),
+    pytest.param(
+        True,
+        False,
+        PROCESSING,
+        ORDINARY_EFFECTS,
+        TARGET_WRITES,
+        id="batch-new-processing",
+    ),
+    pytest.param(True, False, PROCESSED, (), (), id="batch-new-processed"),
+    pytest.param(True, False, FAILED, (), (), id="batch-new-failed"),
+    pytest.param(
+        True,
+        True,
+        PROCESSING,
+        ORDINARY_EFFECTS,
+        TARGET_WRITES,
+        id="batch-old-processing",
+    ),
+    pytest.param(
+        True, True, PROCESSED, ORDINARY_EFFECTS, TARGET_WRITES, id="batch-old-processed"
+    ),
+    pytest.param(
+        True, True, FAILED, ORDINARY_EFFECTS, TARGET_WRITES, id="batch-old-failed"
+    ),
+]
+FAILED_DISCOVERY_OUTCOMES = [
+    pytest.param(
+        False, False, ORDINARY_EFFECTS, TARGET_WRITES, id="singleton-ordinary"
+    ),
+    pytest.param(False, True, CONTROL_EFFECTS, TARGET_WRITES, id="singleton-priority"),
+    pytest.param(True, False, (), (), id="batch-ordinary"),
+    pytest.param(True, True, (), (), id="batch-priority"),
 ]
 
 
 class TestHydrationHandoff:
     @pytest.mark.parametrize(
-        ("warm", "history", "effects", "target_writes"), ORDINARY_OUTCOMES
+        ("batching", "warm", "history", "effects", "target_writes"), ORDINARY_OUTCOMES
     )
     @pytest.mark.parametrize("stale", [FAILED, PROCESSED])
     async def test_ordinary_context_read_order_and_admitted_membership(
         self,
+        batching: bool,
         warm: bool,
         history: DeliveryStatus,
         stale: DeliveryStatus,
@@ -50,20 +104,21 @@ class TestHydrationHandoff:
         target_writes: tuple[str, ...],
     ) -> None:
         observed = await observe_handoff(
-            batching=False, control=False, warm=warm, history=history, stale=stale
+            batching=batching, control=False, warm=warm, history=history, stale=stale
         )
         assert observed.effects == effects
         assert observed.original_preserved
         assert observed.target_writes == target_writes
 
+    @pytest.mark.parametrize("batching", [False, True], ids=["singleton", "batch"])
     @pytest.mark.parametrize("warm", [False, True], ids=["new", "old"])
     @pytest.mark.parametrize("history", [PROCESSING, PROCESSED, FAILED])
     @pytest.mark.parametrize("stale", [FAILED, PROCESSED])
     async def test_control_handoff_preserves_the_refused_head(
-        self, warm: bool, history: DeliveryStatus, stale: DeliveryStatus
+        self, batching: bool, warm: bool, history: DeliveryStatus, stale: DeliveryStatus
     ) -> None:
         observed = await observe_handoff(
-            batching=False, control=True, warm=warm, history=history, stale=stale
+            batching=batching, control=True, warm=warm, history=history, stale=stale
         )
         assert observed.effects == CONTROL_EFFECTS
         assert observed.original_preserved
@@ -71,17 +126,17 @@ class TestHydrationHandoff:
         assert observed.blocked_claimed
         assert observed.blocked_status is not PROCESSED
 
-    @pytest.mark.parametrize("batching", [False])
     @pytest.mark.parametrize(
-        ("control", "effects"),
-        [
-            pytest.param(False, ORDINARY_EFFECTS, id="ordinary"),
-            pytest.param(True, CONTROL_EFFECTS, id="priority"),
-        ],
+        ("batching", "control", "effects", "target_writes"), FAILED_DISCOVERY_OUTCOMES
     )
     @pytest.mark.parametrize("warm", [False, True], ids=["new-context", "old-cache"])
     async def test_fresh_failed_discovery_obeys_the_configured_replay_policy(
-        self, batching: bool, control: bool, warm: bool, effects: tuple[str, ...]
+        self,
+        batching: bool,
+        control: bool,
+        warm: bool,
+        effects: tuple[str, ...],
+        target_writes: tuple[str, ...],
     ) -> None:
         observed = await observe_handoff(
             batching=batching,
@@ -93,4 +148,4 @@ class TestHydrationHandoff:
         )
         assert observed.effects == effects
         assert observed.original_preserved
-        assert observed.target_writes == TARGET_WRITES
+        assert observed.target_writes == target_writes

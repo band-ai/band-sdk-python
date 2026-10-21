@@ -36,7 +36,7 @@ class TestStoredIntentRetry:
         assert harness.peer.write_kinds == {DeliveryStatus.PROCESSING, ending.intent}
         assert harness.member_statuses == dict.fromkeys(harness.members, ending.intent)
 
-    @pytest.mark.parametrize("shape", [Shape.OFF])
+    @pytest.mark.parametrize("shape", list(Shape))
     @pytest.mark.parametrize("ending", [Ending.RAISES])
     async def test_a_failed_original_keeps_its_stored_error(
         self, harness: Harness, fault: Fault

@@ -1,25 +1,31 @@
-"""A one-room platform and the turn and control host doubles shared by the room execution kits."""
+"""A one-room platform, a started room execution and batch-host doubles."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import contextlib
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from band.agent import Agent
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FrameworkAdapter
 from band.core.settlement import SettlementResult
+from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
-from band.platform.event import MessageEvent
+from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.message_lifecycle import ActionablePage
+from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event, make_participant_mock
+from tests.core.agentlifecycle.kit import make_runtime
+from tests.runtime.conftest import Waiting
 from tests.runtime.helpers import (
     AGENT_ID,
     EPOCH,
@@ -36,7 +42,7 @@ def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
     context = MagicMock()
     context.room_id = ROOM_ID
     context.is_llm_initialized = False
-    context.config = SessionConfig()
+    context.config = SessionConfig(consume_all_queued=True)
     context.participants = [
         {"id": "alice", "name": "Alice", "type": "User"},
         {"id": "bob", "name": "Bob", "type": "User"},
@@ -315,3 +321,164 @@ class ControlScript:
 
 def _payload_id(event: Any) -> str:
     return event.payload.id
+
+
+@dataclass
+class Room(Waiting):
+    platform: FakeRoom
+    ctx: ExecutionContext
+    turns: Turns
+
+    async def deliver(self, *events: MessageEvent) -> None:
+        for event in events:
+            await self.ctx.on_event(event)
+
+    async def interrupt(self) -> None:
+        """An INTERRUPT control signal; between turns it is a no-op."""
+        self.ctx.interrupt()
+
+    async def reached(self, status: DeliveryStatus, *message_ids: str) -> None:
+        await self.until(
+            lambda: all(self.platform.status_of(m) == status for m in message_ids)
+        )
+
+    async def settled(self, *message_ids: str) -> None:
+        await self.reached(DeliveryStatus.PROCESSED, *message_ids)
+
+    async def admission_attempted(self, message_id: str) -> None:
+        await self.until(lambda: message_id in self.platform.admission_attempts)
+
+    async def resync(self) -> None:
+        """Ask for recovery and wait until the room has read the platform again."""
+        reads = self.platform.page_reads
+        await self.ctx.request_resync()
+        await self.until(lambda: self.platform.page_reads > reads)
+
+    async def readmit(self) -> None:
+        """Stop refusing admissions and let recovery pick the work up again."""
+        self.platform.refuse_processing.clear()
+        await self.ctx.request_resync()
+
+
+@contextlib.asynccontextmanager
+async def started_room(
+    platform: FakeRoom,
+    *,
+    batching: bool = True,
+    max_queued: int = 10,
+    config: SessionConfig | None = None,
+    gate: bool = False,
+    fail_on: frozenset[str] = frozenset(),
+    arrived: tuple[MessageEvent, ...] = (),
+    controls: ControlScript | None = None,
+) -> AsyncIterator[Room]:
+    """A started room over a host that can run a batch; ``config`` replaces the
+    one ``batching`` and ``max_queued`` describe."""
+    turns = Turns(gate=gate, fail_on=set(fail_on))
+    ctx = ExecutionContext(
+        ROOM_ID,
+        platform.link(),
+        turns.single,
+        config=config
+        or SessionConfig(consume_all_queued=batching, max_queued_messages=max_queued),
+        agent_id=AGENT_ID,
+        on_execute_batch=turns.batch,
+        on_message_control=controls.handle if controls else None,
+        is_message_control=controls.recognizes if controls else None,
+    )
+    platform.deliver = ctx.on_event
+    platform.interrupt = ctx.interrupt
+    for event in arrived:
+        await ctx.on_event(event)
+    await ctx.start()
+    try:
+        yield Room(platform, ctx, turns)
+    finally:
+        turns.release.set()
+        await ctx.stop(timeout=2)
+
+
+class LegacyAdapter(SimpleAdapter[Any]):
+    """An adapter that declares no optional capability: no batch support and no
+    control handler."""
+
+    async def on_message(self, *args: Any, **kwargs: Any) -> None: ...
+
+
+class BatchAdapter(LegacyAdapter):
+    supports_batch_input = True
+
+
+class ControlHandlingAdapter(LegacyAdapter):
+    """Handles controls but cannot say which messages are controls."""
+
+    async def try_handle_control(self, *args: Any, **kwargs: Any) -> bool:
+        return False
+
+
+class RecognizingAdapter(ControlHandlingAdapter):
+    def is_control_message(self, msg: Any) -> bool:
+        return msg.content == "approve"
+
+
+class LegacyPreprocessor:
+    """A preprocessor without ``process_batch``."""
+
+    async def process(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+class BatchOnlyPreprocessor(LegacyPreprocessor):
+    """Can build batches but has no shared read-only projection."""
+
+    async def process_batch(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+class RewritingPreprocessor(DefaultPreprocessor):
+    """Recognize controls from the same transformed input ordinary handling sees."""
+
+    @staticmethod
+    def message(
+        ctx: ExecutionContext, event: PlatformEvent, agent_id: str
+    ) -> PlatformMessage | None:
+        message = DefaultPreprocessor.message(ctx, event, agent_id)
+        return replace(message, content="approve") if message is not None else None
+
+
+def stored_message(message_id: str) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "sender_type": "User",
+        "sender_name": "Alice",
+        "content": message_id,
+    }
+
+
+async def history_contents(*, stored_ids: list[str]) -> list[str]:
+    """The history a preprocessed batch of ``m1`` and ``m2`` carries."""
+    ctx = room_context(stored=[stored_message(i) for i in stored_ids])
+    events = [make_message_event(msg_id=i) for i in ("m1", "m2")]
+    inp = await DefaultPreprocessor().process_batch(ctx, events, AGENT_ID)
+    assert inp is not None
+    return [message["content"] for message in inp.history.raw]
+
+
+async def classify(
+    adapter: SimpleAdapter[Any],
+    ctx: MagicMock,
+    content: str,
+    preprocessor: DefaultPreprocessor | None = None,
+) -> bool:
+    """Whether a started agent tells its runtime a delivery is a control."""
+    runtime = make_runtime()
+    runtime.agent_id = AGENT_ID
+    async with Agent(runtime=runtime, adapter=adapter, preprocessor=preprocessor):
+        is_control = runtime.start.await_args.kwargs["is_message_control"]
+        return is_control(ctx, make_message_event(content=content))
+
+
+def batching_agent(adapter: SimpleAdapter[Any], **kwargs: Any) -> Agent:
+    runtime = make_runtime()
+    runtime.session_config = SessionConfig(consume_all_queued=True)
+    return Agent(runtime=runtime, adapter=adapter, **kwargs)

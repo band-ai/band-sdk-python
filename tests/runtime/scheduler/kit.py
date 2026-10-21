@@ -60,6 +60,7 @@ async def declining_room(
     adapter: DecliningAdapter,
     *,
     started: bool = False,
+    batching: bool = True,
 ) -> AsyncIterator[tuple[RestPeer, ExecutionContext, ControlCallback]]:
     peer = RestPeer()
     runtime = make_runtime()
@@ -71,9 +72,9 @@ async def declining_room(
                 ROOM_ID,
                 link_over(rest),
                 callbacks["on_execute"],
-                config=session_config(batching=False, retries=1),
+                config=session_config(batching=batching, retries=1),
                 agent_id=AGENT_ID,
-                on_execute_batch=callbacks.get("on_execute_batch"),
+                on_execute_batch=callbacks["on_execute_batch"],
                 on_message_control=callbacks["on_message_control"],
                 is_message_control=callbacks["is_message_control"],
             )

@@ -103,6 +103,7 @@ class DeliveryFacts(TypedDict):
     self_echo: bool
     durably_processed: bool
     durably_failed: bool
+    allow_failed_retry: bool
 
 
 class DeliveryHost(Protocol):
@@ -161,6 +162,8 @@ class DeliveryLifecycle:
         self.config = config
         self.host = host
         self.agent_id = agent_id
+        # One model attempt answers for a whole batch, so a failed one is final.
+        self.replays_failures = not config.consume_all_queued
         # Loop time before which an unconfirmed terminal write is not retried, so
         # arrivals cannot multiply an outage's writes. A due or requested
         # reconciliation clears it.
@@ -197,6 +200,7 @@ class DeliveryLifecycle:
             durably_processed=DeliveryStatus.PROCESSED in (status, cached),
             durably_failed=status == DeliveryStatus.FAILED
             or (status is None and cached == DeliveryStatus.FAILED),
+            allow_failed_retry=self.replays_failures,
         )
 
     def eligibility(
@@ -545,7 +549,7 @@ class DeliveryLifecycle:
                         message_id(event),
                         GENERIC_PROVIDER_FAILURE_MESSAGE,
                         self.retry_tracker,
-                        True,
+                        self.replays_failures,
                     )
 
     async def settle(self, scope: TurnScope) -> None:
