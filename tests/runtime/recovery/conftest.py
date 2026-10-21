@@ -17,7 +17,7 @@ from tests.runtime.recovery.kit import (
 )
 
 
-@pytest.fixture(params=[Shape.OFF])
+@pytest.fixture(params=list(Shape))
 def shape(request: pytest.FixtureRequest) -> Shape:
     return request.param
 

@@ -25,7 +25,7 @@ from tests.runtime.helpers import (
 
 
 class TestHousekeeping:
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize("batching", [False, True], ids=["singleton", "batch"])
     @pytest.mark.parametrize(
         ("stopped", "head_status"),
         [

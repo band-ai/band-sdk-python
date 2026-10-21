@@ -29,6 +29,7 @@ from band_sdk_core import (
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import ControlMode
 from band.core.exceptions import (
+    BandConfigError,
     CleanupIncompleteError,
     InputNotAccepted,
     RoomExecutionStoppedError,
@@ -265,11 +266,20 @@ class ExecutionContext:
                 pair executes at most once per runtime. Defaults to a private
                 instance for standalone contexts.
             on_execute_batch: Callback running one turn over several originals.
+                Required when ``config.consume_all_queued`` is set.
             is_message_control: Read-only recognition of a delivery the
                 adapter would handle as a control. Without it controls are
                 handled in ordinary queue order.
+
+        Raises:
+            BandConfigError: ``config.consume_all_queued`` without a batch host.
         """
         self.config = config or SessionConfig()
+        if self.config.consume_all_queued and on_execute_batch is None:
+            raise BandConfigError(
+                "consume_all_queued needs a host that runs a turn over several "
+                "originals (on_execute_batch)"
+            )
         self.room_id = room_id
         self.link = link
         self._on_execute = on_execute
