@@ -261,8 +261,10 @@ Agent-emitted events (tool_call, thought, task, usage) surface via the **REST co
 messages API** the toolkit reads, not the user WebSocket stream. Usage rides a `task`
 event's `metadata.band_usage` today (a `usage` message_type isn't accepted yet), so
 `capture.usage()` filters on that discriminator. Token counts are each provider's raw
-values, no folding: whether `input_tokens` includes cache is provider-specific, so
-`input_tokens + cache_read_tokens + cache_write_tokens` is the robust total prompt size
+values, no folding: whether `input_tokens` already includes cache is provider-specific
+(Anthropic excludes it, OpenAI/Gemini include it), so
+`input_tokens + cache_read_tokens + cache_write_tokens` is an upper bound on prompt
+size, not an exact total — compare it within one provider, never across providers
 (`TurnUsage` in `src/band/core/types.py`).
 
 ## Quick recipe: validate a change across all runnable lanes, then commit

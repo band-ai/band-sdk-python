@@ -22,7 +22,9 @@ changes branches or prepares another checkout.
    sync.
 4. **Check push access** (only when fixes will be pushed). Inspect the PR's
    `isCrossRepository`, `maintainerCanModify`, and head repository, together with
-   the authenticated user's permissions. Direct write access to the head repository
+   the authenticated user's permissions on each repository
+   (`gh api repos/<owner>/<repo> --jq .permissions.push`; `isCrossRepository`
+   and `maintainerCanModify` describe the PR, not the user). Direct write access to the head repository
    covers same-repo and owned-fork PRs. The separate maintainer route requires
    push access to the base repository and the creator's permission to edit the
    user-owned fork (`maintainerCanModify`); it does not require direct fork write
