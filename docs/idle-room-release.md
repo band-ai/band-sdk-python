@@ -14,6 +14,10 @@ specific qualification blocker. This also applies to JSON/YAML configuration and
 Codex environment settings. There is no supported bypass or restricted feature
 profile.
 
+`OmpAdapterConfig` (native OMP) has no `retention` setting. Native OMP turn
+settlement gates Band message completion, not automatic idle process release; room
+processes stay resident until explicit cleanup, a failed turn, or cancellation.
+
 ```python
 from pydantic import ValidationError
 
