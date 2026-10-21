@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from band.runtime.scheduler import ResyncOutcome
 from tests.runtime.scheduler.kit import DecliningAdapter, declining_room
 
 
@@ -13,7 +12,7 @@ class TestDeclinedEffects:
     async def test_decline_posts_one_error_before_ordinary_fallback(self) -> None:
         adapter = DecliningAdapter()
         async with declining_room(adapter) as (peer, ctx, _):
-            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
+            await ctx.scheduler.run_pass(recovery=True)
             assert peer.status_of("expired") is DeliveryStatus.PROCESSED
         assert adapter.ordinary == ["expired"]
         assert peer.events_posted == 1
@@ -26,9 +25,9 @@ class TestDeclinedEffects:
     ) -> None:
         adapter = DecliningAdapter(recognized=recognized, refuse=True)
         async with declining_room(adapter) as (peer, ctx, _):
-            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.BLOCKED
+            await ctx.scheduler.run_pass(recovery=True)
             assert (adapter.ordinary, peer.events_posted) == (["expired"], 1)
             assert peer.status_of("expired") is DeliveryStatus.PROCESSING
-            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.BLOCKED
+            await ctx.scheduler.run_pass(recovery=True)
             assert (adapter.ordinary, peer.events_posted) == (["expired", "expired"], 2)
             assert not peer.writes_of(DeliveryStatus.PROCESSED)

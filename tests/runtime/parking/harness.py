@@ -26,7 +26,7 @@ from band.platform.message_lifecycle import (
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import DEFAULT_MAX_MESSAGE_RETRIES, SessionConfig
-from tests.conftest import make_message_event, make_room_removed_event
+from tests.conftest import make_message_event
 from tests.platform.settlement.kit import (
     MISSING_ATTEMPT,
     ROOM_ID,
@@ -37,7 +37,7 @@ from tests.platform.settlement.kit import (
     link_over,
 )
 from tests.runtime.batching.kit import ControlScript, Turns
-from tests.runtime.conftest import Waiting, admit_room
+from tests.runtime.conftest import Waiting
 from tests.runtime.helpers import AGENT_ID, EPOCH, SENDER_ID
 
 # An input that arrives independently of the originals the room starts with.
@@ -465,9 +465,8 @@ class Harness(Waiting):
         await self.elapse(1)
 
     async def leave(self) -> None:
-        """Deliver the room-removed event to presence and wait for retirement."""
-        admit_room(self.runtime.presence, ROOM_ID)
-        await self.runtime.presence._on_platform_event(make_room_removed_event(ROOM_ID))
+        """Leave through presence's callback, as join does, and wait for retirement."""
+        await self.runtime.presence.on_room_left(ROOM_ID)
         await self.converged()
 
     async def converged(self) -> None:

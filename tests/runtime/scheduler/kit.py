@@ -86,11 +86,11 @@ class WaitingAdapter(DecliningAdapter):
         super().__init__()
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
-        self.calls = 0
 
     async def try_handle_control(self, msg: Any, tools: Any) -> bool:
-        self.calls += 1
-        if self.calls == 1:
+        """Decline like the parent, holding only the first offer until released."""
+        declined = await super().try_handle_control(msg, tools)
+        if not self.entered.is_set():
             self.entered.set()
             await self.release.wait()
-        return False
+        return declined
