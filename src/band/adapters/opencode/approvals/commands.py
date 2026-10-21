@@ -70,5 +70,5 @@ def parse_question_answers(content: str, question_count: int) -> list[list[str]]
 
 def is_question_rejection(command: str) -> bool:
     """Whether a room reply rejects a question rather than answering it."""
-    tokens = command.split()
-    return bool(tokens) and tokens[0].lstrip("/").lower() == PermissionReplyWord.REJECT
+    parsed = parse_permission_reply(command)
+    return parsed is not None and parsed.reply == "reject"
