@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.letta import (
-    LettaAdapter,
-    LettaAdapterConfig,
-    LettaMCPConfig,
-)
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 from band.converters.letta import LettaSessionState
 from band.testing import FakeAgentTools
 from tests.adapters.lettakit import (

@@ -10,18 +10,11 @@ from letta_client.types.agents.text_content import TextContent
 from letta_client.types.agents.tool_call import ToolCall
 from letta_client.types.agents.tool_return import ToolReturn
 
-from band.adapters.letta import (
-    LettaAdapter,
-    LettaAdapterConfig,
-    RoomContext,
-)
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
 from band.converters.letta import LettaSessionState
 from band.core.types import Emit, ToolEventKey
 from band.runtime.tools import BandTool
-from band.testing import (
-    FakeAgentTools,
-    events_of_type,
-)
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_grouped_call_message,

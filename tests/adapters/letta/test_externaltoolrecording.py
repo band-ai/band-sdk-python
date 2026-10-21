@@ -8,18 +8,11 @@ from typing import Literal
 import pytest
 from letta_client.types.tool_return_message import ToolReturnMessage
 
-from band.adapters.letta import (
-    LettaAdapterConfig,
-    LettaMCPConfig,
-)
+from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig
 from band.converters.letta import LettaSessionState
 from band.core.protocols import TurnResultAlreadyReported
 from band.runtime.tools import BandTool
-from band.testing import (
-    MISSING_REPLY_FAILURE,
-    FakeAgentTools,
-    failure_reports,
-)
+from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from tests.adapters.letta.kit import sent_contents
 from tests.adapters.lettakit import (
     call_id,

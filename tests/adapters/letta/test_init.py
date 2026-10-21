@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from band.adapters.letta import (
-    LettaAdapter,
-    LettaAdapterConfig,
-    LettaMCPConfig,
-)
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
 
 class TestLettaAdapterInit:

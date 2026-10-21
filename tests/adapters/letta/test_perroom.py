@@ -9,25 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.adapters.letta import (
-    LettaAdapter,
-    LettaAdapterConfig,
-    RoomContext,
-)
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
 from band.converters.letta import LettaSessionState
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     TurnResultAlreadyReported,
 )
 from band.core.types import Capability, Emit
-from band.testing import (
-    FakeAgentTools,
-    reported_failures,
-)
-from tests.adapters.letta.kit import (
-    REPLY_SETTLING_CALLS,
-    sent_contents,
-)
+from band.testing import FakeAgentTools, reported_failures
+from tests.adapters.letta.kit import REPLY_SETTLING_CALLS, sent_contents
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_letta_response,

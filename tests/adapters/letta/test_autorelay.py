@@ -17,10 +17,7 @@ from band.testing import (
     failure_reports,
     reported_failures,
 )
-from tests.adapters.letta.kit import (
-    REPLY_SETTLING_CALLS,
-    sent_contents,
-)
+from tests.adapters.letta.kit import REPLY_SETTLING_CALLS, sent_contents
 from tests.adapters.lettakit import (
     make_platform_message,
     ready_letta_adapter,

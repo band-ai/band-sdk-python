@@ -6,10 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.adapters.letta import (
-    LettaAdapter,
-    RoomContext,
-)
+from band.adapters.letta import LettaAdapter, RoomContext
 
 
 class TestLettaAdapterOnCleanup:

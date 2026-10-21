@@ -6,11 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.adapters.letta import (
-    LettaAdapter,
-    LettaAdapterConfig,
-    LettaMCPConfig,
-)
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 from tests.adapters.lettakit import make_mock_agent
 
 

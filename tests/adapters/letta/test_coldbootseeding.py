@@ -6,11 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.adapters.letta import (
-    LettaAdapter,
-    LettaAdapterConfig,
-    RoomContext,
-)
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
 from band.converters.letta import LettaSessionState
 from band.core.protocols import TurnResultAlreadyReported
 from band.testing import FakeAgentTools
