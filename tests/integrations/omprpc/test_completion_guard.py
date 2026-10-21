@@ -9,6 +9,7 @@ peer frames, never on sleeps that the assertion depends on.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -183,6 +184,46 @@ class TestCompletionGuard:
             with pytest.raises(asyncio.CancelledError):
                 await running
         assert process_is_gone(client)
+
+    async def test_cancellation_with_surviving_callback_stays_cancellation(
+        self, client_factory: ClientFactory, short_guard: None
+    ) -> None:
+        # STOP precedence over a dirty retirement: cancelling while a
+        # cancellation-resistant callback is armed must end the turn as
+        # CancelledError — never converted into a turn failure or a restart
+        # request. The recorded retirement error alone blocks replacement.
+        client = await client_factory("drain-stubborn")
+        resumed = asyncio.Event()
+
+        async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
+            while not resumed.is_set():
+                try:
+                    await resumed.wait()
+                except asyncio.CancelledError:
+                    continue
+            return OmpToolResult(content=[])
+
+        observer = Observer()
+        running = asyncio.create_task(
+            client.prompt(
+                "first",
+                on_event=observer.on_event,
+                on_tool=on_tool,
+                on_ui=observer.on_ui,
+            )
+        )
+        await observer.wait_for("agent_end")
+        await asyncio.sleep(GUARD_S / 5)  # armed, callback claimed
+        running.cancel()
+        async with asyncio.timeout(10):
+            with pytest.raises(asyncio.CancelledError):
+                await running
+        assert process_is_gone(client)
+        with pytest.raises(OmpProcessError, match="retirement is unproven"):
+            await client.start()  # the recorded error is the fail-closed route
+        resumed.set()
+        with contextlib.suppress(Exception):
+            await client.close()
 
     async def test_lost_snapshot_response_fails_bounded_at_the_request_layer(
         self, client_factory: ClientFactory, short_guard: None
