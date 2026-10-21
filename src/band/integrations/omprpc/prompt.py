@@ -102,7 +102,11 @@ class PromptRun:
         if self.snapshot is None:
             return False
         sequence, state = self.snapshot
-        return state.isSettled and sequence >= self.last_activity_sequence
+        return (
+            state.isSettled
+            and idle_flags(state)
+            and sequence >= self.last_activity_sequence
+        )
 
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
@@ -122,9 +126,16 @@ class PromptRun:
         if self.snapshot is None or self.snapshot[0] <= self.last_activity_sequence:
             return False
         _, state = self.snapshot
-        return bool(
-            state.isStreaming
-            or state.hasPendingAsyncWork
-            or state.queuedMessageCount > 0
-            or state.isCompacting
-        )
+        return not idle_flags(state)
+
+
+def idle_flags(state: OmpState) -> bool:
+    """Positive idle proof for a snapshot: no busy signal remains set."""
+    return bool(
+        not state.isStreaming
+        and not state.hasPendingAsyncWork
+        and not state.isCompacting
+        and state.queuedMessageCount == 0
+    )
+
+
