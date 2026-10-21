@@ -8,7 +8,6 @@ from band_sdk_core import ParkedReason
 from band.platform.event import ReconnectedEvent
 from tests.platform.settlement.kit import MISSING_ATTEMPT, Reply
 from tests.runtime.parking.harness import (
-    NOT_FOUND,
     OFF_FAILED,
     PAST_TWO_INTERVALS,
     RECONCILE_SECONDS,
@@ -16,6 +15,7 @@ from tests.runtime.parking.harness import (
     SPARE_RETRIES,
     Hangup,
     Harness,
+    Refusal,
     RoomPeer,
 )
 
@@ -28,7 +28,9 @@ class TestOffModeFailure:
     @pytest.mark.parametrize(
         ("reply", "parked"),
         [
-            pytest.param(NOT_FOUND, ParkedReason.NotFound.wire_name, id="not-found"),
+            pytest.param(
+                Refusal.ACCESS_LOST, ParkedReason.NotFound.wire_name, id="access-lost"
+            ),
             pytest.param(
                 MISSING_ATTEMPT, ParkedReason.Rejected.wire_name, id="rejected"
             ),
@@ -40,7 +42,7 @@ class TestOffModeFailure:
         self,
         room_peer: RoomPeer,
         room: Harness,
-        reply: Reply | Hangup,
+        reply: Reply | Hangup | Refusal,
         parked: str | None,
     ) -> None:
         room_peer.script(reply, QUEUED)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.runtime.parking.harness import (
-    NOT_FOUND_REFUSALS,
+    PARKED_REFUSALS,
     PAST_TWO_INTERVALS,
     Cell,
     Harness,
@@ -16,7 +16,7 @@ from tests.runtime.parking.harness import (
 
 @pytest.mark.looptime
 class TestRoomRetirement:
-    @pytest.mark.parametrize("refusal", NOT_FOUND_REFUSALS)
+    @pytest.mark.parametrize("refusal", PARKED_REFUSALS)
     async def test_observed_removal_retires_the_room_without_settling_the_intent(
         self, scenario: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:

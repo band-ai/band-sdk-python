@@ -71,7 +71,8 @@ class Hangup:
 class Refusal(StrEnum):
     """How the platform refuses a terminal write after the model has worked.
 
-    The first two are the same 404: the platform never says which happened.
+    The first two are the same 404; only whether the room still answers reads
+    tells them apart.
     """
 
     DELETED = "message-deleted"
@@ -87,7 +88,8 @@ class Refusal(StrEnum):
         return reason.wire_name
 
 
-NOT_FOUND_REFUSALS = (Refusal.DELETED, Refusal.ACCESS_LOST)
+# The refusals that park the intent; a deleted message's 404 retires it instead.
+PARKED_REFUSALS = (Refusal.ACCESS_LOST, Refusal.REJECTED)
 
 # The refusals that can be lifted: a deleted message never returns.
 RELENTING_REFUSALS = (Refusal.ACCESS_LOST, Refusal.REJECTED)
@@ -211,6 +213,24 @@ class Cell:
             platform={},
         )
 
+    def after_gone(self) -> Outcome:
+        """One turn over originals the platform no longer has: each terminal write
+        is sent once, and nothing is retained or held by the platform."""
+        return Outcome(
+            model=[self.queued],
+            admitted=list(self.queued),
+            terminal_writes=self.writes(),
+            retained={},
+            completed=sorted(self.queued),
+            platform={},
+        )
+
+    def after_refusal(self, refusal: Refusal) -> Outcome:
+        """One turn whose terminal writes were all refused as ``refusal`` says."""
+        if refusal is Refusal.DELETED:
+            return self.after_gone()
+        return self.after_first_attempt(parked=refusal.parked)
+
     def after_acceptance(self, *, rounds: int = 1) -> Outcome:
         """The same single turn once a terminal write for each original was accepted.
 
@@ -243,8 +263,8 @@ class RoomPeer(SettlementPeer):
     A terminal write is answered by ``terminal[message_id]`` (default: accepted).
     ``admission[message_id]`` likewise answers its processing write. ``refuse``
     makes the platform change as the model works: a deletion or loss of access
-    strikes when a message's terminal write arrives, and lost access revokes
-    every lifecycle write while reads keep answering. ``writes`` lists every
+    strikes when a message's terminal write arrives, and lost access answers
+    every room route, reads included, with not found. ``writes`` lists every
     lifecycle write as ``"<message>/<action>"``, answered or not.
     """
 
@@ -290,9 +310,13 @@ class RoomPeer(SettlementPeer):
             case _:
                 self.doomed.update(dict.fromkeys(message_ids, refusal))
 
-    def script(self, reply: Reply | Hangup, *message_ids: str) -> None:
+    def script(self, reply: Reply | Hangup | Refusal, *message_ids: str) -> None:
         """Answer the terminal writes of ``message_ids`` with ``reply``."""
-        self.terminal.update(dict.fromkeys(message_ids, reply))
+        match reply:
+            case Refusal():
+                self.refuse(reply, *message_ids)
+            case _:
+                self.terminal.update(dict.fromkeys(message_ids, reply))
 
     def relent(self) -> None:
         """Accept terminal writes again; a deleted message stays deleted."""
@@ -341,6 +365,8 @@ class RoomPeer(SettlementPeer):
         return Reply.of_json(200, {"data": [], "metadata": {"has_more": False}})
 
     def actionable(self) -> Reply:
+        if self.access_lost:
+            return NOT_FOUND
         rows = [
             self.row(m) for m, s in self.status.items() if s != DeliveryStatus.PROCESSED
         ]
@@ -351,6 +377,8 @@ class RoomPeer(SettlementPeer):
     def next_message(self) -> Reply:
         now = asyncio.get_running_loop().time()
         self.next_read_times.append(now)
+        if self.access_lost:
+            return NOT_FOUND
         recent = self.next_read_times[-MAX_NEXT_READS_AT_ONE_INSTANT:]
         if len(recent) == MAX_NEXT_READS_AT_ONE_INSTANT and set(recent) == {now}:
             return Reply(204)

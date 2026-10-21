@@ -1,4 +1,4 @@
-"""A 404 after model work leaves an unresolved intent, whatever its cause."""
+"""A 404 while the room is unreadable leaves an unresolved intent, never executed."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import pytest
 
 from tests.runtime.parking.harness import (
     NOT_FOUND,
-    NOT_FOUND_REFUSALS,
     PAST_TWO_INTERVALS,
     Cell,
     Harness,
@@ -17,10 +16,10 @@ from tests.runtime.parking.harness import (
 
 @pytest.mark.looptime
 class TestUnknownCause:
-    @pytest.mark.parametrize("refusal", NOT_FOUND_REFUSALS)
     async def test_the_intent_is_retained_unresolved_and_never_executed(
-        self, scenario: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
+        self, scenario: Cell, room_peer: RoomPeer, room: Harness
     ) -> None:
+        refusal = Refusal.ACCESS_LOST
         room_peer.refuse(refusal, *scenario.queued)
 
         await room.join()
