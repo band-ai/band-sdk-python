@@ -211,9 +211,7 @@ class TestShutdownStatus:
                 await asyncio.gather(old_waiter, return_exceptions=True)
 
     @pytest.mark.parametrize("hosting", ["agent", "runtime"])
-    @pytest.mark.parametrize(
-        "termination", ["signal_cancel", "policy_close"]
-    )
+    @pytest.mark.parametrize("termination", ["signal_cancel", "policy_close"])
     async def test_transport_completion_without_successful_waiter_clears_health(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -277,7 +275,7 @@ class TestShutdownStatus:
                 assert ws is not None and ws.client is not None
                 supervisor = ws.client._supervisor_task
                 assert supervisor is not None
-                await server.close_connection(code=1000)
+                await server.close_connection(code=1008, reason="policy violation")
                 await asyncio.wait_for(asyncio.shield(supervisor), timeout=2.0)
                 assert not link.is_connected
                 release.set()
