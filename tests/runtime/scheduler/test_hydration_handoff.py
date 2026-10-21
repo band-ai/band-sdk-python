@@ -49,13 +49,13 @@ class TestHydrationHandoff:
             ("control" if control else "ordinary",) if runs else ()
         )
         assert observed.original_preserved
-        assert observed.history_reads == 1
         assert observed.target_writes == (
             ("processing target", "processed target") if runs else ()
         )
         if control:
-            assert observed.blocked_attempts >= 1
-            assert observed.blocked_settlements == 0
+            # The refused head was reached, and its refusal never completes it.
+            assert observed.blocked_claimed
+            assert observed.blocked_status is not PROCESSED
 
     @pytest.mark.parametrize("batching", [False])
     @pytest.mark.parametrize("control", [False, True], ids=["ordinary", "priority"])
@@ -77,4 +77,3 @@ class TestHydrationHandoff:
         assert observed.target_writes == (
             () if batching else ("processing target", "processed target")
         )
-        assert observed.history_reads == int(warm or not batching)

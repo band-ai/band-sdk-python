@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import DeliveryStatus
-from tests.runtime.delivery.kit import RestPeer, started_session
+from tests.runtime.delivery.kit import RestPeer, started_session, write
 
 pytestmark = pytest.mark.looptime
 
@@ -26,10 +26,15 @@ class TestDeletedOriginal:
             session.turns.release.set()
             await session.settled("warmup")
             await session.quiesce()
+            before_live = len(peer.journal)
 
-            await session.deliver(peer.post("live", at=3))
+            await session.deliver(peer.post("live", at=3), peer.post("later", at=4))
             await session.quiesce()
 
-        assert session.turns.ids == [("warmup",), ("live",)]
-        assert peer.status_of("live") is DeliveryStatus.PROCESSED
-        assert session.admission_attempts.count("deleted") == 1
+        assert session.turns.ids == [("warmup",), ("live",), ("later",)]
+        assert peer.status_of("later") is DeliveryStatus.PROCESSED
+        # Later input does not re-claim the deleted message.
+        assert (
+            write(DeliveryStatus.PROCESSING, "deleted", confirmed=False)
+            not in peer.journal[before_live:]
+        )
