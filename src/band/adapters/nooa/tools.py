@@ -96,9 +96,10 @@ class TurnBinding:
     def post_thought(self, text: str) -> None:
         """Post *text* as a thought ahead of the tool calls its model call starts.
 
-        NOOA calls this from ``LLMComplete``, before the call's code runs. The
-        task is created here, synchronously, so the loop steps it, and it
-        queues on ``posting``, before any tool call that code creates.
+        NOOA calls this from ``LLMComplete`` on the turn's event loop, before the
+        call's code runs. The task is created here, synchronously, so the loop
+        steps it, and it queues on ``posting``, before any tool call that code
+        creates. It must run on the loop thread: ``ensure_future`` needs it.
         """
         if not self.open:
             return
@@ -254,8 +255,11 @@ class RoomTools:
         message_type: MessageType,
         payload: Mapping[ToolEventKey, object],
     ) -> None:
-        # Taken even when tool events are off: a call reports before it runs,
-        # so its effect (such as a reply) cannot overtake a thought queued first.
+        # A call's TOOL_CALL report waits its turn even when tool events are off:
+        # the call runs only after it, so its effect (such as a reply) cannot
+        # overtake a thought queued first.
+        if not (self._emit_tool_calls or message_type is MessageType.TOOL_CALL):
+            return
         async with binding.posting:
             if self._emit_tool_calls:
                 await send_event_safe(
