@@ -159,6 +159,49 @@ class TestOwnedWork:
         await resident.room.dispose()
         assert resident.releases == [ReleaseCause.FINAL]
 
+    async def test_nested_cleanup_spares_accepted_callers_but_not_unrelated_work(
+        self, host: ResidenceHost
+    ) -> None:
+        resident = host.room()
+        await resident.turn()
+        unrelated_wait = Hold()
+        requested, finish = asyncio.Event(), asyncio.Event()
+
+        async def unrelated_work() -> None:
+            async with resident.room.use():
+                await unrelated_wait.wait()
+
+        async def configure() -> str:
+            with pytest.raises(CleanupIncompleteError):
+                await resident.room.dispose()
+            requested.set()
+            await finish.wait()
+            return "configured"
+
+        async def accepted_caller() -> str:
+            async with resident.room.use():
+                return await asyncio.shield(resident.room.start_owned(configure))
+
+        unrelated = resident.room.start_owned(unrelated_work)
+        await unrelated_wait.arrived()
+        caller = resident.room.start_owned(accepted_caller)
+        try:
+            await requested.wait()
+            with pytest.raises(asyncio.CancelledError):
+                await unrelated
+            assert resident.live
+            finish.set()
+            assert await caller == "configured"
+            await resident.room.dispose()
+            assert resident.room.snapshot.state is Residency.CLOSED
+            assert resident.releases == [ReleaseCause.FINAL]
+        finally:
+            finish.set()
+            for task in (caller, unrelated):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(caller, unrelated, return_exceptions=True)
+
     @requires_eager_tasks
     async def test_started_work_runs_only_once_enrolled(
         self, host: ResidenceHost
