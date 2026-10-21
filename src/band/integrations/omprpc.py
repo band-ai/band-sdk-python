@@ -238,6 +238,9 @@ class PromptRun:
         if self.snapshot is None:
             return False
         sequence, state = self.snapshot
+        # A sticky event claim is superseded by any newer snapshot that is
+        # both settled and positively idle (the snapshot/frame race the
+        # settlement suite pins); it gates guard arming, not snapshot proof.
         return (
             state.isSettled
             and _idle_flags(state)
