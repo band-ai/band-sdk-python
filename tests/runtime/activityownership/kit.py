@@ -5,11 +5,7 @@ import json
 
 import httpx
 
-from tests.runtime.helpers import ALICE, LifecyclePlatform, page
-
-
-def is_message_post(request: httpx.Request) -> bool:
-    return request.method == "POST" and request.url.path.endswith("/messages")
+from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
 
 
 def message_content(request: httpx.Request) -> str:

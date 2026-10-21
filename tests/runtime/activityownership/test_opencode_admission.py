@@ -14,18 +14,21 @@ from band.agent import Agent
 from band.runtime.execution import ExecutionContext, TurnOutcome
 from band.runtime.tools.agent import AgentTools
 from tests.adapters.opencode.helpers import (
+    APPROVED_ASK_NOTICES,
+    FIRST_ANSWER,
+    FOLLOW_UP,
     PERMISSION_ID,
+    SECOND_ANSWER,
     make_platform_message,
     model_answer,
     parked_turn_client,
+    room_turn,
+    turn_finished,
 )
 from tests.conftest import make_message_event
 from tests.mcpbackends import backends_created_by
 from tests.runtime.activityownership.kit import HeldReplyPlatform
 from tests.runtime.helpers import AGENT_ID, ALICE, IDLE, KEEP_ALIVE, ROOM_ID
-
-FIRST_ANSWER = "first answer"
-SECOND_ANSWER = "second answer"
 
 
 @pytest.fixture
@@ -45,7 +48,7 @@ class TestOpencodeAdmission:
         )
         adapter = OpencodeAdapter(client_factory=lambda _: client, emit=())
         agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
-        activity_platform.add_message("new", content="and then?")
+        activity_platform.add_message("new", content=FOLLOW_UP)
 
         with backends_created_by():
             await adapter.on_started("Test", "Test")
@@ -61,11 +64,10 @@ class TestOpencodeAdmission:
                     approval, AgentTools.from_context(ctx)
                 )
                 await activity_platform.reply_entered.wait()
-                first_turn = (await adapter._get_or_create_room_state(ROOM_ID)).turn
-                assert first_turn is not None and first_turn.watcher is not None
+                first_turn = await room_turn(adapter, room_id=ROOM_ID)
 
                 outcome = await ctx._process_event(
-                    make_message_event(msg_id="new", content="and then?")
+                    make_message_event(msg_id="new", content=FOLLOW_UP)
                 )
                 assert outcome is TurnOutcome.NOT_ACCEPTED
                 assert activity_platform.marked("processed") == ["original"]
@@ -74,7 +76,7 @@ class TestOpencodeAdmission:
                 assert activity_platform.activity_reports == [KEEP_ALIVE]
 
                 activity_platform.release.set()
-                await first_turn.watcher
+                await turn_finished(first_turn)
                 await ctx._join_activity_completion()
                 assert activity_platform.activity_reports == [KEEP_ALIVE, IDLE]
 
@@ -82,7 +84,8 @@ class TestOpencodeAdmission:
                 await ctx._join_activity_completion()
 
                 assert activity_platform.marked("processed") == ["original", "new"]
-                assert activity_platform.room_messages[-2:] == [
+                assert activity_platform.room_messages == [
+                    *APPROVED_ASK_NOTICES,
                     FIRST_ANSWER,
                     SECOND_ANSWER,
                 ]

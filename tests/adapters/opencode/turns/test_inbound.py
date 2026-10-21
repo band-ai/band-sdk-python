@@ -4,15 +4,20 @@ import asyncio
 
 import pytest
 
-from band.adapters.opencode import OpencodeAdapter
 from band.core.exceptions import InputNotAccepted
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from tests.adapters.opencode.helpers import (
+    APPROVED_ASK_NOTICES,
+    FIRST_ANSWER,
+    FOLLOW_UP,
+    PERMISSION_ID,
+    SECOND_ANSWER,
     BandMCPCalls,
     FakeOpencodeClient,
     HeldReplyTools,
     approve,
+    assert_left_untouched,
     deliver_followup,
     event_message_updated,
     event_permission,
@@ -20,23 +25,11 @@ from tests.adapters.opencode.helpers import (
     model_answer,
     park_turn,
     parked_turn_client,
+    room_turn,
     run_single_turn,
+    turn_finished,
     wait_for,
 )
-
-
-def assert_left_untouched(tools: FakeAgentTools) -> None:
-    """A refused delivery neither ran nor judged a turn of its own."""
-    assert not tools.turn.complete
-    assert tools.events_sent == []
-    assert tools.messages_sent == []
-
-
-async def room_turn_finished(adapter: OpencodeAdapter) -> None:
-    room_state = await adapter._get_or_create_room_state("room-1")
-    turn = room_state.turn
-    assert turn is not None
-    await wait_for(lambda: not turn.running)
 
 
 class TestInbound:
@@ -46,9 +39,9 @@ class TestInbound:
         """The approve message runs no model, so its own turn is settled; and the
         resumed turn's band tool calls still resolve to the turn's tools."""
         fake_client = FakeOpencodeClient(
-            prompt_event_sequences=[[event_permission("sess-1", "req-1")]],
+            prompt_event_sequences=[[event_permission("sess-1", PERMISSION_ID)]],
             reply_permission_events={
-                "req-1": [
+                PERMISSION_ID: [
                     mcp_backend.band_tool_call(
                         BandTool.SEND_MESSAGE,
                         {"content": "Done.", "mentions": ["@alice"]},
@@ -61,7 +54,9 @@ class TestInbound:
         approver_tools = FakeAgentTools()
 
         await run_single_turn(adapter, tools, content="run it")
-        await deliver_followup(adapter, approver_tools, content="approve req-1")
+        await deliver_followup(
+            adapter, approver_tools, content=f"approve {PERMISSION_ID}"
+        )
         await wait_for(lambda: tools.turn.replied)
 
         assert approver_tools.turn.complete
@@ -100,8 +95,8 @@ class TestInbound:
         the reply; a message arriving then is busy, and admitted after."""
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
-                model_answer("msg-1", "first answer"),
-                model_answer("msg-2", "second answer"),
+                model_answer("msg-1", FIRST_ANSWER),
+                model_answer("msg-2", SECOND_ANSWER),
             ]
         )
         adapter = make_adapter(fake_client)
@@ -114,17 +109,17 @@ class TestInbound:
         await first_tools.reply_entered.wait()
 
         with pytest.raises(InputNotAccepted):
-            await deliver_followup(adapter, busy_tools, content="and then?")
+            await deliver_followup(adapter, busy_tools, content=FOLLOW_UP)
         assert len(fake_client.prompt_calls) == 1
         assert_left_untouched(busy_tools)
 
-        first_tools.reply_release.set()
+        first_tools.release.set()
         await running_turn
         assert first_tools.turn.complete
-        await deliver_followup(adapter, next_tools, content="and then?")
+        await deliver_followup(adapter, next_tools, content=FOLLOW_UP)
 
-        assert first_tools.chat == ["first answer"]
-        assert next_tools.chat == ["second answer"]
+        assert first_tools.chat == [FIRST_ANSWER]
+        assert next_tools.chat == [SECOND_ANSWER]
 
     async def test_a_message_during_an_approved_turns_reply_waits_for_that_turn(
         self, make_adapter
@@ -132,8 +127,8 @@ class TestInbound:
         """A turn released to wait on a person keeps the room through the reply
         it posts after the approval."""
         fake_client = parked_turn_client(
-            after_approval=model_answer("msg-1", "first answer"),
-            later_prompts=[model_answer("msg-2", "second answer")],
+            after_approval=model_answer("msg-1", FIRST_ANSWER),
+            later_prompts=[model_answer("msg-2", SECOND_ANSWER)],
         )
         adapter = make_adapter(fake_client)
         first_tools, busy_tools, next_tools = (
@@ -146,15 +141,16 @@ class TestInbound:
         await first_tools.reply_entered.wait()
 
         with pytest.raises(InputNotAccepted):
-            await deliver_followup(adapter, busy_tools, content="and then?")
+            await deliver_followup(adapter, busy_tools, content=FOLLOW_UP)
         assert len(fake_client.prompt_calls) == 1
         assert_left_untouched(busy_tools)
 
-        first_tools.reply_release.set()
-        await room_turn_finished(adapter)
+        first_turn = await room_turn(adapter)
+        first_tools.release.set()
+        await turn_finished(first_turn)
         assert first_tools.turn.complete
-        await deliver_followup(adapter, next_tools, content="and then?")
+        await deliver_followup(adapter, next_tools, content=FOLLOW_UP)
         await adapter.on_cleanup("room-1")
 
-        assert first_tools.chat[-1] == "first answer"
-        assert next_tools.chat == ["second answer"]
+        assert first_tools.chat == [*APPROVED_ASK_NOTICES, FIRST_ANSWER]
+        assert next_tools.chat == [SECOND_ANSWER]

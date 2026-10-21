@@ -13,8 +13,10 @@ from tests.adapters.opencode.helpers import (
     event_permission,
     event_session_idle,
     make_platform_message,
+    room_turn,
     run_single_turn,
     tools_protocol,
+    turn_finished,
     wait_for,
 )
 from tests.toolkit.clock import binary_clock_resolution
@@ -127,11 +129,9 @@ class TestApprovalLifetime:
             is_session_bootstrap=False,
             room_id="room-1",
         )
-        room_state = await adapter._get_or_create_room_state("room-1")
-        first_turn = room_state.turn
-        assert first_turn is not None
+        first_turn = await room_turn(adapter)
         await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
-        await wait_for(lambda: not first_turn.running)
+        await turn_finished(first_turn)
 
         await deliver_message(
             adapter,

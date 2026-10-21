@@ -13,7 +13,11 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
-from band.adapters.opencode.approvals.wording import DECLINED_QUESTION_ANSWER
+from band.adapters.opencode.approvals.wording import (
+    APPROVAL_HANDLED_TEMPLATE,
+    APPROVAL_REQUESTED_TEMPLATE,
+    DECLINED_QUESTION_ANSWER,
+)
 from band.client.rest import MessageSentResponse
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
@@ -285,19 +289,19 @@ class RaisingSendTools(FakeAgentTools):
 
 
 class HeldReplyTools(FakeAgentTools):
-    """FakeAgentTools that hold the turn's reply post, keeping its watcher in
-    the delivery tail after the model has finished."""
+    """FakeAgentTools that hold every ``send_message`` until ``release`` is set,
+    keeping the turn's watcher in the delivery tail after the model has finished."""
 
     def __init__(self) -> None:
         super().__init__()
         self.reply_entered = asyncio.Event()
-        self.reply_release = asyncio.Event()
+        self.release = asyncio.Event()
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> MessageSentResponse | None:
         self.reply_entered.set()
-        await self.reply_release.wait()
+        await self.release.wait()
         return await super().send_message(content, mentions)
 
 
@@ -545,6 +549,9 @@ async def deliver_followup(
 
 
 PERMISSION_ID = "req-1"
+FOLLOW_UP = "and then?"
+FIRST_ANSWER = "first answer"
+SECOND_ANSWER = "second answer"
 
 
 def parked_turn_client(
@@ -573,6 +580,36 @@ async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
     control = agent_input(f"approve {PERMISSION_ID}", approver_tools)
     assert await adapter.try_handle_control(control.msg, control.tools)
     return approver_tools
+
+
+#: The notices a ``parked_turn_client`` turn posts to the room by the time
+#: ``approve`` has handled its ask.
+APPROVED_ASK_NOTICES = [
+    APPROVAL_REQUESTED_TEMPLATE.format(
+        permission="bash", patterns="rm -rf tmp", request_id=PERMISSION_ID
+    ),
+    APPROVAL_HANDLED_TEMPLATE.format(request_id=PERMISSION_ID, reply="once"),
+]
+
+
+async def room_turn(adapter: OpencodeAdapter, *, room_id: str = "room-1") -> TurnState:
+    """The turn that currently owns ``room_id``."""
+    turn = (await adapter._get_or_create_room_state(room_id)).turn
+    assert turn is not None
+    return turn
+
+
+async def turn_finished(turn: TurnState) -> None:
+    """Wait until the turn's watcher has delivered its result."""
+    assert turn.watcher is not None
+    await turn.watcher
+
+
+def assert_left_untouched(tools: FakeAgentTools) -> None:
+    """A refused delivery neither ran nor judged a turn of its own."""
+    assert not tools.turn.complete
+    assert tools.events_sent == []
+    assert tools.messages_sent == []
 
 
 class AskFactory:
