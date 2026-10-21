@@ -32,4 +32,4 @@ class TestDeclineLifetime:
                 adapter.release.set()
                 assert await late is False
                 assert await callback(ctx, event) is False
-            assert adapter.calls == 2
+            assert peer.events_posted == 2
