@@ -7,7 +7,6 @@ from typing import TypeAlias
 
 from band.adapters.opencode.approvals.commands import (
     PermissionCommand,
-    is_question_rejection,
     parse_permission_reply,
 )
 from band.adapters.opencode.approvals.pending import (
@@ -63,11 +62,11 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
     command = strip_leading_mentions(raw).strip()
 
     approval = parse_permission_reply(command)
-    if approval and permission_command_applies(asks, approval):
+    if approval and _permission_command_applies(asks, approval):
         return PermissionReply(approval)
 
     if (question := asks.resolve_question(command)) is not None:
-        if is_question_rejection(command):
+        if approval is not None and approval.rejects:
             return QuestionRejection(question)
         # Free text: strip only the delivery mention so an answer that
         # legitimately begins with an @handle (naming a person) survives.
@@ -77,7 +76,7 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
 
     if (
         approval is not None
-        and approval.reply == "reject"
+        and approval.rejects
         and approval.request_id is not None
         and (asks.questions or approval.request_id in asks.known_question_ids)
     ):
@@ -86,7 +85,7 @@ def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
     return None
 
 
-def permission_command_applies(asks: PendingAsks, approval: PermissionCommand) -> bool:
+def _permission_command_applies(asks: PendingAsks, approval: PermissionCommand) -> bool:
     """Whether a parsed approve/always/reject targets a permission.
 
     ``reject <id>`` is also the question-rejection grammar. A named id
@@ -100,16 +99,16 @@ def permission_command_applies(asks: PendingAsks, approval: PermissionCommand) -
     known_question = named in asks.known_question_ids
     if (
         named is not None
-        and approval.reply in ("once", "always")
+        and approval.grants
         and named not in asks.permissions
         and not known_permission
         and not known_question
         and asks.questions.has_unclaimed()
     ):
         return False
-    if named is not None and approval.reply == "reject" and named in asks.questions:
+    if named is not None and approval.rejects and named in asks.questions:
         return False
-    if approval.reply in ("once", "always"):
+    if approval.grants:
         return asks.parked_on_human() or (
             named is not None and (known_permission or known_question)
         )

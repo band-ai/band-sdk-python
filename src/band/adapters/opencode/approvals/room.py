@@ -266,7 +266,7 @@ class RoomApprovals:
         asks = self._asks
         if (
             approval.request_id is None
-            and approval.reply == "reject"
+            and approval.rejects
             and asks.permissions.has_unclaimed()
             and asks.questions.has_unclaimed()
         ):
@@ -297,7 +297,7 @@ class RoomApprovals:
         # (already resolved, or another permission is pending instead):
         # feedback, not a fresh prompt for the model.
         if (
-            approval.reply in ("once", "always")
+            approval.grants
             and approval.request_id in asks.questions
             and approval.request_id not in asks.permissions
             and not asks.permissions.has_unclaimed()

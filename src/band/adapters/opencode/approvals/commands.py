@@ -33,6 +33,16 @@ class PermissionCommand:
     # when exactly one is outstanding.
     request_id: str | None
 
+    @property
+    def grants(self) -> bool:
+        """Whether the reply approves the ask (once or always)."""
+        return self.reply in ("once", "always")
+
+    @property
+    def rejects(self) -> bool:
+        """Whether the reply declines the ask."""
+        return self.reply == "reject"
+
 
 def parse_permission_reply(content: str) -> PermissionCommand | None:
     """Map a room reply (``approve <id>`` / ``always <id>`` / ``reject <id>``)
@@ -71,4 +81,4 @@ def parse_question_answers(content: str, question_count: int) -> list[list[str]]
 def is_question_rejection(command: str) -> bool:
     """Whether a room reply rejects a question rather than answering it."""
     parsed = parse_permission_reply(command)
-    return parsed is not None and parsed.reply == "reject"
+    return parsed is not None and parsed.rejects
