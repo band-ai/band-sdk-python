@@ -14,22 +14,21 @@ from tests.runtime.activityownership.kit import ActivityPlatform
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
-    LifecyclePlatform,
     rest_client_over,
 )
 
 
 @pytest.fixture
-async def activity_platform() -> AsyncIterator[LifecyclePlatform]:
+async def activity_platform() -> AsyncIterator[ActivityPlatform]:
     yield ActivityPlatform()
 
 
 @pytest.fixture
 async def execution(
-    activity_platform: LifecyclePlatform,
+    activity_platform: ActivityPlatform,
 ) -> AsyncIterator[Callable[..., ExecutionContext]]:
     contexts: list[ExecutionContext] = []
-    async with rest_client_over(activity_platform.answer) as rest:
+    async with rest_client_over(activity_platform.respond) as rest:
 
         def create(
             handler: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
