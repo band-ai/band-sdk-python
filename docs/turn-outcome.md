@@ -431,12 +431,16 @@ classified by [`SettlementResult`](rest-client.md#lifecycle-acceptance):
 | --- | --- |
 | `ACCEPTED` | Apply the stored continuation once: finish the input, or permit its next configured attempt with prior failures still charged. |
 | `UNCONFIRMED` | Retained and retried on the reconciliation cadence, at most once per interval. Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
-| `NOT_FOUND`, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
+| `NOT_FOUND` with the room still readable | Retired: the message is gone, so its intent is dropped locally and its original released. Nothing is written and nothing re-executes it. |
+| `NOT_FOUND` with the room unreadable, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
 | HTTP 204 | `RoomExecutionStoppedError`: the intent is retained and retried later, uncharged. |
 
-`NOT_FOUND` is not a diagnosis: the platform returns the same 404 for a missing
-or soft-deleted message and for lost room access, so the SDK parks the intent
-instead of guessing.
+`NOT_FOUND` alone is not a diagnosis: the platform returns the same 404 for a
+missing or soft-deleted message and for lost room access. After a 404 the SDK
+reads `/next` once. A successful read proves the agent still reads the room, so
+the message is gone. A failed read leaves the cause ambiguous, and the intent
+parks. A processing claim answered 404 follows the same rule: a gone original
+leaves the retained line, and one in an unreadable room is retried later.
 
 Every recovery entrance (the reconciliation pass, the control probe, `/next`
 backlog and a live duplicate delivery) retries through one helper that reads the
