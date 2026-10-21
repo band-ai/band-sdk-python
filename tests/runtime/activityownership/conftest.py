@@ -14,18 +14,17 @@ from tests.runtime.activityownership.kit import ActivityPlatform, IdleReportGate
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
-    LifecyclePlatform,
     rest_client_over,
 )
 
 
 @pytest.fixture
-async def activity_platform() -> AsyncIterator[LifecyclePlatform]:
+async def activity_platform() -> AsyncIterator[ActivityPlatform]:
     yield ActivityPlatform()
 
 
 @pytest.fixture
-def idle_report_gate(activity_platform: LifecyclePlatform) -> IdleReportGate:
+def idle_report_gate(activity_platform: ActivityPlatform) -> IdleReportGate:
     return IdleReportGate(activity_platform)
 
 
