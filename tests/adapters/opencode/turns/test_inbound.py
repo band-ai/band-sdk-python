@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 
 import pytest
 
@@ -12,9 +13,11 @@ from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     BandMCPCalls,
     FakeOpencodeClient,
+    HeldReplyTools,
     event_message_updated,
     event_permission,
     event_session_idle,
+    event_text_part,
     make_platform_message,
     run_single_turn,
     tools_protocol,
@@ -94,3 +97,49 @@ class TestInbound:
         assert not busy_tools.turn.complete
         assert busy_tools.events_sent == []
         assert tools.chat == ["Done."]
+
+    async def test_a_message_during_the_previous_reply_waits_for_that_turn(
+        self, make_adapter
+    ) -> None:
+        """The previous turn still owns the room until its watcher has posted
+        the reply; a message arriving then is busy, and admitted after."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_message_updated("sess-1", "msg-1"),
+                    event_text_part("sess-1", "msg-1", "first answer"),
+                    event_session_idle("sess-1"),
+                ],
+                [
+                    event_message_updated("sess-1", "msg-2"),
+                    event_text_part("sess-1", "msg-2", "second answer"),
+                    event_session_idle("sess-1"),
+                ],
+            ]
+        )
+        adapter = make_adapter(fake_client)
+        first_tools = HeldReplyTools()
+        running_turn = asyncio.create_task(run_single_turn(adapter, first_tools))
+        await first_tools.reply_entered.wait()
+
+        def next_message(tools: FakeAgentTools) -> Awaitable[None]:
+            return deliver_message(
+                adapter,
+                make_platform_message(content="and then?"),
+                tools_protocol(tools),
+                OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        with pytest.raises(InputNotAccepted):
+            await next_message(FakeAgentTools())
+        first_tools.reply_release.set()
+        await running_turn
+        next_tools = FakeAgentTools()
+        await next_message(next_tools)
+
+        assert first_tools.chat == ["first answer"]
+        assert next_tools.chat == ["second answer"]

@@ -129,9 +129,7 @@ class TestApprovalLifetime:
         )
         await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
         room_state = await adapter._get_or_create_room_state("room-1")
-        await wait_for(
-            lambda: room_state.turn is not None and room_state.turn.turn_future.done()
-        )
+        await wait_for(lambda: room_state.turn is None or not room_state.turn.running)
 
         await deliver_message(
             adapter,

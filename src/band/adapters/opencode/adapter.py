@@ -112,6 +112,11 @@ class TurnState:
     # aborts the session without cancelling the task that still posts the report.
     reports_timeout: bool = False
 
+    @property
+    def running(self) -> bool:
+        """The turn owns the room until its watcher has delivered the result."""
+        return self.watcher is None or not self.watcher.done()
+
 
 # Resolves to the TurnState an ApprovalPorts bundle acts on -- either pinned
 # to one specific turn (a per-turn RoomApprovals, see _begin_turn) or tracking
@@ -459,8 +464,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
         if room_state.turn and (
-            not room_state.turn.turn_future.done()
-            or room_state.approvals.awaiting_human()
+            room_state.turn.running or room_state.approvals.awaiting_human()
         ):
             raise InputNotAccepted("The room already has an active OpenCode turn")
 

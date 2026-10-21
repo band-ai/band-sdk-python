@@ -14,6 +14,7 @@ import pytest
 from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
 from band.adapters.opencode.approvals.wording import DECLINED_QUESTION_ANSWER
+from band.client.rest import MessageSentResponse
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -272,6 +273,23 @@ class RaisingSendTools(FakeAgentTools):
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> dict[str, Any]:
         raise BandToolError("send failed")
+
+
+class HeldReplyTools(FakeAgentTools):
+    """FakeAgentTools that hold the turn's reply post, keeping its watcher in
+    the delivery tail after the model has finished."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reply_entered = asyncio.Event()
+        self.reply_release = asyncio.Event()
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> MessageSentResponse | None:
+        self.reply_entered.set()
+        await self.reply_release.wait()
+        return await super().send_message(content, mentions)
 
 
 class TaskEventFailingTools(FakeAgentTools):
