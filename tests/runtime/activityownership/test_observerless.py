@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from band.runtime.working_state import (
+from band.runtime.activity import (
     end_tool_activity,
     report_memory_activity,
     report_tool_activity,

@@ -34,40 +34,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 
-from band.runtime.activity import (
-    MEMORY,
-    REASONING,
-    ActivityObserver,
-    tool_call_activity,
-)
-
 logger = logging.getLogger(__name__)
 
 ReportFn = Callable[[bool], Awaitable[object]]
-
-
-def _observer(tools: object) -> ActivityObserver | None:
-    return getattr(tools, "_activity_observer", None)
-
-
-async def report_tool_activity(tools: object, name: str) -> None:
-    if observer := _observer(tools):
-        await observer.update(tool_call_activity(name))
-
-
-async def end_tool_activity(tools: object) -> None:
-    if observer := _observer(tools):
-        await observer.update(REASONING)
-
-
-async def report_memory_activity(tools: object) -> None:
-    if observer := _observer(tools):
-        await observer.update(MEMORY)
-
-
-async def set_permission_wait(tools: object, waiting: bool) -> None:
-    if observer := _observer(tools):
-        await observer.set_manual_wait(waiting)
 
 
 def _retrieve_task_error(task: asyncio.Task[None]) -> None:

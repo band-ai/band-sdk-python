@@ -6,9 +6,9 @@ import httpx
 import pytest
 
 from band.platform.event import PlatformEvent
+from band.runtime.activity import report_tool_activity
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
-from band.runtime.working_state import report_tool_activity
 from tests.activitysupport import install_activity_support
 from tests.conftest import make_message_event
 from tests.runtime.activityownership.kit import (

@@ -1,4 +1,5 @@
-"""Names-only room activity detail and the per-turn state that holds it."""
+"""Names-only room activity detail, the per-turn state that holds it, and the
+producers a turn reports it through."""
 
 from __future__ import annotations
 
@@ -53,3 +54,27 @@ class TurnActivity:
             self.progress = names_only(activity)
         if waiting is not None:
             self.waiting = waiting
+
+
+def _observer(tools: object) -> ActivityObserver | None:
+    return getattr(tools, "_activity_observer", None)
+
+
+async def report_tool_activity(tools: object, name: str) -> None:
+    if observer := _observer(tools):
+        await observer.update(tool_call_activity(name))
+
+
+async def end_tool_activity(tools: object) -> None:
+    if observer := _observer(tools):
+        await observer.update(REASONING)
+
+
+async def report_memory_activity(tools: object) -> None:
+    if observer := _observer(tools):
+        await observer.update(MEMORY)
+
+
+async def set_permission_wait(tools: object, waiting: bool) -> None:
+    if observer := _observer(tools):
+        await observer.set_manual_wait(waiting)
