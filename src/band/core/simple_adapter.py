@@ -12,6 +12,7 @@ from typing_extensions import Unpack
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import ControlMode
+from band.core.activity import sync_activity_tool_names
 from band.core.disposal import AdapterDisposal, CleanupCallback
 from band.core.exceptions import BandConfigError, InputNotAccepted
 from band.core.handoff import context_handoff
@@ -450,6 +451,9 @@ class SimpleAdapter(ABC, Generic[H]):
                 else:
                     converted_history = inp.history
 
+            # One turn, one gate decision: the live tool-name detail follows
+            # the same choice as tool-call narration (band.core.activity).
+            sync_activity_tool_names(inp.tools, self.features.emit)
             await self.run_judged_turn(
                 msg=inp.msg,
                 tools=inp.tools,
