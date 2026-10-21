@@ -365,7 +365,7 @@ class ExecutionContext:
         self._on_participant_removed = on_participant_removed
         self.hub_room_id = hub_room_id
 
-        # Per-room boolean working-state reporter. Disabled for the contact-hub
+        # Per-room working-state reporter. Disabled for the contact-hub
         # room: it's internal housekeeping, not a peer-facing conversation, so no
         # counterpart watches a "Reasoning…" indicator there.
         self._working_reporter = WorkingStateReporter(
@@ -1873,7 +1873,7 @@ class ExecutionContext:
                 await self._on_execute(self, event)
 
     async def _report_working_state(self, working: bool) -> bool:
-        """Report the room's boolean working state (wired into the reporter)."""
+        """Report working state and visible activity (wired into the reporter)."""
         return await self.link.report_activity(
             self.room_id,
             working,

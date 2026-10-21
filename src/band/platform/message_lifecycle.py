@@ -358,7 +358,7 @@ class MessageLifecycle:
         on_stopped: Callable[[], None] | None = None,
     ) -> bool:
         """
-        Report the agent's boolean working state for a room's execution.
+        Report the agent's working state and activity for a room's execution.
 
         ``working=True`` while a reasoning cycle is active (refreshed on a
         keep-alive cadence), ``False`` once it ends. Request failures are
