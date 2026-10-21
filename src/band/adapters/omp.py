@@ -52,7 +52,7 @@ from band.core.types import (
     MessageType,
     PlatformMessage,
 )
-from band.integrations import omproomask
+from band.integrations import omproomask, omprpc
 from band.integrations.omp import finalize_omp_command, validate_omp_command
 from band.integrations.ompprocess import (
     DEFAULT_OMP_COMMAND,
@@ -621,7 +621,16 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
                     )
                     room.bootstrapped = True
-                    await self._refresh_state(room)
+                    # The post-prompt state refresh is part of completion: a
+                    # lost response must fail bounded, not outlive the turn.
+                    try:
+                        async with asyncio.timeout(omprpc.COMPLETION_TIMEOUT_S):
+                            await self._refresh_state(room)
+                    except TimeoutError as cause:
+                        raise omprpc.OmpCompletionTimeout(
+                            "OMP post-turn state refresh timed out;"
+                            " the turn outcome is uncertain"
+                        ) from cause
                     if (
                         Emit.THOUGHTS in self.features.emit
                         and not tools.turn.replied
