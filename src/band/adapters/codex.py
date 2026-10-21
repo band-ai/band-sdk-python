@@ -60,7 +60,7 @@ from band.core.retention import (
     require_disabled_retention,
 )
 from band.core.retention.cleanup import spawn_owned
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
@@ -906,7 +906,7 @@ class CodexAdapterConfig(EnvAdapterConfig):
         )
 
 
-class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
+class CodexAdapter(ApprovalInterruptMixin, BatchInputAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
@@ -924,7 +924,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -1209,28 +1208,6 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         )
         tools.turn.settle()
         return True
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: CodexSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

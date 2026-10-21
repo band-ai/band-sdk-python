@@ -33,8 +33,12 @@ from band.adapters.nooa.tools import (
 from band.converters.nooa import NooaHistoryConverter, NooaTranscript
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.handoff import context_handoff
-from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.protocols import (
+    AgentToolsProtocol,
+    generic_provider_failure,
+    send_event_safe,
+)
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -207,7 +211,7 @@ class NooaAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
 
 
-class NooaAdapter(SimpleAdapter[NooaTranscript]):
+class NooaAdapter(BatchInputAdapter[NooaTranscript]):
     """Run a NOOA agent class in Band rooms, one agent instance per room.
 
     ``Emit.THOUGHTS`` posts each model call's **raw** ``reasoning_content`` as a
@@ -223,7 +227,6 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -337,28 +340,6 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
                     "Room %s: seeded %s transcript line(s)", room_id, len(transcript)
                 )
         return self._agents[room_id]
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: NooaTranscript,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Run one room message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

@@ -66,7 +66,7 @@ from band.core.retention import (
     require_disabled_retention,
 )
 from band.core.retention.cleanup import spawn_owned
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
@@ -129,7 +129,11 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
 )
-from band.runtime.formatters import InputField, format_current_inputs, messages_before
+from band.runtime.formatters import (
+    SENDER_METADATA_INSTRUCTION,
+    format_current_inputs,
+    messages_before,
+)
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -210,13 +214,6 @@ class ACPMcpServerResolutionError(ValueError):
 # Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
 # (12+ adapters each hardcode their own copy); it has already drifted once
 # (the Parlant adapter uses "[System Update]: " for the identical concept).
-# Who is asking is read off each current input, never off a per-turn requester
-# line: a turn can carry inputs from several senders.
-SENDER_METADATA_INSTRUCTION = (
-    f"Each current input message carries its own {InputField.SENDER_ID}, "
-    f"{InputField.SENDER_NAME} and {InputField.SENDER_TYPE}; use them to know "
-    "who is asking and whom to mention in your reply."
-)
 
 SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
@@ -385,7 +382,7 @@ ACPClientAdapterConfigT = TypeVar(
 
 
 class ACPClientAdapter(
-    SimpleAdapter[ACPClientSessionState], Generic[ACPClientAdapterConfigT]
+    BatchInputAdapter[ACPClientSessionState], Generic[ACPClientAdapterConfigT]
 ):
     """Adapter that forwards Band messages to a remote ACP agent.
 
@@ -401,7 +398,6 @@ class ACPClientAdapter(
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -807,27 +803,6 @@ class ACPClientAdapter(
         turn's own error log carries the traceback."""
         logger.warning("Room %s: ACP agent process not ready: %s", room.room_id, error)
         await tools.send_failure(AgentFailure(_PROVIDER, PROCESS_NOT_READY_ERROR))
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: ACPClientSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

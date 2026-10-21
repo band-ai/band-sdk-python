@@ -27,7 +27,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import BackendTurns, bind_turn_task
 from band.core.types import (
@@ -65,7 +65,7 @@ from band.integrations.opencode import (
     parse_opencode_event,
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
-from band.runtime.formatters import InputField, format_current_inputs
+from band.runtime.formatters import SENDER_METADATA_INSTRUCTION, format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
@@ -230,7 +230,7 @@ class McpRegistration:
     url: str
 
 
-class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
+class OpencodeAdapter(BatchInputAdapter[OpencodeSessionState]):
     """Band adapter for the OpenCode HTTP server.
 
     Maps each Band room to an OpenCode session. Messages from the room
@@ -273,7 +273,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -407,9 +406,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             "Use each MCP tool's schema for its argument names. When a tool "
             f"needs the current room, use the Current {CHAT_ID_FIELD_NAME} "
             "value above.\n"
-            "Each current input message names its own sender in its "
-            f"{InputField.SENDER_ID}, {InputField.SENDER_NAME} and "
-            f"{InputField.SENDER_TYPE} fields.\n"
+            f"{SENDER_METADATA_INSTRUCTION}\n"
         )
         return f"{self._system_prompt}\n\n{room_context}".strip()
 
@@ -450,28 +447,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     @property
     def backend_turns(self) -> BackendTurns[TurnState]:
         return self._backend_turns
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: OpencodeSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

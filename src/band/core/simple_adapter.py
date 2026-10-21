@@ -112,8 +112,8 @@ class SimpleAdapter(ABC, Generic[H]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
-    # An adapter sets this only after ``on_messages`` runs a turn over several
-    # originals; ``consume_all_queued`` refuses every adapter that leaves it off.
+    # Whether ``on_messages`` runs one turn over several originals; only
+    # ``BatchInputAdapter`` sets it, and a host never hands a batch elsewhere.
     supports_batch_input: ClassVar[bool] = False
 
     def __init__(
@@ -439,49 +439,6 @@ class SimpleAdapter(ABC, Generic[H]):
         """
         return False
 
-    async def on_messages(self, inp: AgentInput) -> None:
-        """Run one judged turn over ``inp.messages`` through ``on_turn``.
-
-        Refused unless the adapter declared ``supports_batch_input``.
-        """
-        if not self.supports_batch_input:
-            raise BandConfigError(f"{type(self).__name__} does not support batch input")
-        with trace_context_scope():
-            async with self.judged_turn(
-                messages=inp.messages, tools=inp.tools, room_id=inp.room_id
-            ):
-                await self.on_turn(
-                    inp.messages,
-                    inp.tools,
-                    self.convert_history(inp),
-                    inp.participants_msg,
-                    inp.contacts_msg,
-                    is_session_bootstrap=inp.is_session_bootstrap,
-                    room_id=inp.room_id,
-                )
-
-    async def on_turn(
-        self,
-        messages: Sequence[PlatformMessage],
-        tools: AgentToolsProtocol,
-        history: H,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """The model turn over one or more original messages, oldest first.
-
-        An adapter declaring ``supports_batch_input`` overrides this as its one
-        model-input builder and turns its ``on_message`` into
-        ``on_turn((msg,), ...)``, so a singleton and a batch share one tool
-        loop and are judged by ``judged_turn`` alike.
-        """
-        raise BandConfigError(
-            f"{type(self).__name__} declares batch input but does not implement on_turn"
-        )
-
     def convert_history(self, inp: AgentInput) -> H:
         """``inp``'s history in the adapter's own type: converted when a
         converter is set, otherwise the raw ``HistoryProvider``."""
@@ -569,3 +526,65 @@ class SimpleAdapter(ABC, Generic[H]):
             and await report_unsettled_turn(tools, room_id=room_id)
         ):
             raise TurnResultAlreadyReported("turn ended without a reply")
+
+
+class BatchInputAdapter(SimpleAdapter[H]):
+    """An adapter whose one model turn runs over one or more original messages.
+
+    ``on_turn`` is its single model-input builder: a singleton is a turn of
+    one, so a singleton and a batch share one tool loop and are judged by
+    ``judged_turn`` alike.
+    """
+
+    supports_batch_input: ClassVar[bool] = True
+
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: H,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_messages(self, inp: AgentInput) -> None:
+        """Run one judged turn over ``inp.messages`` through ``on_turn``."""
+        with trace_context_scope():
+            async with self.judged_turn(
+                messages=inp.messages, tools=inp.tools, room_id=inp.room_id
+            ):
+                await self.on_turn(
+                    inp.messages,
+                    inp.tools,
+                    self.convert_history(inp),
+                    inp.participants_msg,
+                    inp.contacts_msg,
+                    is_session_bootstrap=inp.is_session_bootstrap,
+                    room_id=inp.room_id,
+                )
+
+    @abstractmethod
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: H,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """The model turn over one or more original messages, oldest first."""

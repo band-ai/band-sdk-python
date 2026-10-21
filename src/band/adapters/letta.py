@@ -26,7 +26,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.timestamps import assume_utc
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
@@ -38,6 +38,7 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
     distinct_sender_ids,
+    ids_of,
 )
 from band.integrations.letta.config import (
     LettaAdapterConfig,
@@ -100,7 +101,7 @@ class RoomContext:
     stale_tools: bool = False
 
 
-class LettaAdapter(SimpleAdapter[LettaSessionState]):
+class LettaAdapter(BatchInputAdapter[LettaSessionState]):
     """
     Letta adapter using the Letta Python SDK (letta-client).
 
@@ -151,7 +152,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -300,28 +300,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def backend_turns(self) -> BackendTurns[LettaRun]:
         return self._backend_turns
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: LettaSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -337,7 +315,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         if not self._client:
             logger.error(
                 "Letta client not initialized, dropping messages %s",
-                [msg.id for msg in messages],
+                ids_of(messages),
             )
             message = "Letta adapter not initialized"
             await tools.send_failure(AgentFailure(_PROVIDER, message))

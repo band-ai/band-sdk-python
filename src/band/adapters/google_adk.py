@@ -25,7 +25,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
 from band.core.exceptions import ProviderRunError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
     Capability,
@@ -34,6 +34,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -378,7 +379,7 @@ class GoogleADKAdapterConfig(BaseAdapterConfig):
     max_transcript_chars: PositiveInt = 100_000
 
 
-class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
+class GoogleADKAdapter(BatchInputAdapter[GoogleADKMessages]):
     """
     Google ADK adapter using SimpleAdapter pattern.
 
@@ -401,7 +402,6 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -527,28 +527,6 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             app_name=_APP_NAME,
         )
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: GoogleADKMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -568,7 +546,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         """
         _, _, _, _, types = _require_adk()
 
-        message_ids = [message.id for message in messages]
+        message_ids = ids_of(messages)
         logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         # Initialize or seed per-room history

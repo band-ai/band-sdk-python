@@ -31,7 +31,7 @@ from band.adapters.parlant.rooms import RoomSessions
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
     Capability,
@@ -39,6 +39,7 @@ from band.core.types import (
     FeatureKwargs,
     PlatformMessage,
     distinct_sender_ids,
+    ids_of,
 )
 from band.integrations.parlant.customschema import check_parlant_custom_tools
 from band.integrations.parlant.sessiontools import bound_session_tools
@@ -76,7 +77,7 @@ class ParlantSessionTurn:
     session_id: SessionId
 
 
-class ParlantAdapter(SimpleAdapter[ParlantMessages]):
+class ParlantAdapter(BatchInputAdapter[ParlantMessages]):
     """
     Parlant adapter using the official Parlant SDK directly.
 
@@ -117,7 +118,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     @property
     def judges_turns(self) -> bool:
@@ -344,28 +344,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     def backend_turns(self) -> BackendTurns[ParlantSessionTurn]:
         return self._backend_turns
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: ParlantMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -379,7 +357,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     ) -> None:
         """Post the turn's inputs into the room's Parlant session as one
         customer message and relay the response to their senders."""
-        message_ids = [msg.id for msg in messages]
+        message_ids = ids_of(messages)
         logger.debug("Handling messages %s in room %s", message_ids, room_id)
         rooms = self._rooms
         if rooms is None:

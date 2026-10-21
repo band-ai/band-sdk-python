@@ -18,7 +18,7 @@ from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessag
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import ANTHROPIC_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -26,6 +26,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -106,7 +107,7 @@ class AnthropicAdapterConfig(BaseAdapterConfig):
     max_tokens: PositiveInt = 4096
 
 
-class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
+class AnthropicAdapter(BatchInputAdapter[AnthropicMessages]):
     """
     Anthropic SDK adapter using SimpleAdapter pattern.
 
@@ -129,7 +130,6 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -177,28 +177,6 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         )
         logger.info("Anthropic adapter started for agent: %s", agent_name)
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: AnthropicMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -220,7 +198,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         - Contact changes injected when broadcast
         - Tool loop runs until no more tool_use blocks
         """
-        message_ids = [msg.id for msg in messages]
+        message_ids = ids_of(messages)
         logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         # Initialize history for this room on first message

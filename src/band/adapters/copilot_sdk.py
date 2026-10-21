@@ -32,7 +32,7 @@ from band.core.delivery import (
 )
 from band.core.exceptions import BandConfigError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_safe
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn_lifecycle import BackendTurns
 from band.core.types import (
@@ -42,6 +42,7 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
     distinct_sender_ids,
+    ids_of,
 )
 from band.integrations.copilot_sdk import CopilotSessionManager
 from band.integrations.copilot_sdk.prompts import TURN_COMPLETION_GUIDANCE
@@ -215,7 +216,7 @@ def _turn_incident(data: object) -> str | None:
             return None
 
 
-class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
+class CopilotSDKAdapter(BatchInputAdapter[CopilotSDKSessionState]):
     """Adapter for the GitHub Copilot SDK.
 
     Maps each Band room to a dedicated Copilot session (stable
@@ -239,7 +240,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -442,28 +442,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     def backend_turns(self) -> BackendTurns[SessionTurn]:
         return self._backend_turns
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: CopilotSDKSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -558,9 +536,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
             await self._persist_session_id(room_id, tools)
 
-        logger.debug(
-            "Room %s: messages %s processed", room_id, [msg.id for msg in messages]
-        )
+        logger.debug("Room %s: messages %s processed", room_id, ids_of(messages))
 
     # --- Session handling --------------------------------------------------
 

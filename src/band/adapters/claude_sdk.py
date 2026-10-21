@@ -94,7 +94,7 @@ from band.core.retention import (
     RoomRetentionConfig,
     require_disabled_retention,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
@@ -114,6 +114,7 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
     distinct_sender_ids,
+    ids_of,
 )
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
@@ -591,7 +592,9 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionState]):
+class ClaudeSDKAdapter(
+    ApprovalInterruptMixin, BatchInputAdapter[ClaudeSDKSessionState]
+):
     """
     Claude Agent SDK adapter using SimpleAdapter pattern.
 
@@ -617,7 +620,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.FILES, Capability.TASKS}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -879,28 +881,6 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         tools.turn.settle()
         return True
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: ClaudeSDKSessionState,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -919,7 +899,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         - Bind the turn's tools, then reuse or start the room's CLI
         - Stream response and log events (tools execute via MCP)
         """
-        message_ids = [msg.id for msg in messages]
+        message_ids = ids_of(messages)
         logger.debug("Handling messages %s in room %s", message_ids, room_id)
 
         if not self._session_manager:
@@ -1039,7 +1019,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         session: ClaudeRoomSession,
         tools: AgentToolsProtocol,
         full_message: str,
-        message_ids: list[str],
+        message_ids: tuple[str, ...],
         audience: tuple[str, ...],
         release_future: asyncio.Future[None],
         *,

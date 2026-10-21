@@ -35,7 +35,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import GEMINI_MODEL
 from band.core.exceptions import ProviderRunError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
     Capability,
@@ -148,7 +148,7 @@ class GeminiAdapterConfig(BaseAdapterConfig):
     max_history_messages: PositiveInt = 200
 
 
-class GeminiAdapter(SimpleAdapter[GeminiMessages]):
+class GeminiAdapter(BatchInputAdapter[GeminiMessages]):
     """
     Gemini SDK adapter using SimpleAdapter pattern.
 
@@ -170,7 +170,6 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -214,28 +213,6 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             features=self.features,
         )
         logger.info("Gemini adapter started for agent: %s", agent_name)
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: GeminiMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

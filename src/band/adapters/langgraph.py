@@ -18,7 +18,7 @@ from typing_extensions import Unpack
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import Turn
 from band.core.types import (
     Capability,
@@ -27,6 +27,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.integrations.langgraph import langchain_tools
 from band.runtime.formatters import format_current_inputs
@@ -95,7 +96,7 @@ class LangGraphAdapterConfig(BaseAdapterConfig):
     inject_system_prompt: bool | None = None
 
 
-class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
+class LangGraphAdapter(BatchInputAdapter[LangChainMessages]):
     """
     LangGraph adapter using SimpleAdapter pattern.
 
@@ -144,7 +145,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -306,28 +306,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         return False
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: LangChainMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -340,7 +318,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         room_id: str,
     ) -> None:
         """Run the graph once over one or more original messages."""
-        message_ids = [msg.id for msg in messages]
+        message_ids = ids_of(messages)
         logger.info("[HANDLE] Messages %s in room %s", message_ids, room_id)
 
         # Usage is reported per model call on the stream; a turn may make several

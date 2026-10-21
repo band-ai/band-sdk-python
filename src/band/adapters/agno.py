@@ -18,7 +18,7 @@ from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.exceptions import ProviderRunError
 from band.core.protocols import AgentToolsProtocol, generic_provider_failure
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
     Capability,
@@ -27,6 +27,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.formatters import format_current_inputs
@@ -136,7 +137,7 @@ class AgnoAdapterConfig(BaseAdapterConfig):
     """Settings for :class:`AgnoAdapter`; the Agno agent owns model and prompt."""
 
 
-class AgnoAdapter(SimpleAdapter[AgnoMessages]):
+class AgnoAdapter(BatchInputAdapter[AgnoMessages]):
     """Bridge a user-built Agno agent to Band.
 
     "User" throughout this adapter means the SDK integrator who built and
@@ -160,7 +161,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -316,28 +316,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             sorted(c.value for c in self.features.capabilities),
         )
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: AgnoMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -350,7 +328,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         room_id: str,
     ) -> None:
         """Run the user's Agno agent once over one or more original messages."""
-        msg_ids = ", ".join(msg.id for msg in messages)
+        msg_ids = ", ".join(ids_of(messages))
         logger.info(
             "Room %s msgs %s: handling from senders %s (bootstrap=%s)",
             room_id,

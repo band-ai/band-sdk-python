@@ -47,7 +47,7 @@ from band.core.protocols import (
     AgentToolsProtocol,
 )
 from band.core.redaction import redact_credentials_deep
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.turn import Turn
 from band.core.types import (
     Capability,
@@ -491,14 +491,13 @@ class StrandsAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
 
 
-class StrandsAdapter(SimpleAdapter[StrandsMessages]):
+class StrandsAdapter(BatchInputAdapter[StrandsMessages]):
     """Run a Strands model in a Band room."""
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -641,28 +640,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             if agent is not None:
                 self._message_history[room_id] = agent.messages
                 await self.emit_usage(tools, self._usage_from_agent(agent))
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: StrandsMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
 
     async def on_turn(
         self,

@@ -115,6 +115,27 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+An adapter that can run one turn over several originals derives
+`BatchInputAdapter` and implements `on_turn` instead of `on_message`. A
+singleton arrives as a turn of one, so both entry points share one model-input
+builder and this one judge:
+
+```python
+from band.core.simple_adapter import BatchInputAdapter
+
+
+class Unbuilt(BatchInputAdapter[list]):
+    pass
+
+
+try:
+    Unbuilt()
+except TypeError as error:
+    assert "on_turn" in str(error)
+else:
+    raise AssertionError("a batch adapter needs its on_turn builder")
+```
+
 ## Input that was not accepted
 
 `InputNotAccepted` means this particular attempt provably started no provider

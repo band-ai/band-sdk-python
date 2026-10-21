@@ -60,7 +60,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
     Capability,
     Emit,
@@ -68,6 +68,7 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
+    ids_of,
 )
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
@@ -344,7 +345,7 @@ class PydanticAIAdapterConfig(BaseAdapterConfig):
     custom_section: str | None = None
 
 
-class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
+class PydanticAIAdapter(BatchInputAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
 
@@ -366,7 +367,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -520,28 +520,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: PydanticAIMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -631,7 +609,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # failed run captured.
         capture_cm = capture_run_messages()
         captured = capture_cm.__enter__()
-        message_ids = ",".join(message.id for message in messages)
+        message_ids = ", ".join(ids_of(messages))
         trace_token = _native_turn.set((room_id, message_ids, monotonic()))
         event_count = 0
         try:
