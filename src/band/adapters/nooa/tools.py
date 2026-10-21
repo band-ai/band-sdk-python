@@ -72,16 +72,20 @@ class RoomToolSpec:
 
 @dataclass
 class TurnBinding:
-    """One turn's tools for one room, and the tool calls that turn started.
+    """One turn's tools for one room, and the tool calls and thoughts it started.
 
-    The turn owns its calls: when it ends, calls still running are cancelled
-    and awaited, so none can commit an effect after the turn is judged.
+    The turn owns its calls and thoughts: when it ends, calls still running are
+    cancelled and thoughts still posting are awaited, so none can commit after
+    the turn is judged. Every event the turn posts waits its turn on
+    ``posting``, whose waiters ``asyncio.Lock`` serves in arrival order.
     """
 
     room: RoomTools
     tools: AgentToolsProtocol
     open: bool = True
     in_flight: set[asyncio.Task[Any]] = field(default_factory=set)
+    thoughts: set[asyncio.Task[None]] = field(default_factory=set)
+    posting: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def start(self, call: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.ensure_future(call)
@@ -89,11 +93,33 @@ class TurnBinding:
         task.add_done_callback(self.in_flight.discard)
         return task
 
+    def post_thought(self, text: str) -> None:
+        """Post *text* as a thought ahead of the tool calls its model call starts.
+
+        NOOA calls this from ``LLMComplete``, before the call's code runs. The
+        task is created here, synchronously, so the loop steps it, and it
+        queues on ``posting``, before any tool call that code creates.
+        """
+        if not self.open:
+            return
+        task = asyncio.ensure_future(self._post_thought(text))
+        self.thoughts.add(task)
+        task.add_done_callback(self.thoughts.discard)
+
+    async def _post_thought(self, text: str) -> None:
+        # Taking the lock must stay this coroutine's first await; see post_thought.
+        async with self.posting:
+            await send_event_safe(self.tools, text, MessageType.THOUGHT)
+
     async def close(self) -> None:
         self.open = False
         for task in self.in_flight:
             task.cancel()
         await asyncio.gather(*self.in_flight, return_exceptions=True)
+        if caller_is_cancelled():
+            for task in self.thoughts:
+                task.cancel()
+        await asyncio.gather(*self.thoughts, return_exceptions=True)
 
 
 # Context-local, not an attribute of the room's RoomTools: a task the model's code
@@ -123,15 +149,17 @@ class RoomTools:
 
     @hidden
     @asynccontextmanager
-    async def bound_to(self, tools: AgentToolsProtocol) -> AsyncIterator[None]:
+    async def bound_to(self, tools: AgentToolsProtocol) -> AsyncIterator[TurnBinding]:
         """Route this turn's calls to its tools; refuse or cancel them afterwards."""
         binding = TurnBinding(self, tools)
         token = _turn_binding.set(binding)
         try:
-            yield
+            yield binding
         finally:
-            await binding.close()
-            _turn_binding.reset(token)
+            try:
+                await binding.close()
+            finally:
+                _turn_binding.reset(token)
 
     def _binding(self, name: str) -> TurnBinding:
         """The binding of the turn this call belongs to, if it is still running."""
@@ -144,7 +172,7 @@ class RoomTools:
 
     async def _invoke(self, name: str, arguments: dict[str, Any]) -> Any:
         binding = self._binding(name)
-        call = binding.start(self._call(binding.tools, name, arguments))
+        call = binding.start(self._call(binding, name, arguments))
         try:
             return await call
         except asyncio.CancelledError:
@@ -155,12 +183,12 @@ class RoomTools:
             ) from None
 
     async def _call(
-        self, tools: AgentToolsProtocol, name: str, arguments: dict[str, Any]
+        self, binding: TurnBinding, name: str, arguments: dict[str, Any]
     ) -> Any:
         """Run one tool call and report it, inside the turn that owns it."""
         call_id = uuid4().hex
         await self._report(
-            tools,
+            binding,
             MessageType.TOOL_CALL,
             {
                 ToolEventKey.NAME: name,
@@ -169,27 +197,29 @@ class RoomTools:
             },
         )
         try:
-            value = serialize_tool_result(await self._specs[name].run(tools, arguments))
+            value = serialize_tool_result(
+                await self._specs[name].run(binding.tools, arguments)
+            )
         except asyncio.CancelledError:
             message = f"{name} was cancelled because its turn ended first"
-            await self._report_result(tools, name, call_id, message, is_error=True)
+            await self._report_result(binding, name, call_id, message, is_error=True)
             raise
         except Exception as error:
             message = f"{name} failed: {error}"
             logger.warning("Band tool %s failed: %s", name, error)
-            await self._report_result(tools, name, call_id, message, is_error=True)
+            await self._report_result(binding, name, call_id, message, is_error=True)
             raise BandToolError(message) from error
         if (image_result := image_passthrough_result(name, value)) is not None:
             images = images_from_result(image_result)
             output = image_block_placeholder(len(images))
-            await self._report_result(tools, name, call_id, output, is_error=False)
+            await self._report_result(binding, name, call_id, output, is_error=False)
             return images
-        await self._report_result(tools, name, call_id, value, is_error=False)
+        await self._report_result(binding, name, call_id, value, is_error=False)
         return value
 
     async def _report_result(
         self,
-        tools: AgentToolsProtocol,
+        binding: TurnBinding,
         name: str,
         call_id: str,
         output: object,
@@ -197,7 +227,7 @@ class RoomTools:
         is_error: bool,
     ) -> None:
         await self._report(
-            tools,
+            binding,
             MessageType.TOOL_RESULT,
             {
                 ToolEventKey.NAME: name,
@@ -209,13 +239,17 @@ class RoomTools:
 
     async def _report(
         self,
-        tools: AgentToolsProtocol,
+        binding: TurnBinding,
         message_type: MessageType,
         payload: Mapping[ToolEventKey, object],
     ) -> None:
-        if not self._emit_tool_calls:
-            return
-        await send_event_safe(tools, json.dumps(payload, default=str), message_type)
+        # Taken even when tool events are off: a call reports before it runs,
+        # so its effect (such as a reply) cannot overtake a thought queued first.
+        async with binding.posting:
+            if self._emit_tool_calls:
+                await send_event_safe(
+                    binding.tools, json.dumps(payload, default=str), message_type
+                )
 
 
 def images_from_result(result: ImageContentResult) -> list[Image]:
