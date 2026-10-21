@@ -3,7 +3,7 @@
 Covers MCP server registration at startup (external and self-hosted modes),
 MCP tool attachment to Letta agents, and the self-hosted backend lifecycle
 (registration reuse, deregistration on stop, conflict/failure recovery).
-Kept separate from ``test_letta_adapter.py`` — which covers the message path
+Kept separate from the ``letta`` test package — which covers the message path
 and agent lifecycle — so each file stays focused on one concern.
 """
 
