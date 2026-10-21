@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
 
 import pytest
 
@@ -122,8 +121,8 @@ class TestInbound:
         running_turn = asyncio.create_task(run_single_turn(adapter, first_tools))
         await first_tools.reply_entered.wait()
 
-        def next_message(tools: FakeAgentTools) -> Awaitable[None]:
-            return deliver_message(
+        async def next_message(tools: FakeAgentTools) -> None:
+            await deliver_message(
                 adapter,
                 make_platform_message(content="and then?"),
                 tools_protocol(tools),
