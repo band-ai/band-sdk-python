@@ -418,12 +418,12 @@ def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
 
 
 def mirror_settlement_results(link: MagicMock) -> MagicMock:
-    """Give a mock link detailed terminal writes that follow its boolean mocks.
+    """Give a mock link the detailed status writes the runtime reads.
 
-    Runtime tests script ``mark_processed``/``mark_failed``; the runtime reads
-    the detailed results, which here are ACCEPTED exactly when the boolean mock
-    is truthy. Wire-level classification is covered through the real client in
-    ``tests/platform/settlement``.
+    Every processing claim is accepted. Runtime tests script
+    ``mark_processed``/``mark_failed``; the detailed terminal results are
+    ACCEPTED exactly when the boolean mock is truthy. Wire-level classification
+    is covered through the real client in ``tests/platform/settlement``.
     """
 
     def settled(accepted: object) -> SettlementResult:
@@ -435,6 +435,7 @@ def mirror_settlement_results(link: MagicMock) -> MagicMock:
     async def failed(*args: Any, **kwargs: Any) -> SettlementResult:
         return settled(await link.mark_failed(*args, **kwargs))
 
+    link.mark_processing_result = AsyncMock(return_value=SettlementResult.ACCEPTED)
     link.mark_processed_result = AsyncMock(side_effect=processed)
     link.mark_failed_result = AsyncMock(side_effect=failed)
     return link

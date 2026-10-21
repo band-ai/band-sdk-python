@@ -43,7 +43,6 @@ def mock_link():
     )
 
     # Mock message lifecycle methods (new in BandLink)
-    link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
     mirror_settlement_results(link)

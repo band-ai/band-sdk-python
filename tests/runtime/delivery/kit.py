@@ -20,13 +20,14 @@ from typing import Any
 import httpx
 from band_sdk_core import ClaimRegistry
 
-from band.client.streaming import DeliveryStatus, MessageCreatedPayload
+from band.client.streaming import DeliveryStatus, MessageCreatedPayload, MessageMetadata
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ExecutionContext
+from band.runtime.execution import ExecutionContext, ExecutionHandler
+from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
-from tests.platform.settlement.kit import Reply, link_over
+from tests.platform.settlement.kit import NOT_FOUND, Reply, link_over
 from tests.runtime.batching.kit import ControlScript, Turns
 from tests.runtime.conftest import Waiting
 from tests.runtime.helpers import (
@@ -110,6 +111,8 @@ class Row:
     statuses: dict[str, DeliveryStatus]
     # The list and /next omit some deliveries the WebSocket still carries.
     listed: bool = True
+    sender_id: str = SENDER_ID
+    sender_type: str = "User"
 
     @property
     def key(self) -> tuple[datetime, str]:
@@ -137,8 +140,8 @@ class Row:
             "id": self.message_id,
             "chat_room_id": ROOM_ID,
             "content": self.message_id,
-            "sender_id": SENDER_ID,
-            "sender_type": "User",
+            "sender_id": self.sender_id,
+            "sender_type": self.sender_type,
             "sender_name": "User",
             "message_type": "text",
             "metadata": metadata,
@@ -181,6 +184,7 @@ class RestPeer:
         self.events_posted = 0
         self.journal: list[str] = []
         self.refuse_processing: set[str] = set()
+        self.deleted: set[str] = set()
         self.confirm_terminal = True
         # Answers every terminal write verbatim, confirming none of them.
         self.terminal_error: Reply | None = None
@@ -194,20 +198,64 @@ class RestPeer:
         at: float | None = None,
         others: dict[str, DeliveryStatus] | None = None,
         listed: bool = True,
+        sender_id: str = SENDER_ID,
+        sender_type: str = "User",
     ) -> MessageEvent:
         """Store a message ``at`` seconds after the epoch; return its WebSocket event."""
         moment = EPOCH + timedelta(seconds=len(self.rows) if at is None else at)
         statuses = dict(others or {})
         if status is not None:
             statuses[AGENT_ID] = status
-        self.rows[message_id] = Row(message_id, moment, statuses, listed)
+        self.rows[message_id] = Row(
+            message_id, moment, statuses, listed, sender_id, sender_type
+        )
         return make_message_event(
             room_id=ROOM_ID,
             msg_id=message_id,
             content=message_id,
-            sender_id=SENDER_ID,
+            sender_id=sender_id,
+            sender_type=sender_type,
             inserted_at=moment.isoformat(),
         )
+
+    def row(self, message_id: str) -> PlatformMessage:
+        """A stored message as the actionable list returns it."""
+        row = self.rows[message_id]
+        return PlatformMessage(
+            id=message_id,
+            room_id=ROOM_ID,
+            content=message_id,
+            sender_id=row.sender_id,
+            sender_type=row.sender_type,
+            sender_name="User",
+            message_type="text",
+            metadata=row.wire["metadata"],
+            created_at=row.inserted_at,
+        )
+
+    def replay(self, message_id: str) -> MessageEvent:
+        """A WebSocket redelivery of a stored message, carrying its current statuses."""
+        row = self.rows[message_id]
+        return make_message_event(
+            room_id=ROOM_ID,
+            msg_id=message_id,
+            content=message_id,
+            sender_id=row.sender_id,
+            sender_type=row.sender_type,
+            inserted_at=row.inserted_at.isoformat(),
+            metadata=MessageMetadata(
+                mentions=[],
+                delivery_status={
+                    recipient: delivery_entry(status)
+                    for recipient, status in row.statuses.items()
+                },
+            ),
+        )
+
+    def delete(self, message_id: str) -> None:
+        """Soft-delete a message: it leaves the list and every write on it is not found."""
+        self.rows[message_id].listed = False
+        self.deleted.add(message_id)
 
     def set_status(self, message_id: str, status: DeliveryStatus | None) -> None:
         """Change this agent's status as another runtime would, outside the room."""
@@ -304,7 +352,10 @@ class RestPeer:
 
     def _write(self, message_id: str, action: DeliveryStatus) -> httpx.Response:
         terminal = action is not DeliveryStatus.PROCESSING
-        failure = self.terminal_error if terminal else None
+        if message_id in self.deleted:
+            failure: Reply | None = NOT_FOUND
+        else:
+            failure = self.terminal_error if terminal else None
         confirmed = failure is None and (
             self.confirm_terminal
             if terminal
@@ -481,4 +532,28 @@ async def started_session(
             yield Session(peer, turns, ctx, started_at, scripted)
         finally:
             turns.release.set()
+            await ctx.stop(timeout=STOP_SECONDS)
+
+
+@contextlib.asynccontextmanager
+async def room_over(
+    peer: RestPeer,
+    on_execute: ExecutionHandler,
+    *,
+    claims: ClaimRegistry | None = None,
+    retries: int = 1,
+) -> AsyncIterator[ExecutionContext]:
+    """An unstarted room execution over the peer, stopped on exit."""
+    async with rest_client_over(peer.answer) as rest:
+        ctx = ExecutionContext(
+            ROOM_ID,
+            link_over(rest),
+            on_execute,
+            config=session_config(batching=False, retries=retries),
+            agent_id=AGENT_ID,
+            claim_registry=claims,
+        )
+        try:
+            yield ctx
+        finally:
             await ctx.stop(timeout=STOP_SECONDS)

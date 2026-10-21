@@ -23,7 +23,6 @@ def mock_link() -> MagicMock:
     link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
         return_value=MagicMock(data=[])
     )
-    link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
     mirror_settlement_results(link)

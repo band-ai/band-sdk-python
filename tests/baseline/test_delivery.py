@@ -15,7 +15,6 @@ def delivery_link() -> MagicMock:
     """Build the minimal local transport contract used by delivery scenarios."""
     link = MagicMock()
     link.agent_id = "agent-baseline"
-    link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
     return mirror_settlement_results(link)
