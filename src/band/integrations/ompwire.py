@@ -209,6 +209,7 @@ class OmpState(OmpWireModel):
     isStreaming: bool = False
     hasPendingAsyncWork: bool = False
     queuedMessageCount: int = 0
+    isCompacting: bool = False
 
 
 class OmpHostToolCall(OmpWireModel):
