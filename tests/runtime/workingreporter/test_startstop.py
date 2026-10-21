@@ -52,7 +52,7 @@ class TestStartStop:
         assert rec.calls == []
 
     @pytest.mark.looptime
-    async def test_stop_during_the_first_report_leaves_no_keep_alive(self):
+    async def test_stop_during_the_first_report_leaves_no_keep_alive(self) -> None:
         recorder = DetailRecorder()
         reporter = WorkingStateReporter(recorder, keep_alive_seconds=3.0)
         recorder.hold()
