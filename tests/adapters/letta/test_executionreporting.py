@@ -12,9 +12,10 @@ from letta_client.types.agents.tool_return import ToolReturn
 
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, RoomContext
 from band.converters.letta import LettaSessionState
-from band.core.types import Emit, ToolEventKey
+from band.core.types import Emit
 from band.runtime.tools import BandTool
-from band.testing import FakeAgentTools, events_of_type
+from band.testing import FakeAgentTools
+from tests.adapters.letta.kit import reported_tool_names
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_grouped_call_message,
@@ -25,13 +26,6 @@ from tests.adapters.lettakit import (
     make_tool_return_message,
     ready_letta_adapter,
 )
-
-
-def reported_tool_names(tools: FakeAgentTools, event_type: str) -> list[str]:
-    return [
-        json.loads(event["content"])[ToolEventKey.NAME]
-        for event in events_of_type(tools, event_type)
-    ]
 
 
 class TestExecutionReporting:

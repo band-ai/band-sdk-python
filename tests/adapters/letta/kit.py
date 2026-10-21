@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from band.core.types import ToolEventKey
 from band.runtime.tools import BandTool
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type
 
 # Band tool calls that settle the turn's reply, so no assistant text is relayed.
 REPLY_SETTLING_CALLS = [
@@ -23,3 +26,10 @@ REPLY_SETTLING_CALLS = [
 
 def sent_contents(tools: FakeAgentTools) -> list[str]:
     return [message["content"] for message in tools.messages_sent]
+
+
+def reported_tool_names(tools: FakeAgentTools, event_type: str) -> list[str]:
+    return [
+        json.loads(event["content"])[ToolEventKey.NAME]
+        for event in events_of_type(tools, event_type)
+    ]
