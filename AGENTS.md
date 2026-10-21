@@ -12,9 +12,10 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 ## Skills
 
-Project guidelines live in skills under `.claude/skills/`. Each loads
-automatically when its trigger matches; read the SKILL.md directly if your
-agent doesn't load skills.
+Project guidelines live in skills under `.claude/skills/`; Codex reads the
+same skills through the `.agents/skills` symlink. Each loads automatically
+when its trigger matches; read the SKILL.md directly if your agent doesn't
+load skills.
 
 | Skill | Use when |
 |---|---|
