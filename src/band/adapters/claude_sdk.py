@@ -131,6 +131,7 @@ from band.integrations.mcp import (
     BandMCPTransport,
     SharedBandMCPBackend,
 )
+from band.runtime.activity import set_permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_effects,
@@ -142,6 +143,7 @@ from band.runtime.decisions import (
 )
 from band.runtime.formatters import format_tokens, strip_leading_mentions
 from band.runtime.prompts import SYSTEM_UPDATE_PREFIX
+from band.runtime.toolactivity import end_tool_activity, report_tool_activity
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BAND_MCP_SERVER_NAME,
@@ -469,6 +471,12 @@ TOOL_SEARCH = "ToolSearch"
 # Approvals only gate Claude Code's side-effecting native tools.
 NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}|{re.escape(TOOL_SEARCH)}$).+"
 
+
+def _served_by_band(sdk_tool_name: str) -> bool:
+    """Band's MCP server reports its own tools' activity as they run."""
+    return sdk_tool_name.startswith(MCP_TOOL_PREFIX)
+
+
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
     r"""(?x)
@@ -675,7 +683,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # _declined_the_reply for what this is cross-referenced against and
         # why tool_use_id uniqueness needs no turn-scoping here.
         self._notified_declines: dict[str, set[str]] = {}
-        # Bare tool name per pending call, keyed by room then tool_use_id
+        # SDK tool name per pending call, keyed by room then tool_use_id
         # (ToolResultBlock only carries the id). Room-scoped rather than
         # turn-local: a resumed session can replay a result whose tool_use
         # streamed in an earlier, truncated turn, and that result must still
@@ -1405,7 +1413,9 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # Bare name for the cross-adapter tool_call record (the SDK
         # namespaces our tools mcp__band__*; see _semantic_tool_name).
         tool_name = self._semantic_tool_name(block.name)
-        pending_tool_names[block.id] = tool_name
+        pending_tool_names[block.id] = block.name
+        if not _served_by_band(block.name):
+            await report_tool_activity(tools, tool_name)
         await self._narrate_tool_call(block, tool_name, room_id, tools)
 
     async def _narrate_tool_call(
@@ -1555,7 +1565,12 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         Shared by both envelopes a result can arrive in: user-type messages
         (the protocol shape) and assistant messages (accepted defensively).
         """
-        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
+        sdk_tool_name = pending_tool_names.pop(block.tool_use_id, None)
+        if sdk_tool_name is not None and not _served_by_band(sdk_tool_name):
+            await end_tool_activity(tools)
+        result_tool_name = (
+            None if sdk_tool_name is None else self._semantic_tool_name(sdk_tool_name)
+        )
         await self._narrate_tool_result(block, result_tool_name, room_id, tools)
 
     async def _narrate_tool_result(
@@ -1858,36 +1873,41 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # so the caller isn't left waiting for a timeout nobody will see.
         tools = self._room_tools.get(room_id)
         mention = [requester["id"]] if requester else None
-        if tools:
-            try:
-                await tools.send_notice(
-                    APPROVAL_REQUESTED_TEMPLATE.format(summary=summary, token=token),
-                    mentions=mention,
-                )
-            except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-                logger.warning("Room %s: Failed to send approval notification", room_id)
-                # A reply that claimed it meanwhile owns the answer; otherwise
-                # decline without a notice, so the missing-reply guard stays.
-                if registry.withdraw(entry):
-                    self._clear_pending_approval(room_id, entry)
-                    return PermissionResultDeny(
-                        message="Could not deliver approval prompt, tool use declined"
-                    )
-
-        # The request has been posted (or there was nowhere to post it) --
-        # either way, on_message must return now so Band's room loop can
-        # dispatch the reply that will resolve this wait. The turn is then
-        # judged at its real end (see _on_turn_complete).
-        if tools:
-            tools.turn.detach()
-        self._release_turn(room_id)
-
+        await set_permission_wait(tools, True)
         try:
+            if tools:
+                try:
+                    await tools.send_notice(
+                        APPROVAL_REQUESTED_TEMPLATE.format(
+                            summary=summary, token=token
+                        ),
+                        mentions=mention,
+                    )
+                except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+                    logger.warning(
+                        "Room %s: Failed to send approval notification", room_id
+                    )
+                    # A reply that claimed it meanwhile owns the answer; otherwise
+                    # decline without a notice, so the missing-reply guard stays.
+                    if registry.withdraw(entry):
+                        return PermissionResultDeny(
+                            message="Could not deliver approval prompt, tool use declined"
+                        )
+
+            # The request has been posted (or there was nowhere to post it) --
+            # either way, on_message must return now so Band's room loop can
+            # dispatch the reply that will resolve this wait. The turn is then
+            # judged at its real end (see _on_turn_complete).
+            if tools:
+                tools.turn.detach()
+            self._release_turn(room_id)
+
             decision = await registry.wait(
                 entry, pending.future, timeout_s=self._approvals.wait_timeout_s
             )
         finally:
             self._clear_pending_approval(room_id, entry)
+            await set_permission_wait(tools, self._open_approval_count(room_id) > 0)
 
         match decision:
             case Timeout.TIMED_OUT:
@@ -2062,8 +2082,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         session_count = manager.get_session_count() if manager else 0
         session = manager.session(room_id) if manager else None
         session_id = (session.session_id if session else None) or "—"
-        registry = self._pending_approvals.get(room_id)
-        pending_count = registry.unclaimed_count() if registry else 0
+        pending_count = self._open_approval_count(room_id)
 
         lines = [
             "**Claude SDK Status**",
@@ -2119,6 +2138,10 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
     def _new_approval_registry(self) -> DecisionRegistry[PendingApproval]:
         return DecisionRegistry(max_pending=self._approvals.max_pending_per_room)
+
+    def _open_approval_count(self, room_id: str) -> int:
+        registry = self._pending_approvals.get(room_id)
+        return registry.unclaimed_count() if registry else 0
 
     def _clear_pending_approval(
         self, room_id: str, entry: DecisionEntry[PendingApproval]
