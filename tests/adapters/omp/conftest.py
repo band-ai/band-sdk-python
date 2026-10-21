@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -48,3 +49,22 @@ async def overlapping_selections(
         resolver.release.set()
         runtime.release_rollback.set()
         await adapter.cleanup_all()
+
+
+@pytest.fixture
+def ask_adapter(tmp_path: Path):
+    """An adapter whose native peer raises a structured ask dialog."""
+    adapter = OmpAdapter(
+        OmpAdapterConfig(
+            cwd=str(tmp_path),
+            command=(
+                sys.executable,
+                "-u",
+                "-m",
+                "tests.integrations.ompaskpeer",
+                "ask",
+            ),
+        ),
+        emit=(),
+    )
+    return adapter

@@ -41,6 +41,7 @@ class OmpCommandName(StrEnum):
     SWITCH_SESSION = "switch_session"
     NEW_SESSION = "new_session"
     SET_HOST_TOOLS = "set_host_tools"
+    SET_ASK_DIALOG = "set_ask_dialog"
     SET_MODEL = "set_model"
     GET_AVAILABLE_THINKING_LEVELS = "get_available_thinking_levels"
     SET_THINKING_LEVEL = "set_thinking_level"
@@ -50,6 +51,7 @@ class OmpUIMethod(StrEnum):
     """UI request methods the native host answers."""
 
     SELECT = "select"
+    ASK = "ask"
 
 
 class OmpPromptStatus(StrEnum):

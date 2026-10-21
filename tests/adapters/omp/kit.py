@@ -9,7 +9,7 @@ from collections.abc import Callable
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import psutil
 import pytest
@@ -97,6 +97,8 @@ class PendingRuntime:
                 "sessionFile": None,
                 "isSettled": True,
             }
+        if command == OmpCommandName.SET_ASK_DIALOG:
+            return {"enabled": True}
         return {}
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
@@ -1134,3 +1136,26 @@ def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
             self.closed = True
 
     return FailingRuntime()
+
+
+async def ask_turn(
+    adapter: OmpAdapter,
+    tools: FakeAgentTools,
+    *,
+    bootstrap: bool = True,
+    content: str = "Ask me which database to use",
+) -> None:
+    await adapter.run_judged_turn(
+        msg=make_platform_message(content),
+        tools=tools,
+        history=OmpSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=bootstrap,
+        room_id="room-123",
+    )
+
+
+async def ask_frames(adapter: OmpAdapter) -> list[dict[str, JsonValue]]:
+    checkpoint = await adapter._rooms["room-123"].client.request("checkpoint")
+    return cast(list[dict[str, JsonValue]], checkpoint["frames"])
