@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -360,12 +360,14 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
             )
             observer: TurnObserver | None = None
             try:
-                # The observer stops inside the binding, so every thought it
-                # hands over is posted or cancelled when the binding closes.
-                async with agent.room.bound_to(tools) as binding:
-                    with observing_turn(
-                        agent, on_reasoning=self._thought_poster(binding)
-                    ) as observer:
+                # Usage includes owned cleanup; the closed binding refuses late thoughts.
+                with ExitStack() as observation:
+                    async with agent.room.bound_to(tools) as binding:
+                        observer = observation.enter_context(
+                            observing_turn(
+                                agent, on_reasoning=self._thought_poster(binding)
+                            )
+                        )
                         handoff.consume()
                         await agent.respond(message)
             except Exception as error:

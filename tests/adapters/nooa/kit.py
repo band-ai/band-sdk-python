@@ -193,6 +193,49 @@ class Gate:
         return room_agent_class(llm, namespace=carrying("gate", self))
 
 
+class CleanupWork:
+    """A tool whose child agent completes while cancellation is cleaned up."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.completed = False
+        self.cancelled = False
+        self.pending: asyncio.Task[Any] | None = None
+
+    async def handler(self) -> None:
+        child_class = room_agent_class(
+            FakeLLMClient(
+                [
+                    code_turn(
+                        "self.cleanup.entered.set()\n"
+                        "await self.cleanup.cleanup_started.wait()"
+                    ),
+                    tool_call_turn(
+                        RETURN_RESULT,
+                        {"value": None},
+                        reasoning="Finished owned cleanup.",
+                        usage=CHILD_USAGE,
+                    ),
+                ]
+            ),
+            base=Agent,
+            name="Child",
+            namespace=carrying("cleanup", self) | {"work": child_work},
+        )
+        child = asyncio.create_task(child_class().work())
+        try:
+            try:
+                await asyncio.shield(child)
+            finally:
+                self.cleanup_started.set()
+                await child
+                self.completed = True
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
 class LeftoverReply:
     """A reply the model leaves running in one turn and releases in the next.
 
