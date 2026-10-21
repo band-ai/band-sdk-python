@@ -103,10 +103,6 @@ class Selection:
     stop: Stop
     at: Candidate | None = None
 
-    @property
-    def events(self) -> tuple[MessageEvent, ...]:
-        return tuple(candidate.event for candidate in self.members)
-
 
 def merge(rest: Sequence[Candidate], retained: Sequence[Candidate]) -> list[Candidate]:
     """Resolve identities in source order; an original in both appears once.

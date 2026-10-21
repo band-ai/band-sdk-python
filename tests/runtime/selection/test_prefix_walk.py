@@ -145,10 +145,3 @@ class TestPrefixWalk:
         selection = walk([listed, retained], listed={"a"}, read_to=9)
 
         assert outline(selection) == (["a"], Stop.BOUNDARY, "r")
-
-    def test_the_events_are_the_originals_that_were_selected(self) -> None:
-        first, second = candidate("a", second=1), candidate("b", second=2)
-
-        selection = walk([first, second], listed={"a", "b"})
-
-        assert selection.events == (first.event, second.event)

@@ -10,6 +10,7 @@ from band.runtime.delivery import TurnOutcome
 from band.runtime.execution import ExecutionContext
 from band.runtime.messages import PlatformMessage
 from band.runtime.originals import backlog_event, is_ordinary
+from band.runtime.selection import Candidate
 
 
 async def attempt_delivery(
@@ -29,9 +30,10 @@ async def attempt_delivery(
     scheduler.retain(event)
     with scheduler.discovery():
         if is_ordinary(event):
-            candidate = scheduler.candidate(
-                event,
-                observation=source if isinstance(source, PlatformMessage) else None,
+            candidate = scheduler.classify(
+                Candidate.listed(source)
+                if isinstance(source, PlatformMessage)
+                else Candidate.retained(event)
             )
             result = await scheduler.dispatch((candidate,), priority=priority)
         else:
