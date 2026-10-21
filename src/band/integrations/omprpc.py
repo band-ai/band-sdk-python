@@ -238,7 +238,11 @@ class PromptRun:
         if self.snapshot is None:
             return False
         sequence, state = self.snapshot
-        return state.isSettled and sequence >= self.last_activity_sequence
+        return (
+            state.isSettled
+            and _idle_flags(state)
+            and sequence >= self.last_activity_sequence
+        )
 
     def boundary_reached(self) -> bool:
         return self.result.done() or self.terminal_seen or self.settled_proven()
@@ -258,12 +262,17 @@ class PromptRun:
         if self.snapshot is None or self.snapshot[0] <= self.last_activity_sequence:
             return False
         _, state = self.snapshot
-        return bool(
-            state.isStreaming
-            or state.hasPendingAsyncWork
-            or state.queuedMessageCount > 0
-            or state.isCompacting
-        )
+        return not _idle_flags(state)
+
+
+def _idle_flags(state: OmpState) -> bool:
+    """Positive idle proof for a snapshot: no busy signal remains set."""
+    return bool(
+        not state.isStreaming
+        and not state.hasPendingAsyncWork
+        and not state.isCompacting
+        and state.queuedMessageCount == 0
+    )
 
 
 class OmpProcessScope:
@@ -379,6 +388,7 @@ class OmpRpcClient:
         self._pending: dict[str, PendingRequest] = {}
         self._turn: PromptRun | None = None
         self._retirement_error: OmpProcessError | None = None
+        self._survivors: set[asyncio.Task[None]] = set()
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
@@ -487,9 +497,31 @@ class OmpRpcClient:
             self._ensure_running()
             await self._execute_prompt(message, on_event, on_tool, on_ui)
 
+    def _retire_survivors(self) -> OmpProcessError | None:
+        """Re-prove callback retirement on every repeat close attempt."""
+        pending = {task for task in self._survivors if not task.done()}
+        if pending:
+            if self._retirement_error is None:
+                self._retirement_error = OmpProcessError(
+                    f"OMP callbacks survived cancellation: {len(pending)} task(s)"
+                    " still pending; retirement is unproven"
+                )
+            return self._retirement_error
+        if self._survivors:
+            # Every survivor has finished: callback cleanup is now proven and
+            # replacement is unblocked.
+            for task in self._survivors:
+                OmpRpcClient._consume_task(task)
+            self._retirement_error = None
+        self._survivors.clear()
+        return None
+
     async def close(self) -> None:
         """Finish shared bounded cleanup before propagating caller cancellation."""
         if self._proc is None and self._spawn_task is None:
+            error = self._retire_survivors()
+            if error is not None:
+                raise error
             return
         self._begin_close()
         closing = self._close_task
@@ -739,12 +771,18 @@ class OmpRpcClient:
                 snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
             )
             turn.record_snapshot(snapshot.sequence, state)
-            # A settled snapshot newer than every observed event proves native
-            # completion, as does a session_settled frame that postdates the
-            # snapshot and all activity. An old, uncorrelated session_settled
-            # cannot overrule a newer busy snapshot, so each wake re-snapshots.
+            # A snapshot proving settlement AND positive idleness, newer than
+            # every observed event, proves native completion. isSettled alone
+            # must not end a turn: background work can outlive the answer, so
+            # the success path demands the same positive-idle conjunction the
+            # completion guard requires before arming. A session_settled frame
+            # postdating the snapshot and all activity proves it too; an old
+            # one cannot overrule a newer busy snapshot, so each wake
+            # re-snapshots.
             if (
-                state.isSettled and snapshot.sequence >= turn.last_activity_sequence
+                state.isSettled
+                and _idle_flags(state)
+                and snapshot.sequence >= turn.last_activity_sequence
             ) or (
                 turn.settled_sequence > snapshot.sequence
                 and turn.settled_sequence > turn.last_activity_sequence
@@ -1139,15 +1177,7 @@ class OmpRpcClient:
             if turn.event_worker is not None:
                 workers.append(turn.event_worker)
             await self._cancel_tasks(workers)
-            survivors = [task for task in workers if not task.done()]
-            if survivors:
-                retirement = OmpProcessError(
-                    f"OMP callbacks survived cancellation: {len(survivors)} task(s)"
-                    " still pending; retirement is unproven"
-                )
-                if self._retirement_error is None:
-                    self._retirement_error = retirement
-                errors.append(retirement)
+            self._survivors.update(task for task in workers if not task.done())
 
         owner = self._windows_process
         scope = self._process_scope
@@ -1161,6 +1191,9 @@ class OmpRpcClient:
                 self._proc = owner.process
         process = await self._settle_spawn()
         if process is None:
+            error = self._retire_survivors()
+            if error is not None:
+                raise error
             self._windows_process = None
             self._process_scope = None
             return
@@ -1217,6 +1250,9 @@ class OmpRpcClient:
             if self._stderr_task is not None:
                 drains.append(self._stderr_task)
             await self._cancel_tasks(drains)
+        error = self._retire_survivors()
+        if error is not None:
+            errors.append(error)
         if len(errors) == 1:
             raise errors[0]
         if errors:
