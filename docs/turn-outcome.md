@@ -417,7 +417,9 @@ The activity owner is the originating turn scope, independently of the current
 message delivery. A registered provider worker keeps its reporter alive after
 the handler settles, including while waiting for human approval. Later approval
 replies and busy deliveries do not replace that owner or restart its duration
-cap. Reporting ends when both the handler and its workers finish.
+cap. Reporting ends when both the handler and its workers finish. Only a
+message handler's turn reports; a worker bound by a housekeeping turn, such as
+a participant change, never starts the indicator.
 
 An echoed heartbeat STOP can cancel that detached provider and notify its adapter
 once. It does not rewrite the original delivery's settled acknowledgement.

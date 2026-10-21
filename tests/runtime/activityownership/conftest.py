@@ -11,7 +11,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.activityownership.kit import ActivityPlatform, IdleReportGate
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
@@ -29,15 +29,25 @@ def activity_platform() -> Iterator[ActivityPlatform]:
 
 
 @pytest.fixture
+def idle_report_gate(activity_platform: ActivityPlatform) -> IdleReportGate:
+    return IdleReportGate(activity_platform)
+
+
+@pytest.fixture
 async def execution(
-    activity_platform: ActivityPlatform,
+    idle_report_gate: IdleReportGate,
 ) -> AsyncIterator[Callable[..., ExecutionContext]]:
     contexts: list[ExecutionContext] = []
-    async with rest_client_over(activity_platform.respond) as rest:
+    async with rest_client_over(idle_report_gate.answer) as rest:
 
         def create(
             handler: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
             hub_room_id: str | None = None,
+            *,
+            on_message_control: Callable[
+                [ExecutionContext, PlatformEvent], Awaitable[bool]
+            ]
+            | None = None,
             **settings: object,
         ) -> ExecutionContext:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
@@ -52,6 +62,7 @@ async def execution(
                 agent_id=AGENT_ID,
                 hub_room_id=hub_room_id,
                 on_platform_stop=runtime._on_platform_stop,
+                on_message_control=on_message_control,
                 config=SessionConfig(enable_context_hydration=False, **settings),
             )
             contexts.append(ctx)
@@ -59,7 +70,7 @@ async def execution(
 
         yield create
         for ctx in contexts:
-            activity_platform.activity_release.set()
+            idle_report_gate.peer.activity_release.set()
             await ctx.stop()
 
 

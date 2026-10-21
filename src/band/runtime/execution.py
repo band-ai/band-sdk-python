@@ -1908,6 +1908,7 @@ class ExecutionContext:
     ) -> None:
         scope = self.current_scope
         if scope is not None:
+            scope.reports_activity = True
             await self._acquire_activity(scope)
         if scope is not None and scope.terminating:
             raise asyncio.CancelledError
@@ -1972,7 +1973,11 @@ class ExecutionContext:
         """Bind completion to the same owner that delivers worker cancellation."""
         scope.bind(owner)
         owner.task.add_done_callback(lambda _: self._finish_activity(scope))
-        if scope is self.current_scope and self._activity_owner is None:
+        if (
+            scope.reports_activity
+            and scope is self.current_scope
+            and self._activity_owner is None
+        ):
             previous = self._activity_completion
 
             async def acquire() -> None:
@@ -2094,7 +2099,7 @@ class ExecutionContext:
             wake.cancel()
             await asyncio.gather(wake, return_exceptions=True)
             scope.settled = True
-            if isinstance(event, MessageEvent) and handler is None:
+            if scope.reports_activity:
                 self._finish_activity(scope, aborted=scope.terminating)
                 if not self._closing:
                     await self._join_activity_completion()
