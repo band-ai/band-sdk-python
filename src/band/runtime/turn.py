@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
@@ -18,7 +18,7 @@ from band.runtime.activity import (
 )
 from band.runtime.tools.effects import turn_effect
 from band.runtime.tools.registry import TOOL_DEFINITIONS
-from band.runtime.tools.types import BandTool, Surface, TurnEffect
+from band.runtime.tools.types import BandTool, Surface, ToolDefinition, TurnEffect
 
 _ToolsClass = TypeVar("_ToolsClass", bound=type)
 
@@ -32,6 +32,16 @@ def record_tool_result(turn: Turn, tool_name: str, result: Any) -> None:
     if effect is TurnEffect.REPLY and result is None:
         return
     turn.record(effect)
+
+
+def _agent_tool_methods(
+    cls: type,
+) -> Iterator[tuple[ToolDefinition, Callable[..., Awaitable[Any]]]]:
+    """Each agent tool ``cls`` itself defines, with its method."""
+    for definition in TOOL_DEFINITIONS.values():
+        method = cls.__dict__.get(definition.method_name)
+        if definition.surface == Surface.AGENT and method is not None:
+            yield definition, method
 
 
 def _recording(
@@ -52,10 +62,8 @@ def records_turn_effects(cls: _ToolsClass) -> _ToolsClass:
     Wrapping the methods themselves counts every call path: registry dispatch,
     a framework calling the method directly, and ``deliver_reply``.
     """
-    for definition in TOOL_DEFINITIONS.values():
-        method = cls.__dict__.get(definition.method_name)
-        if definition.surface == Surface.AGENT and method is not None:
-            setattr(cls, definition.method_name, _recording(definition.name, method))
+    for definition, method in _agent_tool_methods(cls):
+        setattr(cls, definition.method_name, _recording(definition.name, method))
     return cls
 
 
@@ -113,12 +121,7 @@ def _observing(
 
 def reports_tool_activity(cls: _ToolsClass) -> _ToolsClass:
     """Report every agent tool method except ``send_event`` as turn activity."""
-    for definition in TOOL_DEFINITIONS.values():
-        method = cls.__dict__.get(definition.method_name)
-        if (
-            definition.surface == Surface.AGENT
-            and definition.name != BandTool.SEND_EVENT
-            and method is not None
-        ):
+    for definition, method in _agent_tool_methods(cls):
+        if definition.name != BandTool.SEND_EVENT:
             setattr(cls, definition.method_name, _observing(definition.name, method))
     return cls
