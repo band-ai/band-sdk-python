@@ -23,10 +23,18 @@ the workflow files cannot say for themselves.
   cancelled or queued behind one another: each one is the verdict for the commit that
   lands, in a concurrency group of its own.
 - **The merge queue runs a slim `ci.yml`:** `lint` plus the `test`, `test-crewai` and
-  `test-parlant` suites on Ubuntu with Python 3.12. The full OS × Python grid,
-  `test-strands-nooa`, `packaging` and `wheel-extras` run on the PR only, and
+  `test-parlant` suites on Ubuntu with Python 3.12. `test-strands-nooa`, `packaging`
+  and `wheel-extras` stay out of the queue, and
   `python-core-coverage.yml` does not run in the queue. A break that shows only on a lane the
   queue skips reaches `main` and surfaces in the next PR's CI.
+- **Normal PRs run all four dependency environments on Linux with Python 3.11–3.13,
+  and on Windows with Python 3.13 only.** The full Linux/Windows grid runs on the
+  `release-please--branches--main` release PR, every Monday at 03:17 UTC, and through
+  `gh workflow run ci.yml --ref <branch-or-tag>`. Scheduled runs use the latest `main`
+  commit. Manual runs validate the selected ref without publishing anything.
+  When adding a supported Python version, update the matrix exclusions so normal
+  PRs retain only the newest validated Windows interpreter; the matrix guard
+  checks this against the version grid.
 
 ## PyPI publish
 
