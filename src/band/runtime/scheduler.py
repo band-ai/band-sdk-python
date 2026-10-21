@@ -655,7 +655,7 @@ class Scheduler:
         control: bool = False,
     ) -> DispatchResult:
         match outcome:
-            case TurnOutcome.ADVANCED:
+            case TurnOutcome.ADVANCED | TurnOutcome.ABSENT:
                 self.release(identities)
                 if self.deferred_id in identities:
                     self.defer(None)

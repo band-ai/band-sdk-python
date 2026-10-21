@@ -36,6 +36,7 @@ from band.core.protocols import (
     TURN_FAILURE_PROVIDER,
 )
 from band.core.retention import task_failure
+from band.core.settlement import SettlementResult
 from band.core.turn_lifecycle import (
     TurnTask,
     finished_within_grace,
@@ -1395,7 +1396,7 @@ class ExecutionContext:
             raise asyncio.CancelledError
 
         try:
-            accepted = await self.delivery.processing(message_id)
+            result = await self.delivery.processing(message_id)
         except RoomExecutionStoppedError as error:
             if self.current_scope is scope and self._active_cycle_task is task:
                 self.observe_platform_stop(scope, cooperative=True)
@@ -1409,7 +1410,7 @@ class ExecutionContext:
             or scope.terminating
         ):
             raise asyncio.CancelledError
-        return accepted
+        return result is SettlementResult.ACCEPTED
 
     async def abort_delivery(self, kind: ControlMode, scope: TurnScope) -> bool:
         """Unwind an aborted cycle (interrupt/stop) and report it as aborted.
