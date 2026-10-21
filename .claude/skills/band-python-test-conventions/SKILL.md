@@ -1,6 +1,8 @@
 ---
 name: band-python-test-conventions
 description: Band Python SDK test conventions. Use when writing or editing tests under tests/.
+paths:
+  - "tests/**/*.py"
 ---
 
 # Test Conventions

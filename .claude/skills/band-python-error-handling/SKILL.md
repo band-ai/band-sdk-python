@@ -1,6 +1,8 @@
 ---
 name: band-python-error-handling
 description: Band Python SDK error handling. Use when raising or handling exceptions or formatting validation errors.
+paths:
+  - "**/*.py"
 ---
 
 # Error Handling

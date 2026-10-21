@@ -1,6 +1,8 @@
 ---
 name: band-python-conventions
 description: Band Python SDK coding standards. Use when writing or editing Python source in this repo.
+paths:
+  - "**/*.py"
 ---
 
 # Coding Standards

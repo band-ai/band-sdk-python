@@ -1,7 +1,6 @@
 ---
 name: band-investigate-test-error
 description: Use this skill when a test is failing or erroring and the root cause is not obvious — when the user asks to "investigate this test failure", "figure out why this test is flaky", "why is this test erroring", "find the root cause of this failure", or wants a rigorous multi-hypothesis diagnosis before touching code. Spawns parallel investigator subagents, each owning one hypothesis (adapter/product bug, test-case assumptions, test tooling/toolkit bug, LLM flakiness), makes each VALIDATE its hypothesis empirically rather than assume, then scrutinizes their reports and presents a ranked conclusion of what and where the issue is.
-version: 1.0.0
 ---
 
 # Investigate Test Error

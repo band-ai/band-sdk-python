@@ -3,7 +3,7 @@ name: band-run-e2e-live
 description: Use this skill when the user wants to RUN the band-sdk-python E2E baseline tests against the live platform + real LLMs (not write them) — "run the e2e tests live", "run the usage smoke for anthropic", "validate this adapter live", "run all lanes", "why does the codex/opencode lane skip/fail", "set up .env.test", "switch the venv for crewai", "run crewai and the dev lanes at the same time / in parallel". Covers the venv-per-lane dependency split (including `uv run --isolated` for running lanes simultaneously), .env.test, BAND_E2E_LANE scoping, per-lane commands, and the backends (codex/opencode) auth/CWD/server gotchas. For AUTHORING new E2E tests use band-write-e2e-test instead; for diagnosing a failing test use band-investigate-test-error.
 ---
 
-# Run the E2E live tests (band-sdk-python)
+# Run the E2E Live Tests
 
 Operational playbook for executing `tests/e2e/baseline/` against the **real** Band
 platform + real LLM providers. The tests provision their own agents/rooms and make

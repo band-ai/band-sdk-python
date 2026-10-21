@@ -1,9 +1,10 @@
 ---
 name: band-pr-triage
-description: Use this skill when the user wants a quick, cheap, read-only check of whether a PR can be merged or needs the heavy band-code-review — invoked explicitly as /band-pr-triage [target] [--level low|medium]. Never posts, fixes, or changes anything. Reads cheap signals (CI, size, file kinds, tests alongside source, skipped tests, open threads, ticket scope) plus a scan of the diff, reads the PR's earlier review history for signs the review is not converging, and returns MERGE, HEAVY REVIEW (naming the angles and the command to run), CHANGES NEEDED, or RETHINK (repeated comments on the same area; stop patching); any doubt escalates. --level low (default) adds one scan agent; --level medium adds Edge-Case and Logical-Bug hypothesis scans, still unproven. Does not call the built-in code-review skill.
+description: Use this skill when the user wants a quick, cheap, read-only check of whether a PR can be merged or needs the heavy band-code-review — also invoked as /band-pr-triage [target] [--level low|medium]. Never posts, fixes, or changes anything. Reads cheap signals (CI, size, file kinds, tests alongside source, skipped tests, open threads, ticket scope) plus a scan of the diff, reads the PR's earlier review history for signs the review is not converging, and returns MERGE, HEAVY REVIEW (naming the angles and the command to run), CHANGES NEEDED, or RETHINK (repeated comments on the same area; stop patching); any doubt escalates. --level low (default) adds one scan agent; --level medium adds Edge-Case and Logical-Bug hypothesis scans, still unproven. Does not call the built-in code-review skill.
+argument-hint: "[target] [--level low|medium]"
 ---
 
-# Band PR Triage
+# PR Triage
 
 Decides one thing: can this PR merge, does it need `band-code-review`, or has the
 review history shown it needs rethinking? It is not a review. It posts nothing, fixes nothing, and proves nothing; its scans

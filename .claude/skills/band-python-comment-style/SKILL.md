@@ -1,6 +1,8 @@
 ---
 name: band-python-comment-style
 description: Band Python SDK comment style. Use when writing or editing comments or docstrings.
+paths:
+  - "**/*.py"
 ---
 
 # Comment Style
