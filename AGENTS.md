@@ -429,9 +429,9 @@ install` it and exercise the real call in this repo's venv.
 
 ## Pre-Commit Checklist
 
-Before selecting checks, re-read your own diff once against the
-`band-python-conventions` skill — including code you just wrote this session, not only
-code you started from. The two rules that get skipped under time pressure:
+For Python changes, before selecting checks, re-read your own diff once against
+the `band-python-conventions` skill — including code you just wrote this session,
+not only code you started from. The two rules that get skipped under time pressure:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead
@@ -586,10 +586,6 @@ promote with `gh pr ready <pr>` only after the review passes and the task
 authorizes that transition. Do not change unrelated PRs' stages or treat
 readiness as permission to merge. See the
 [GitHub stage documentation](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/changing-the-stage-of-a-pull-request).
-
-### Pre-Commit Checklist
-
-See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.
 
 ### Code Review
 
