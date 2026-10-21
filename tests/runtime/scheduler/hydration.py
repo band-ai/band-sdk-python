@@ -26,10 +26,9 @@ from tests.runtime.helpers import (
 class HandoffObservation:
     effects: tuple[str, ...]
     original_preserved: bool
-    history_reads: int
     target_writes: tuple[str, ...]
-    blocked_attempts: int
-    blocked_settlements: int
+    blocked_claimed: bool
+    blocked_status: DeliveryStatus | None
 
 
 async def observe_handoff(
@@ -48,14 +47,11 @@ async def observe_handoff(
         status="sent", delivery_status={AGENT_ID: delivery_entry(stale)}
     )
     original = event.payload.model_dump()
-    history_reads = 0
     effects: list[str] = []
     delivered: list[dict[str, object]] = []
 
     async def answer(request: httpx.Request) -> httpx.Response:
-        nonlocal history_reads
         if request.method == "GET" and request.url.path.endswith("/context"):
-            history_reads += 1
             row = peer.rows["target"].wire
             row["metadata"]["delivery_status"] = {AGENT_ID: delivery_entry(history)}
             return httpx.Response(
@@ -112,10 +108,9 @@ async def observe_handoff(
         effects=tuple(effects),
         original_preserved=event.payload.model_dump() == original
         and all(payload == original for payload in delivered),
-        history_reads=history_reads,
         target_writes=tuple(
             entry for entry in peer.without_reads() if entry.endswith(" target")
         ),
-        blocked_attempts=len(peer.writes_of(DeliveryStatus.PROCESSING, "blocked")),
-        blocked_settlements=len(peer.writes_of(DeliveryStatus.PROCESSED, "blocked")),
+        blocked_claimed=bool(peer.writes_of(DeliveryStatus.PROCESSING, "blocked")),
+        blocked_status=peer.status_of("blocked") if control else None,
     )

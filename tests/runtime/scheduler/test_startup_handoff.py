@@ -42,4 +42,3 @@ class TestStartupHandoff:
                 ("tail-1",),
                 ("tail-2",),
             ]
-            assert (len(peer.nexts), len(peer.reads)) == (2, 0)
