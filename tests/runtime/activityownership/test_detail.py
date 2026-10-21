@@ -28,12 +28,13 @@ class TestOwnedDetail:
     ) -> None:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            await report_tool_activity(tools, "Bash")
-            await set_permission_wait(tools, True)
+            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(set_permission_wait(tools, True))
+            # Hidden behind the wait: the room keeps seeing permission.
             await end_tool_activity(tools)
             await report_memory_activity(tools)
-            await set_permission_wait(tools, False)
-            await end_tool_activity(tools)
+            await activity_platform.shown(set_permission_wait(tools, False))
+            await activity_platform.shown(end_tool_activity(tools))
 
         ctx = execution(handler)
         await ctx._process_event(make_message_event())
@@ -74,7 +75,7 @@ class TestOwnedDetail:
             == [{"working": True, "activity": {"kind": "permission"}}] * 2
         )
         await report_tool_activity(captured[0], "Bash")
-        await set_permission_wait(captured[0], False)
+        await activity_platform.shown(set_permission_wait(captured[0], False))
         assert activity_platform.activity_bodies[-1] == {
             "working": True,
             "activity": {"kind": "tool_call", "name": "Bash"},
@@ -106,7 +107,7 @@ class TestOwnedDetail:
         assert before[-1] == {"working": False}
         assert activity_platform.activity_bodies == before
 
-    async def test_graceful_stop_drops_observations_from_the_draining_turn(
+    async def test_graceful_stop_keeps_the_draining_turn_detail_current(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
@@ -127,52 +128,51 @@ class TestOwnedDetail:
         await handler_started.wait()
         stopping = asyncio.create_task(ctx.stop(timeout=30))
         await idle.awaited.wait()
-        await report_tool_activity(captured[0], "Bash")
+        await activity_platform.shown(report_tool_activity(captured[0], "Bash"))
         release.set()
         assert await stopping
         assert activity_platform.activity_bodies == [
             {"working": True, "activity": {"kind": "reasoning"}},
+            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
             {"working": False},
         ]
 
-    async def test_queued_observation_is_rechecked_after_stop_and_replacement(
+    @pytest.mark.looptime
+    async def test_an_interrupted_turn_cannot_change_detail_while_unwinding(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
     ) -> None:
-        captured: list[AgentTools] = []
-        handler_started = asyncio.Event()
-        release = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        cleanup_release = asyncio.Event()
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
-            captured.append(AgentTools.from_context(ctx))
-            handler_started.set()
-            await release.wait()
+            tools = AgentTools.from_context(ctx)
+            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await report_memory_activity(tools)
+                cleanup_entered.set()
+                await cleanup_release.wait()
+                raise
 
         ctx = execution(handler)
-        turn = asyncio.create_task(ctx._process_event(make_message_event(msg_id="old")))
-        await handler_started.wait()
-        activity_platform.hold_next_activity = True
-        change = asyncio.create_task(report_tool_activity(captured[0], "Bash"))
-        await activity_platform.activity_entered.wait()
-        stale = asyncio.create_task(report_memory_activity(captured[0]))
+        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        await activity_platform.bodies_reach(2)
         ctx.interrupt()
-        activity_platform.activity_release.set()
-        await asyncio.gather(turn, change, stale)
-        release.set()
-        await ctx._process_event(make_message_event(msg_id="new"))
-        assert activity_platform.activity_bodies[-3:] == [
-            {"working": False},
+        await cleanup_entered.wait()
+        # Less than the cleanup grace and the keep-alive: only a change could post.
+        await asyncio.sleep(0.5)
+        cleanup_release.set()
+        await turn
+        assert activity_platform.activity_bodies == [
             {"working": True, "activity": {"kind": "reasoning"}},
+            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
             {"working": False},
         ]
-        assert not any(
-            body.get("activity", {}).get("kind") == "memory"
-            for body in activity_platform.activity_bodies
-        )
 
-    @pytest.mark.looptime
-    async def test_waiting_delivery_takes_over_reporting_once_the_owner_finishes(
+    async def test_observation_from_a_waiting_delivery_never_starts_reporting(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
@@ -203,14 +203,62 @@ class TestOwnedDetail:
         worker_release.set()
         await workers[0].task
         await ctx._join_activity_completion()
+        before = list(activity_platform.activity_bodies)
         await report_tool_activity(waiting_tools[0], "Bash")
-        assert activity_platform.activity_bodies[-3:] == [
-            {"working": False},
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
-        ]
+        assert before[-1] == {"working": False}
+        assert activity_platform.activity_bodies == before
         waiting_release.set()
         await waiting
+
+    async def test_a_new_turn_starts_at_reasoning(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        turns: list[ExecutionContext] = []
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            turns.append(ctx)
+            if len(turns) > 1:
+                return
+            tools = AgentTools.from_context(ctx)
+            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(set_permission_wait(tools, True))
+
+        ctx = execution(handler)
+        await ctx._process_event(make_message_event(msg_id="first"))
+        await ctx._process_event(make_message_event(msg_id="second"))
+        assert activity_platform.activity_bodies == [
+            {"working": True, "activity": {"kind": "reasoning"}},
+            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
+            {"working": True, "activity": {"kind": "permission"}},
+            {"working": False},
+            {"working": True, "activity": {"kind": "reasoning"}},
+            {"working": False},
+        ]
+
+    async def test_a_tool_never_waits_for_the_platform(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        observed_before_delivery: list[bool] = []
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            tools = AgentTools.from_context(ctx)
+            activity_platform.hold_next_activity = True
+            observing = asyncio.create_task(report_tool_activity(tools, "Bash"))
+            await activity_platform.activity_entered.wait()
+            observed_before_delivery.append(observing.done())
+            activity_platform.activity_release.set()
+
+        ctx = execution(handler)
+        await ctx._process_event(make_message_event())
+        assert observed_before_delivery == [True]
+        assert activity_platform.activity_bodies[1] == {
+            "working": True,
+            "activity": {"kind": "tool_call", "name": "Bash"},
+        }
 
     @pytest.mark.parametrize("excluded", ["disabled", "hub"])
     async def test_excluded_reporting_ignores_observations(

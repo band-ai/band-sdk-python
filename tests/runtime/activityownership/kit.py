@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable
 from typing import Any, Literal
 
 import httpx
@@ -16,19 +17,33 @@ class ActivityPlatform(LifecyclePlatform):
         self.hold_next_activity = False
         self.activity_entered = asyncio.Event()
         self.activity_release = asyncio.Event()
+        self._reported = asyncio.Condition()
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
         response = self.answer(request)
-        if self.hold_next_activity and request.url.path.endswith("/activity"):
-            self.hold_next_activity = False
-            self.activity_entered.set()
-            await self.activity_release.wait()
+        if request.url.path.endswith("/activity"):
+            async with self._reported:
+                self.activity_bodies.append(json.loads(request.content))
+                self._reported.notify_all()
+            if self.hold_next_activity:
+                self.hold_next_activity = False
+                self.activity_entered.set()
+                await self.activity_release.wait()
         return response
+
+    async def bodies_reach(self, count: int) -> list[dict[str, Any]]:
+        async with self._reported:
+            await self._reported.wait_for(lambda: len(self.activity_bodies) >= count)
+        return self.activity_bodies
+
+    async def shown(self, observation: Awaitable[None]) -> None:
+        """Make a visible change and wait until the platform has received it."""
+        count = len(self.activity_bodies)
+        await observation
+        await self.bodies_reach(count + 1)
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
-        if tail == "activity":
-            self.activity_bodies.append(json.loads(request.content))
         if tail == "participants":
             return page([{**ALICE, "role": "member", "status": "active"}])
         if request.method == "POST" and tail == "messages":

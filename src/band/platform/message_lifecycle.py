@@ -116,14 +116,6 @@ def _failure_result(error: Exception) -> SettlementResult:
             return SettlementResult.UNCONFIRMED
 
 
-def _first_rejected_field(body: object) -> str:
-    """A content-free cause: the first JSON pointer a validation error names."""
-    envelope = _validated(ErrorEnvelope, body)
-    if envelope is None:
-        return "unparsed"
-    return next(iter(envelope.error.details), "unnamed")
-
-
 async def _post_activity(
     rest: AsyncRestClient,
     room_id: str,
@@ -137,10 +129,7 @@ async def _post_activity(
     except ApiError as error:
         if detail is None or error.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
             raise
-        activity_support.disable(
-            room_id=room_id, field=_first_rejected_field(error.body)
-        )
-        logger.debug("Activity 422 body for room %s: %r", room_id, error.body)
+        activity_support.disable(room_id=room_id)
         response = await _send_activity(rest, room_id, working, None, timeout_seconds)
     activity_support.observe(response.headers)
     return response.data.data

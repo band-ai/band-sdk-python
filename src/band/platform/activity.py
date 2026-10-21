@@ -43,23 +43,22 @@ class ActivitySupport:
     def observe(self, headers: Mapping[str, str]) -> None:
         version = headers.get(API_VERSION_HEADER)
         if not _supports_detail(version):
-            logger.debug(
-                "Agent API version %r does not advertise activity detail", version
-            )
             return
         with self._lock:
+            newly_learned = not self._learned
             self._learned = True
+        if newly_learned:
+            logger.info("Agent API %s supports activity detail", version)
 
-    def disable(self, *, room_id: str, field: str) -> None:
+    def disable(self, *, room_id: str) -> None:
         with self._lock:
             already_disabled = self._disabled
             self._disabled = True
         if not already_disabled:
             logger.info(
-                "Activity report with detail returned 422 in room %s (field %s); "
+                "Activity report with detail returned 422 in room %s; "
                 "using boolean reporting for this process",
                 room_id,
-                field,
             )
 
 

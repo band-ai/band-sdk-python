@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-
 import pytest
 from band_rest import AgentActivityDetail
 
@@ -67,16 +65,3 @@ class TestActivityVersion:
             {"working": True, "activity": {"kind": kind}},
             {"working": False},
         ]
-
-    async def test_unadvertised_version_is_logged_for_diagnosis(
-        self,
-        link: BandLink,
-        activity_peer: ActivityPeer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        activity_peer.version = "1.24.0"
-        with caplog.at_level(logging.DEBUG, logger="band.platform.activity"):
-            assert await link.report_activity("room", True)
-        [record] = caplog.records
-        assert record.levelno == logging.DEBUG
-        assert "'1.24.0'" in record.getMessage()

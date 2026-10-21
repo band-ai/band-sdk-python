@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from band.platform.link import BandLink
-from tests.platform.activity.kit import ActivityPeer
+from tests.platform.activity.kit import ActivityPeer, lifecycle_records
 
 
 class TestActivityReporting:
@@ -37,8 +37,9 @@ class TestActivityReporting:
             assert not await link.report_activity("room-1", True)
             assert not await link.report_activity("room-1", True)
             assert await link.report_activity("room-1", True)
-        assert [record.levelno for record in caplog.records] == [
+        records = lifecycle_records(caplog)
+        assert [record.levelno for record in records] == [
             logging.WARNING,
             logging.INFO,
         ]
-        assert "recovered" in caplog.records[-1].getMessage()
+        assert "recovered" in records[-1].getMessage()

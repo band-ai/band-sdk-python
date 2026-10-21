@@ -426,9 +426,13 @@ indicator while adapter residency retains responsibility for released workers.
 The authoritative idle report finishes before a replacement reports working.
 
 `SessionConfig.enable_working_state` controls both the indicator and activity
-detail, independently of chat narration and tool capabilities. Changes and
-keep-alives share one serialized reporter. The duration cap stops both kinds
-of refresh without cancelling provider work; actual completion still clears.
+detail, independently of chat narration and tool capabilities. Each turn keeps
+its own detail, starting at reasoning; the room shows the owner's detail, and
+none while an aborted owner unwinds. Reporting what a turn is doing never starts
+reporting, changes ownership, or waits on the network: a visible change wakes
+the reporter's keep-alive, which sends the latest detail, so changes made while
+a report is in flight coalesce. The duration cap stops both kinds of refresh
+without cancelling provider work; actual completion still clears.
 
 Detail compatibility is learned from the `X-API-Version` header the platform
 puts on every activity response. Reports stay boolean until a response in the

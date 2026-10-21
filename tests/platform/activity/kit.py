@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import deque
 from typing import Any
 
 import httpx
+import pytest
 
 from band.platform.activity import API_VERSION_HEADER
+from band.platform.message_lifecycle import logger as lifecycle_logger
 from tests.activitysupport import SUPPORTED_VERSION
 
 DETAIL = {"kind": "tool_call", "name": "Bash"}
+
+
+def lifecycle_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Records of the delivery logger alone, not the version negotiation's."""
+    return [r for r in caplog.records if r.name == lifecycle_logger.name]
 
 
 class ActivityPeer:

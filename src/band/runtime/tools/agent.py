@@ -58,6 +58,7 @@ from band.core.turn_lifecycle import TurnTask
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
+from band.runtime.activity import ActivityObserver
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
@@ -74,7 +75,6 @@ from band.runtime.tools.schema import (
     validate_tool_arguments,
 )
 from band.runtime.turn import records_turn_effects
-from band.runtime.working_state import ActivityObserver
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam

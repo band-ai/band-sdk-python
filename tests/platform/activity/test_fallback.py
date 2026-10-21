@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from unittest.mock import Mock
 
 import httpx
@@ -53,36 +52,6 @@ class TestActivityFallback:
         assert not await link.report_activity("room", working, activity=activity)
         assert len(activity_peer.reports) == 1
         assert learned.supported
-
-    async def test_downgrade_logs_the_rejected_field_not_the_body(
-        self,
-        link: BandLink,
-        activity_peer: ActivityPeer,
-        detail: AgentActivityDetail,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        activity_peer.responses.append(
-            httpx.Response(
-                422,
-                json={
-                    "error": {
-                        "code": "validation_error",
-                        "details": {"/activity/name": ["echoed Bash --secret"]},
-                        "message": "Invalid request",
-                        "request_id": "request-1",
-                    }
-                },
-            )
-        )
-        with caplog.at_level(logging.DEBUG, logger="band.platform"):
-            assert await link.report_activity("room", True, activity=detail)
-        [record] = [r for r in caplog.records if r.levelno == logging.INFO]
-        assert "/activity/name" in record.getMessage()
-        assert "secret" not in record.getMessage()
-        assert any(
-            r.levelno == logging.DEBUG and "secret" in r.getMessage()
-            for r in caplog.records
-        )
 
     @pytest.mark.parametrize("status", [400, 403, 500])
     async def test_other_errors_do_not_retry_or_disable(

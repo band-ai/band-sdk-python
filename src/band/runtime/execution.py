@@ -76,6 +76,7 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
+from band.runtime.activity import ActivityObserver
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.context import ConversationContext
 from band.runtime.context_serialization import context_item_to_dict
@@ -86,7 +87,7 @@ from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.resync import ResyncSchedule
 from band.runtime.sessionconfig import SessionConfig
 from band.runtime.tools.agent import AgentTools
-from band.runtime.working_state import ActivityObserver, WorkingStateReporter
+from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -1876,7 +1877,7 @@ class ExecutionContext:
         return await self.link.report_activity(
             self.room_id,
             working,
-            activity=self._working_reporter.activity,
+            activity=self._visible_activity,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
@@ -1945,8 +1946,13 @@ class ExecutionContext:
     def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
         return ScopeActivityObserver(self, scope) if scope is not None else None
 
-    def owns_activity(self, scope: TurnScope) -> bool:
-        return self._activity_owner is scope and not scope.aborted and not self._closing
+    @property
+    def _visible_activity(self) -> AgentActivityDetail | None:
+        """The owner's detail; an aborted owner's stale work is never shown."""
+        owner = self._activity_owner
+        if owner is None or owner.aborted:
+            return None
+        return owner.activity.detail
 
     async def observe_activity(
         self,
@@ -1955,17 +1961,11 @@ class ExecutionContext:
         activity: AgentActivityDetail | None = None,
         waiting: bool | None = None,
     ) -> None:
-        if (
-            self._activity_owner is None
-            and scope is self.current_scope
-            and not scope.settled
-        ):
-            await self._acquire_activity(scope)
-        await self._working_reporter.update(
-            current=partial(self.owns_activity, scope),
-            activity=activity,
-            waiting=waiting,
-        )
+        """Record a turn's activity; never starts reporting or waits on it."""
+        before = self._visible_activity
+        scope.activity.apply(activity=activity, waiting=waiting)
+        if self._visible_activity != before:
+            self._working_reporter.refresh()
 
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
