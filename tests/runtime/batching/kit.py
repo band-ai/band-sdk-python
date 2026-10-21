@@ -1,16 +1,199 @@
-"""Turn and control host doubles shared by the room execution kits."""
+"""A one-room platform and the turn and control host doubles shared by the room execution kits."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
-from band.client.streaming import MessageCreatedPayload
+from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from band.core.exceptions import InputNotAccepted
+from band.core.settlement import SettlementResult
 from band.platform.event import MessageEvent
+from band.platform.message_lifecycle import ActionablePage
 from band.runtime.execution import ExecutionContext
+from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import SessionConfig
+from tests.conftest import make_message_event, make_participant_mock
+from tests.runtime.helpers import (
+    AGENT_ID,
+    EPOCH,
+    ROOM_ID,
+)
+
+
+def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
+    """An uninitialized room context with three known participants and
+    ``stored`` as the room's persisted messages."""
+    context = MagicMock()
+    context.room_id = ROOM_ID
+    context.is_llm_initialized = False
+    context.config = SessionConfig()
+    context.participants = [
+        {"id": "alice", "name": "Alice", "type": "User"},
+        {"id": "bob", "name": "Bob", "type": "User"},
+        {"id": "helper", "name": "Helper", "type": "Agent"},
+    ]
+    context.peek_pending_system_messages = MagicMock(return_value=[])
+    context.get_context = AsyncMock(
+        return_value=MagicMock(messages=stored or [], participants=[])
+    )
+    return context
+
+
+@dataclass
+class Delivery:
+    message: PlatformMessage
+    status: str | None = None
+    in_rest: bool = True
+
+
+@dataclass
+class FakeRoom:
+    """The platform side of one room: an ordered store behind the link's calls."""
+
+    rest: MagicMock
+    page_size: int = 100
+    refuse_processing: set[str] = field(default_factory=set)
+    # Messages whose next admission is refused and every one after it accepted.
+    refuse_processing_once: set[str] = field(default_factory=set)
+    unconfirmed_terminal: bool = False
+    deliveries: dict[str, Delivery] = field(default_factory=dict)
+    # Messages the room asked to admit, in order, whether or not it was refused.
+    admission_attempts: list[str] = field(default_factory=list)
+    page_reads: int = 0
+    # Events the WebSocket delivers while the next page read is in flight.
+    during_read: list[Any] = field(default_factory=list)
+    # Control signals that reach the room while the next page read is in flight.
+    read_actions: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
+    deliver: Callable[[Any], Awaitable[None]] | None = None
+    # Messages whose processing write is overtaken by an INTERRUPT.
+    interrupt_during_processing: set[str] = field(default_factory=set)
+    interrupt: Callable[[], bool] | None = None
+
+    def post(
+        self,
+        message_id: str,
+        *,
+        sender_id: str = "alice",
+        sender_type: str = "User",
+        at: int | None = None,
+        in_rest: bool = True,
+        status: str | None = None,
+    ) -> MessageEvent:
+        """Store a message ``at`` seconds after the epoch and return its WS event."""
+        offset = len(self.deliveries) if at is None else at
+        moment = EPOCH + timedelta(seconds=offset)
+        message = PlatformMessage(
+            id=message_id,
+            room_id=ROOM_ID,
+            content=message_id,
+            sender_id=sender_id,
+            sender_type=sender_type,
+            sender_name=None,
+            message_type="text",
+            metadata=self.metadata(status),
+            created_at=moment,
+        )
+        self.deliveries[message_id] = Delivery(message, status, in_rest)
+        return make_message_event(
+            room_id=ROOM_ID,
+            msg_id=message_id,
+            sender_id=sender_id,
+            sender_type=sender_type,
+            inserted_at=moment.isoformat(),
+        )
+
+    @staticmethod
+    def metadata(status: str | None) -> dict[str, Any]:
+        statuses = {AGENT_ID: {"status": status}} if status else {}
+        return {"mentions": [], "delivery_status": statuses}
+
+    def status_of(self, message_id: str) -> str | None:
+        return self.deliveries[message_id].status
+
+    def statuses(self) -> dict[str, str | None]:
+        """Every stored message's delivery status, in posting order."""
+        return {message_id: d.status for message_id, d in self.deliveries.items()}
+
+    def outstanding(self) -> list[PlatformMessage]:
+        return [
+            replace(d.message, metadata=self.metadata(d.status))
+            for d in sorted(
+                self.deliveries.values(),
+                key=lambda d: (d.message.created_at, d.message.id),
+            )
+            if d.in_rest and d.status != DeliveryStatus.PROCESSED
+        ]
+
+    async def actionable_page(
+        self, room_id: str, *, cursor: str | None = None
+    ) -> ActionablePage:
+        self.page_reads += 1
+        messages = self.outstanding()
+        while self.read_actions:
+            await self.read_actions.pop(0)()
+        while self.during_read and self.deliver is not None:
+            await self.deliver(self.during_read.pop(0))
+        if cursor is not None:
+            ids = [m.id for m in messages]
+            messages = messages[ids.index(cursor) + 1 :] if cursor in ids else messages
+        page, rest = messages[: self.page_size], messages[self.page_size :]
+        return ActionablePage(page, page[-1].id if rest else None)
+
+    async def mark_processing_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        self.admission_attempts.append(message_id)
+        if message_id in self.interrupt_during_processing and self.interrupt:
+            self.interrupt_during_processing.discard(message_id)
+            self.interrupt()
+        if message_id in self.refuse_processing:
+            return SettlementResult.REJECTED
+        if message_id in self.refuse_processing_once:
+            self.refuse_processing_once.discard(message_id)
+            return SettlementResult.REJECTED
+        self.deliveries[message_id].status = DeliveryStatus.PROCESSING
+        return SettlementResult.ACCEPTED
+
+    async def mark_processed_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        return self.settle(DeliveryStatus.PROCESSED, message_id)
+
+    async def mark_failed_result(
+        self, room_id: str, message_id: str, error: str | None = None
+    ) -> SettlementResult:
+        return self.settle(DeliveryStatus.FAILED, message_id)
+
+    def settle(self, status: DeliveryStatus, message_id: str) -> SettlementResult:
+        if self.unconfirmed_terminal:
+            return SettlementResult.UNCONFIRMED
+        self.deliveries[message_id].status = status
+        return SettlementResult.ACCEPTED
+
+    def link(self) -> MagicMock:
+        link = MagicMock()
+        link.agent_id = AGENT_ID
+        link.rest = self.rest
+        link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+            return_value=MagicMock(
+                data=[make_participant_mock("alice", "Alice", "User")]
+            )
+        )
+        link.get_actionable_page = AsyncMock(side_effect=self.actionable_page)
+        link.get_next_message = AsyncMock(return_value=None)
+        link.mark_processing_result = AsyncMock(side_effect=self.mark_processing_result)
+        link.mark_processed = AsyncMock(return_value=True)
+        link.mark_failed = AsyncMock(return_value=True)
+        link.mark_processed_result = AsyncMock(side_effect=self.mark_processed_result)
+        link.mark_failed_result = AsyncMock(side_effect=self.mark_failed_result)
+        link.report_activity = AsyncMock(return_value=True)
+        link.get_stale_processing_messages = AsyncMock(return_value=[])
+        return link
 
 
 @dataclass
