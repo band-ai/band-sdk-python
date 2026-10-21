@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from band.client.streaming import ControlMode
-from tests.adapters.claude_sdk.batch.kit import LIST_FILES, OpenRoom, alice_helper_alice
+from tests.adapters.claude_sdk.batch.kit import (
+    ADMIN,
+    LIST_FILES,
+    OpenRoom,
+    alice_helper_alice,
+)
 from tests.adapters.claude_sdk.helpers import with_approvals
 
 
@@ -25,4 +30,5 @@ class TestBatchInterrupts:
 
         assert "Never sent." not in room.chat
         assert room.chat[-1] == "Fresh start."
-        assert room.adapter._pending_approvals == {}
+        await room.send("/approvals", sender=ADMIN)
+        assert room.chat[-1] == "No pending approvals."

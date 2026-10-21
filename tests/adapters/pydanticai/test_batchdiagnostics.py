@@ -36,4 +36,4 @@ class TestBatchDiagnostics:
         ):
             await adapter.on_messages(inp)
 
-        assert f"messages {','.join(o.id for o in BATCH)}:" in caplog.text
+        assert f"messages {', '.join(o.id for o in BATCH)}:" in caplog.text

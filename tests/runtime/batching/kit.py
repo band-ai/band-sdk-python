@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from band.core.exceptions import InputNotAccepted
+from band.core.protocols import FrameworkAdapter
 from band.core.settlement import SettlementResult
+from band.core.types import AgentInput
 from band.platform.event import MessageEvent
 from band.platform.message_lifecycle import ActionablePage
 from band.runtime.execution import ExecutionContext
@@ -22,7 +24,10 @@ from tests.runtime.helpers import (
     AGENT_ID,
     EPOCH,
     ROOM_ID,
+    agent_hooks,
 )
+
+CONTACTS_NOTICE = "alice is now a contact"
 
 
 def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
@@ -42,6 +47,36 @@ def room_context(*, stored: list[dict[str, Any]] | None = None) -> MagicMock:
         return_value=MagicMock(messages=stored or [], participants=[])
     )
     return context
+
+
+def seeded_room(adapter: FrameworkAdapter | None = None) -> ExecutionContext:
+    """A real, uninitialized room context holding a roster and a contacts notice,
+    run through ``adapter``'s delivery callbacks when one is given."""
+    hooks: dict[str, Any] = (
+        dict(agent_hooks(adapter))
+        if adapter is not None
+        else {"on_execute": AsyncMock()}
+    )
+    ctx = ExecutionContext(
+        ROOM_ID,
+        MagicMock(),
+        config=SessionConfig(enable_context_hydration=False),
+        agent_id=AGENT_ID,
+        **hooks,
+    )
+    ctx.add_participant({"id": "bob", "name": "Bob", "type": "User"})
+    ctx.inject_system_message(CONTACTS_NOTICE)
+    return ctx
+
+
+def offered_context(inp: AgentInput) -> tuple[bool, bool, str | None]:
+    """Whether ``inp`` still opens the session, carries the roster and carries
+    the contacts notice: everything a context commit takes away."""
+    return (
+        inp.is_session_bootstrap,
+        inp.participants_msg is not None,
+        inp.contacts_msg,
+    )
 
 
 @dataclass

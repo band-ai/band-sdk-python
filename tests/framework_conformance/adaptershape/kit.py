@@ -8,7 +8,8 @@ from tests.paths import REPO_ROOT, SRC_ROOT
 
 CONFIG_BASES = frozenset({"BaseAdapterConfig", "EnvAdapterConfig"})
 
-ADAPTER_BASE = "SimpleAdapter"
+# The abstract bases every adapter derives from; they hold no settings of their own.
+ADAPTER_BASES = frozenset({"SimpleAdapter", "BatchInputAdapter"})
 
 
 @dataclass(frozen=True)
@@ -64,8 +65,8 @@ ADAPTER_NAMES = {c.node.name for c in SOURCE_CLASSES if c.node.name.endswith("Ad
 ADAPTERS = [
     c
     for c in SOURCE_CLASSES
-    if c.node.name in ADAPTER_NAMES - {ADAPTER_BASE}
-    and c.base_names & (ADAPTER_NAMES | {ADAPTER_BASE})
+    if c.node.name in ADAPTER_NAMES - ADAPTER_BASES
+    and c.base_names & (ADAPTER_NAMES | ADAPTER_BASES)
     and "Protocol" not in c.base_names
 ]
 

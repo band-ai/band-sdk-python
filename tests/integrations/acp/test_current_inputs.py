@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from band.integrations.acp.client_adapter import SENDER_METADATA_INSTRUCTION
+from band.runtime.formatters import SENDER_METADATA_INSTRUCTION
 from tests.framework_conformance.batchprobes import (
     ALICE_SECOND,
     BATCH,

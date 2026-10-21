@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import copy
-from typing import Any
-
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexCommand
 from band.testing import FakeAgentTools
 from tests.adapters.codexbatch.kit import (
-    ROOM_ID,
     OpenRoom,
     approval_request,
     room_message,
@@ -27,15 +23,6 @@ CONSUMED_AS_CONTROL = {
     CodexCommand.APPROVALS,
     CodexCommand.STATUS,
 }
-
-
-def tables_of(adapter: CodexAdapter) -> dict[str, Any]:
-    """A snapshot of every table the adapter keeps."""
-    return {
-        name: copy.copy(value)
-        for name, value in vars(adapter).items()
-        if isinstance(value, dict | set | list)
-    }
 
 
 class TestControlRecognition:
@@ -70,11 +57,10 @@ class TestControlRecognition:
 
         assert consumed is (command in CONSUMED_AS_CONTROL)
 
-    async def test_recognizing_creates_no_room_state(
+    async def test_recognizing_starts_nothing_and_posts_nothing(
         self, codex_room: OpenRoom
     ) -> None:
         room = await codex_room()
-        before = tables_of(room.adapter)
 
         recognized = [
             room.adapter.is_control_message(room.message(content))
@@ -82,8 +68,11 @@ class TestControlRecognition:
         ]
 
         assert recognized == [True] * len(COMMANDS)
-        assert tables_of(room.adapter) == before
-        assert room.adapter._room_clients == {}
+        assert (room.client.connected, room.client.requests, room.chat) == (
+            False,
+            [],
+            [],
+        )
 
     async def test_recognizing_a_reply_leaves_the_pending_approval_unanswered(
         self, codex_room: OpenRoom
@@ -91,7 +80,6 @@ class TestControlRecognition:
         room = await codex_room(approval_request(10), turn_completed())
         await room.send("run tests")
         token = await room.approval_token()
-        before = tables_of(room.adapter)
         posted = list(room.chat)
 
         recognized = [
@@ -99,13 +87,10 @@ class TestControlRecognition:
             for content in (f"/approve {token}", f"/decline {token}", "/approvals")
         ]
 
-        pending = room.adapter._pending_approvals[ROOM_ID]
         assert recognized == [True] * 3
-        assert [entry.token for entry in pending.unclaimed()] == [token]
-        assert not pending[token].future.done()
         assert room.decisions == []
         assert room.chat == posted
-        assert tables_of(room.adapter) == before
+        assert f"- {token}:" in await room.pending_approvals()
         await room.control(f"/approve {token}")
         await room.settled()
         assert room.decisions == [(10, "accept")]

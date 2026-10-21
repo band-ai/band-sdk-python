@@ -77,6 +77,8 @@ class TestCursorTurnCleanup:
         successor = active_turn(session)
         token = decision_token(session)
 
+        # The stale turn's done callback, which only the event loop can order
+        # after its successor took the room.
         adapter._forget_turn(stale)
         with pytest.raises(InputNotAccepted):
             await session.send("hello", room=ROOM_A)

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.exceptions import BandConfigError, InputNotAccepted
-from band.core.protocols import TurnResultAlreadyReported
-from band.core.simple_adapter import SimpleAdapter
+from band.core.exceptions import InputNotAccepted
+from band.core.protocols import BatchFrameworkAdapter, TurnResultAlreadyReported
+from band.core.simple_adapter import BatchInputAdapter, SimpleAdapter
 from band.testing import MISSING_REPLY_FAILURE, failure_reports
 from tests.core.batchturnkit import (
     Entry,
@@ -21,19 +21,16 @@ from tests.runtime.conftest import platform_msg
 
 
 class TestBatchTurn:
-    async def test_an_adapter_that_never_declared_batch_support_refuses_a_batch(
+    def test_an_adapter_that_never_declared_batch_support_is_no_batch_host(
         self,
     ) -> None:
-        inp = batch_input()
-
-        with pytest.raises(BandConfigError, match="UndeclaredAdapter does not support"):
-            await UndeclaredAdapter().on_messages(inp)
+        assert not isinstance(UndeclaredAdapter(), BatchFrameworkAdapter)
 
     @pytest.mark.parametrize(
         ("entry", "message_ids"),
         [
             pytest.param(SimpleAdapter.on_event, ("m1",), id="singleton"),
-            pytest.param(SimpleAdapter.on_messages, ("m1", "m2"), id="batch"),
+            pytest.param(BatchInputAdapter.on_messages, ("m1", "m2"), id="batch"),
         ],
     )
     async def test_every_entry_reaches_the_one_turn_builder(
@@ -70,10 +67,6 @@ class TestBatchTurn:
         assert failure_reports(inp.tools) == []
         assert not inp.tools.turn.judged
 
-    async def test_an_adapter_that_declares_batch_without_a_builder_fails_loudly(
-        self,
-    ) -> None:
-        inp = batch_input()
-
-        with pytest.raises(BandConfigError, match="on_turn"):
-            await UnbuiltAdapter().on_messages(inp)
+    def test_a_batch_adapter_without_a_turn_builder_cannot_be_built(self) -> None:
+        with pytest.raises(TypeError, match="on_turn"):
+            UnbuiltAdapter()
