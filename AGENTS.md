@@ -10,6 +10,36 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 4. Platform tools for chat, contacts, memory, files, and the room task board
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
 
+## Skills
+
+Project guidelines live in skills under `.claude/skills/`. Each loads
+automatically when its trigger matches; read the SKILL.md directly if your
+agent doesn't load skills.
+
+| Skill | Use when |
+|---|---|
+| [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | writing or editing Python source |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing or editing tests under `tests/` |
+| [band-python-comment-style](.claude/skills/band-python-comment-style/SKILL.md) | writing comments or docstrings |
+| [band-python-error-handling](.claude/skills/band-python-error-handling/SKILL.md) | raising/handling exceptions, formatting validation errors |
+
+| Skill | Use when |
+|---|---|
+| [band-plan](.claude/skills/band-plan/SKILL.md) | turning a Linear ticket into a reviewed implementation plan |
+| [band-linear-create-branch](.claude/skills/band-linear-create-branch/SKILL.md) | creating a branch for Linear work with `git lb` |
+| [band-add-framework-adapter](.claude/skills/band-add-framework-adapter/SKILL.md) | adding a new framework adapter |
+| [band-write-e2e-test](.claude/skills/band-write-e2e-test/SKILL.md) | writing or extending an E2E baseline test |
+| [band-run-e2e-live](.claude/skills/band-run-e2e-live/SKILL.md) | running the E2E baseline lanes against the live platform |
+| [band-investigate-test-error](.claude/skills/band-investigate-test-error/SKILL.md) | finding the root cause of a failing or flaky test |
+| [band-code-review](.claude/skills/band-code-review/SKILL.md) | running the team's fixed-criteria review on a PR or branch |
+| [band-here-is-a-review](.claude/skills/band-here-is-a-review/SKILL.md) | handling review feedback on a PR or pasted review findings |
+| [band-pr-triage](.claude/skills/band-pr-triage/SKILL.md) | a quick read-only check of whether a PR can merge or needs a full review |
+| [band-stacked-prs](.claude/skills/band-stacked-prs/SKILL.md) | splitting work into stacked PRs or managing a PR chain with `gh stack` |
+| [band-desktop-setup](.claude/skills/band-desktop-setup/SKILL.md) | setting up, upgrading, or troubleshooting Claude Desktop as a Band agent |
+| [bug-hunting-via-example](.claude/skills/bug-hunting-via-example/SKILL.md) | using real runnable examples to reproduce and root-cause integration, concurrency, or lifecycle bugs |
+| [dependabot-triage](.claude/skills/dependabot-triage/SKILL.md) | reviewing, batching, or clearing open Dependabot PRs |
+| [local-platform-testing](.claude/skills/local-platform-testing/SKILL.md) | testing against a locally run thenvoi-platform, including on-prem-only feature flags |
+
 ## Platform Tools
 
 `src/band/runtime/tools/` owns every word an LLM reads about a platform
@@ -113,24 +143,6 @@ JSON-RPC over stdio; the SDK provides both server (`ACPServer` +
 `BandACPServerAdapter`) and client (`ACPClientAdapter`) sides. See
 [docs/acp.md](docs/acp.md) for the full session lifecycle, live-emission
 ordering, and permission-pairing rules.
-
-## Comment Style
-
-Comments state facts about the code as it is now, not narration of how it
-got there — never "extracted from X", "ported from Y", "changed from Z",
-no session/PR/ticket/line-number history. Git already owns that history.
-
-A comment earns its place only by saying something a reader can't get
-from the code itself: a non-obvious invariant, a race/ordering guarantee,
-a workaround for a specific external bug, a scope boundary that looks
-like it should be wider than it is. Never restate what the code already
-says in prose.
-
-If a function needs a long comment to be understood, that's a signal the
-function itself is doing too much — split it into named sub-functions
-whose names carry the "what," and keep the comment for the one "why" that
-can't be named away. Prefer trimming/removing this class of comment
-outright over compressing it.
 
 ## Code Structure
 
@@ -366,99 +378,10 @@ committing to one, verify the capability you need ships in the *released*
 version you'd actually install, not just on `latest`/`master` docs — `pip
 install` it and exercise the real call in this repo's venv.
 
-## Coding Standards
-
-- Always use type hints for function parameters and return types
-- Use `from __future__ import annotations` as the first import in every file
-- **Imports go at the top of the file, full absolute path (`from band.x.y
-  import Z`), never inside a function body.** This gets missed constantly —
-  check it explicitly before finishing any edit that touches an import. The
-  one legitimate exception: a module gated behind an optional extra not
-  installed in every lane's venv (e.g. `band.adapters.copilot_acp` imports
-  `acp`, the `agent-client-protocol` package — importing it at module level
-  would break test *collection* for a venv that lacks that extra, such as
-  `dev-crewai`). Even then the deferred import belongs only at the specific
-  call site that needs it, and only because collection-time safety genuinely
-  requires it — never as a default habit. If the module has no such
-  extra-gated dependency (true for the vast majority, including every
-  adapter that only shells out to a CLI, like `codex`), the import is
-  top-level, full stop.
-- Import symbols directly from the module that owns them. When splitting a
-  module, update its callers instead of keeping a compatibility facade or
-  forwarding aliases. Do not preserve obsolete import paths. Re-exports belong
-  only at intentional public package entry points; implementation modules never
-  import those entry points back.
-  Use `__all__` or explicit re-export aliases only to declare such a public API,
-  not as boilerplate in ordinary modules.
-- No underscores in file names or class names: modules get a clean single word
-  (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
-  PascalCase with no leading underscore. Exception: patterns a tool requires,
-  e.g. pytest's `test_*.py` / `conftest.py`.
-- Never read configuration with `os.environ` / `os.getenv` — define a
-  `pydantic-settings` `BaseSettings` class (field name == env var name,
-  `SettingsConfigDict(extra="ignore", case_sensitive=False, env_ignore_empty=True)`
-  — the last so a set-but-empty var like `CI=` falls back to the field default
-  instead of raising a bool/int ValidationError) and read its fields; see
-  `tests/e2e/baseline/settings.py` for the canonical pattern
-- In tests, never derive repository-anchored paths with per-file
-  `Path(__file__).parents[N]` arithmetic — import the anchors from
-  `tests/paths.py` (`REPO_ROOT`, `SRC_ROOT`, `EXAMPLES_ROOT`, `KIT_DIR`,
-  `ENV_TEST_FILE`). Only genuinely package-relative paths (a fixture file
-  next to its test) stay relative to their own `__file__`.
-- Prefer `match`/`case` over long `if`/`elif` chains that dispatch on one value
-- Never use `print()` — use `logging` with module-level `logger = logging.getLogger(__name__)`
-- Use `%s` placeholders in log messages for lazy evaluation
-- Use Pydantic v2 for data models; use `model_dump()` not `dict()`
-- Target Python 3.11+; use `list[str]` not `List[str]`, `str | None` not `Optional[str]`
-- Use async/await everywhere in async codebases; use `AsyncMock` for testing async methods
-- Catch `pydantic.ValidationError` separately from generic `Exception`
-- Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
-- Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
-- Test what really matters — behavior that can break. Don't write tests that
-  restate definitions (asserting dataclass defaults equal themselves, echoing a
-  constant) or otherwise cannot fail for a real reason; they add maintenance
-  cost without protection.
-- Write intent-oriented code: the reader should see *what* is meant, not decode
-  *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
-  early returns over nested branches), and hide bookkeeping behind a small helper
-  or property with an intent-revealing name. Branch on *what to do*, not *which
-  function to call*, and prefer computing the varying part once over
-  duplicating a call across both branches of an `if`/`else` — e.g. a log
-  statement that only varies by level: `level = logging.DEBUG if known else
-  logging.WARNING; logger.log(level, msg, ...)`, never `log = logger.debug if
-  known else logger.warning; log(msg, ...)` (a ternary-selected callable) and
-  never `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`
-  (the message and args retyped in both branches).
-- **Tests must be declarative and intent-revealing, not a transcript of the
-  implementation.** Assert on a readable projection of the observable outcome
-  — the thing the test is actually about — never on raw internals or on a
-  side effect that merely implies the real answer. Concretely:
-  - `assert reply.outline == ["tool_call (permission)", "message", ...]` over
-    a hand-rolled comprehension pulling `message_type` out of each event dict.
-  - `assert record.levelno == logging.DEBUG` over inferring a log level
-    indirectly from whether two separate capture windows came back empty.
-  If writing the assertion requires re-deriving *how* the code decided
-  something, the test is checking the wrong thing — assert the decision
-  itself.
-- **Tests run on Ubuntu and Windows CI — test across OSes, don't skip one.**
-  Build host paths with `tmp_path` or `tests.paths.host_absolute_path`, never a
-  hard-coded `"/opt/..."` (no drive, so relative on Windows); check absoluteness
-  with `band.workspaces.is_host_absolute`. Where behavior differs per OS, write
-  one parametrize table that runs everywhere, each row naming the `os.name`
-  values that accept it. `skipif(os.name ...)` is only for a boundary that
-  cannot run on that OS, never for a path or separator assumption.
-- Prefer a single source of truth for a value or closed vocabulary consumed in more
-  than one place: give it one definition — a constant, a `StrEnum`, or a small helper
-  — that every site references, rather than re-typing the same magic literal in a
-  producer and the consumer that reads it (a typo then fails silently). Keep genuinely
-  distinct vocabularies separate, though — don't merge two sets that only happen to
-  share some values today (e.g. the ACP `ChunkType` a chunk carries vs. the platform
-  `message_type` an event is posted under).
-
 ## Pre-Commit Checklist
 
 Before running the commands below, re-read your own diff once against the
-Coding Standards above — including code you just wrote this session, not only
+`band-python-conventions` skill — including code you just wrote this session, not only
 code you started from. The two rules that get skipped under time pressure:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
@@ -478,14 +401,6 @@ uv run ruff format .
 uv run pyrefly check
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 ```
-
-## Error Handling
-
-Beyond the `ValidationError`/`ValueError` rules already in Coding Standards
-above, format tool validation errors with `format_tool_validation_error`
-(`src/band/runtime/tools/schema.py`) or `format_validation_error`
-(`src/band/runtime/custom_tools.py`) rather than hand-rolling the message. Who
-acts on each exception class is in `src/band/core/exceptions.py`.
 
 ## Git Workflow
 
