@@ -6,9 +6,11 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import psutil
 import pytest
+from pydantic import JsonValue
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
@@ -45,6 +47,8 @@ class PendingRuntime:
                 "sessionFile": None,
                 "isSettled": True,
             }
+        if command == "set_ask_dialog":
+            return {"enabled": True}
         return {}
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
@@ -504,3 +508,26 @@ def failing_runtime(closing: asyncio.Event, finish_close: asyncio.Event):
             self.closed = True
 
     return FailingRuntime()
+
+
+async def ask_turn(
+    adapter: OmpAdapter,
+    tools: FakeAgentTools,
+    *,
+    bootstrap: bool = True,
+    content: str = "Ask me which database to use",
+) -> None:
+    await adapter.run_judged_turn(
+        msg=make_platform_message(content),
+        tools=tools,
+        history=OmpSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=bootstrap,
+        room_id="room-123",
+    )
+
+
+async def ask_frames(adapter: OmpAdapter) -> list[dict[str, JsonValue]]:
+    checkpoint = await adapter._rooms["room-123"].runtime.request("checkpoint")
+    return cast(list[dict[str, JsonValue]], checkpoint["frames"])
