@@ -414,6 +414,9 @@ class ExecutionContext:
 
         self._detached_cycle_tasks: dict[asyncio.Task[None], TurnTask] = {}
         self.current_scope: TurnScope | None = None
+        self._activity_owner: TurnScope | None = None
+        self._activity_stop_scope: TurnScope | None = None
+        self._activity_completion: asyncio.Task[None] | None = None
         self._control_revision = 0
         self._on_platform_stop = on_platform_stop
         self._shutdown_task: asyncio.Task[bool] | None = None
@@ -452,8 +455,10 @@ class ExecutionContext:
     @property
     def adapter_stop_notified(self) -> bool:
         """Whether an observed STOP already notified the adapter for this turn."""
-        scope = self.current_scope
-        return scope is not None and scope.observer_task is not None
+        return any(
+            scope is not None and scope.observer_task is not None
+            for scope in (self.current_scope, self._activity_stop_scope)
+        )
 
     def _set_state(self, new_state: ExecutionState) -> None:
         """
@@ -630,6 +635,8 @@ class ExecutionContext:
             loop_owner.terminate()
             await self._drain_or_retain(loop_owner)
             self._process_loop_task = None
+        self._activity_owner = None
+        await self._join_activity_completion()
         await self._stop_retained_tasks(terminal_deadline())
         await self._working_reporter.stop()
         return self._stop_graceful
@@ -737,10 +744,13 @@ class ExecutionContext:
 
     def _cancel_cycle(self, kind: ControlMode) -> bool:
         scope = self._running_scope
-        if scope is None:
-            return False
-        scope.terminate(kind)
-        return True
+        activity = self._activity_owner
+        if activity is not None and activity is not scope:
+            activity.terminate(kind)
+            self._finish_activity(activity, aborted=True)
+        if scope is not None:
+            scope.terminate(kind)
+        return scope is not None or activity is not None
 
     def stop_room(self) -> None:
         """Pause triggers and abort the cycle, leaving it actionable for PLAY."""
@@ -768,7 +778,11 @@ class ExecutionContext:
             self._queue_wait.reschedule(self._resync_schedule.due_at)
 
     def owns_stop_observation(self, scope: TurnScope) -> bool:
-        return self._owns_control_revision(scope, scope.stop_revision)
+        return (
+            scope
+            in (self.current_scope, self._activity_owner, self._activity_stop_scope)
+            and scope.stop_revision == self._control_revision
+        )
 
     def _owns_control_revision(self, scope: TurnScope, revision: int | None) -> bool:
         return self.current_scope is scope and revision == self._control_revision
@@ -785,8 +799,10 @@ class ExecutionContext:
                 scope.control_revision if control_revision is None else control_revision
             )
         scope.terminate(ControlMode.STOP, cooperative=cooperative, observed=True)
-        if self.current_scope is not scope:
-            return
+        if scope is self._activity_owner:
+            self._activity_stop_scope = scope
+            if scope.settled:
+                self._finish_activity(scope, aborted=True)
         if (
             not self._closing
             and self.owns_stop_observation(scope)
@@ -1864,14 +1880,19 @@ class ExecutionContext:
             working,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
-                self._observe_activity_stop, self.current_scope, self._control_revision
+                self._observe_activity_stop,
+                self._activity_owner or self.current_scope,
+                self._control_revision,
             ),
         )
 
     def _observe_activity_stop(self, scope: TurnScope | None, revision: int) -> None:
         if (
             scope is None
-            or not self._owns_control_revision(scope, revision)
+            or not (
+                scope in (self._activity_owner, self.current_scope)
+                and revision == self._control_revision
+            )
             or scope.stop_observed
             or self._closing
             or scope.kind is not None
@@ -1885,14 +1906,87 @@ class ExecutionContext:
     async def _execute_message_cycle(
         self, event: PlatformEvent, message_id: str | None
     ) -> None:
-        await self._working_reporter.start()
         scope = self.current_scope
+        if scope is not None:
+            scope.reports_activity = True
+            await self._acquire_activity(scope)
         if scope is not None and scope.terminating:
             raise asyncio.CancelledError
         self._resync_handled_work = True
         self._reset_resync_interval()
         with _observe_phase("handler", self.room_id, message_id):
             await self._on_execute(self, event)
+
+    async def _join_activity_completion(self) -> None:
+        task = self._activity_completion
+        if task is not None:
+            await asyncio.shield(task)
+            if self._activity_completion is task:
+                self._activity_completion = None
+
+    async def _acquire_activity(self, scope: TurnScope) -> None:
+        await self._join_activity_completion()
+        await self._start_activity(scope)
+
+    async def _start_activity(self, scope: TurnScope) -> None:
+        previous = self._activity_owner
+        if previous is not None and previous is not scope:
+            if not previous.aborted and any(
+                not worker.task.done() for worker in previous.workers
+            ):
+                return
+            self._finish_activity(previous, aborted=True)
+            await self._join_activity_completion()
+        if scope.aborted or self._closing:
+            return
+        if self._activity_owner is not scope:
+            self._activity_stop_scope = None
+        self._activity_owner = scope
+        await self._working_reporter.start()
+
+    def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
+        """Bind completion to the same owner that delivers worker cancellation."""
+        scope.bind(owner)
+        owner.task.add_done_callback(lambda _: self._finish_activity(scope))
+        if (
+            scope.reports_activity
+            and scope is self.current_scope
+            and self._activity_owner is None
+        ):
+            previous = self._activity_completion
+
+            async def acquire() -> None:
+                if previous is not None:
+                    await asyncio.shield(previous)
+                if scope is self.current_scope:
+                    await self._start_activity(scope)
+
+            self._retain_activity_completion(asyncio.create_task(acquire()))
+
+    def _retain_activity_completion(self, task: asyncio.Task[None]) -> None:
+        self._activity_completion = task
+        task.add_done_callback(self._activity_completed)
+
+    def _activity_completed(self, task: asyncio.Task[None]) -> None:
+        task_failure(task)
+        if self._activity_completion is task:
+            self._activity_completion = None
+            if self._activity_owner is not None:
+                self._finish_activity(self._activity_owner)
+
+    def _finish_activity(self, scope: TurnScope, *, aborted: bool = False) -> None:
+        if self._activity_owner is not scope:
+            return
+        if not aborted and (
+            not scope.settled or any(not owner.task.done() for owner in scope.workers)
+        ):
+            return
+        self._activity_owner = None
+        self._working_reporter.defer_false_report()
+        if self._activity_completion is None:
+            self._retain_activity_completion(
+                asyncio.create_task(self._working_reporter.stop())
+            )
 
     def _retain_detached_cycle_task(
         self, task: asyncio.Task[None], *, owner: TurnTask | None = None
@@ -1979,15 +2073,11 @@ class ExecutionContext:
         finally:
             wake.cancel()
             await asyncio.gather(wake, return_exceptions=True)
-            if isinstance(event, MessageEvent) and handler is None:
-                # stop() joins this cycle inside the settlement budget, which is
-                # shorter than the activity POST. A closing execution finishes
-                # working:false after that join.
-                if self._closing:
-                    self._working_reporter.defer_false_report()
-                else:
-                    await self._working_reporter.stop()
             scope.settled = True
+            if scope.reports_activity:
+                self._finish_activity(scope, aborted=scope.terminating)
+                if not self._closing:
+                    await self._join_activity_completion()
         if scope.shutdown:
             raise asyncio.CancelledError
         if scope.kind is not None:

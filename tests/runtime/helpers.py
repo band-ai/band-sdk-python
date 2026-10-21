@@ -156,6 +156,12 @@ STOP_ECHO: ActivityReport = (True, False)
 IDLE: ActivityReport = (False, False)
 
 
+def is_message_post(request: httpx.Request) -> bool:
+    return (
+        request.method == "POST" and request.url.path.rsplit("/", 1)[-1] == "messages"
+    )
+
+
 def page(data: list[dict[str, Any]]) -> httpx.Response:
     """A listing that fits in one page."""
     return httpx.Response(
@@ -299,13 +305,16 @@ class PostingPlatform(LifecyclePlatform):
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "participants":
-            return page([ALICE])
+            return page([{**ALICE, "role": "member", "status": "active"}])
         if request.method == "POST" and tail == "events":
             return httpx.Response(
-                201, json={"data": {"id": "e-1", "message_type": "event"}}
+                201,
+                json={"data": {"id": "e-1", "message_type": "event", "success": True}},
             )
-        if request.method == "POST" and tail == "messages":
-            return httpx.Response(201, json={"data": {"id": "m-1", "recipients": []}})
+        if is_message_post(request):
+            return httpx.Response(
+                201, json={"data": {"id": "m-1", "recipients": [], "success": True}}
+            )
         return super().answer(request)
 
 

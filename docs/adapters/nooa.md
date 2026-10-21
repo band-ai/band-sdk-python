@@ -58,8 +58,14 @@ These invariants are easy to break:
 - **Usage and thoughts cover delegated work.** A turn can call child agents,
   each with its own event bus. While the turn runs, NOOA instrumentation hooks
   (which NOOA scopes to a `ContextVar`) subscribe every agent the turn calls, so
-  `Emit.USAGE` sums all of their model calls. `Emit.THOUGHTS` posts each call's
-  raw `reasoning_content`; leave it out of `emit` to keep reasoning out of the room.
+  `Emit.USAGE` sums all of their model calls into one usage event at turn end.
+  `Emit.THOUGHTS` posts each call's raw `reasoning_content` live, as soon as
+  that call completes. Thoughts and tool events post one at a time, in the
+  order they were started, so a thought always lands before the tool calls
+  (and any reply) its call's code makes. When the turn ends, a thought still
+  posting is awaited, or cancelled if the turn itself is cancelled, so none
+  posts after the turn is judged. Leave `Emit.THOUGHTS` out of `emit` to keep
+  reasoning out of the room.
 - **The model sees only the room agent's own module.** NOOA lists the globals of
   every module in an agent class's MRO as already in scope for the model's code,
   so `NooaRoomAgent` lives in `band.adapters.nooa.agent`, which holds nothing

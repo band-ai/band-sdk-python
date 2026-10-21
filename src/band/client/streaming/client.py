@@ -33,7 +33,6 @@ from band.client.streaming.errors import (
     WebSocketUpgradeError,
     probe_upgrade_error,
 )
-from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.core.retention.cleanup import report_owned, spawn_owned
 from band.core.types import ConflictPolicy
@@ -301,7 +300,7 @@ class WireEvent(StrEnum):
     `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary
     (kept as literals, not derived, since `EventType` is an opaque PyO3 type
     that can't be a `StrEnum` member's value; a drift-guard test in
-    `tests/websocket/test_client.py` keeps the two in sync).
+    `tests/websocket/client/test_wire_vocabulary.py` keeps the two in sync).
     `TASK_CREATED`/`TASK_UPDATED` are outside it entirely (the `tasks:*`
     channel's raw-dict passthrough never calls `validate_event_payload`, and
     has no band-sdk-typescript counterpart to justify a core module).
@@ -406,8 +405,8 @@ class WebSocketClient:
         self._on_disconnect = on_disconnect
         self._validation_error_count: int = 0
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
-        self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
-        self._session = Session(self._watchdog.policy)
+        self._session_policy = session_policy or SessionPolicy.default()
+        self._session = Session(self._session_policy)
         self._probed_failure_message: str | None = None
         self._cached_connect_failure: WebSocketUpgradeError | None = None
         # The scheduled terminal shutdown: held so it stays alive, and its
@@ -449,18 +448,6 @@ class WebSocketClient:
         `get_current_subscriptions` copies its dict on every call."""
         return frozenset(self._require_client().get_current_subscriptions())
 
-    async def _handle_reconnect(self) -> None:
-        """Reset the watchdog deadline on reconnect, then forward to the
-        caller's own on_reconnect callback (if any).
-
-        Without this, a reconnect can inherit a deadline set before the new
-        socket existed and expire before its first heartbeat_interval_s
-        cycle completes, force-closing a healthy connection.
-        """
-        self._watchdog.reset_deadline()
-        if self._on_reconnect is not None:
-            await self._on_reconnect()
-
     def _build_phx_client(self) -> PHXChannelsClient:
         """Construct a fresh PHXChannelsClient for one connection attempt --
         a new instance is required per attempt; the vendored client has no
@@ -471,10 +458,10 @@ class WebSocketClient:
             protocol_version=PhoenixChannelsProtocolVersion.V2,
             auto_reconnect=False,
             reconnect_policy=RECONNECT_POLICY,
-            heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
-            on_reconnect=self._handle_reconnect,
+            heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
+            heartbeat_dead_threshold_s=self._session_policy.dead_threshold_s,
+            on_reconnect=self._on_reconnect,
             on_disconnect=self._on_disconnect,
-            on_heartbeat_ack=self._watchdog.reset_deadline,
             additional_headers=self._handshake_headers,
         )
         if self.agent_id:
@@ -616,7 +603,6 @@ class WebSocketClient:
             self._initial_connect_query
         )
         client.auto_reconnect = True
-        self._watchdog.start(client)
 
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context.
@@ -634,7 +620,7 @@ class WebSocketClient:
         blocks (as callers were free to do before ``Session`` existed) must
         start a new connection lifecycle, not resume a now-Dead one.
         """
-        self._session = Session(self._watchdog.policy)
+        self._session = Session(self._session_policy)
         self._probed_failure_message = None
         self._cached_connect_failure = None
         self._transport_shutdown = None
@@ -669,7 +655,6 @@ class WebSocketClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""
-        await self._watchdog.stop()
         self._session.end()
         if self.client:
             await self.client.__aexit__(exc_type, exc_val, exc_tb)

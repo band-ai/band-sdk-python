@@ -1,0 +1,6 @@
+interface:
+  display_name: "Band Code Review"
+  short_description: "Run the team's fixed-criteria review on a PR or branch"
+  default_prompt: "Use $band-code-review to review this PR."
+policy:
+  allow_implicit_invocation: false
