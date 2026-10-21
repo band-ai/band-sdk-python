@@ -17,7 +17,12 @@ from band.runtime.activity import (
 )
 from band.runtime.sessionconfig import SessionConfig
 from tests.activitysupport import SUPPORTED_VERSION
-from tests.runtime.helpers import ALICE, LifecyclePlatform, page
+from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
+
+
+def message_content(request: httpx.Request) -> str:
+    return json.loads(request.content)["message"]["content"]
+
 
 KEEP_ALIVE_SECONDS = SessionConfig().working_keep_alive_seconds
 
@@ -41,6 +46,7 @@ class ActivityPlatform(LifecyclePlatform):
 
     def __init__(self) -> None:
         super().__init__()
+        self.room_messages: list[str] = []
         self.activity_responses: deque[httpx.Response] = deque()
         self.activity_bodies: list[dict[str, Any]] = []
         self.hold_next_activity = False
@@ -97,8 +103,9 @@ class ActivityPlatform(LifecyclePlatform):
         tail = request.url.path.rsplit("/", 1)[-1]
         if tail == "participants":
             return page([{**ALICE, "role": "member", "status": "active"}])
-        if request.method == "POST" and tail == "messages":
+        if is_message_post(request):
             self.posts.append(tail)
+            self.room_messages.append(message_content(request))
             return httpx.Response(
                 201, json={"data": {"id": "m-1", "success": True, "recipients": []}}
             )
@@ -116,3 +123,20 @@ class ObservedIdle(asyncio.Event):
     async def wait(self) -> Literal[True]:
         self.awaited.set()
         return await super().wait()
+
+
+class HeldReplyPlatform(ActivityPlatform):
+    """Holds the post of one reply until ``release`` is set, so its turn can be
+    kept in the delivery tail after the model has finished."""
+
+    def __init__(self, held_reply: str) -> None:
+        super().__init__()
+        self.held_reply = held_reply
+        self.reply_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def respond(self, request: httpx.Request) -> httpx.Response:
+        if is_message_post(request) and message_content(request) == self.held_reply:
+            self.reply_entered.set()
+            await self.release.wait()
+        return await super().respond(request)
