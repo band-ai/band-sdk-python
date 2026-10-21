@@ -8,8 +8,9 @@ from band_sdk_core import ClaimRegistry
 from tests.runtime.delivery.kit import RestPeer, started_session
 from tests.runtime.helpers import ROOM_ID
 
+pytestmark = pytest.mark.looptime
 
-@pytest.mark.looptime
+
 class TestHeldClaim:
     async def test_later_messages_wait_behind_a_claim_held_elsewhere(self) -> None:
         peer = RestPeer()

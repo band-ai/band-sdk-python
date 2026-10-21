@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
-from band.agent import Agent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.preprocessing.kit import ControlPolicy
 from tests.runtime.deferral.kit import ApprovalAdapter
-from tests.runtime.helpers import AGENT_ID, ROOM_ID, LifecyclePlatform, rest_client_over
+from tests.runtime.helpers import (
+    AGENT_ID,
+    ROOM_ID,
+    LifecyclePlatform,
+    agent_hooks,
+    rest_client_over,
+)
 from tests.runtime.scheduler.driver import attempt_delivery
 
 # (hosting, content, rewritten, consumed) -> the ids the policy saw and the ids settled.
@@ -66,19 +69,14 @@ class TestConfiguredControlPolicy:
         adapter = ApprovalAdapter()
         adapter.reject = True
         policy = ControlPolicy(rewritten)
-        agent = Agent(
-            runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter, preprocessor=policy
-        )
         async with rest_client_over(peer.answer) as rest:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
             link.rest = rest
             ctx = ExecutionContext(
                 ROOM_ID,
                 link,
-                agent._on_execute,
                 agent_id=AGENT_ID,
-                on_message_control=agent._on_control,
-                is_message_control=agent._is_control,
+                **agent_hooks(adapter, preprocessor=policy),
                 config=SessionConfig(
                     enable_context_hydration=False, enable_working_state=False
                 ),

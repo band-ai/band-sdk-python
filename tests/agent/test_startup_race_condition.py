@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -106,6 +106,11 @@ class TestStartupRaceCondition:
                     agent_id="agent-123",
                     config=SessionConfig(enable_context_hydration=False),
                 )
+                mock_ctx.participants = []
+                mock_ctx.participants_changed = MagicMock(return_value=False)
+                mock_ctx.room_id = "room-123"
+                # An ordinary message: no control handler consumes it.
+                mock_ctx.scheduler.offer_control = AsyncMock(return_value=False)
 
                 # Create a proper MessageEvent (not a MagicMock)
                 message_event = MessageEvent(

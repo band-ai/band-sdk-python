@@ -510,7 +510,6 @@ async def harness_over(
             on_message_control=controls.handle if controls else None,
             is_message_control=controls.recognizes if controls else None,
             session_config=SessionConfig(
-                consume_all_queued=cell.mode.batching,
                 max_message_retries=cell.mode.retries,
                 enable_context_hydration=False,
                 enable_working_state=False,

@@ -61,6 +61,7 @@ from band.core.adapterconfig import BaseAdapterConfig
 from band.core.exceptions import BandConfigError, BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.timestamps import assume_utc
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -231,13 +232,13 @@ class RestCrewAIFlowStateSource:
         if value is None:
             return None
         if isinstance(value, datetime):
-            return value if value.tzinfo else value.replace(tzinfo=UTC)
+            return assume_utc(value)
         if isinstance(value, str):
             try:
                 dt = datetime.fromisoformat(value)
             except ValueError:
                 return None
-            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+            return assume_utc(dt)
         return None
 
     async def _full_fetch(

@@ -9,7 +9,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from enum import Enum
 from time import monotonic
-from typing import Protocol
+from typing import Protocol, TypedDict
 
 from band_sdk_core import (
     ClaimRegistry,
@@ -89,6 +89,14 @@ class TurnOutcome(Enum):
     DECLINED = "declined"
 
 
+class DeliveryFacts(TypedDict):
+    """What the room knows about a delivery, for the core eligibility rule."""
+
+    self_echo: bool
+    durably_processed: bool
+    durably_failed: bool
+
+
 class DeliveryHost(Protocol):
     """Room effects whose ownership outlives an individual delivery operation."""
 
@@ -97,9 +105,6 @@ class DeliveryHost(Protocol):
 
     @property
     def is_stopped(self) -> bool: ...
-
-    @property
-    def is_closing(self) -> bool: ...
 
     @property
     def context_hydrated(self) -> bool: ...
@@ -153,7 +158,11 @@ class DeliveryLifecycle:
         # reconciliation clears it.
         self.retry_not_before: dict[str, float] = {}
 
-    def _facts(self, candidate: Candidate) -> dict[str, bool]:
+    def lift_write_backoff(self) -> None:
+        """Let every unconfirmed terminal write retry now, for a reconciliation."""
+        self.retry_not_before.clear()
+
+    def _facts(self, candidate: Candidate) -> DeliveryFacts:
         observation = candidate.observed_metadata
         message = payload(candidate.event)
         status = delivery_status_for_agent(
@@ -167,8 +176,8 @@ class DeliveryLifecycle:
             if observation is None
             else None
         )
-        return {
-            "self_echo": bool(
+        return DeliveryFacts(
+            self_echo=bool(
                 self.agent_id
                 and is_self_echo(
                     sender_id=message.sender_id or "",
@@ -176,10 +185,10 @@ class DeliveryLifecycle:
                     agent_id=self.agent_id,
                 )
             ),
-            "durably_processed": DeliveryStatus.PROCESSED in (status, cached),
-            "durably_failed": status == DeliveryStatus.FAILED
+            durably_processed=DeliveryStatus.PROCESSED in (status, cached),
+            durably_failed=status == DeliveryStatus.FAILED
             or (status is None and cached == DeliveryStatus.FAILED),
-        }
+        )
 
     def eligibility(
         self, candidate: Candidate, *, remember_completion: bool = True
@@ -505,11 +514,11 @@ class DeliveryLifecycle:
             raise ValueError(f"message {identity} has no pending terminal write")
         with observe_delivery_phase("ack", self.room_id, identity):
             match pending["status"]:
-                case "processed":
+                case DeliveryStatus.PROCESSED:
                     result = await self.link.mark_processed_result(
                         self.room_id, identity
                     )
-                case "failed":
+                case DeliveryStatus.FAILED:
                     result = await self.link.mark_failed_result(
                         self.room_id, identity, pending.get("error")
                     )
@@ -523,10 +532,9 @@ class DeliveryLifecycle:
         )
         match result:
             case SettlementResult.ACCEPTED:
-                if not self.host.is_closing:
-                    self.claims.confirm_settlement(
-                        self.room_id, identity, pending["token"], self.retry_tracker
-                    )
+                self.claims.confirm_settlement(
+                    self.room_id, identity, pending["token"], self.retry_tracker
+                )
                 self.retry_not_before.pop(identity, None)
             case SettlementResult.NOT_FOUND | SettlementResult.REJECTED:
                 reason = (

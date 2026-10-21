@@ -1094,9 +1094,18 @@ class ExecutionContext:
         return self._on_message_control is not None
 
     def recognizes_delivery_control(self, event: MessageEvent) -> bool:
-        return self._is_message_control is not None and self._is_message_control(
-            self, event
-        )
+        """Whether the host handles ``event`` as a control; a failing recognizer leaves it ordinary."""
+        if self._is_message_control is None:
+            return False
+        try:
+            return self._is_message_control(self, event)
+        except Exception:
+            logger.exception(
+                "Room %s: control recognition failed for message %s; handling it as ordinary input",
+                self.room_id,
+                delivery_id(event),
+            )
+            return False
 
     async def _invoke_handler(self, event: PlatformEvent) -> None:
         """Coroutine wrapper around the execution handler so it can run as a
