@@ -62,7 +62,7 @@ class TestOmpToolActivity:
     @pytest.mark.parametrize(
         "emit", [EMIT_ON, EMIT_OFF], ids=["narration-on", "narration-off"]
     )
-    async def test_start_and_end_are_independent_of_narration(
+    async def test_tool_activity_follows_the_narration_switch(
         self, tmp_path: Path, emit: tuple[Emit, ...]
     ) -> None:
         adapter = make_adapter(tmp_path, emit)
@@ -76,7 +76,10 @@ class TestOmpToolActivity:
         )
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
 
-        recorder.assert_completed_tool("Bash")
+        if emit:
+            recorder.assert_completed_tool("Bash")
+        else:
+            assert recorder.events == []
         assert bool(tools.events_sent) is bool(emit)
 
     async def test_only_the_name_reaches_the_recorder(self, tmp_path: Path) -> None:
@@ -95,7 +98,7 @@ class TestOmpToolActivity:
         assert recorder.events == [{"kind": "tool_call", "name": "Write"}]
 
     async def test_latest_open_tool_wins(self, tmp_path: Path) -> None:
-        adapter = make_adapter(tmp_path, EMIT_OFF)
+        adapter = make_adapter(tmp_path, EMIT_ON)
         tools = FakeAgentTools()
         recorder = ActivityRecorder()
         tools._activity_observer = recorder
@@ -109,7 +112,7 @@ class TestOmpToolActivity:
         ]
 
     async def test_end_of_untracked_call_changes_nothing(self, tmp_path: Path) -> None:
-        adapter = make_adapter(tmp_path, EMIT_OFF)
+        adapter = make_adapter(tmp_path, EMIT_ON)
         tools = FakeAgentTools()
         recorder = ActivityRecorder()
         tools._activity_observer = recorder
