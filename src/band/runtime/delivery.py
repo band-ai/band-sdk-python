@@ -37,6 +37,12 @@ from band.runtime.sessionconfig import SessionConfig
 
 logger = logging.getLogger(__name__)
 
+# Why a refused terminal write stays parked, by the platform's answer.
+PARKED_REASONS = {
+    SettlementResult.NOT_FOUND: ParkedReason.NotFound,
+    SettlementResult.REJECTED: ParkedReason.Rejected,
+}
+
 
 @contextlib.contextmanager
 def observe_delivery_phase(
@@ -232,6 +238,11 @@ class DeliveryLifecycle:
                 identity,
             )
             return False
+        logger.info(
+            "Room %s readable after a 404 on message %s; dropping it as gone",
+            self.room_id,
+            identity,
+        )
         return True
 
     def retire_gone(self, identity: str) -> None:
@@ -578,13 +589,8 @@ class DeliveryLifecycle:
             case SettlementResult.NOT_FOUND if await self.is_gone(identity):
                 self.retire_gone(identity)
             case SettlementResult.NOT_FOUND | SettlementResult.REJECTED:
-                reason = (
-                    ParkedReason.NotFound
-                    if result is SettlementResult.NOT_FOUND
-                    else ParkedReason.Rejected
-                )
                 self.claims.park_settlement(
-                    self.room_id, identity, pending["token"], reason
+                    self.room_id, identity, pending["token"], PARKED_REASONS[result]
                 )
                 logger.warning(
                     "Terminal write parked room=%s message=%s result=%s",

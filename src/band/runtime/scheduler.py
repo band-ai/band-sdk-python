@@ -67,6 +67,17 @@ class DispatchKey:
     identities: tuple[str, ...]
     disposition: Disposition
 
+    @classmethod
+    def of(
+        cls, members: tuple[Candidate, ...], revision: int, *, priority: bool
+    ) -> DispatchKey:
+        return cls(
+            priority,
+            revision,
+            tuple(candidate.message_id for candidate in members),
+            members[0].disposition,
+        )
+
 
 @dataclass(eq=False)
 class DiscoveryPass:
@@ -303,18 +314,16 @@ class Scheduler:
         except Exception:
             logger.exception("Room %s scheduler failed", self.owner.room_id)
 
-    async def retry_settlements(self) -> bool:
-        results: list[bool] = []
+    async def retry_settlements(self) -> None:
         for identity in self.owner.claims.pending_ack_ids(self.owner.room_id):
             retry = self.owner.delivery.keeps_original(identity)
-            results.append(await self.owner.delivery.retry_settlement(identity))
+            await self.owner.delivery.retry_settlement(identity)
             if (
                 retry
                 and not self.owner.delivery.keeps_original(identity)
                 and self.current_pass is not None
             ):
                 self.current_pass.resumed_retries.add(identity)
-        return all(results)
 
     async def run_pass(self, *, recovery: bool = False) -> ResyncOutcome:
         if recovery:
@@ -338,40 +347,9 @@ class Scheduler:
                 active.ordinary_held = self.deferred_id is not None and not recovery
                 outcome = ResyncOutcome.PROGRESS
                 while outcome is ResyncOutcome.PROGRESS and not self.owner.is_closing:
-                    if not recovery and (
-                        self.pending_resync is not None
-                        or (
-                            self.schedule.due_at is not None
-                            and self.schedule.due_at
-                            <= asyncio.get_running_loop().time()
-                        )
-                    ):
+                    if not recovery and self.preempted():
                         return ResyncOutcome.BLOCKED
-                    gated = self.ordinary_gated(active)
-                    housekeeping = (
-                        self.housekeeping() if gated or self.owner.is_stopped else None
-                    )
-                    if housekeeping is not None:
-                        outcome = (await self.dispatch_local(housekeeping)).scheduling
-                    elif self.owner.is_stopped:
-                        outcome = ResyncOutcome.STOPPED
-                    elif gated:
-                        outcome = await self.priority_step(active)
-                    else:
-                        outcome = await self.step(active)
-                        if (
-                            outcome in {ResyncOutcome.BLOCKED, ResyncOutcome.RETRY}
-                            and self.deferred
-                        ):
-                            active.ordinary_held = True
-                            outcome = ResyncOutcome.PROGRESS
-                    if active.invalidated:
-                        outcome = ResyncOutcome.BLOCKED
-                    elif (
-                        outcome is ResyncOutcome.STOPPED
-                        and self.housekeeping() is not None
-                    ):
-                        outcome = ResyncOutcome.PROGRESS
+                    outcome = await self.advance(active)
                     if outcome is ResyncOutcome.PROGRESS:
                         await asyncio.sleep(0)
                 if outcome is ResyncOutcome.EMPTY:
@@ -390,6 +368,38 @@ class Scheduler:
                         empty=outcome is ResyncOutcome.EMPTY and not self.handled_work,
                         stopped=self.owner.is_stopped,
                     )
+
+    def preempted(self) -> bool:
+        """Whether a live pass must yield to a requested or due resync."""
+        due_at = self.schedule.due_at
+        return self.pending_resync is not None or (
+            due_at is not None and due_at <= asyncio.get_running_loop().time()
+        )
+
+    async def advance(self, active: DiscoveryPass) -> ResyncOutcome:
+        """Take the next step; invalidation ends the pass, housekeeping keeps it going."""
+        outcome = await self.take_step(active)
+        if active.invalidated:
+            return ResyncOutcome.BLOCKED
+        if outcome is ResyncOutcome.STOPPED and self.housekeeping() is not None:
+            return ResyncOutcome.PROGRESS
+        return outcome
+
+    async def take_step(self, active: DiscoveryPass) -> ResyncOutcome:
+        """Housekeeping before held or stopped input, then controls, then ordinary work."""
+        gated = self.ordinary_gated(active)
+        housekeeping = self.housekeeping() if gated or self.owner.is_stopped else None
+        if housekeeping is not None:
+            return (await self.dispatch_local(housekeeping)).scheduling
+        if self.owner.is_stopped:
+            return ResyncOutcome.STOPPED
+        if gated:
+            return await self.priority_step(active)
+        outcome = await self.step(active)
+        if outcome in {ResyncOutcome.BLOCKED, ResyncOutcome.RETRY} and self.deferred:
+            active.ordinary_held = True
+            return ResyncOutcome.PROGRESS
+        return outcome
 
     async def resume_from_gate(self, active: DiscoveryPass) -> ResyncOutcome | None:
         revision = self.owner.control_revision
@@ -620,7 +630,7 @@ class Scheduler:
         if priority and not control:
             return DispatchResult(ResyncOutcome.BLOCKED, TurnOutcome.DECLINED)
         if active is not None:
-            key = DispatchKey(priority, revision, identities, members[0].disposition)
+            key = DispatchKey.of(members, revision, priority=priority)
             if key in active.selections:
                 logger.debug(
                     "Room %s: Selection %s repeated without progress; leaving it for the next resync",
@@ -725,15 +735,15 @@ class Scheduler:
             elif candidate.disposition is Disposition.CONTROL and not self.declined(
                 candidate.message_id
             ):
-                key = DispatchKey(
-                    True, revision, (candidate.message_id,), candidate.disposition
-                )
+                key = DispatchKey.of((candidate,), revision, priority=True)
                 if key not in active.selections:
                     result = await self.dispatch((candidate,), priority=True)
                     if result.turn is TurnOutcome.ADVANCED:
                         active.ordinary_held = False
                         active.selections = {
-                            key for key in active.selections if key.priority
+                            selected
+                            for selected in active.selections
+                            if selected.priority
                         }
                     return (
                         ResyncOutcome.STOPPED
