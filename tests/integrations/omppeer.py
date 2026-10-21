@@ -527,6 +527,8 @@ class Peer:
                     },
                 )
                 PROTOCOL_VERSION = OMP_NATIVE_PROTOCOL_VERSION
+            case "set_ask_dialog":
+                self.respond(frame, {"enabled": True})
             case "prompt":
                 self.prompt(frame)
             case "get_state":
