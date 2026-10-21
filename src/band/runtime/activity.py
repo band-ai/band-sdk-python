@@ -4,6 +4,7 @@ producers a turn reports it through."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from inspect import getattr_static
 from typing import Protocol
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
@@ -56,25 +57,30 @@ class TurnActivity:
             self.waiting = waiting
 
 
-def _observer(tools: object) -> ActivityObserver | None:
+def activity_observer_of(tools: object) -> ActivityObserver | None:
+    """The turn observer bound to ``tools``, if it declares one."""
+    # A dynamic proxy (``__getattr__``, a mock) would conjure an observer it
+    # never had; only a declared attribute counts.
+    if getattr_static(tools, "_activity_observer", None) is None:
+        return None
     return getattr(tools, "_activity_observer", None)
 
 
 async def report_tool_activity(tools: object, name: str) -> None:
-    if observer := _observer(tools):
+    if observer := activity_observer_of(tools):
         await observer.update(tool_call_activity(name))
 
 
 async def end_tool_activity(tools: object) -> None:
-    if observer := _observer(tools):
+    if observer := activity_observer_of(tools):
         await observer.update(REASONING)
 
 
 async def report_memory_activity(tools: object) -> None:
-    if observer := _observer(tools):
+    if observer := activity_observer_of(tools):
         await observer.update(MEMORY)
 
 
 async def set_permission_wait(tools: object, waiting: bool) -> None:
-    if observer := _observer(tools):
+    if observer := activity_observer_of(tools):
         await observer.set_manual_wait(waiting)

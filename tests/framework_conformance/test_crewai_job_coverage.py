@@ -75,6 +75,7 @@ class TestCrewAIJobCoverage:
             Path("tests/integrations/test_crewai_flow_real_sdk.py"),
             Path("tests/integrations/test_crewai_real_tools.py"),
             Path("tests/integrations/test_crewai_completion.py"),
+            Path("tests/integrations/crewai/activity/test_execution.py"),
             Path("tests/test_capability_gating_e2e.py"),
             Path("tests/framework_conformance/test_files_image_passthrough_matrix.py"),
         }

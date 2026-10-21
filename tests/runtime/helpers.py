@@ -184,6 +184,15 @@ class LifecyclePlatform:
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
 
+    @property
+    def indicator_changes(self) -> list[ActivityReport]:
+        """The room's working-state reports with repeated refreshes collapsed."""
+        return [
+            report
+            for index, report in enumerate(self.activity_reports)
+            if index == 0 or report != self.activity_reports[index - 1]
+        ]
+
     def add_message(self, message_id: str, *, content: str = "hello") -> None:
         self.messages.append(
             {

@@ -54,6 +54,8 @@ class TestOwnedDetail:
             PERMISSION_BODY,
             tool_body("Edit"),
             MEMORY_BODY,
+            # The reply is a Band tool call too; it ends back at reasoning.
+            REASONING_BODY,
             IDLE_BODY,
         ]
 

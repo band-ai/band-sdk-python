@@ -61,6 +61,7 @@ from band.runtime.tools import (
     get_tool_description,
     withheld_tool_names,
 )
+from band.runtime.turn import tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -219,9 +220,10 @@ def _custom_tool(
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             async def execute(tools: AgentToolsProtocol) -> str:
                 await reporter.report_call(tools, tool_name, kwargs)
-                result = await execute_custom_tool(
-                    tool=definition, arguments=kwargs, turn=tools.turn
-                )
+                async with tool_activity(tools, tool_name):
+                    result = await execute_custom_tool(
+                        tool=definition, arguments=kwargs, turn=tools.turn
+                    )
                 await reporter.report_result(tools, tool_name, result)
                 return json.dumps({"status": "success", "result": result}, default=str)
 
