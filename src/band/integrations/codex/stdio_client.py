@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 # Long enough for the child watcher to record an exit, short enough that a
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
+# How long a closed stdin gets to end the whole Codex session before it is killed.
+_SESSION_EXIT_S = 1.0
+_SESSION_POLL_S = 0.02
 _STDOUT_LIMIT = 16 * 1024 * 1024
 HELPER_PATH = Path(__file__).resolve().with_name("winmain.py")
 
@@ -110,6 +113,30 @@ async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
         return
+
+
+async def _await_session_exit(
+    process: asyncio.subprocess.Process, timeout: float
+) -> bool:
+    """True once the child and every other process in its session are gone.
+
+    The session id stays reserved while any member lives, so probing the
+    group is exact; the launcher alone exiting is not enough, since its
+    real CLI child would keep the room's working directory.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(_SESSION_POLL_S, remaining))
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -258,8 +285,11 @@ class CodexStdioClient(BaseJsonRpcClient):
                 await self._windows_process.close(_EXIT_OBSERVE_S)
                 self._windows_process = None
             elif (process := self._proc) is not None:
-                await kill_process_tree(process)
+                # Codex and its launcher exit on their own once stdin closes; the
+                # tree kill is the fallback for a session that does not.
                 await close_stdin(process)
+                if not await _await_session_exit(process, _SESSION_EXIT_S):
+                    await kill_process_tree(process)
                 if not await await_returncode(process, _EXIT_OBSERVE_S):
                     logger.warning(
                         "Codex process %s still alive after tree kill", process.pid
