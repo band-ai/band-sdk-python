@@ -2,6 +2,30 @@
 
 This is a Python SDK that connects AI agents to the Band collaborative platform.
 
+## Engineering Standard
+
+Understand the problem before changing code. For defects, establish the root
+cause with evidence and fix it at the layer that owns the behavior. For other
+changes, establish the intended outcome and constraints.
+
+Before implementation, form a plan proportional to the work: scope, approach,
+important scenarios, and validation. Prefer focused, clear solutions that reuse
+existing patterns.
+
+Assess whether existing tests meaningfully cover the affected behavior. Close
+material coverage gaps and validate realistic flows, including complex
+interactions and failure paths where relevant. Passing tests or high coverage
+alone do not establish correctness.
+
+Report what was verified, what remains uncertain, and any checks not run.
+Follow the [PR Lifecycle and Readiness Review](#pr-lifecycle-and-readiness-review)
+requirements: start new PRs as drafts and mark them ready only after the
+readiness review passes.
+
+Other developers and agents may be working concurrently. Preserve their
+changes, inspect current local and remote state before integrating or pushing,
+and avoid unrelated edits or destructive Git operations.
+
 ## Core Features
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents, NOOA)
@@ -13,15 +37,23 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 ## Skills
 
 Project guidelines live in skills under `.claude/skills/`; Codex reads the
-same skills through the `.agents/skills` symlink. Before editing, read the
-applicable guideline skills below; discovery alone does not load their rules.
-Workflow skills can be selected when their descriptions match the task;
-`band-code-review` requires explicit invocation. If the host has no skill
-loader, read the referenced `SKILL.md` directly. Workflow execution follows
+same skills through the `.agents/skills` symlink. Before starting work, identify,
+read, and apply the existing skills relevant to the task. Reassess when the work
+changes, such as moving from investigation to implementation, testing, or review.
+Skill discovery alone does not load its instructions.
+
+Follow each skill's activation rules; `band-code-review` requires explicit
+invocation. Read the referenced `SKILL.md` directly when automatic loading is
+unavailable. Reference only skills that actually exist; disclose missing guidance
+when it materially affects the work. Workflow execution follows
 [the shared runtime guidance](.claude/skills/workflow-runtime.md).
-When both personal `my-*` and project `band-*` workflows are available, use
-the project workflow for Band work unless the user names another one. Do not
-modify or remove personal skills as part of a repository change.
+
+Use relevant personal or other installed skills as well when they help the task;
+the user does not need to name each one. Project skills define the repository's
+requirements; other skills may complement them without weakening those
+requirements. Follow an explicit user choice of workflow and respect each skill's
+activation rules. Do not modify or remove personal skills as part of a repository
+change.
 
 | Skill | Use when |
 |---|---|
@@ -201,8 +233,9 @@ tests/
 `testpaths = ["tests"]`, so **every** test lives here — including tests for code
 outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
 `tests/docker`, `.claude/skills` -> `tests/skills`). A `test_*.py` placed next to
-non-package code is never collected by CI's bare `uv run pytest`; address the code
-under test through an anchor in `tests/paths.py` instead.
+non-package code is never collected by CI's bare
+`uv run --all-packages pytest`; address the code under test through an anchor in
+`tests/paths.py` instead.
 
 **One test class per file, one concern per class.** Each `test_*.py` holds
 exactly one `class Test...` named for the behavior it covers — no
@@ -222,43 +255,46 @@ To wire a new framework adapter into the matrix, follow
 
 ```bash
 # Install dependencies (modern frameworks; see Dependency Conflicts below)
-uv sync --extra dev
+uv sync --all-packages --locked --extra dev
 
 # Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
-uv sync --extra dev-crewai
+uv sync --all-packages --locked --extra dev-crewai
 
 # Install Strands/NOOA adapter deps in their OpenAI-2 environment
-uv sync --extra dev-strands-nooa
+uv sync --all-packages --locked --extra dev-strands-nooa
 
 # Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
-uv sync --extra dev-parlant
+uv sync --all-packages --locked --extra dev-parlant
 
 # Run unit tests
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 
 # Run single test
-uv run pytest tests/ -k "test_name"
+uv run --all-packages pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
+uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
 
 # Run integration tests (requires API key)
-uv run pytest tests/integration/ -v -s --no-cov
+uv run --all-packages pytest tests/integration/ -v -s --no-cov
 
 # Run E2E tests (requires live platform + LLM API keys)
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/ -v -s --no-cov
 
 # Run E2E tests for a single adapter
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -k langgraph -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/ -k langgraph -v -s --no-cov
 
 # Run the baseline toolkit smokes (provision their own agents; only need
 # BAND_API_KEY_USER — see tests/e2e/baseline/README.md)
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/baseline/ -v -s --no-cov
 
-# Linting and formatting
-uv run ruff check .
-uv run ruff format .
-uv run pyrefly check
+# Linting, formatting checks, and type checks
+uv run --all-packages ruff check .
+uv run --all-packages ruff format --check .
+uv run --all-packages pyrefly check
+
+# Apply formatting changes
+uv run --all-packages ruff format .
 ```
 
 ## Dependency Conflicts
@@ -356,7 +392,7 @@ Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown
 — so `python` snippets in the docs must stay correct and runnable, not rot:
 
 ```bash
-uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
+uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
 uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest --markdown-docs docs/adapters/nooa.md --no-cov
 ```
 
