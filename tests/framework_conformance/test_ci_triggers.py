@@ -1,4 +1,4 @@
-"""Guard: CI runs on pull requests and the merge queue, never on a push to `main`.
+"""Guard CI triggers and cancellation without rerunning on a push to `main`.
 
 `main` only changes through the merge queue, which validates the exact commit
 that lands, so CI never re-runs on a push to `main` and Core coverage stays out
@@ -25,8 +25,16 @@ def workflow(path: Path) -> dict[str, Any]:
 
 
 class TestCiTriggers:
-    def test_ci_runs_on_pull_requests_and_the_merge_queue_only(self) -> None:
-        assert set(workflow(CI_WORKFLOW)["on"]) == {"pull_request", "merge_group"}
+    def test_ci_runs_on_pull_requests_queue_weekly_and_manual_dispatch(self) -> None:
+        assert set(workflow(CI_WORKFLOW)["on"]) == {
+            "pull_request",
+            "merge_group",
+            "schedule",
+            "workflow_dispatch",
+        }
+
+    def test_full_compatibility_runs_every_monday(self) -> None:
+        assert workflow(CI_WORKFLOW)["on"]["schedule"] == [{"cron": "17 3 * * 1"}]
 
     def test_only_pull_request_runs_are_cancelled(self) -> None:
         # A requeue on the same base reuses the queue ref, so queue runs group by run id.
