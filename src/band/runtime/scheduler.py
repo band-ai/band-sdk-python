@@ -16,7 +16,6 @@ from band.platform.message_lifecycle import ActionablePage
 from band.runtime.delivery import TurnOutcome
 from band.runtime.messages import PlatformMessage
 from band.runtime.originals import (
-    backlog_event,
     delivery_id,
     is_ordinary,
     is_synthetic,
@@ -408,16 +407,6 @@ class Scheduler:
         ]
         return [self.classify(candidate) for candidate in merge(rest, retained)]
 
-    def candidate(
-        self, event: MessageEvent, *, observation: PlatformMessage | None = None
-    ) -> Candidate:
-        candidate = (
-            Candidate.retained(event)
-            if observation is None
-            else Candidate.listed(observation)
-        )
-        return self.classify(candidate)
-
     def classify(self, candidate: Candidate) -> Candidate:
         match self.owner.delivery.eligibility(candidate, remember_completion=False):
             case "runnable":
@@ -528,9 +517,7 @@ class Scheduler:
             self.sync_complete = True
             active.recovery = False
             return PageRead([], exhausted=True)
-        if self.candidate(backlog_event(row), observation=row).disposition is (
-            Disposition.SKIP
-        ):
+        if self.classify(Candidate.listed(row)).disposition is Disposition.SKIP:
             self.next_fallback = True
             return ResyncOutcome.PROGRESS
         return PageRead([row], exhausted=False)
