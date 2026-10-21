@@ -3,6 +3,10 @@
 Shared by `band-here-is-a-review` and `band-code-review`. Run it once, before reading any
 code, whenever the work targets a GitHub PR.
 
+Follow [workflow-runtime.md](../workflow-runtime.md) for tools and existing
+authorization. Workers inspect the prepared checkout; only the coordinator
+changes branches or prepares another checkout.
+
 1. **Identify the PR.** A PR URL gives `owner/repo` and the number; a bare number or
    branch name means the current repo. Pass `-R owner/repo` to every `gh pr` command
    and use the same `owner/repo` in every `gh api` path.
@@ -16,8 +20,14 @@ code, whenever the work targets a GitHub PR.
    `headRefOid`. If it doesn't (unpushed local commits, or the remote moved ahead),
    stop and tell the user how they differ. Line numbers and pushes are only safe in
    sync.
-4. **Check push access** (only when fixes will be pushed). From `gh pr view --json
-   isCrossRepository,maintainerCanModify,headRepositoryOwner`: pushing works for a
-   same-repo PR, a fork the user owns (`headRepositoryOwner.login` equals
-   `gh api user --jq .login`), or a fork with `maintainerCanModify` true. Otherwise
-   nothing can be pushed — say so and fall back to replying only.
+4. **Check push access** (only when fixes will be pushed). Inspect the PR's
+   `isCrossRepository`, `maintainerCanModify`, and head repository, together with
+   the authenticated user's permissions. Direct write access to the head repository
+   covers same-repo and owned-fork PRs. The separate maintainer route requires
+   push access to the base repository and the creator's permission to edit the
+   user-owned fork (`maintainerCanModify`); it does not require direct fork write
+   access. Check branch restrictions too; see
+   [GitHub's fork editing requirements](https://docs.github.com/en/pull-requests/how-tos/commit-changes/committing-changes-to-a-pull-request-branch-created-from-a-fork).
+   If neither route permits pushing, enter verdict-only mode before any edits.
+   Skip implementation and commits, propose fixes in replies, and leave confirmed
+   or partially-right defects open until a fix is published.

@@ -1,9 +1,13 @@
 ---
 name: band-here-is-a-review
-description: Use this skill whenever the user provides an external code review and wants it handled — pasted review text (numbered findings, severity labels, "nit:", inline PR comments, output from a review bot like CodeRabbit/Greptile/Copilot or another AI/agent), a PR review link, or phrasing like "here is a review", "I got this review back", "the reviewer said…", "address this review feedback", "assess these findings and fix what's real", "deal with these comments". Trigger it even when the user just pastes a block of review findings with no instruction — handling it IS the instruction. Treats the review as claims to verify, not orders to execute — verifies every finding against the actual code, triages by relevance and by the task's scope (taken from the linked ticket and the PR description), pushes back on wrong or irrelevant findings with technical reasoning, and asks the user once about real findings outside that scope (open a followup Linear ticket — often the right answer: true, but out of scope — fix now, or drop). For the findings that survive, it plans a clean root-cause fix that fits the existing design (never a bolt-on patch), then implements and verifies it. When the review lives on a PR, it fetches the open review threads, pushes the fixes, and replies on and resolves every thread — fixed or rejected alike. Not for reviewing code yourself (use band-code-review) or for a plain bug report with no review attached.
+description: Handle supplied code-review feedback, pasted findings, or a PR review link. Verify each claim, reject unsupported findings, fix confirmed in-scope root causes, and answer the review threads. Use for "address this review" or "assess and fix these findings"; use band-code-review to review code from scratch.
 ---
 
 # Here Is a Review
+
+Read [workflow-runtime.md](../workflow-runtime.md) for available tools,
+delegation, and existing authorization. When called as a worker, return all
+remote publication actions to the coordinator, including pushes and replies.
 
 The user will provide a code review. Your job is NOT to implement it. Your job is to
 **assess it, verify it, and fix only what genuinely deserves fixing — cleanly.**
@@ -46,15 +50,21 @@ evidence.
 
 - First prepare the workspace per [pr-workspace.md](pr-workspace.md): the right repo,
   the PR head checked out and in sync, and whether fixes can be pushed.
+  Without push access, use verdict-only mode throughout: verify and propose
+  fixes, skip Phases 4–5, and leave confirmed unfixed findings open in Phase 6.
 - Pull the review threads with `gh api graphql` on the PR's `reviewThreads`: each
   thread's `id`, `isResolved`, `isOutdated`, `path`, `line`, and its comments
   (`author { login }`, `body`). Walk `pageInfo` until `hasNextPage` is false. The
   thread `id` is all Phase 6 needs to reply and resolve.
 - Also pull review bodies (`gh api --paginate repos/{o}/{r}/pulls/{n}/reviews`) and
   top-level comments (`gh api --paginate repos/{o}/{r}/issues/{n}/comments`) for
-  findings that sit outside a thread. These have no resolved state: handle only
-  those posted after the PR author's latest top-level comment, and skip empty
-  review bodies (the wrapper around a batch of inline comments).
+  findings that sit outside a thread. These have no resolved state: retain each
+  comment's ID and URL, and skip a finding only when a later reply explicitly
+  records its published fix, rejection, deferral, authorized drop, or answer.
+  A confirmation with a proposed but unpublished fix remains open; an unrelated
+  author comment is not an acknowledgement. Before skipping a claimed fix,
+  verify that it still addresses the finding at the current head.
+  Skip empty review bodies (the wrapper around a batch of inline comments).
 - Handle only unresolved threads. An outdated thread still counts: verify it
   against the current code like any other. Skip `band-code-review`'s no-fix
   records (`.claude/skills/band-code-review/no-fix-records.md`): they are
@@ -147,7 +157,7 @@ Never silently expand the task's scope, and never silently drop a real finding.
 
 ### Decision gate — out of scope
 
-Ask once, with one `AskUserQuestion` covering every out-of-scope finding. Each gets one
+Ask once, covering every out-of-scope finding not already authorized. Each gets one
 line (defect + failure scenario + why it's out of scope) and three options: open a
 followup Linear ticket (recommended unless the fix is trivial) / fix now and accept the
 PR growth / drop. A dropped finding keeps its reason for the reply and report.
@@ -195,15 +205,19 @@ user's confirmation before implementing. Routine fixes proceed without asking.
    read only the failures and the summary line.
 4. Re-check each fixed finding against its original failure scenario.
 5. For a PR review, commit the fixes on the PR branch following AGENTS.md "Commit
-   Messages", then push. Without push access (see the workspace check), make no
-   commits: each Phase 6 reply gives the verdict and the proposed fix instead. Every reply cites the commit that holds its fix, so if
+   Messages", then push. A delegated worker returns its verified diff and proposed
+   replies for the coordinator to commit and publish. Without push access, use
+   verdict-only mode from intake: no edits or commits, and confirmed defects remain
+   open. Every fixed reply cites the published commit that holds its fix, so if
    the verification gate or the push fails, stop and report instead of starting
    Phase 6.
 
 ## Phase 6 — Close the loop on the PR (PR reviews only)
 
-Answer every finding where the reviewer left it, then resolve it — fixed, rejected,
-or deferred alike. A reply is the record of the decision, so nothing stays open.
+Answer every finding where the reviewer left it. Resolve published fixes,
+rejections, deferrals, drops, and answered questions; confirmed or partially-right
+defects without a published fix stay open. In a delegated run the coordinator
+performs these remote actions from the worker's verified verdicts.
 
 - Re-fetch thread state first and skip any thread someone resolved meanwhile.
 - **Reply** once per thread, covering every finding from it, with the
@@ -213,8 +227,9 @@ or deferred alike. A reply is the record of the decision, so nothing stays open.
   - rejected → the verdict and the evidence;
   - deferred → "real, but out of scope for <scope sentence> — tracked in <link>";
   - dropped → that it's real but out of scope, and the reason it won't be done;
+  - confirmed but unfixed → the verdict and proposed fix; leave the thread open;
   - a question → its answer.
-- **Resolve** the thread with the `resolveReviewThread` GraphQL mutation.
+- **Resolve** eligible threads with the `resolveReviewThread` GraphQL mutation.
 - A finding from a review body or a top-level comment has no thread to resolve:
   answer it in one top-level PR comment that quotes or links each finding.
 - If any finding was deferred, add its followup link to the PR description
@@ -225,9 +240,10 @@ or deferred alike. A reply is the record of the decision, so nothing stays open.
 
 End with a per-finding table: finding → verdict → scope (in scope / out-of-scope-fixed /
 out-of-scope-deferred with the issue link / out-of-scope-dropped) → action (fixed /
-rejected — why / deferred / dropped — why / answered, for a question). Follow it with a
+rejected — why / deferred / dropped — why / proposed but unfixed / answered, for a question). Follow it with a
 short summary of what changed and how it was verified. For a PR review, state the pushed
-commit(s) and that every thread was answered and resolved.
+commit(s), which threads were resolved, and which remain open with unfixed defects.
+List actionable non-thread findings separately; they have no resolution flag.
 
 A deferred finding is filed, not fixed — say so. Report honestly: failed gates, skipped
 items, and pushed-back findings are stated plainly, not buried.

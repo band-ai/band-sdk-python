@@ -1,11 +1,17 @@
 ---
 name: band-code-review
-description: Run the team's fixed-criteria code review on a PR or branch, invoked as /band-code-review [target] [--fix] [--cycles N]. Six angle-groups (Style & Hygiene, Design & Reuse, Runtime Safety & Observability, Test Quality, Edge-Case Flow Analysis, Logical Bugs); a shared skeptic must reproduce every proposed defect and prove it reachable before it counts, and every dropped claim is posted as a resolved no-fix thread. Unresolved PR comments, external reviewers' included, go through band-here-is-a-review for a verdict. --fix first runs the simplify skill, then fixes surviving findings through band-here-is-a-review for up to 3 cycles, escalating to a design-level review when fixes don't settle. Does not use the built-in code-review skill.
+description: Run the team's six-angle review of a PR or branch when explicitly requested. Verify findings and existing feedback, publish one review, and optionally simplify and fix root causes with --fix for up to --cycles N rounds. Use band-here-is-a-review for supplied feedback alone.
 argument-hint: "[target] [--fix] [--cycles N]"
 disable-model-invocation: true
 ---
 
 # Code Review
+
+Read [workflow-runtime.md](../workflow-runtime.md) for runtime capabilities,
+delegation limits, authorization, and cleanup. Apply the same review stages
+serially when delegation is unavailable, and disclose the loss of independence.
+In that fallback the coordinator performs each role in turn, retaining its
+verification requirements and phase boundaries.
 
 The team's fixed-criteria review of an open PR. Four lenses (A–D) scan the
 diff in parallel while Edge-Case Flow Analysis and Logical Bugs run a staged
@@ -42,9 +48,10 @@ and with `--fix` push access). `--fix` without push access runs as if absent
 
 ## Simplify (`--fix` only)
 
-Once, before cycle 1, invoke the built-in `simplify` skill (Skill tool) on the
-PR diff against its base (or the path), passing the scope statement. It
-simplifies only. It never uses a cycle.
+Once, before cycle 1, use the available `simplify` skill on the PR diff
+against its base (or the path), passing the scope statement. If unavailable,
+perform a local pass for reuse, clarity, and appropriate layering without
+changing behavior. This pass never uses a cycle.
 
 1. Run the repo's full verification gate (per AGENTS.md "Pre-Commit
    Checklist" / CI), quietly: use
@@ -67,7 +74,8 @@ group; each agent reads the file's intro and only its own group's section.
 1. **Digest, once per cycle.** First confirm the checkout still equals the
    PR's `headRefOid` (fix rounds push). Pull `gh pr diff <n>`, inline comments
    (`gh api --paginate repos/{o}/{r}/pulls/{n}/comments`), top-level comments
-   (`.../issues/{n}/comments`), and thread resolution via `gh api graphql`
+   (`.../issues/{n}/comments`), review bodies (`.../pulls/{n}/reviews`),
+   and thread resolution via `gh api graphql`
    `reviewThreads` (walk `pageInfo`; REST has no resolved state). First pick
    out the no-fix records ([no-fix-records.md](no-fix-records.md))
    and keep the **closed records**; reopened ones leave the digest. Split the
@@ -77,7 +85,8 @@ group; each agent reads the file's intro and only its own group's section.
    stays with the coordinator; reviewers never see it. Its unresolved items
    are what "Fixing" hands over. Write the diff (or path subset) once to a
    scratchpad file, `pr-<n>-cycle-<k>.diff`.
-2. Spawn groups A–D, the mapper, and the explorer in parallel. Pass **paths,
+2. Delegate groups A–D, the mapper, and the explorer within the runtime's
+   concurrency limits, scheduling additional work as slots free. Pass **paths,
    not content**: each agent gets the diff file's path, the head SHA, the
    scope statement, and the path of `angle-groups.md` with its own group
    letters (it reads only those sections), and reads the files it needs
@@ -87,8 +96,7 @@ group; each agent reads the file's intro and only its own group's section.
    earlier findings — they pull attention away from a fresh look. The one
    exception: the mapper and explorer get the closed records, in the form
    `no-fix-records.md` gives.
-   - Run A–D on a mid-tier model (`model: "sonnet"`); the mapper, explorer,
-     and skeptic inherit the session model.
+   - Inherit the session model; do not assume vendor-specific model aliases.
    - **Small PR** (at most 150 added plus deleted lines across at most 3
      files, per `gh pr view <n> --json additions,deletions,changedFiles`):
      run A–D as one agent applying all four angle
@@ -119,10 +127,12 @@ group; each agent reads the file's intro and only its own group's section.
      fixed it (it's in the ledger) it's a **regression**; an older fix that
      didn't hold is a fresh finding.
 6. Groups never dedup against each other.
-7. Only the coordinator writes to the PR. Review subagents never modify the
-   working tree or touch GitHub, and never switch branches or check out other
-   refs (the tree is shared); the skeptic writes only in the scratchpad. Say
-   this in every subagent prompt, the fix subagent's included.
+7. Only the coordinator publishes remote changes: pushes, reviews, replies,
+   thread resolutions, and ticket updates. Reviewers are read-only; the skeptic
+   writes only in the scratchpad. A fix worker may edit its assigned files and
+   run verification, then returns the diff, evidence, and proposed replies.
+   No worker switches branches or checks out another ref. State the applicable
+   role's permissions in each prompt, and never run reviewers over a mutating tree.
 
 ## Comment bar
 
@@ -165,20 +175,16 @@ says in one sentence why it's outside the scope, and never blocks.
 
 ## Fixing
 
-After posting, run `band-here-is-a-review` in a **resumable subagent** (Agent
-tool, `general-purpose`, prompt naming the skill and the batch; keep its
-agent ID). A Skill-tool call can't pause and resume: it loads once, so its
-"pause after Phase 3" would end the run at verdicts and the fix would never
-start. Continue the same subagent with `SendMessage`. The coordinator never
-applies a fix, assigns a verdict, or drops an item itself. With nothing to
-hand over (no unresolved feedback, no out-of-scope finding, and either no
-`--fix` or no findings), skip the subagent; under `--fix` that cycle is
-converged.
+After posting, run `band-here-is-a-review` as a distinct verification and fix
+stage, preferably in a resumable worker. Keep its handle and the phase result;
+if resumption is unavailable, pass that result to a new worker, or continue
+serially with the limitation disclosed. The coordinator does not override the
+stage's verified verdicts. With no unresolved feedback, no out-of-scope
+finding, and either no `--fix` or no findings, skip this stage; under `--fix`
+that cycle is converged.
 
-The subagent can't talk to the user. Any question it would ask (the scope
-gate for out-of-scope feedback, the architectural-change gate) comes back to
-the coordinator at a pause; the coordinator asks the user with
-`AskUserQuestion` and relays the answer by `SendMessage`.
+Workers return user decisions to the coordinator. It checks existing
+authorization, asks only for a missing decision, and relays the answer.
 
 1. **Package the batch.** Every **unresolved** digest item (thread, author,
    whole thread), every out-of-scope finding this review posted, plus —
@@ -205,23 +211,24 @@ the coordinator at a pause; the coordinator asks the user with
 3. **Pause after its Phase 3, then always send the decision.** Under `--fix`
    the first pause is never the end of the run. Enter verified items in the
    ledger and decide (see "Cycles"); without `--fix` there is no ledger and
-   no decision, only the verdict-only close-out. `SendMessage` exactly one of:
+   no decision, only the verdict-only close-out. Give the fix stage exactly one of:
    - **Fix** (`--fix`, continuing or converged, every cycle including the
      last) → proceed to Phase 4. On converged it fixes only nits and
-     suggestions. Wait for its report that fixes are pushed and threads
-     replied to.
+     suggestions. Wait for its verified diff and proposed thread replies.
    - **Verdict-only close-out** (no `--fix`, or not converging) → no code
      changes: reply on every item with its verdict; resolve WRONG, NOT WORTH
      IT, deferred (with the followup link), and answered-question items;
      leave CONFIRMED and PARTIALLY RIGHT threads open and unfixed as the
      record. The report lists them.
 4. **Fix (its Phases 4–5).** Root-cause plans (items sharing a root cause
-   share one fix), implementation, the full verification gate, commit and
-   push. A failing-test proof must turn green; a repro must stop
+   share one fix), implementation, and the full verification gate. The coordinator
+   reviews the result, commits, and pushes before closing any fixed thread.
+   A failing-test proof must turn green; a repro must stop
    reproducing and gets a regression test when feasible. Its
    architectural-change gate applies.
-5. **Close the loop (its Phase 6).** Reply on and resolve every thread, fixed
-   or declined, so a fix round leaves nothing open.
+5. **Close the loop (its Phase 6).** The coordinator publishes the verified
+   verdicts and resolves fixed or declined threads. Confirmed defects whose
+   fixes were not published stay open, including in verdict-only mode.
 
 ## Cycles
 
@@ -287,13 +294,13 @@ threads stay open as evidence, and start no further cycle. Then:
    cause (unclear state ownership, a missing abstraction, an unmodeled
    lifecycle), and propose one or two design-level fixes with tradeoffs and
    blast radius.
-2. Ask the user with `AskUserQuestion`, naming the signal that fired and
+2. Ask the user, naming the signal that fired and
    presenting it as "a real design issue, not patch material". Options: apply
    a proposed design fix, rethink it differently (their direction), or
    stop here with threads left open.
 3. Wait. Apply no design change and open no ticket without their answer.
-4. If they pick a design change, have a fix subagent (never the coordinator)
-   apply it as one root-cause change, run the gate, and push; then resume the
+4. If they pick a design change, have the fix stage apply it as one root-cause
+   change and run the gate; the coordinator commits and pushes, then resumes the
    loop. Their decision restarts the cycle cap and the ledger lineage for that
    hotspot, even if the run had reached the cap, and the open threads reach
    the next cycle as unresolved digest items. If they stop, go to the final
@@ -302,20 +309,10 @@ threads stay open as evidence, and start no further cycle. Then:
 ## Cleanup
 
 Runs last on every exit path (normal end, converged, capped, halted, user
-stop, error), before the final report. Load `TaskStop` with `ToolSearch` if
-needed.
-
-1. **Subagents.** `ListAgents`; for each agent this run spawned that is still
-   running or paused waiting for a message (the fix subagent after its last
-   decision, a reviewer or skeptic that never reported), stop it with
-   `TaskStop` using its agent ID. Never wait indefinitely on a silent
-   subagent: stop it and note it in the report.
-2. **Background processes.** Stop every background task this run started
-   (repro scripts, test runs, servers) by its task ID with `TaskStop`. Never
-   kill by process name or pattern; that can hit the user's own processes.
-3. **Scratchpad.** Delete the `pr-<n>-cycle-<k>.diff` files.
-4. **Confirm.** `ListAgents` again: none of this run's agents may remain
-   running or paused. Anything that would not stop goes in the report.
+stop, error), before the final report. Follow the runtime guide to stop and
+confirm completion of this run's tracked workers and background processes.
+Never wait indefinitely on a silent worker; report incomplete work and anything
+that could not be stopped. Delete this run's `pr-<n>-cycle-<k>.diff` files.
 
 ## Final report
 

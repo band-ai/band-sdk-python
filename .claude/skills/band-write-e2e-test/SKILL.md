@@ -5,6 +5,10 @@ description: Use this skill when the user asks to write, add, or extend an end-t
 
 # Write an E2E Test
 
+Read [the shared workflow runtime](../workflow-runtime.md) before execution.
+Use host-native delegation within available capacity; when unavailable, run
+the same research/review passes sequentially and report the self-review.
+
 Produce a live end-to-end test that exercises **real** platform + adapter behaviour,
 built entirely from the existing baseline toolkit. The pipeline is: collect context in
 parallel → plan → **gate the plan** → implement → review → run → fix elegantly. Do not
@@ -42,12 +46,12 @@ Do **not** use this for unit/adapter/converter tests (those live in `tests/adapt
 `tests/converters/`, `tests/framework_conformance/` and don't touch the platform), or for
 a one-line tweak to an existing E2E test — just make it.
 
-## Phase 1 — Collect context (parallel subagents)
+## Phase 1 — Collect context
 
-Spawn **three read-only `Explore` agents in a single message** so they run concurrently.
-Each gets a self-contained prompt (they are fresh agents; they don't see this
-conversation) and returns a tight written summary, not file dumps. You keep the
-conclusions.
+Assign these three read-only research passes using the shared runtime's
+delegation rules. Give each a self-contained brief and request a tight summary,
+not file dumps. Batch independent passes within available capacity; otherwise
+perform them sequentially.
 
 1. **Docs sweep.** "Read `tests/e2e/baseline/README.md` and
    `tests/e2e/baseline/ADDING_AN_ADAPTER.md` in full, plus the `AGENTS.md`
@@ -69,8 +73,8 @@ conclusions.
    file:line, and **whether the behaviour already appears to be covered** (an existing
    test to extend/parametrize rather than duplicate)."
 
-While they run, do nothing else — wait for all three, then synthesize a short context
-brief (toolkit pieces to reuse, target location, precedents, and any coverage overlap).
+After all three passes, synthesize a short context brief (toolkit pieces to
+reuse, target location, precedents, and any coverage overlap).
 
 ## Phase 2 — Plan the test
 
@@ -142,11 +146,10 @@ dance but discards data the test needs (e.g. returns nothing instead of the capt
 messages), extend it backward-compatibly and call it — don't inline its body into the
 test.
 
-Then spawn **one review agent** to check what `/code-review` (Phase 5) structurally
-cannot — it is diff-based and knows neither the plan nor this repo's E2E invariants. Give
-it a self-contained brief (the plan, the diff, the toolkit rules). Default to a fresh
-`general-purpose` agent (`model: "sonnet"` is fine); use `subagent_type: "fork"` only if
-it genuinely needs this session's live context. It verifies:
+Then perform a focused plan/toolkit review, independently when delegation is
+available. Supply a self-contained brief (plan, diff, toolkit rules) and keep
+the reviewer read-only. A sequential self-review must be reported as such.
+This pass verifies:
 
 - **Matches the plan & topology** — the chosen `@per_adapter`/`@with_adapters` shape,
   fixtures, and assertions are the ones the plan specified.
@@ -160,22 +163,27 @@ Phase 5 covers them, so don't duplicate. Coverage/duplication was settled at the
 gate; don't relitigate it here. Scrutinize the report (don't stenograph): reject
 unsupported claims and fold the surviving findings back into the test.
 
-## Phase 5 — Automated code review
+## Phase 5 — Local diff review
 
-Run the `/code-review` skill on the diff and address its findings — the generic
-correctness + reuse/simplification/efficiency sweep. With Phase 4 (only the plan- and
-toolkit-specific checks `/code-review` can't see) this is the whole review, no overlap.
+Review the diff using [the project review angles](../band-code-review/angle-groups.md)
+and an available `simplify` skill, then address verified findings. Combine
+this correctness/reuse pass with Phase 4's plan/toolkit checks. This review
+does not post to GitHub; invoke `band-code-review` only when explicitly
+requested and an open PR exists.
 
 ## Phase 6 — Run, and fix elegantly on failure
 
 Run just this test (scope narrowly; `--no-cov`; live suite needs the env):
 
 ```bash
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/<path>::<test> -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest '<collected-node-id>' -v -s --no-cov
 ```
 
-If a lane backend is involved, set `BAND_E2E_LANE=<lane>` and the lane's `uv` extra per
-the README.
+Use `--collect-only -q` on the target file to obtain its exact node id,
+including the test class and matrix parameter where present. Follow the
+project's one-class-per-file convention for new or touched tests. Set
+`BAND_E2E_LANE=<lane>` and select the lane's `uv` extra per the README; use
+the isolated commands from `band-run-e2e-live` for concurrent lanes.
 
 Budget the timeout; never let reruns absorb one. A test with multiple runtime boots or
 agent lifecycles needs an explicit `@pytest.mark.timeout(extra=n)` above the conftest
@@ -195,7 +203,7 @@ raw `@pytest.mark.flaky` fails collection.
     clean fix (product code, test, toolkit, or prompt — wherever it belongs). Do not add
     reruns, sleeps, or loosened asserts to paper over a real defect. Do not bend the
     assertion to match a wrong output.
-  - **Re-review the fix** (re-run the relevant Phase 4 lenses and/or `/code-review`), then
+  - **Re-review the fix** (re-run the relevant Phase 4 and Phase 5 passes), then
     re-run the test.
 
 ## Hard rules (never violate)

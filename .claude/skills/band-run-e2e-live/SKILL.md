@@ -5,6 +5,9 @@ description: Use this skill when the user wants to RUN the band-sdk-python E2E b
 
 # Run the E2E Live Tests
 
+Read [the shared workflow runtime](../workflow-runtime.md) before execution.
+Use its ownership, process cleanup, and reporting rules for every run.
+
 Operational playbook for executing `tests/e2e/baseline/` against the **real** Band
 platform + real LLM providers. The tests provision their own agents/rooms and make
 real LLM calls, so they need credentials and, for some lanes, a specific venv or
@@ -20,7 +23,9 @@ external binaries/servers. Everything here is about *running* — to author test
    baseline settings (`load_dotenv(ENV_TEST_FILE, override=False)` in
    `tests/e2e/baseline/settings.py`, so a value already exported in your shell wins).
    Holds the Band keys, provider keys, models, and URLs. You do **not** export
-   anything. A tracked `.env.test.example` documents the vars. Minimum for any run:
+   credentials for pytest, but shell values take precedence: check for stale
+   overrides and align the run with the repo-root file without printing secrets.
+   Backend setup processes must load that file explicitly. A tracked `.env.test.example` documents the vars. Minimum for any run:
    `BAND_API_KEY_USER` + the provider key(s) for the adapters in the lane.
 
 ## Venv per lane — the dependency-conflict split (the #1 gotcha)
@@ -30,10 +35,10 @@ crewai, parlant, and Strands/NOOA are kept out of the default venv, so there are
 
 | Extra | Command | Contains | Lanes it serves |
 |---|---|---|---|
-| `dev` | `uv sync --extra dev` | everything **except crewai, parlant, strands and nooa** (anthropic, claude_sdk, copilot_sdk, agno, langgraph, pydantic_ai, gemini, google_adk, ACP, opencode, letta) | core, google, backends, letta |
-| `dev-crewai` | `uv sync --extra dev-crewai` | crewai + test tooling only (**no** pydantic-ai/parlant/agno/gemini/...) | crewai |
-| `dev-strands-nooa` | `uv sync --extra dev-strands-nooa` | Strands, NOOA (Python 3.12–3.13, off Windows) and their LangGraph peer, on OpenAI 2 | strands, nooa |
-| `dev-parlant` | `uv sync --extra dev-parlant` | parlant + test tooling | parlant |
+| `dev` | `uv sync --locked --all-packages --extra dev` | everything **except crewai, parlant, strands and nooa** (anthropic, claude_sdk, copilot_sdk, agno, langgraph, pydantic_ai, gemini, google_adk, ACP, opencode, letta) | core, google, backends, letta |
+| `dev-crewai` | `uv sync --locked --all-packages --extra dev-crewai` | crewai + test tooling only (**no** pydantic-ai/parlant/agno/gemini/...) | crewai |
+| `dev-strands-nooa` | `uv sync --locked --all-packages --extra dev-strands-nooa` | Strands, NOOA (Python 3.12–3.13, off Windows) and their LangGraph peer, on OpenAI 2 | strands, nooa |
+| `dev-parlant` | `uv sync --locked --all-packages --extra dev-parlant` | parlant + test tooling | parlant |
 
 - **Why the split exists:** `pyproject.toml` declares the extras as `[tool.uv] conflicts`,
   so uv resolves each side in its own fork. Without the declaration uv *could* still
@@ -42,16 +47,16 @@ crewai, parlant, and Strands/NOOA are kept out of the default venv, so there are
   of mcp, aiofiles, regex and tomli). parlant and pydantic-ai install two distributions
   (`griffe`/`griffelib`) into the same `griffe` import path, and Strands/NOOA need
   OpenAI 2 while modern Pydantic AI needs OpenAI 3.
-- **Switching mutates the single `.venv`** — run `uv sync --extra <extra>` and it
-  installs/uninstalls to match. After a non-`dev` run, **`uv sync --extra dev` to
+- **Switching mutates the single `.venv`** — run `uv sync --locked --all-packages --extra <extra>` and it
+  installs/uninstalls to match. After a non-`dev` run, **`uv sync --locked --all-packages --extra dev` to
   restore** the default before running anything else (unit suite, other lanes). This is
   fine for sequential work but *serializes* crewai against every dev lane. To run them
   **at the same time**, use `uv run --isolated` instead — see "Running lanes
   simultaneously" below.
 - **Detect which env you're in** before running:
   ```bash
-  uv run python -c "import crewai" 2>/dev/null && echo dev-crewai || echo "not crewai env"
-  uv run python -c "import pydantic_ai" 2>/dev/null && echo dev || echo "not dev env"
+  uv run --all-packages python -c "import crewai" 2>/dev/null && echo dev-crewai || echo "not crewai env"
+  uv run --all-packages python -c "import pydantic_ai" 2>/dev/null && echo dev || echo "not dev env"
   ```
 - Symptoms of the wrong env: `ModuleNotFoundError: No module named 'agno'` (you're in
   dev-crewai, running a dev-lane test) or crewai import errors (you're in dev). The
@@ -84,20 +89,20 @@ with `@lane(Lane.X)` (that's a `band-write-e2e-test` concern).
 
 ```bash
 # One lane (from the matching venv):
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=core   uv run pytest tests/e2e/baseline/ -v --no-cov
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=google uv run pytest tests/e2e/baseline/ -v --no-cov
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=core   uv run --all-packages pytest tests/e2e/baseline/ -v --no-cov
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=google uv run --all-packages pytest tests/e2e/baseline/ -v --no-cov
 
 # A single file / cell (fast iteration):
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=core uv run pytest \
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=core uv run --all-packages pytest \
   "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn[anthropic]" -v --no-cov
 
 # crewai lane — switch venv first, restore after:
-uv sync --extra dev-crewai
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=crewai uv run pytest tests/e2e/baseline/ -v --no-cov
-uv sync --extra dev
+uv sync --locked --all-packages --extra dev-crewai
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=crewai uv run --all-packages pytest tests/e2e/baseline/ -v --no-cov
+uv sync --locked --all-packages --extra dev
 
 # Just collect (verify parametrization/lane wiring, no live calls):
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ --collect-only -q --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 ```
 
 - Always `--no-cov`. Live cells take ~10–60s each (real provisioning + LLM) — give
@@ -116,7 +121,7 @@ never overwrites another lane's environment — `.venv` stays the `dev` env, no
 
 ```bash
 # Terminal A — dev lanes, default .venv:
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=core   uv run pytest tests/e2e/baseline/ -v --no-cov
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=core   uv run --all-packages pytest tests/e2e/baseline/ -v --no-cov
 
 # Terminal B — crewai lane, its own isolated env:
 E2E_TESTS_ENABLED=true BAND_E2E_LANE=crewai \
@@ -128,38 +133,23 @@ E2E_TESTS_ENABLED=true BAND_E2E_LANE=crewai \
   concurrently against the **same** `.venv` — an isolated env is only needed for the
   lanes on a conflicting extra.
 
-### All lanes at once
+### Covering all lanes
 
-Because separate pytest processes only *read* the venv, every lane can run as its own
-concurrent process — the `dev` lanes share `.venv`, each other lane gets its isolated
-env:
+Derive the current lanes and their extras from `toolkit/ci_lanes.py`, the
+registry, and `.github/workflows/e2e.yml`; the table above is an overview.
+Run every lane supported by the host, including Strands, NOOA, and Parlant
+in their matching isolated environments. Report unsupported or unconfigured
+lanes explicitly rather than treating a partial run as full coverage.
 
-```bash
-export E2E_TESTS_ENABLED=true
-# dev lanes — one background process each, all sharing .venv:
-for L in core google backends; do
-  BAND_E2E_LANE=$L uv run pytest tests/e2e/baseline/ -v --no-cov \
-    > "/tmp/e2e-$L.log" 2>&1 &
-done
-# crewai — concurrent, in its own isolated env:
-BAND_E2E_LANE=crewai \
-  uv run --locked --isolated --python 3.12 --all-packages --extra dev-crewai \
-  pytest tests/e2e/baseline/ -v --no-cov \
-  > /tmp/e2e-crewai.log 2>&1 &
-wait   # block until all lanes finish; then grep the logs for the summaries
-```
+Track each launched process and log separately, await each exit status, and
+read its pytest summary. A shell `wait` without individual statuses does
+not establish that every lane passed. Clean up processes and servers started
+by this run, including when a lane fails or is interrupted.
 
-Two things temper "all lanes", none of them venv-related:
-
-- **`letta` and `backends` need local infra** — letta a dockerized Letta server (its
-  own section below), backends codex API-key login + a running opencode server (next
-  section). Without it those lanes **fail-loud** — drop them from the loop until set
-  up (add `letta` to the `for` loop once its server is running).
-- **Shared-provider rate limits** — `core` and `crewai` (and `strands`) **all** hit
-  OpenAI, so running them together multiplies OpenAI pressure and can throttle;
-  `google` is split out precisely for this isolation. If you hit 429s, run `core` and
-  `crewai` sequentially and keep `google` (and `backends`) parallel. Band-account
-  contention is fine (unique agent names per lane; orphan sweep has an age guard).
+- **`letta` and `backends` need local infrastructure** described below.
+- **Shared-provider rate limits** can make parallel runs counterproductive:
+  core, CrewAI, and Strands all use OpenAI. Serialize those lanes when needed.
+  Provisioning uses unique agent names and an age guard for orphan sweeps.
 
 ## backends lane — use the setup scripts
 
@@ -173,36 +163,29 @@ what this lane needs. They install the CLIs, authenticate/serve, and export
 secrets, and the scripts won't run verbatim locally because `$GITHUB_ENV` is unset).
 Locally, do the equivalent:
 
-- **codex** (`setup-codex.sh`):
-  ```bash
-  npm install -g @openai/codex @agentclientprotocol/codex-acp   # pin the versions setup-codex.sh pins
-  printenv OPENAI_API_KEY | codex login --with-api-key   # API-key auth — see below
-  codex login status
-  ```
-  Then in `.env.test`: `CODEX_CWD=<disposable dir outside the repo>` (a **stable**
-  directory — not `/tmp/...`, which clears on reboot and fails the `is a dir` gate) and
-  `E2E_CODEX_CWD_IS_DISPOSABLE=true`. `CODEX_MODEL` defaults to `OPENAI_MODEL`
-  (`src/band/core/defaultmodels.py`).
-  - **Auth is the #1 codex trap:** `codex login status`. If it says **"Logged in using
-    ChatGPT"**, switch to exactly what the script does — **API-key** login
-    (`codex login --with-api-key` from `OPENAI_API_KEY`), not the interactive ChatGPT
-    login. Re-login with the API key to switch.
-- **opencode** (`setup-opencode.sh`):
-  ```bash
-  npm install -g opencode-ai   # pin the version setup-opencode.sh pins
-  # write ~/.config/opencode/opencode.json with the Zen provider key + a free model
-  # (small_model opencode/mimo-v2.6-flash-free); see the script for the exact JSON
-  cd "$(mktemp -d)" && opencode serve --hostname 127.0.0.1 --port 4096 &   # empty cwd!
-  curl -fsS http://127.0.0.1:4096/global/health                            # wait until healthy
-  ```
-  Then in `.env.test`: `OPENCODE_BASE_URL=http://127.0.0.1:4096`, plus
-  `E2E_OPENCODE_BASH_ASKS=true` **if** the config you wrote gates `bash` to `ask`
-  (`"permission": {"bash": "ask"}`, as the CI script sets). The manual-approval
-  smoke (`smoke/behavior/approvals/test_approvals.py`) needs a real
-  `permission.asked` and fails naming that reason without it — the server's rules,
-  not the adapter's `approval_mode`, decide when one is raised. Serve from an
-  **empty** dir — in the repo checkout a weak free model wanders into the source
-  instead of replying. Uses `OPENCODE_ZEN_API_KEY` (Zen free tier).
+- **codex** (`setup-codex.sh`): use the pinned CLI versions in that script.
+  Inspect the installed CLI's auth/config options before setup. Reuse suitable
+  existing auth, or use a verified process-scoped credential/state mechanism
+  for the test process; do not run the CI script's global login replacement
+  against a developer's personal profile. Load provider keys from `.env.test`
+  without printing them. If isolated auth cannot be configured, report that
+  setup requirement before changing the user's saved login.
+  In `.env.test`, set `CODEX_CWD` to an existing disposable directory outside
+  the repository and `E2E_CODEX_CWD_IS_DISPOSABLE=true`. A temporary directory
+  is valid for a run when recreated and cleaned up by that run; a saved path
+  must still exist. The model default comes from `core/defaultmodels.py`.
+- **opencode** (`setup-opencode.sh`): use the script's pinned version and
+  config JSON, but put `opencode.json` only in this run's disposable server
+  working directory (the script verifies this placement across platforms).
+  Do not overwrite `~/.config/opencode/opencode.json`. Load
+  `OPENCODE_ZEN_API_KEY` from `.env.test` into the server process, start it
+  from that directory on a free loopback port, and track its process handle
+  and log. Poll `/global/health` with a bounded deadline before testing;
+  terminate and await the owned server during cleanup.
+  Set `OPENCODE_BASE_URL` to that server and declare
+  `E2E_OPENCODE_BASH_ASKS=true` only when its `bash` permission is `ask`.
+  The manual-approval smoke needs a real `permission.asked`; server rules,
+  rather than adapter `approval_mode`, determine whether it is raised.
 - **copilot_acp / cursor_acp / omp_acp** (`setup-copilot.sh`, `setup-cursor.sh`,
   `setup-omp.sh`): copilot_acp is Anthropic BYOK — the gate is the `copilot` CLI plus
   `ANTHROPIC_API_KEY`, no login; cursor_acp needs the `agent` CLI plus
@@ -213,7 +196,7 @@ Locally, do the equivalent:
   after the baseline run.
 - Verify the requirement gate without spending an LLM call:
   ```bash
-  E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run python -c "
+  E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run --all-packages python -c "
   from tests.e2e.baseline.settings import BaselineSettings
   from tests.e2e.baseline.toolkit.deps import Dep, requirement_reason
   s = BaselineSettings()
@@ -235,10 +218,15 @@ one, and without the patch tool discovery returns zero tools and every cell
 fails):
 
 ```bash
-OPENAI_API_KEY=... GITHUB_ENV=/dev/null .github/scripts/setup-letta.sh
+# Load OPENAI_API_KEY from the repo-root .env.test into this process first.
+GITHUB_ENV=/dev/null .github/scripts/setup-letta.sh
 ```
 
-Then in `.env.test` (or exported):
+The script owns a container named `letta-server`; check for an existing container
+before starting it and do not replace another run's container. Remove only the
+container this run created after testing, including on failed setup.
+
+Then in `.env.test`:
 
 - `LETTA_BASE_URL=http://localhost:8283` — **required**; the settings default is
   Letta Cloud, and `Dep.LETTA` would then demand a `LETTA_API_KEY`.
@@ -251,7 +239,7 @@ Then in `.env.test` (or exported):
   docker run above); set `127.0.0.1` only for a natively-run Letta.
 
 ```bash
-E2E_TESTS_ENABLED=true BAND_E2E_LANE=letta uv run pytest tests/e2e/baseline/ -v --no-cov
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=letta uv run --all-packages pytest tests/e2e/baseline/ -v --no-cov
 ```
 
 Gotcha: agents are created with `LETTA_EMBEDDING` (default
@@ -279,15 +267,16 @@ values, no folding: whether `input_tokens` includes cache is provider-specific, 
 
 ## Quick recipe: validate a change across all runnable lanes, then commit
 
-1. `uv sync --extra dev` → full unit suite + `pyrefly check` + `ruff check`.
+1. `uv sync --locked --all-packages --extra dev` → full unit suite + `pyrefly check` + `ruff check`.
 2. `BAND_E2E_LANE=core` then `google` live (dev).
-3. `uv sync --extra dev-crewai` → `BAND_E2E_LANE=crewai` live → `uv sync --extra dev`.
+3. `uv sync --locked --all-packages --extra dev-crewai` → `BAND_E2E_LANE=crewai` live → `uv sync --locked --all-packages --extra dev`.
    Same for `strands`/`nooa` (`dev-strands-nooa`) and `parlant` (`dev-parlant`).
    (Or, to run steps 2 and 3 in parallel, use `uv run --locked --isolated` per "Running
    lanes simultaneously" — no back-and-forth `uv sync`.)
 4. `backends` (on `dev`): set up via the equivalents of the `.github/scripts/setup-*.sh`
    scripts above (API-key codex login, running opencode server, `.env.test`
    entries), then `BAND_E2E_LANE=backends`. `letta` (on `dev`): start the docker Letta
-   server per "letta lane", then `BAND_E2E_LANE=letta`. If either isn't set up, report
-   it runs in CI's own lane.
-5. Commit/push only when green (and only if the user asked).
+   server per "letta lane", then `BAND_E2E_LANE=letta`. If either is not set up, report
+   it as unverified locally; only current CI evidence establishes its CI result.
+5. Report exact commands, pass/fail/skip totals, and any unrun lanes. Commit/push
+   only when authorized and the required checks pass.

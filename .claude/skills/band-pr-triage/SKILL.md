@@ -10,6 +10,9 @@ Decides one thing: can this PR merge, does it need `band-code-review`, or has th
 review history shown it needs rethinking? It is not a review. It posts nothing, fixes nothing, and proves nothing; its scans
 produce leads that only ever push the verdict toward more review.
 
+Follow [the shared runtime guidance](../workflow-runtime.md) for available
+tools, model selection, bounded parallel work, scratch files, and cleanup.
+
 ## Invocation
 
 `/band-pr-triage [target] [--level low|medium]` (default `low`)
@@ -76,7 +79,7 @@ session's working-directory diff, not a PR.
 4. **Scan.** Scan agents are read-only. Each gets the worktree path, the diff
    path, the scope statement, and
    `.claude/skills/band-code-review/angle-groups.md` with its group letters.
-   - **low** — one agent on `model: "sonnet"` skims A–D for what the diff
+   - **low** — one agent inheriting the session model skims A–D for what the diff
      itself shows, and answers: does it do what the scope says; is there a
      plain blocking defect; does it touch stateful, concurrent, lifecycle, or
      protocol logic; and, from the thread digest, do the earlier comments
@@ -111,9 +114,13 @@ session's working-directory diff, not a PR.
    4. **MERGE** — every signal clear and the scans returned nothing beyond
       nits (list them as non-blocking). With CI pending: "MERGE once CI is
       green".
-6. **Cleanup.** `git worktree remove --force <scratchpad>/triage-<n>`, delete
-   the diff and thread-digest files, and stop any scan agent still running
-   (`ListAgents`, `TaskStop`). Never kill processes by name.
+6. **Cleanup.** Await every scan worker, or stop it through the host's agent
+   controls using its recorded ID and confirm it stopped. Only then remove
+   this run's worktree with
+   `git worktree remove --force <scratchpad>/triage-<n>` and delete its diff
+   and thread-digest files. Follow the shared runtime guidance; never kill
+   processes by name. Record any cleanup failure in the final report, keeping
+   resources still in use.
 
 ## Output
 

@@ -1,17 +1,20 @@
 ---
 name: band-plan
-description: Turns a Linear ticket (URL or identifier like INT-1234) into a finalized, reviewed implementation plan attached to the ticket. Designs for the root cause behind the ticket rather than the symptom it reports, after a system-level view decides between a local fix and an architectural adjustment. Verifies everything against fresh origin/main, sibling repos, and current docs, and researches best practices and well-maintained libraries when the problem is a general one. Works in plan mode, presents a short scenario-based review summary, and iterates until the user finalizes the plan. Never implements; the plan ends with a hand-off prompt for a separate agent. Trigger on "plan this ticket", "/band-plan INT-1234", "plan out/scope out INT-1234", "let's plan this out", or a Linear ticket ID/URL paired with build intent ("let's figure out how to build this", "what would it take to do INT-1234", "how should we implement this"). Not for implementing directly, and not for handling a code review (use band-here-is-a-review).
+description: Turn a Linear ticket into a reviewed implementation plan attached to the ticket. Use for "plan this ticket", "plan out INT-1234", or a ticket paired with a request to design its implementation. Verify the root cause, discuss scenarios, and publish after finalization. Never implements; use band-here-is-a-review for supplied reviews.
 argument-hint: "[ticket-id-or-url]"
 ---
 
 # Plan a Ticket
 
+Read [workflow-runtime.md](../workflow-runtime.md) for planning artifacts,
+available tools, delegation limits, and existing authorization.
+
 Scope: produce a finalized, attached plan for a Linear ticket. Never write or
-edit product code, never implement, never call `ExitPlanMode`. The plan hands
-off through its Implementation Prompt, for a separate agent to run. Plan
-mode's no-edit rule covers the repos; the only writes outside the plan file
-are Phase 8's Linear updates, made after the user finalizes and while still
-in plan mode.
+edit product code or implement. The plan hands off through its Implementation
+Prompt, for a separate agent to run. Use native plan mode when available;
+otherwise maintain a plan-only workflow with a scratch plan file outside the
+repo. The only content writes outside the plan file are Phase 8's Linear
+updates, after the user finalizes; honor runtime restrictions on publishing.
 
 Requires the Linear MCP server for reading the ticket and attaching the plan.
 Without it, ask the user to paste the ticket and its comments, and in Phase 8
@@ -21,8 +24,8 @@ The plan solves the real problem behind the ticket, not the spot where it
 surfaced. A ticket usually reports a symptom or proposes a fix; neither is the
 root cause until Phase 3 shows it is.
 
-The plan lives in plan mode's own plan file (the path plan mode gives) from
-the first draft on. Every revision updates that file; the chat summary is
+The plan lives in the selected plan file from the first draft on. State its
+path to the user. Every revision updates that file; the chat summary is
 derived from it and Phase 8 publishes it. That keeps one copy of the plan,
 and the file survives context compaction.
 
@@ -49,26 +52,25 @@ Copy this checklist into your first reply and update it as phases finish:
 - [ ] 8 Publish
 ```
 
-## Delegating to forks
+## Delegating research
 
-When Phases 1 and 4 fan out, each wave of parallel `fork`s launches in a
-single message.
-A fork inherits this context, but a vague brief still leads to duplicated work
-or gaps, so every brief states:
+When Phases 1 and 4 fan out, delegate independent research within available
+capacity, or run the same work serially with the limitation disclosed. Do not
+assume workers inherit context; every brief states:
 
-- **Objective:** the one question this fork answers.
-- **Boundaries:** what belongs to other forks; read-only, no edits.
+- **Objective:** the one question this worker answers.
+- **Boundaries:** what belongs to other workers; read-only, no edits.
 - **Sources:** where to look, primary sources first.
 - **Output:** conclusions with citations (file path and line, doc section or
   URL, pinned version, date), at most about 800 words, no raw file, page, or
   diff dumps.
 
-Fold every fork's findings in before moving on.
+Fold every worker's findings in before moving on.
 
 ## Phase 0 — Enter plan mode, resolve and size the ticket
 
-1. `EnterPlanMode` — first, before any research, so nothing that follows can
-   slip in an edit.
+1. Establish the plan-only boundary and plan-file path before research,
+   using the runtime guide. A missing native plan-mode tool does not block planning.
 2. Accept a Linear URL or a bare identifier. From a URL, extract the
    identifier (`[A-Z]+-\d+`) rather than guessing from the slug. If it doesn't
    resolve, ask before guessing.
@@ -76,12 +78,12 @@ Fold every fork's findings in before moving on.
    `list_comments` too — acceptance criteria often live in comments.
 4. If a prior run's plan is attached (filename `plan-<identifier>.md` or title
    starting `Plan: <identifier>`),
-   `get_attachment` and read it, tell the user what it covers, and ask with
-   `AskUserQuestion`: update it (recommended) or start fresh. Either way note
+   `get_attachment` and read it, tell the user what it covers, and ask whether
+   to update it (recommended) or start fresh. Either way note
    its attachment id; Phase 8 replaces it.
 5. Size the ticket. **Light** when the change fits in one sentence, stays in
    one area, and touches no public API, config, or wire shape: run every phase
-   inline without forks, skip Phase 4 with a one-line reason, and mark plan
+   inline without workers, skip Phase 4 with a one-line reason, and mark plan
    sections that don't apply "n/a". Otherwise **full**. When a later phase
    shows a light ticket isn't (Phase 3 finds a design cause, a public surface
    changes), switch to full and say so.
@@ -110,22 +112,22 @@ Never assume, always verify — the one rule everything else follows from.
 
 If all of this lives in one place, do it inline. Once it spans more than one
 independent area (a sibling repo, a library, a separate doc area), give each
-area a fork, and have each fork also do Phase 2's survey for its area.
+area a worker where available, and also do Phase 2's survey for its area.
 
 ## Phase 2 — Survey what exists
 
 1. Look for an existing mechanism that does this or nearly does — a helper,
    base class, schema builder, toolkit fixture — and plan to extend it. Build
-   new only once nothing usable exists. Forks from Phase 1 already covered
+   new only once nothing usable exists. Workers from Phase 1 already covered
    their areas; use their findings.
 2. Find the single source of truth for every value, policy, or constant the
    plan touches. The plan extends it, never adds a parallel one. This is a
-   synthesis across all areas, so do it here, not in a fork.
+   synthesis across all areas, so do it here, not in a worker.
 
 ## Phase 3 — Find the root cause and the right level
 
 Run this before drafting. Its output decides where the change lives. Do it in
-this context, not a fork: it's a synthesis, and no single area shows the
+this context, not a worker: it's a synthesis, and no single area shows the
 whole flow.
 
 1. **Name the underlying problem.** Keep asking "why does this happen?" or
@@ -174,9 +176,9 @@ Search for Phase 3's root cause, not the ticket's symptom.
    building new, with trade-offs stated. A close call is a question for the
    user in Phase 7.
 
-Run it as forks in two waves, each using `WebSearch` and `WebFetch`. First
-wave: one fork for best practices and case studies that also returns the
-candidate libraries. Second wave: one fork per serious candidate, vetting it
+Research in two waves using available web search and primary-source access.
+First wave: best practices and case studies, returning candidate libraries.
+Second wave: a worker per serious candidate where available, vetting it
 with [research.md](research.md).
 
 ## Phase 5 — Draft the plan
@@ -248,9 +250,11 @@ Treat every claim and decision in the draft as a claim to verify, not a
 conclusion — the same discipline `band-here-is-a-review` applies to someone
 else's review.
 
-1. **Independent review.** Give a fresh `general-purpose` subagent only the
+1. **Independent review.** Give a fresh reviewer only the
    ticket and the plan file, not the research trail — an agent without the
    drafting history isn't anchored to what this session believes it checked.
+   If delegation is unavailable, perform the same checks as a separate pass
+   and disclose that independent review was unavailable.
    Tell it the plan describes `origin/main` of each repo, to be read with
    `git show origin/main:<path>`, not the working tree. Ask it to:
    - re-verify every factual claim (this exists here, this API behaves so,
@@ -282,8 +286,8 @@ else's review.
 
 ## Phase 7 — Present and discuss (never offer to implement)
 
-1. Never call `ExitPlanMode`, and never ask "should I implement this" or
-   "ready to proceed" in any form.
+1. Stay within the plan-only boundary; never ask "should I implement this"
+   or "ready to proceed" in any form.
 2. Present a review summary the user can check in a couple of minutes, not
    the full plan. Its job is to catch a misread intent quickly. About one
    screen, in this order:

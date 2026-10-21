@@ -5,6 +5,10 @@ description: Use this skill when the user asks to add a new framework adapter to
 
 # Add a Framework Adapter
 
+Read [the shared workflow runtime](../workflow-runtime.md) before execution.
+Use its host-native tools, bounded delegation, sequential fallback, and cleanup
+rules for every role and review pass below.
+
 A skill-style instruction document for an AI coding agent (or a developer)
 tasked with adding a new framework adapter to this SDK. Input: a ticket plus
 whatever context the developer supplies ("add an adapter for framework X").
@@ -46,7 +50,7 @@ not done yet.
 
 > ⚠️ **Ground truth is the installed package, not this document.** Before
 > writing adapter code, install the SDK and inspect it:
-> `python -c "import <pkg>, inspect; print(sorted(dir(<pkg>)))"` and
+> `uv run --all-packages python -c "import <pkg>, inspect; print(sorted(dir(<pkg>)))"` and
 > `inspect.signature(...)` on every entry point you plan to call. Treat every
 > API snippet below as provisional and correct it to the installed version.
 > Where this doc says "verify", that is a hard gate, not a suggestion.
@@ -77,24 +81,24 @@ Legend: **E** = easy/core (this PR), **M** = medium (this PR, needs care),
 |---|---|---|---|
 | Reply to a room message | … | E | Plain assistant text is NOT auto-delivered; the model replies via `band_send_message`, the adapter relays final text only through `relay_reply` and posts its own messages with `send_notice` (`AGENTS.md` → "Turn Outcome") |
 | System prompt / `custom_section` | … | E | Use `render_system_prompt(...)`; own the prompt contract |
-| Model selection | … | E | Default None → framework default; explicit override via config |
+| Model selection | … | E | Verify whether the SDK requires a model; use `core/defaultmodels.py` for shared defaults, or `None` only when the framework supports its own default |
 | Expose Band platform tools | … | E | Bridge from `tools.get_openai_tool_schemas(...)` + `filter_tool_schemas` |
 | Developer custom tools | … | E | `custom_tools_to_schemas` / `find_custom_tool` / `execute_custom_tool`; first-wins dedup |
 | `Capability.MEMORY` / `CONTACTS` | … | E | Gate schemas + prompt sections; Band memory ≠ framework-native memory |
 | History conversion | … | E | `[sender]: content` text or structured list; own-reply handling (see gaps) |
-| **Context rehydration** (cross-restart) | … | M | Persist a resume id via `task` event metadata + text-injection fallback |
+| **Context rehydration** (cross-restart) | … | M | Convert platform history; where native sessions exist, evaluate persisted resume ids plus a history fallback |
 | **Emitted events** (`TOOL_CALLS`/`THOUGHTS`) | … | M | Emit from our handlers where we control execution |
-| Per-room isolation | … | E | One session/thread per room; deterministic ids |
+| Per-room isolation | … | E | Isolate room state; use separate native sessions where the SDK exposes them |
 | Cleanup on room leave / shutdown | … | E | Per-room cleanup + adapter-wide `cleanup_all` |
-| Testability | … | E | `client_factory` seam for hand-rolled fakes |
+| Testability | … | E | Inject the actual external boundary (client, graph, runtime, or factory) for realistic fakes |
 | Human-in-the-loop ("ask the user" tool) | … | M | Route to the room via turn-splitting — see Gaps below |
 | (Framework-specific extras) | … | D | Defer until a customer needs it |
 
 ## Gaps & pitfalls (the four recurring focus areas)
-- **Context rehydration**: native resume is usually host/disk-local. Plan the
-  two-tier scheme: persist the resume id in `task`-event metadata (converter
-  reads it back) AND build a text-history fallback for resume misses. Note:
-  platform `/context` history is agent-scoped.
+- **Context rehydration**: platform `/context` history is agent-scoped. For
+  stateless APIs, convert that history into requests. Where native resume is
+  supported, verify its persistence boundary and decide how to record resume
+  ids and fall back to history when the session is unavailable.
 - **Emitted events**: bridged-tool execution we control → emit `tool_call`/
   `tool_result` from our handlers (payload keys `name`/`args`/`output`/
   `tool_call_id` — `ToolEventKey` in `core/types.py`, parsed by
@@ -121,6 +125,13 @@ optional-import guard plan, and any concurrency rate-limits documented
 upstream.
 
 ## Session architecture & per-room isolation
+
+First identify the framework's state boundary. Stateless APIs need isolated
+request/history state; graph frameworks may own checkpoints; persistent
+runtimes may need the session layout below. Do not introduce a session
+manager, synthetic ids, or a subprocess lifecycle without a verified need.
+
+For a runtime that supports persistent sessions:
 ```
 1 adapter instance ── owns ──▶ 1 client/runtime
         │
@@ -128,20 +139,22 @@ upstream.
                                 ├── conversation history (isolated per session)
                                 └── framework-native state (isolated per session)
 ```
-- Deterministic session id: fold in the **immutable Band agent id**
+- When the SDK accepts caller-chosen session ids, fold in the **immutable Band agent id**
   (`self.platform.agent_id`, the `PlatformConnection` the runtime injects
   before `on_started`) —
   never the display name (renameable, not guaranteed unique). Scheme:
-  `band-{agent_id}-{room_id}`; explicit prefix overrides.
+  `band-{agent_id}-{room_id}`; explicit prefix overrides. When it assigns ids,
+  retain those ids in the room mapping instead.
 - Cross-agent collision analysis: what happens when two agents share a host,
   a state directory, or one client? Name the mitigation.
-- Concurrency: which calls may interleave? Usually: rooms in parallel, one
-  room's calls serialized by a per-room lock owned by the session manager.
+- Concurrency: which calls may interleave? Trace existing runtime
+  serialization before adding locks; preserve room isolation for concurrent
+  rooms and cleanup.
 
 ## Tool bridging & feature-collision policy
-Handlers must resolve the current room's `AgentToolsProtocol` at call time
-(`_room_tools[room_id]`), never a captured reference — sessions outlive any
-single message. Then classify every Band↔framework overlap:
+Long-lived handlers must resolve the current room's `AgentToolsProtocol` at
+call time, since their sessions outlive a message. A handler scoped to one
+turn can use that turn's tools directly. Then classify every Band↔framework overlap:
 
 | Collision | Handling |
 |---|---|
@@ -161,7 +174,7 @@ loop shape, eviction policy.
 
 ## Phasing
 Core now; defer the rest until a customer needs it. Definition of Done:
-- [ ] converter + session manager + adapter implemented and registered
+- [ ] converter + adapter + any required state owner implemented and registered
 - [ ] conformance configs registered; config-drift green
 - [ ] unit tests green (converter + adapter incl. per-room isolation, resume,
       failure paths); no over-mocking
@@ -190,10 +203,10 @@ subagents to spawn.
 | Role | Responsibility | Mapped to |
 |---|---|---|
 | Project manager | Sequences phases, holds scope (core only), tracks tasks | main session + task tracking |
-| Architect | Guards the client/session-per-room contract; no cross-room leakage | `Plan` agent at phase boundaries |
-| Developer(s) | Implements slices (converter, manager, adapter, tests, example) | `Explore`/general agents per independent slice |
-| Principal | Guards simplicity, typing, naming, comment discipline | `/code-review` (high) + focused quality pass |
-| Peer review | Verifies diff logic (bridging, resume/fallback, isolation) | `/code-review` and/or a fork |
+| Architect | Guards state ownership and room isolation | Architecture pass at phase boundaries |
+| Developer(s) | Implements slices (converter, adapter, tests, example, manager if needed) | Implementing session; delegate independent slices only with exclusive file ownership |
+| Principal | Guards simplicity, typing, naming, comment discipline | Local diff review using the project review angles |
+| Peer review | Verifies diff logic (bridging, resume/fallback, isolation) | Independent review when available; otherwise a reported self-review |
 | QA | Runs suites, triages failures, owns flake policy | `/band-write-e2e-test`, `/band-investigate-test-error`, live runs |
 
 Cadence: plan a slice → implement → review → test → next. Keep slices small
@@ -201,20 +214,22 @@ so review stays cheap.
 
 ## Phase 1 — Research (parallel, before any plan)
 
-Launch in one batch:
+Run these independent research passes within available capacity:
 
-1. **Repo pattern maps** (Explore agents): the closest template adapters
+1. **Repo pattern maps** (read-only research roles): the closest template adapters
    (which family? subprocess-runtime adapters mirror claude_sdk/codex;
    direct-API mirror anthropic/gemini), the conformance registries, and a
    **test-infrastructure reality check**. Do not trust docs, memories, or
    design notes about test infra — read the actual branch. Registration steps
    and helpers named in older notes are often renamed or gone.
-2. **SDK ground truth online**: WebFetch the SDK's *source* (README plus the
+2. **SDK ground truth online**: read the SDK's *source* (README plus the
    actual `client.py`/`session.py`/`tools.py` files), not just docs pages.
    Docs lie by omission and by staleness; note every discrepancy.
 
 Then the **hard gate — step 0 of implementation**: add the pyproject extra,
-`uv sync`, and inspect the installed package with `inspect.signature(...)` on
+update the lockfile intentionally with `uv lock`, run
+`uv sync --locked --all-packages --extra <matching-dev-extra>`, and inspect
+the installed package with `inspect.signature(...)` on
 every call you plan to make. Verify EVERY claim your research produced.
 Expect surprises; in past runs these included: resume accepting the full
 tool-registration kwargs; a provider config field documented as optional but
@@ -255,21 +270,21 @@ Integration"), in this order, running the named suites after each step:
    one-sided.
 2. **Conformance registration** (converter config, output adapter, then the
    adapter config once it exists) → `test_config_drift.py` green.
-3. **Session manager + adapter.** Manager owns: client lifecycle, room→
-   session registry, per-room turn locks (never dropped — lock identity must
-   stay stable for queued waiters), lock-holding cleanup, and an
-   abort-then-drop eviction for failed turns. Adapter owns: creation policy
-   (resume vs create), tool bridging, prompt composition, event emission.
-   Do not cache liveness the client can answer itself.
-4. **Adapter unit tests** with a hand-rolled fake client/session at the
-   `client_factory` seam (mirror `FakeCopilotClient` in
+3. **Adapter + state owner, if needed.** Reuse the runtime's existing turn
+   serialization. Where native sessions need a manager, give it lifecycle,
+   room mapping, and cleanup ownership; any additional locks must retain
+   identity while waiters exist. Verify the SDK's abort/resume contract
+   before choosing recovery or eviction. The adapter owns tool bridging,
+   prompt composition, and event emission. Do not cache liveness the client
+   can answer itself.
+4. **Adapter unit tests** with a realistic fake at the verified external
+   boundary (for a client/session runtime, see `FakeCopilotClient` in
    `tests/adapters/copilot_sdk/fakes.py`) and the real
    `FakeAgentTools`. Never mock the thing under test. Cover: reply+mention;
    system-message assembly; bridged tool execution + events; custom-tool
    precedence; validation-error mapping;
-   resume, resume-miss injection, eviction-then-resume; **two rooms → two
-   sessions, no leakage**; cleanup per room and adapter-wide; startup-failure
-   rollback.
+   **two rooms without leakage**; cleanup and failure rollback. For native
+   session runtimes, also cover resume, resume-miss history, and recovery.
 5. **Registration** in both `__init__.py`s, pyproject extra + dev list.
 6. **Example(s)** following `AGENTS.md` → "Example Files" (PEP 723 headers
    and the rest), `ValueError` for missing config,
@@ -298,20 +313,24 @@ Integration"), in this order, running the named suites after each step:
 - **Explicit resource ownership**: injected client = borrowed (never stopped
   by the adapter); factory/default = owned (stopped at `cleanup_all`).
   Mutually-exclusive inputs raise `BandConfigError`.
-- **Lifecycle discipline**: eager start + fail-fast auth probe in
-  `on_started` *with rollback* (a failed start must not leak a subprocess);
-  `cleanup_all` releases adapter-wide resources; failed/timed-out turns
-  abort + evict the session so the next message starts clean.
+- **Lifecycle discipline**: initialize owned resources in `on_started` with
+  rollback; `cleanup_all` releases them. Probe auth where the SDK supports
+  a suitable check. For failed/timed-out turns, follow the verified SDK
+  cancellation and recovery contract; never leave work running unnoticed.
 - `%s` logging with room/session ids traceable per lifecycle.
 - The `band-python-conventions` and `band-python-comment-style` skills apply
   throughout.
 
 ## Phase 5 — Review rounds
 
-1. Run **`/code-review` at high effort** on the branch; fix findings at the
+1. Review the diff locally using
+   [the project review angles](../band-code-review/angle-groups.md) and an
+   available `simplify` skill; fix findings at the
    **root cause** — a fix that adds a branch to a tangled function is a
    smell; extract and clarify instead. Findings tend to cluster; a cluster in
-   one area means redesign that area once, not N patches.
+   one area means redesign that area once, not N patches. This local review
+   does not post to GitHub. Run `band-code-review` only when explicitly
+   requested and an open PR exists.
 2. **Treat external reviews with scrutiny.** Validate every claim against
    the code — and empirically against the runtime — before agreeing. Reviews
    routinely contain both real catches and confidently-wrong claims (in past
@@ -326,7 +345,7 @@ Integration"), in this order, running the named suites after each step:
 
 1. **Direct runtime probes**: drive the real adapter with `FakeAgentTools`
    (no platform needed) — reply+mention, model-initiated bridged tool call
-   with fallback suppression, cross-instance resume/recall, and at least one
+   with fallback suppression, history recall (native resume where supported), and at least one
    failure path (kill the subprocess; feed a bad token; exhaust a quota) to
    see the error surface a user will see.
 2. **Live E2E** via the shared registry plus any dedicated tests, authored
@@ -372,13 +391,14 @@ Integration"), in this order, running the named suites after each step:
 
 - [ ] Plan doc written from the Half-1 template; five-question gate passed
 - [ ] Installed-package inspection done; every doc claim verified or corrected
-- [ ] Converter + session manager + adapter implemented, registered
-      everywhere (`__init__`s, pyproject extra + dev, conformance, drift green)
-- [ ] Unit tests green with fakes only at the client seam; isolation, resume,
-      eviction, rollback, and ownership semantics all covered
+- [ ] Converter + adapter implemented, registered
+      everywhere (`__init__`s, pyproject extra + dev, conformance, drift green);
+      add a session manager only where the verified state model needs one
+- [ ] Unit tests green with fakes only at the client seam; isolation, history,
+      rollback, ownership, and supported native-session recovery covered
 - [ ] Quality bar held: Adapter Constructor Shape config, shared constants, no closures smuggling
       state, ownership explicit, PEP 257, WHY-only comments
-- [ ] `/code-review` (high) run; findings fixed at root cause; external review
+- [ ] Local diff review complete; findings fixed at root cause; external review
       claims validated before acting
 - [ ] Docs/comments fact-check audit passed
 - [ ] Live probes green (happy path + failure path + multi-turn where

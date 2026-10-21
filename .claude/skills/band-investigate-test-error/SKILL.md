@@ -1,11 +1,15 @@
 ---
 name: band-investigate-test-error
-description: Use this skill when a test is failing or erroring and the root cause is not obvious — when the user asks to "investigate this test failure", "figure out why this test is flaky", "why is this test erroring", "find the root cause of this failure", or wants a rigorous multi-hypothesis diagnosis before touching code. Spawns parallel investigator subagents, each owning one hypothesis (adapter/product bug, test-case assumptions, test tooling/toolkit bug, LLM flakiness), makes each VALIDATE its hypothesis empirically rather than assume, then scrutinizes their reports and presents a ranked conclusion of what and where the issue is.
+description: Use this skill when a test is failing or erroring and the root cause is not obvious — when the user asks to "investigate this test failure", "figure out why this test is flaky", "why is this test erroring", "find the root cause of this failure", or wants a rigorous multi-hypothesis diagnosis before touching code. Runs competing investigation passes (adapter/product bug, test-case assumptions, test tooling/toolkit bug, LLM flakiness), delegated within host capacity or sequentially when unavailable. Each hypothesis must be validated empirically before presenting a ranked conclusion.
 ---
 
 # Investigate Test Error
 
-Diagnose a failing or flaky test by running **four parallel investigators**, each
+Read [the shared workflow runtime](../workflow-runtime.md) before execution.
+Use its host-native tools, inherited model, capacity limits, sequential
+fallback, and cleanup rules throughout this investigation.
+
+Diagnose a failing or flaky test through **four competing investigation passes**, each
 assigned one competing hypothesis for the root cause. Every investigator must
 **validate** its hypothesis with evidence — reproduce, instrument, prototype, bisect
 — not merely reason about it. You (the orchestrator) then scrutinize the reports,
@@ -49,30 +53,29 @@ Step 1), so it **must be self-contained**. Include:
 If you cannot reproduce it at all, that itself is the finding — say so and treat
 "non-reproducible / environment-specific" as the leading hypothesis.
 
-## Step 1 — Spawn four investigators in parallel
+## Step 1 — Assign the investigation passes
 
-Send all four in a **single message** (multiple `Agent` tool calls) so they run
-concurrently. Give each a prompt that (a) states its assigned hypothesis, (b) pastes in
-the full self-contained brief from Step 0, and (c) enforces the **validation mandate**
-below.
+Use the host's available delegation tool, retaining its inherited model. Give
+each investigator its hypothesis, the full brief, and the validation mandate
+below. Start only as many independent investigators as available capacity
+allows; queue the rest. If delegation is unavailable, perform all passes
+sequentially and explicitly report that they were not independent reviews.
 
-**Default to fresh agents, not forks.** Spawn each investigator as a fresh
-`general-purpose` agent (omit `subagent_type` or set it explicitly) and, if you want to
-save cost, pass a cheaper `model` (e.g. `"sonnet"`) — diagnosis work rarely needs the
-top model. A fresh agent starts near-empty and carries only the brief you hand it, so
-across four parallel agents you avoid re-paying this whole conversation's context four
-times over (a `fork` inherits it all and is pinned to the parent model). This is exactly
-why Step 0 produces a self-contained brief: it's the distilled context that makes fresh
-agents viable.
+Prefer fresh context when the host supports it; otherwise provide the same
+self-contained brief to inherited-context agents. Do not assume a particular
+agent type, model name, or fork parameter exists.
 
-Use `subagent_type: "fork"` **only** as an escape hatch — when the investigation needs
-nuance that lives in *this* session's transcript (e.g. you've already done extensive live
-debugging here) and the brief genuinely can't capture it. Otherwise a fresh agent is
-cheaper and more focused.
+Shared-checkout investigators are read-only and may run only experiments
+that do not mutate source, Git state, or a shared environment. Any experiment
+requiring instrumentation, dependency changes, or bisecting needs an isolated
+checkout/environment preserving the failing baseline, or an exclusive
+coordinator-run experiment after other readers stop. Preserve existing user
+changes; remove only the experiment's own edits. Every report records the
+revision and modifications its test actually exercised.
 
 Assign exactly these four lenses, scoped to this SDK's code under `src/band/`, its tests,
 and the test tooling they rely on. When no LLM is in the loop (most unit tests), drop
-lens 4 and spawn three.
+lens 4 and run three passes.
 
 1. **Adapter / product logic bug.** Is the fault in the code under test — a real logical
    defect that requires a source fix? Look at the adapter(s) the test exercises (in
@@ -105,26 +108,27 @@ lens 4 and spawn three.
 
 > Do not conclude from reading and reasoning alone. **Validate your hypothesis
 > empirically** and report the technique you used and its raw result. Acceptable
-> techniques include: reproducing the failure, adding temporary instrumentation/logging,
-> writing a minimal prototype or standalone repro, bisecting (git or by disabling parts),
+> techniques include: reproducing the failure, adding temporary instrumentation/logging
+> in an isolated experiment, writing a standalone repro, bisecting an isolated checkout,
 > running the test N times to measure flakiness, mocking out one layer to isolate it, or
 > diffing expected vs actual behavior. State explicitly: what you tried, what you
 > observed, whether the evidence **confirms or refutes** your assigned hypothesis, and
 > your confidence (with the concrete evidence backing it). "I think it's probably X"
 > without a validating experiment is not an acceptable finding — say "could not validate"
-> instead. Revert any temporary edits you make. Report your findings; do not fix.
+> instead. Follow the isolation rules above; clean up only your own experiment
+> resources and edits. Report your findings; do not fix.
 
 ## Step 2 — Scrutinize the reports (your job, not the subagents')
 
 When the investigators return, be a demanding reviewer, not a stenographer:
 
 - Reject any claim not backed by a validating experiment. If an investigator "assumed",
-  send a follow-up via `SendMessage` (to that agent, so it keeps its context) demanding
+  send a follow-up through the host's continuation tool (to the same agent) demanding
   the specific experiment that would confirm or refute it.
 - Cross-check contradictions. Two lenses may both fire (e.g. a real adapter bug *and* a
   brittle assertion). Note overlaps and interactions.
 - Issue follow-up tasks where evidence is thin, a repro is missing, or a promising lead
-  was left dangling. It's fine to spawn a targeted fifth investigation.
+  was left dangling. Schedule targeted follow-up passes within available capacity.
 - Watch for the common trap: a "flaky LLM" verdict that's actually a deterministic
   product bug or a too-strict judge. Demand the run-N-times evidence.
 

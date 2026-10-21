@@ -5,6 +5,9 @@ description: Use GitHub's native stacked pull requests (public preview, `gh stac
 
 # Stacked PRs
 
+Read [workflow-runtime.md](../workflow-runtime.md) for available tools and
+authorization. Use the current runtime's web access for the docs below.
+
 GitHub's stacked PRs are in public preview, so commands, limits, and API behavior
 can change. The docs below are the single source of truth. This skill decides
 when to stack and how to work safely; it deliberately does not restate command
@@ -22,8 +25,8 @@ Start from the landing page; it lists the current sub-pages if any moved.
 | Commands, flags, environment variables, exit codes | https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands |
 | Org rollout, CI behavior, API and merge-endpoint caveats | https://docs.github.com/en/pull-requests/tutorials/roll-out-stacked-prs |
 
-Fetch only the pages the task needs, on every invocation. `WebFetch` summarizes
-the page with a small model, so it can drop or blur flags. For exact syntax, run
+Fetch only the pages the task needs, on every invocation. Search summaries
+can omit flags; for exact syntax, run
 `gh stack <command> --help`, which reflects the installed extension. If docs,
 `--help`, and this skill disagree, trust `--help` for syntax and the docs for
 behavior, and tell the user this skill needs an update.
@@ -69,8 +72,8 @@ original task and say nothing about stacking.
 1. **Load docs** for the task, per the table above.
 2. **Preflight.** Compare `gh --version` with the minimum in the quickstart, check
    `gh extension list` for `gh-stack`, and confirm the remote is the user's
-   repository rather than a fork. If the extension is missing, ask before
-   installing it.
+   repository rather than a fork. If the extension is missing, obtain any
+   installation authorization not already provided.
 3. **Read state before changing it.** Run `git status`, note the current branch,
    run `gh stack view`, and list open PRs for the branches involved. If branches
    already have PRs, adopt them with the documented adopt path rather than
@@ -78,8 +81,9 @@ original task and say nothing about stacking.
 4. **Act with the documented commands.** Local-only steps (init, add, view,
    navigation) need no confirmation. Ask first before anything that publishes or
    is hard to undo: push, submit, sync (force-pushes rebased branches), merge,
-   unstack. Skip the question only when the user explicitly asked for that
-   action.
+   unstack. Reuse authorization already provided for the action; do not ask
+   again as part of an authorized fix-and-push workflow. Merge still requires
+   an instruction naming the PR to merge.
 5. **Report** the stack as bottom-to-top branches with PR links and status, and
    flag anything left for the user (drafts to mark ready, conflicts to resolve).
 

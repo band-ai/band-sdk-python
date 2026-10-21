@@ -13,9 +13,12 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 ## Skills
 
 Project guidelines live in skills under `.claude/skills/`; Codex reads the
-same skills through the `.agents/skills` symlink. Each loads automatically
-when its trigger matches; read the SKILL.md directly if your agent doesn't
-load skills.
+same skills through the `.agents/skills` symlink. Before editing, read the
+applicable guideline skills below; discovery alone does not load their rules.
+Workflow skills can be selected when their descriptions match the task;
+`band-code-review` requires explicit invocation. If the host has no skill
+loader, read the referenced `SKILL.md` directly. Workflow execution follows
+[the shared runtime guidance](.claude/skills/workflow-runtime.md).
 
 | Skill | Use when |
 |---|---|
