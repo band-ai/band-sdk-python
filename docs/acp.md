@@ -341,11 +341,24 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   The native adapter has no ACP `resolve_session_config` callback.
 - **Tools and replies.** Canonical Band tools and `additional_tools` are
   registered through native `set_host_tools`; results retain text/image content.
-  Room replies still require `band_send_message`, and deliberate declines use
-  `band_no_reply`. Native assistant text is optional thought telemetry, not a
+  Room replies require `band_send_message` or a native `ask` (below), and deliberate
+  declines use `band_no_reply`. Native assistant text is optional thought telemetry, not a
   room reply. `SimpleAdapter.run_judged_turn` remains the sole turn-judging owner:
   native-only output and failed tools followed by narration still reach the
   missing-reply verdict.
+- **Questions go to the room.** Each session enables OMP's structured ask dialog
+  with `set_ask_dialog`. An `ask` posts the model's questions, options and recommended
+  choice together, mentioning the requester; the post counts as the turn's reply.
+  The native tool receives an immediate acknowledgement, not a fabricated answer:
+  the participant's answer arrives as a later message in the same native session.
+  A room processes messages serially, so waiting inside the turn would prevent
+  that answer from being consumed. Cancelling a native ask would abort the whole
+  prompt. A failed post instead returns an error explanation to the model, and
+  the turn still owes a reply. A platform stop for this room ends the turn without
+  answering the ask; an unrelated room's stop remains a failed post.
+  Other UI requests retain `resolve_permission` behavior. Shutdown rejects new
+  UI and host-tool callbacks before they can post. This covers the active room's
+  native ask dialog, not separately forwarded subagent UI.
 - **Instructions and attribution.** A private always-apply native rule places Band's
   shared communication and completion guidance in OMP's genuine system prompt,
   preserving native instructions, user prompt additions and append-file discovery.
@@ -462,3 +475,37 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   changed or merged with permission records. If encoding a tool-call envelope
   fails, the record keeps its event name and ID, scalar `path`/`file_path`/`target`
   fields and an opaque arguments placeholder.
+
+### Native ask wire smoke
+
+From a source checkout with the `omp` extra installed, exercise an installed
+OMP executable's structured dialog and native answer validation:
+
+```bash
+PYTHONPATH=src:packages/band-mcp/src:. python -m tests.integrations.ompasksmoke --executable omp
+```
+
+The executable must support native RPC v2 and `set_ask_dialog` (18.8.9 or later)
+and allow the explicit test extension to load. This uses a temporary native
+session and an extension command, not a model prompt or a Band room; no Band
+credentials are used and no inference is spent. Native startup still loads
+the installation's provider/model configuration.
+
+## Server prompt outcomes
+
+`ACPServer.prompt` settles on the first terminal outcome for its room:
+
+- Completed text returns `end_turn`; `session/cancel` returns `cancelled`. A Band `error`
+  rejects the prompt with JSON-RPC `internal_error`, the Core failure projection in
+  `error.data`; room cleanup and agent shutdown also fail it. A second prompt while one is
+  pending in that room is rejected with `invalid_params`.
+- Room events bind to a prompt only once its Band post returns, so a previous turn's
+  late event stays unsolicited and cannot settle the prompt or drop the send. A terminal
+  outcome settles the prompt even while its Band REST send is still pending; the
+  request then returns once the cancelled send and completion timer have unwound. One
+  timeout bounds the send and the reply together.
+- Error updates carry the same projection on the agent-message chunk's `_meta`, unsolicited
+  errors in mapped rooms included. Their text and projected keys and values are
+  credential-redacted; values under credential-named fields are redacted in full.
+- The ACP Python client drains queued update handlers before surfacing a prompt error, so
+  a slow client handler can still delay its own `prompt()`.
