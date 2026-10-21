@@ -338,6 +338,50 @@ def _parlant_factory(**kw: Any) -> Any:
     return ParlantAdapter(**kw)
 
 
+async def _omp_advertised_arg_text() -> dict[str, dict[str, str | None]]:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra may be absent in other framework lanes
+        OmpAdapter,
+    )
+
+    adapter = OmpAdapter(capabilities=ALL_CAPABILITIES)
+    advertised: dict[str, dict[str, str | None]] = {}
+    for tool in adapter._host_tools():
+        parameters = tool["parameters"]
+        assert isinstance(parameters, dict)
+        properties = parameters.get("properties")
+        assert isinstance(properties, dict)
+        arguments: dict[str, str | None] = {}
+        for name, specification in properties.items():
+            assert isinstance(specification, dict)
+            description = specification.get("description")
+            assert description is None or isinstance(description, str)
+            arguments[name] = description
+        advertised[str(tool["name"])] = arguments
+    return advertised
+
+
+def _build_omp_config() -> AdapterConfig:
+    from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra may be absent in other framework lanes
+        OmpAdapter,
+        OmpAdapterConfig,
+    )
+
+    custom = OmpAdapterConfig(
+        model="openai/conformance",
+        reasoning_effort="high",
+        custom_section="Be concise.",
+        turn_timeout_s=90,
+    )
+    return AdapterConfig(
+        framework_id="omp",
+        display_name="OMP",
+        adapter_factory=OmpAdapter,
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
+        advertised_arg_text=_omp_advertised_arg_text,
+    )
+
+
 def _codex_factory(**kw: Any) -> Any:
     return CodexAdapter(**kw)
 
@@ -860,6 +904,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_strands_config,
     _build_parlant_config,
     _build_codex_config,
+    _build_omp_config,
     _build_letta_config,
     _build_opencode_config,
     _build_agno_config,

@@ -16,6 +16,7 @@ from tests.framework_conformance.stopprobes import codex as codex_probe
 from tests.framework_conformance.stopprobes import copilotsdk as copilotsdk_probe
 from tests.framework_conformance.stopprobes import cursoracp as cursoracp_probe
 from tests.framework_conformance.stopprobes import letta as letta_probe
+from tests.framework_conformance.stopprobes import omp as omp_probe
 from tests.framework_conformance.stopprobes import opencode as opencode_probe
 from tests.framework_conformance.stopprobes import parlant as parlant_probe
 
@@ -28,6 +29,7 @@ STOP_PROBES: dict[str, dict[str, StopCase]] = {
     "CopilotSDKAdapter": copilotsdk_probe.CASES,
     "CursorACPAdapter": cursoracp_probe.CASES,
     "LettaAdapter": letta_probe.CASES,
+    "OmpAdapter": omp_probe.CASES,
     "OpencodeAdapter": opencode_probe.CASES,
     "ParlantAdapter": parlant_probe.CASES,
 }
@@ -64,6 +66,7 @@ REQUIRED_MODULES: dict[str, str] = {
     "CopilotSDKAdapter": "copilot",
     "CursorACPAdapter": "acp",
     "LettaAdapter": "letta_client",
+    "OmpAdapter": "psutil",
     "ParlantAdapter": "parlant.sdk",
 }
 

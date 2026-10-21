@@ -870,6 +870,42 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/test_omp.py::TestOmp::test_omp_band_tool_call_is_narrated",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_omp.py::TestOmp::test_omp_native_permission_is_denied[cancel]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_omp.py::TestOmp::test_omp_native_permission_is_denied[deny]",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/test_omp.py::TestOmp::test_omp_raw_rpc_prompt_completes",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_omp_acp.py::test_omp_acp_band_tool_call_is_narrated",
       "adapter": "suite",
       "lanes": [
@@ -934,15 +970,6 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/adapters/test_slack_cleanup.py::TestSlackCleanup::test_outer_registration_closes_inner_tool_resource[OneShotInvoker-anthropic]",
-      "adapter": "suite",
-      "lanes": [
-        "core"
-      ],
-      "status": "pass",
-      "reason": null
-    },
-    {
-      "test": "tests/e2e/baseline/smoke/behavior/test_agent_scenarios.py::test_two_agents_greet_each_other",
       "adapter": "suite",
       "lanes": [
         "core"
@@ -1203,6 +1230,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_agent_scenarios.py::test_two_agents_greet_each_other",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_control_signals.py::test_interrupt_cancels_and_consumes",
       "adapter": "suite",
       "lanes": [
@@ -1417,6 +1453,15 @@
     {
       "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
       "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/behavior/test_room_rejoin.py::TestRoomRejoin::test_agent_replies_after_confirmed_leave",
+      "adapter": "omp",
       "lanes": [
         "backends"
       ],
@@ -1845,6 +1890,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "native OMP adapter does not emit per-turn usage"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_not_cumulative_across_turns",
       "adapter": "omp_acp",
       "lanes": [
         "backends",
@@ -2039,6 +2100,22 @@
       ],
       "status": "pass",
       "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "native OMP adapter does not emit per-turn usage"
     },
     {
       "test": "tests/e2e/baseline/smoke/inspection/test_usage.py::test_usage_recorded_for_a_turn",
@@ -2508,6 +2585,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_build_adapter_constructs_each",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_build_adapter_constructs_each",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -2664,6 +2750,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py::test_per_adapter_replies",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -2839,6 +2934,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_burst_recall.py::test_burst_handled_then_spanning_recall",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_burst_recall.py::test_burst_handled_then_spanning_recall",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -3083,6 +3187,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_file_round_trip_across_files_adapters",
       "adapter": "omp_acp",
       "lanes": [
         "backends",
@@ -3339,6 +3459,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_image_vision_passthrough_across_adapters",
       "adapter": "omp_acp",
       "lanes": [
         "backends",
@@ -3502,6 +3638,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_list_contacts_across_contacts_adapters",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_list_contacts_across_contacts_adapters",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -3637,6 +3782,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_memory_survives_adapter_rehydration",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -3766,6 +3920,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_recall_memory_across_memory_adapters",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -3934,6 +4097,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_store_memory_across_memory_adapters",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_store_memory_across_memory_adapters",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -4063,6 +4235,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_capability_matrix.py::test_task_lifecycle_across_task_adapters",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -4232,6 +4413,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_concurrent_instances.py::test_concurrent_same_adapter_instances_each_reply",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -4421,6 +4611,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_after_rejoin",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "recovers context by resuming its own native RPC session, not via platform /context \u2014 a pass would not validate this rehydration"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_after_rejoin",
       "adapter": "omp_acp",
       "lanes": [
         "backends",
@@ -4604,6 +4810,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_within_session",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_context_recall.py::test_recalls_within_session",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -5255,6 +5470,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_loop_suppression.py::test_peer_message_drives_turn_without_loop",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -5458,6 +5682,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_missing_reply_reported.py::test_a_turn_that_did_nothing_is_reported_and_failed_coding_backends",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -5585,6 +5818,15 @@
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
       "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_no_reply.py::test_an_fyi_ends_the_turn_through_band_no_reply_coding_backends",
+      "adapter": "omp",
       "lanes": [
         "backends"
       ],
@@ -5729,6 +5971,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_noisy_room.py::test_recall_and_ignore_crosstalk_in_busy_room",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -6265,6 +6516,22 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
+      "adapter": "omp",
+      "lanes": [
+        "backends",
+        "core",
+        "crewai",
+        "google",
+        "letta",
+        "nooa",
+        "parlant",
+        "strands"
+      ],
+      "status": "na",
+      "reason": "native OMP adapter does not emit per-turn usage"
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_idempotency.py::test_restart_usage_splits_replay_and_inference",
       "adapter": "omp_acp",
       "lanes": [
         "backends",
@@ -6426,6 +6693,15 @@
       "adapter": "nooa",
       "lanes": [
         "nooa"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_offline.py::test_recalls_offline_note_on_cold_boot",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
       ],
       "status": "pass",
       "reason": null
@@ -6615,6 +6891,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_rehydration_partial.py::test_partial_reboot_preserves_context_and_peer",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -6791,6 +7076,15 @@
     },
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_room_isolation.py::test_rooms_keep_isolated_context",
+      "adapter": "omp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_isolation.py::test_rooms_keep_isolated_context",
       "adapter": "omp_acp",
       "lanes": [
         "backends"
@@ -6855,6 +7149,15 @@
     {
       "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
       "adapter": "cursor_acp",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/matrix/test_room_workspaces.py::test_room_files_survive_restart_without_cross_leak",
+      "adapter": "omp",
       "lanes": [
         "backends"
       ],
