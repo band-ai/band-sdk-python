@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from unittest.mock import AsyncMock
 
 import pytest
 
 from band.adapters.parlant.responses import PARLANT_PREAMBLE_TAG, relay_agent_response
-from tests.adapters.parlant.helpers import SENDER_NAME, SESSION_ID, agent_event
+from tests.adapters.parlant.helpers import SENDER_ID, SESSION_ID, agent_event
 
 pytestmark = pytest.mark.usefixtures("parlant_sessions")
 
@@ -39,7 +40,12 @@ HANG_GUARD_SECONDS = 5
 def relay(mock_app, mock_tools):
     """Run the wait against ``mock_app`` within a hang guard."""
 
-    async def run(*, timeout: float = 0.05, poll: float = 0.01) -> None:
+    async def run(
+        *,
+        timeout: float = 0.05,
+        poll: float = 0.01,
+        audience: Sequence[str] = (SENDER_ID,),
+    ) -> None:
         await asyncio.wait_for(
             relay_agent_response(
                 app=mock_app,
@@ -47,7 +53,7 @@ def relay(mock_app, mock_tools):
                 room_id=mock_tools.room_id,
                 min_offset=0,
                 tools=mock_tools,
-                sender_name=SENDER_NAME,
+                audience=audience,
                 timeout=timeout,
                 poll=poll,
             ),
@@ -62,160 +68,176 @@ def answer_after(mock_app, *, waits: list[bool], events: list) -> None:
     mock_app.sessions.find_events = AsyncMock(return_value=events)
 
 
-async def test_retries_past_empty_windows_then_forwards_late_reply(
-    relay, mock_app, mock_tools
-):
-    """The reply only arrives on the 3rd wait, so forwarding it proves the loop
-    retried past both empty windows instead of giving up on the first."""
-    answer_after(
-        mock_app,
-        waits=[False, False, True],
-        events=[agent_event("Hello there!", offset=2)],
-    )
-
-    await relay(timeout=LONG_BUDGET_SECONDS)
-
-    mock_tools.assert_message_sent(
-        content="Hello there!", mentions=[SENDER_NAME], count=1
-    )
-
-
-async def test_relays_all_final_parts_in_one_batch_without_preamble(
-    relay, mock_app, mock_tools, caplog
-):
-    answer_after(
-        mock_app,
-        waits=[True],
-        events=MULTIPART_BATCH,
-    )
-
-    with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
-        await relay(timeout=LONG_BUDGET_SECONDS)
-
-    mock_tools.assert_message_sent(
-        content=f"{BOOKED}\n\n{PEANUTS}", mentions=[SENDER_NAME], count=1
-    )
-    assert not any("left Parlant text unsent" in message for message in caplog.messages)
-
-
-@pytest.mark.parametrize("declined", [False, True], ids=["tool-reply", "tool-decline"])
-async def test_tool_reply_or_decline_suppresses_entire_final_batch(
-    relay, mock_app, mock_tools, declined, caplog
-):
-    if declined:
-        await mock_tools.no_reply("No response needed.")
-    else:
-        await mock_tools.send_message(ALREADY_ANSWERED, mentions=[SENDER_NAME])
-    answer_after(
-        mock_app,
-        waits=[True],
-        events=MULTIPART_BATCH,
-    )
-
-    with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
-        await relay(timeout=LONG_BUDGET_SECONDS)
-
-    assert (
-        f"Room {mock_tools.room_id}: left Parlant text unsent because the turn "
-        f"already replied or declined: {BOOKED}\n\n{PEANUTS}"
-    ) in caplog.messages
-    if declined:
-        mock_tools.assert_no_messages_sent()
-    else:
-        mock_tools.assert_message_sent(
-            content=ALREADY_ANSWERED, mentions=[SENDER_NAME], count=1
+class TestRelayAgentResponse:
+    async def test_retries_past_empty_windows_then_forwards_late_reply(
+        self, relay, mock_app, mock_tools
+    ):
+        """The reply only arrives on the 3rd wait, so forwarding it proves the loop
+        retried past both empty windows instead of giving up on the first."""
+        answer_after(
+            mock_app,
+            waits=[False, False, True],
+            events=[agent_event("Hello there!", offset=2)],
         )
 
-
-async def test_empty_window_after_a_tool_reply_ends_the_wait(
-    relay, mock_app, mock_tools, caplog
-):
-    """Once a Band tool replied, an empty window means the engine is done:
-    the wait returns at once instead of polling out the whole budget."""
-    await mock_tools.send_message(ALREADY_ANSWERED, mentions=[SENDER_NAME])
-
-    with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
         await relay(timeout=LONG_BUDGET_SECONDS)
 
-    mock_app.sessions.wait_for_more_events.assert_awaited_once()
-    assert (
-        f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
-        "because the turn already replied or declined"
-    ) in caplog.messages
+        mock_tools.assert_message_sent(
+            content="Hello there!", mentions=[SENDER_ID], count=1
+        )
 
+    async def test_one_reply_addresses_every_sender_of_the_turn(
+        self, relay, mock_app, mock_tools
+    ):
+        answer_after(
+            mock_app, waits=[True], events=[agent_event("Hello all!", offset=2)]
+        )
 
-async def test_failed_event_read_stops_the_wait(relay, mock_app, mock_tools, caplog):
-    mock_app.sessions.wait_for_more_events = AsyncMock(
-        side_effect=RuntimeError("read failed")
+        await relay(audience=["alice", "helper"], timeout=LONG_BUDGET_SECONDS)
+
+        mock_tools.assert_message_sent(
+            content="Hello all!", mentions=["alice", "helper"], count=1
+        )
+
+    async def test_relays_all_final_parts_in_one_batch_without_preamble(
+        self, relay, mock_app, mock_tools, caplog
+    ):
+        answer_after(
+            mock_app,
+            waits=[True],
+            events=MULTIPART_BATCH,
+        )
+
+        with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+            await relay(timeout=LONG_BUDGET_SECONDS)
+
+        mock_tools.assert_message_sent(
+            content=f"{BOOKED}\n\n{PEANUTS}", mentions=[SENDER_ID], count=1
+        )
+        assert not any(
+            "left Parlant text unsent" in message for message in caplog.messages
+        )
+
+    @pytest.mark.parametrize(
+        "declined", [False, True], ids=["tool-reply", "tool-decline"]
     )
+    async def test_tool_reply_or_decline_suppresses_entire_final_batch(
+        self, relay, mock_app, mock_tools, declined, caplog
+    ):
+        if declined:
+            await mock_tools.no_reply("No response needed.")
+        else:
+            await mock_tools.send_message(ALREADY_ANSWERED, mentions=[SENDER_ID])
+        answer_after(
+            mock_app,
+            waits=[True],
+            events=MULTIPART_BATCH,
+        )
 
-    with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+        with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+            await relay(timeout=LONG_BUDGET_SECONDS)
+
+        assert (
+            f"Room {mock_tools.room_id}: left Parlant text unsent because the turn "
+            f"already replied or declined: {BOOKED}\n\n{PEANUTS}"
+        ) in caplog.messages
+        if declined:
+            mock_tools.assert_no_messages_sent()
+        else:
+            mock_tools.assert_message_sent(
+                content=ALREADY_ANSWERED, mentions=[SENDER_ID], count=1
+            )
+
+    async def test_empty_window_after_a_tool_reply_ends_the_wait(
+        self, relay, mock_app, mock_tools, caplog
+    ):
+        """Once a Band tool replied, an empty window means the engine is done:
+        the wait returns at once instead of polling out the whole budget."""
+        await mock_tools.send_message(ALREADY_ANSWERED, mentions=[SENDER_ID])
+
+        with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+            await relay(timeout=LONG_BUDGET_SECONDS)
+
+        mock_app.sessions.wait_for_more_events.assert_awaited_once()
+        assert (
+            f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
+            "because the turn already replied or declined"
+        ) in caplog.messages
+
+    async def test_failed_event_read_stops_the_wait(
+        self, relay, mock_app, mock_tools, caplog
+    ):
+        mock_app.sessions.wait_for_more_events = AsyncMock(
+            side_effect=RuntimeError("read failed")
+        )
+
+        with caplog.at_level(logging.INFO, logger=relay_agent_response.__module__):
+            await relay(timeout=LONG_BUDGET_SECONDS)
+
+        mock_app.sessions.wait_for_more_events.assert_awaited_once()
+        mock_tools.assert_no_messages_sent()
+        stopped = (
+            f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
+            "because reading events failed"
+        )
+        settled = (
+            f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
+            "because the turn already replied or declined"
+        )
+        assert stopped in caplog.messages
+        assert settled not in caplog.messages
+
+    async def test_gives_up_after_budget_when_no_reply_ever_arrives(
+        self, relay, mock_tools
+    ):
+        """A genuinely silent turn is bounded: the wait returns once the budget
+        elapses (the hang guard would raise otherwise) and nothing is forwarded."""
+        await relay()
+
+        mock_tools.assert_no_messages_sent()
+
+    async def test_preamble_only_times_out_without_forwarding_a_reply(
+        self, relay, mock_app, mock_tools
+    ):
+        """Parlant emits a preamble then stalls the final generation. A preamble is an
+        acknowledgment, not an answer, so it is never forwarded as the reply."""
+        mock_app.sessions.wait_for_more_events = AsyncMock(
+            side_effect=lambda **_: mock_app.sessions.find_events.await_count == 0
+        )
+        mock_app.sessions.find_events = AsyncMock(return_value=[PREAMBLE])
+
+        await relay()
+
+        mock_tools.assert_no_messages_sent()
+
+    async def test_empty_find_events_then_final_still_forwards(
+        self, relay, mock_app, mock_tools
+    ):
+        """A positive wait signal with an empty read is a transient visibility gap:
+        the final is only query-visible on the 2nd read, so forwarding it proves
+        the loop re-polled past the empty read instead of dropping the turn."""
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
+        mock_app.sessions.find_events = AsyncMock(
+            side_effect=[[], [agent_event("The answer.", offset=2)]]
+        )
+
         await relay(timeout=LONG_BUDGET_SECONDS)
 
-    mock_app.sessions.wait_for_more_events.assert_awaited_once()
-    mock_tools.assert_no_messages_sent()
-    stopped = (
-        f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
-        "because reading events failed"
-    )
-    settled = (
-        f"Room {mock_tools.room_id}: stopped waiting for a Parlant reply "
-        "because the turn already replied or declined"
-    )
-    assert stopped in caplog.messages
-    assert settled not in caplog.messages
+        mock_tools.assert_message_sent(
+            content="The answer.", mentions=[SENDER_ID], count=1
+        )
 
+    async def test_empty_final_ends_the_wait_with_a_warning_naming_the_room(
+        self, relay, mock_app, mock_tools, caplog
+    ):
+        """An empty final still ends the turn, and an operator can find the room."""
+        answer_after(mock_app, waits=[True], events=[agent_event("", offset=2)])
 
-async def test_gives_up_after_budget_when_no_reply_ever_arrives(relay, mock_tools):
-    """A genuinely silent turn is bounded: the wait returns once the budget
-    elapses (the hang guard would raise otherwise) and nothing is forwarded."""
-    await relay()
+        with caplog.at_level(logging.WARNING, logger=relay_agent_response.__module__):
+            await relay(timeout=LONG_BUDGET_SECONDS)
 
-    mock_tools.assert_no_messages_sent()
-
-
-async def test_preamble_only_times_out_without_forwarding_a_reply(
-    relay, mock_app, mock_tools
-):
-    """Parlant emits a preamble then stalls the final generation. A preamble is an
-    acknowledgment, not an answer, so it is never forwarded as the reply."""
-    mock_app.sessions.wait_for_more_events = AsyncMock(
-        side_effect=lambda **_: mock_app.sessions.find_events.await_count == 0
-    )
-    mock_app.sessions.find_events = AsyncMock(return_value=[PREAMBLE])
-
-    await relay()
-
-    mock_tools.assert_no_messages_sent()
-
-
-async def test_empty_find_events_then_final_still_forwards(relay, mock_app, mock_tools):
-    """A positive wait signal with an empty read is a transient visibility gap:
-    the final is only query-visible on the 2nd read, so forwarding it proves
-    the loop re-polled past the empty read instead of dropping the turn."""
-    mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
-    mock_app.sessions.find_events = AsyncMock(
-        side_effect=[[], [agent_event("The answer.", offset=2)]]
-    )
-
-    await relay(timeout=LONG_BUDGET_SECONDS)
-
-    mock_tools.assert_message_sent(
-        content="The answer.", mentions=[SENDER_NAME], count=1
-    )
-
-
-async def test_empty_final_ends_the_wait_with_a_warning_naming_the_room(
-    relay, mock_app, mock_tools, caplog
-):
-    """An empty final still ends the turn, and an operator can find the room."""
-    answer_after(mock_app, waits=[True], events=[agent_event("", offset=2)])
-
-    with caplog.at_level(logging.WARNING, logger=relay_agent_response.__module__):
-        await relay(timeout=LONG_BUDGET_SECONDS)
-
-    mock_tools.assert_no_messages_sent()
-    [record] = caplog.records
-    assert record.getMessage() == (
-        f"Room {mock_tools.room_id}: the agent's final message was empty"
-    )
+        mock_tools.assert_no_messages_sent()
+        [record] = caplog.records
+        assert record.getMessage() == (
+            f"Room {mock_tools.room_id}: the agent's final message was empty"
+        )

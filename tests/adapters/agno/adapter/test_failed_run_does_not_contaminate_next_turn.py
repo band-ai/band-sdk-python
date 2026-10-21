@@ -8,7 +8,10 @@ from agno.run.agent import RunOutput
 from band.adapters.agno import (
     AgnoAdapter,
 )
-from tests.adapters.agno.adapter.kit import _msg
+from band.runtime.formatters import format_current_inputs
+from tests.adapters.agno.adapter.kit import (
+    _msg,
+)
 from tests.adapters.agno.helpers import (
     run_input,
 )
@@ -54,7 +57,7 @@ class TestFailedRunDoesNotContaminateNextTurn:
         # No residue from the failed turn 1.
         assert not any("P1-participants" in c for c in contents)
         assert not any("C1-contacts" in c for c in contents)
-        assert first.format_for_llm() not in contents
+        assert format_current_inputs([first]) not in contents
         # Turn 2's own injected context and live message are present.
         assert any("P2-participants" in c for c in contents)
-        assert contents[-1] == second.format_for_llm()
+        assert contents[-1] == format_current_inputs([second])

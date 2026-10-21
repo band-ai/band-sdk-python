@@ -9,7 +9,7 @@ JSON tool schemas.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -43,6 +43,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt, with_system_updates
 from band.runtime.tools import BandTool, selected_tool_definitions
 
@@ -222,6 +223,7 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -347,7 +349,29 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run one room message through the agent's ``respond`` method."""
+        """Run one room message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: NooaTranscript,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Run a turn's room messages through one call of the agent's ``respond``."""
         with context_handoff() as handoff:
             agent = self._room_agent(
                 room_id,
@@ -356,7 +380,7 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
                 is_hub_room=tools.is_hub_room,
             )
             message = with_system_updates(
-                msg.format_for_llm(), participants_msg, contacts_msg
+                format_current_inputs(messages), participants_msg, contacts_msg
             )
             observer: TurnObserver | None = None
             try:

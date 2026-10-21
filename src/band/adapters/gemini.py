@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, ClassVar, cast
 
 import httpx
@@ -51,6 +52,7 @@ from band.runtime.custom_tools import (
     format_validation_error,
     get_custom_tool_name,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     decode_image_blocks,
@@ -168,6 +170,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -223,7 +226,29 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming message with explicit function-calling loop."""
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: GeminiMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Handle one turn over its original messages with one function-calling loop."""
         if is_session_bootstrap:
             if history:
                 self._message_history[room_id] = list(history)
@@ -249,7 +274,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         if contacts_msg:
             user_parts.append(types.Part.from_text(text=f"[System]: {contacts_msg}"))
             logger.info("Room %s: Contacts broadcast received", room_id)
-        user_parts.append(types.Part.from_text(text=msg.format_for_llm()))
+        user_parts.append(types.Part.from_text(text=format_current_inputs(messages)))
         self._message_history[room_id].append(
             types.Content(role="user", parts=user_parts)
         )

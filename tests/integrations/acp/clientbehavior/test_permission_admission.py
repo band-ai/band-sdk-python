@@ -123,7 +123,9 @@ class TestPermissionAdmission:
         assert len(agent.sessions) == 2
 
     @pytest.mark.asyncio
-    async def test_rejected_acp_activity_cannot_complete_incoming_turn(self) -> None:
+    async def test_rejected_acp_activity_cannot_complete_incoming_turn(
+        self,
+    ) -> None:
         agent = FakeACPAgent()
 
         @agent.on_prompt

@@ -33,7 +33,9 @@ from tests.mcpbackends import FakeBandMCPBackend, backends_created_by
 
 
 class TestLifecycle:
-    async def test_watch_task_drains_the_turn_that_started_it(self) -> None:
+    async def test_watch_task_drains_the_turn_that_started_it(
+        self,
+    ) -> None:
         """Regression: the turn's future and usage dict are snapshotted before
         the prompt await. When the turn completes while prompt_async's POST is
         still open and a racing message begins the next turn, the resumed
@@ -65,7 +67,7 @@ class TestLifecycle:
                 session_id="sess-1",
                 client=fake_client,
                 tools=tools_protocol(tools),
-                sender_id="user-2",
+                sender_ids=("user-2",),
             )
             adapter._finish_turn(room_state)
             await orig_prompt(*args, **kwargs)
@@ -112,7 +114,7 @@ class TestLifecycle:
             session_id="sess-1",
             client=FakeOpencodeClient(),
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         first_turn.usage_by_message["msg-1"] = TurnUsage(
             input_tokens=100, output_tokens=20
@@ -123,7 +125,7 @@ class TestLifecycle:
             session_id="sess-1",
             client=FakeOpencodeClient(),
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
         assert next_turn.usage_by_message == {}
 
@@ -155,7 +157,7 @@ class TestLifecycle:
             session_id="sess-a",
             client=client_a,
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         await turn_a.approvals.on_permission_asked(
             OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -167,7 +169,7 @@ class TestLifecycle:
             session_id="sess-b",
             client=client_b,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
 
         assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
@@ -190,7 +192,7 @@ class TestLifecycle:
             session_id="sess-a",
             client=client_a,
             tools=tools_protocol(tools),
-            sender_id="user-1",
+            sender_ids=("user-1",),
         )
         await turn_a.approvals.on_permission_asked(
             OpencodePermissionRequest(id="perm-1", permission="bash")
@@ -202,7 +204,7 @@ class TestLifecycle:
             session_id="sess-b",
             client=client_b,
             tools=tools_protocol(tools),
-            sender_id="user-2",
+            sender_ids=("user-2",),
         )
 
         assert await turn_a.approvals.abandon()
@@ -431,7 +433,9 @@ class TestLifecycle:
         assert fake_client.closed
         assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
 
-    async def test_concurrent_room_start_waits_for_mcp_registration(self) -> None:
+    async def test_concurrent_room_start_waits_for_mcp_registration(
+        self,
+    ) -> None:
         """Every room start waits for the shared client's MCP startup barrier."""
 
         class SlowRegistrationClient(FakeOpencodeClient):

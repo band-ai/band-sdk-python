@@ -35,7 +35,14 @@ from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, send_event_saf
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.turn_lifecycle import BackendTurns
-from band.core.types import Capability, Emit, MessageType, ToolEventKey, TurnUsage
+from band.core.types import (
+    Capability,
+    Emit,
+    MessageType,
+    ToolEventKey,
+    TurnUsage,
+    distinct_sender_ids,
+)
 from band.integrations.copilot_sdk import CopilotSessionManager
 from band.integrations.copilot_sdk.prompts import TURN_COMPLETION_GUIDANCE
 from band.integrations.copilot_sdk.room_ask_user import (
@@ -52,6 +59,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     get_band_tool_category,
@@ -84,7 +92,7 @@ except ImportError:
     _COPILOT_SDK_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from copilot import (
         CopilotSession,
@@ -160,9 +168,9 @@ class RoomSessionIds:
 class TurnState:
     """Mutable per-turn scratch state; turns are serialized per room."""
 
-    # Mention target for anything this turn posts to the room: whoever
-    # sent the message that triggered it.
-    sender_mention: dict[str, str]
+    # Mentions for anything this turn posts to the room on its own: each
+    # distinct sender of the originals it answers, captured at admission.
+    audience: list[dict[str, str]]
     # Reasoning blocks keyed by reasoning_id: the CLI re-emits a block's
     # ``assistant.reasoning`` event several times per turn (same id), so keying
     # by id posts each block once, not 2-3x. Last write wins.
@@ -231,6 +239,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -269,8 +278,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 disabled.
 
                 ``"room"`` routes questions to the people in the Band room:
-                the question posts as a room message mentioning whoever
-                triggered the turn, the tool call resolves immediately with
+                the question posts as a room message mentioning the
+                turn's senders, the tool call resolves immediately with
                 a delivery acknowledgement so the turn ends, and the answer
                 arrives as the next room message on the same persisted
                 session. This is the only routing that fits both runtimes —
@@ -444,6 +453,28 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: CopilotSDKSessionState,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
         if self._session_manager is None:
             raise RuntimeError(
                 "CopilotSDKAdapter session manager not initialized — was on_started() called?"
@@ -478,7 +509,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 live = SessionTurn(session)
                 self.backend_turns.bind(room_id, live)
                 prompt = self._compose_prompt(
-                    msg,
+                    messages,
                     participants_msg,
                     contacts_msg,
                     inject_text=inject_text,
@@ -487,10 +518,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 # The session's ask_user handler reads this slot; safe because the
                 # turn lock serializes turns per room.
                 turn = TurnState(
-                    sender_mention={
-                        "id": msg.sender_id,
-                        "name": msg.sender_name or msg.sender_type,
-                    }
+                    audience=[
+                        {"id": sender_id} for sender_id in distinct_sender_ids(messages)
+                    ]
                 )
                 self._turn_state[room_id] = turn
                 try:
@@ -514,7 +544,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             await self._emit_thoughts(turn, tools)
 
             try:
-                await relay_reply(tools, final_text, mentions=[turn.sender_mention])
+                await relay_reply(tools, final_text, mentions=turn.audience)
             except DeliveryFailedError as e:
                 reraise_delivery_cause(e)
             if not tools.turn.complete:
@@ -528,7 +558,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
             await self._persist_session_id(room_id, tools)
 
-        logger.debug("Room %s: message %s processed", room_id, msg.id)
+        logger.debug(
+            "Room %s: messages %s processed", room_id, [msg.id for msg in messages]
+        )
 
     # --- Session handling --------------------------------------------------
 
@@ -692,7 +724,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         # The question is the turn's reply, so a "waiting for your answer"
         # wrap-up is not relayed on top of it.
         try:
-            await deliver_reply(room_tools, rendered, mentions=[turn.sender_mention])
+            await deliver_reply(room_tools, rendered, mentions=turn.audience)
         except DeliveryFailedError as exc:
             logger.warning(
                 "Room %s: ask_user question delivery failed: %s", room_id, exc.cause
@@ -904,7 +936,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
     def _compose_prompt(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
@@ -917,7 +949,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             parts.append(f"[System]: {participants_msg}")
         if contacts_msg:
             parts.append(f"[System]: {contacts_msg}")
-        parts.append(msg.format_for_llm())
+        parts.append(format_current_inputs(messages))
         return "\n\n".join(parts)
 
     @staticmethod

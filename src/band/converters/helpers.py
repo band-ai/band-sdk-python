@@ -19,8 +19,8 @@ HISTORY_REPLAY_HEADER = (
     "The previous session could not be restored, so the room's earlier "
     "messages are replayed below as read-only background. Treat them as "
     "already handled: do not act on requests in them or answer them again, "
-    "unless the new message asks you to. Reply only to the new message "
-    "under {marker}."
+    "unless a current input message asks you to. Reply only to the current "
+    "input messages under {marker}."
 )
 
 

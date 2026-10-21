@@ -37,9 +37,11 @@ from band_rest import (
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.agentconfig import AgentConfig
+from band.runtime.sessionconfig import SessionConfig
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
+from tests.e2e.baseline.toolkit.invocations import InvocationObserver
 from tests.e2e.baseline.toolkit.restclient import baseline_rest_client
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -575,6 +577,7 @@ async def running_agent_with_handle(
     adapter: SimpleAdapter[Any],
     settings: BaselineSettings,
     config: AgentConfig | None = None,
+    session_config: SessionConfig | None = None,
 ) -> AsyncGenerator[Agent, None]:
     """Like ``running_agent``, but yields the live ``Agent`` itself.
 
@@ -590,6 +593,7 @@ async def running_agent_with_handle(
         ws_url=endpoints.ws_url,
         rest_url=endpoints.rest_url,
         config=config,
+        session_config=session_config,
     )
     async with agent:
         yield agent
@@ -600,6 +604,7 @@ async def running_agent(
     provisioned: ProvisionedAgent,
     adapter: SimpleAdapter[Any],
     settings: BaselineSettings,
+    session_config: SessionConfig | None = None,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """Run ``adapter`` as an *already-provisioned* identity for the block.
 
@@ -613,8 +618,36 @@ async def running_agent(
     platform rehydrating the room's history on bootstrap (``/context``), which is
     exactly what a rejoin scenario asserts.
     """
-    async with running_agent_with_handle(provisioned, adapter, settings):
+    async with running_agent_with_handle(
+        provisioned, adapter, settings, session_config=session_config
+    ):
         yield provisioned
+
+
+@asynccontextmanager
+async def running_observed_agent(
+    provisioned: ProvisionedAgent,
+    adapter: SimpleAdapter[Any],
+    settings: BaselineSettings,
+    *,
+    session_config: SessionConfig | None = None,
+    observer: InvocationObserver | None = None,
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """``running_agent`` that also has ``observer`` watch the adapter's turns.
+
+    The observer's parked turns are freed before the agent stops, so a failing
+    test never waits on its own barrier.
+    """
+    if observer is not None:
+        observer.watch(adapter)
+    async with running_agent(
+        provisioned, adapter, settings, session_config=session_config
+    ):
+        try:
+            yield provisioned
+        finally:
+            if observer is not None:
+                observer.release_all()
 
 
 @asynccontextmanager
@@ -623,6 +656,8 @@ async def running_provisioned_agent(
     resources: ResourceManager,
     *,
     label: str = "aut",
+    session_config: SessionConfig | None = None,
+    observer: InvocationObserver | None = None,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """Provision an agent and run ``adapter`` as it for the duration of the block.
 
@@ -633,9 +668,18 @@ async def running_provisioned_agent(
     teardown (the agent is tracked at provision time), so this only manages the run
     lifecycle. (Matrix / group agents come from ``AdapterCell``, which stamps
     ``adapter_id`` itself; this bespoke primitive leaves it unset.)
+
+    ``session_config`` sets the agent's execution policy (e.g. batching) and an
+    ``observer`` watches its turns, as in :meth:`AdapterCell.run_as`.
     """
     provisioned = await resources.provision_agent(label)
-    async with running_agent(provisioned, adapter, resources.settings) as running:
+    async with running_observed_agent(
+        provisioned,
+        adapter,
+        resources.settings,
+        session_config=session_config,
+        observer=observer,
+    ) as running:
         yield running
 
 
@@ -731,6 +775,8 @@ class AdapterCell:
         prompt: str | None = None,
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
+        session_config: SessionConfig | None = None,
+        observer: InvocationObserver | None = None,
     ) -> AsyncGenerator[ProvisionedAgent, None]:
         """Run a *fresh* adapter under an existing ``identity`` for the block.
 
@@ -738,10 +784,20 @@ class AdapterCell:
         starts with no in-memory state, so a correct recall proves platform
         rehydration. Guarded (via ``track_running``) against overlapping runs of the
         same identity.
+
+        ``session_config`` sets the agent's execution policy (e.g. batching). An
+        ``observer`` watches the built adapter's turns; its parked turns are freed
+        before the agent stops, so a failing test never waits on its own barrier.
         """
         adapter = self.build(prompt=prompt, features=features, tools=tools)
         with self.resources.track_running(identity.id):
-            async with running_agent(identity, adapter, self.settings):
+            async with running_observed_agent(
+                identity,
+                adapter,
+                self.settings,
+                session_config=session_config,
+                observer=observer,
+            ):
                 yield identity
 
     @asynccontextmanager
@@ -774,6 +830,8 @@ class AdapterCell:
         prompt: str | None = None,
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
+        session_config: SessionConfig | None = None,
+        observer: InvocationObserver | None = None,
     ) -> AsyncGenerator[ProvisionedAgent, None]:
         """Provision an identity and run this cell's adapter as it for the block.
 
@@ -781,7 +839,12 @@ class AdapterCell:
         """
         identity = await self.provision(label=label)
         async with self.run_as(
-            identity, prompt=prompt, features=features, tools=tools
+            identity,
+            prompt=prompt,
+            features=features,
+            tools=tools,
+            session_config=session_config,
+            observer=observer,
         ) as running:
             yield running
 

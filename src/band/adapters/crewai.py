@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -31,6 +32,7 @@ from band.integrations.crewai import (
 )
 from band.integrations.crewai.turn import ToolTurn, settle_tool_turns, tool_turn
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import BandTool
 
@@ -41,6 +43,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "crewai"
+
+# Sets the turn's inputs apart from the earlier conversation CrewAI re-reads
+# in the same prompt, so it acts only on these.
+CURRENT_INPUT_LABEL = "[Current input -- act on this now:]"
 
 
 # Context variable for thread-safe room context access.
@@ -156,6 +162,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -291,8 +298,32 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming message using CrewAI agent."""
-        logger.debug("Handling message %s in room %s", msg.id, room_id)
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
+        history: CrewAIMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Handle a turn's original messages with one CrewAI kickoff."""
+        logger.debug(
+            "Handling messages %s in room %s", [m.id for m in messages], room_id
+        )
 
         if not self._crewai_agent:
             message = "CrewAI agent not initialized - ensure on_started() was called"
@@ -305,8 +336,8 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             reply_token = _reply_tracker_var.set(reply_tracker)
             turn_token = _tool_turn_var.set(turn)
             try:
-                await self._process_message(
-                    msg=msg,
+                await self._process_messages(
+                    messages=messages,
                     tools=tools,
                     history=history,
                     participants_msg=participants_msg,
@@ -321,9 +352,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 _reply_tracker_var.reset(reply_token)
                 _current_room_context.reset(room_token)
 
-    async def _process_message(
+    async def _process_messages(
         self,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
         tools: AgentToolsProtocol,
         history: CrewAIMessages,
         participants_msg: str | None,
@@ -335,7 +366,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         tool_turn: ToolTurn,
     ) -> None:
         """Internal message processing logic."""
-        assert self._crewai_agent is not None, "on_message already checked this"
+        assert self._crewai_agent is not None, "on_turn already checked this"
         if is_session_bootstrap:
             if history:
                 self._message_history[room_id] = [
@@ -371,14 +402,11 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             sections.append(f"[System]: {contacts_msg}")
             logger.info("Room %s: Contacts broadcast received", room_id)
 
-        user_message = msg.format_for_llm()
-        sections.append(f"[New message -- act on this now:]\n{user_message}")
+        sections.append(f"{CURRENT_INPUT_LABEL}\n{format_current_inputs(messages)}")
 
-        self._message_history[room_id].append(
-            {
-                "role": "user",
-                "content": user_message,
-            }
+        self._message_history[room_id].extend(
+            {"role": "user", "content": message.format_for_llm()}
+            for message in messages
         )
 
         total_messages = len(self._message_history[room_id])
@@ -426,7 +454,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         logger.info(
             "Room %s: CrewAI turn over for %s (output=%s chars, history=%s)",
             room_id,
-            msg.id,
+            [m.id for m in messages],
             len(final_text),
             len(self._message_history[room_id]),
         )

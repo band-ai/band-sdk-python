@@ -6,7 +6,7 @@ import inspect
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
@@ -29,6 +29,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.integrations.langgraph import langchain_tools
+from band.runtime.formatters import format_current_inputs
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BandTool,
@@ -143,6 +144,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -308,6 +310,28 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         self,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
+        history: LangChainMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Handle one message as a turn of one."""
+        await self.on_turn(
+            (msg,),
+            tools,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+
+    async def on_turn(
+        self,
+        messages: Sequence[PlatformMessage],
+        tools: AgentToolsProtocol,
         history: LangChainMessages,  # Fully typed!
         participants_msg: str | None,
         contacts_msg: str | None,
@@ -315,8 +339,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle message with LangGraph."""
-        logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
+        """Run the graph once over one or more original messages."""
+        message_ids = [msg.id for msg in messages]
+        logger.info("[HANDLE] Messages %s in room %s", message_ids, room_id)
 
         # Usage is reported per model call on the stream; a turn may make several
         # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
@@ -346,8 +371,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             if checkpointer is not None:
                 self._room_checkpointers[room_id] = checkpointer
 
-            # Build messages
-            messages: list[Any] = []
+            # Build the graph's input messages
+            graph_messages: list[Any] = []
 
             # Session bootstrap: prepend the rendered system prompt and hydrate
             # platform history exactly once per room. After that, the LangGraph
@@ -361,9 +386,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 )
                 if not checkpointer_already_has_messages:
                     if self._inject_system_prompt and self._system_prompt:
-                        messages.append(("system", self._system_prompt))
+                        graph_messages.append(("system", self._system_prompt))
                     if history:
-                        messages.extend(
+                        graph_messages.extend(
                             history
                         )  # Already converted by history_converter
                 should_mark_bootstrapped = True
@@ -373,14 +398,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             # message at the start; additional system messages scattered through
             # the conversation cause errors and kill provider cache savings.
             if participants_msg:
-                messages.append(("user", f"[System]: {participants_msg}"))
+                graph_messages.append(("user", f"[System]: {participants_msg}"))
 
             if contacts_msg:
-                messages.append(("user", f"[System]: {contacts_msg}"))
+                graph_messages.append(("user", f"[System]: {contacts_msg}"))
 
-            messages.append(("user", msg.format_for_llm()))
+            graph_messages.append(("user", format_current_inputs(messages)))
 
-            graph_input = {"messages": messages}
+            graph_input = {"messages": graph_messages}
 
             async for event in graph.astream_events(
                 graph_input,
@@ -406,10 +431,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                         oldest_room_id,
                     )
 
-            logger.info("[DONE] Message %s processed successfully", msg.id)
+            logger.info("[DONE] Messages %s processed successfully", message_ids)
 
         except Exception:
-            logger.exception("Error processing message %s", msg.id)
+            logger.exception("Error processing messages %s", message_ids)
             # Keep the user-facing payload generic; the full traceback is in
             # the agent log via logger.exception above. Tool/error internals
             # can include DB strings, paths, and tokens that should not
