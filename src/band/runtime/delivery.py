@@ -87,6 +87,9 @@ class TurnOutcome(Enum):
     RETRY_LATER = "retry_later"
     NOT_ACCEPTED = "not_accepted"
     DECLINED = "declined"
+    # The platform no longer has the original (deleted, or out of reach): no
+    # turn will run it, and nothing about it was processed.
+    ABSENT = "absent"
 
 
 class DeliveryFacts(TypedDict):
@@ -235,24 +238,32 @@ class DeliveryLifecycle:
             for held in acquired:
                 self.claims.release(self.room_id, held)
 
-    async def processing(self, identity: str) -> bool:
+    async def processing(self, identity: str) -> SettlementResult:
         with observe_delivery_phase("claim", self.room_id, identity):
-            accepted = await self.link.mark_processing(self.room_id, identity)
+            result = await self.link.mark_processing_result(self.room_id, identity)
         logger.debug(
-            "Claim room=%s message=%s accepted=%s", self.room_id, identity, accepted
+            "Claim room=%s message=%s result=%s", self.room_id, identity, result
         )
-        return accepted
+        return result
 
     async def confirm_processing(self, scope: TurnScope, revision: int) -> bool:
+        """Open every original's attempt; one the platform no longer has leaves the scope."""
         if not self.host.owns_delivery(scope, revision):
             return False
+        present: list[MessageEvent] = []
         for event in scope.originals:
             try:
-                accepted = await self.processing(message_id(event))
+                result = await self.processing(message_id(event))
             except RoomExecutionStoppedError:
-                accepted = False
-            if not accepted or not self.host.owns_delivery(scope, revision):
                 return False
+            if result is SettlementResult.NOT_FOUND:
+                continue
+            if result is not SettlementResult.ACCEPTED or not self.host.owns_delivery(
+                scope, revision
+            ):
+                return False
+            present.append(event)
+        scope.originals = tuple(present)
         return True
 
     async def run(
@@ -362,6 +373,8 @@ class DeliveryLifecycle:
         """Admit once every original is confirmed processing, or end the attempt."""
         if not await self.confirm_processing(scope, revision):
             return self._unadmitted_outcome()
+        if not scope.originals:
+            return TurnOutcome.ABSENT
         if control and not self.host.recognizes_delivery_control(scope.originals[0]):
             return TurnOutcome.DECLINED
         scope.admit()
