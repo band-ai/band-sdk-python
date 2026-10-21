@@ -136,6 +136,7 @@ class Peer:
         self.held: Frame | None = None
         self.async_hint: bool | None = None
         self.state_request_count = 0
+        self.snapshot_responses = 0
 
     def respond(self, frame: Frame, data: dict[str, JsonValue] | None = None) -> None:
         result: dict[str, JsonValue] = {
@@ -156,7 +157,14 @@ class Peer:
         ):
             self.held = frame
             return
-        self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
+        self.respond(
+            frame,
+            {
+                "pid": os.getpid(),
+                "frames": self.frames,
+                "snapshots": self.snapshot_responses,
+            },
+        )
 
     def end(
         self,
@@ -414,6 +422,37 @@ class Peer:
                 self.result(settled=True)
                 self.settle()
                 return
+            case "settled-with-pending":
+                # The answer completes and the session reports settled while a
+                # background job keeps the pending flag set: settlement is
+                # contradicted by positive busy evidence in the very snapshot
+                # that would end the turn, and no frame claims completion until
+                # the job finishes.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("answer")
+                self.result(settled=True)
+                self.settled = True
+                self.async_hint = True
+                return
+            case "drain-stubborn-adapter":
+                # As drain-stubborn, but the blocked callback is a custom tool
+                # the adapter executes, exercising the retirement seam itself.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-hold",
+                        "toolCallId": "call-hold",
+                        "toolName": "hold",
+                        "arguments": {},
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+                return
             case "drain-blocked-event":
                 # Result and settlement complete while one event callback stays
                 # undelivered, so the event drain never finishes.
@@ -624,6 +663,7 @@ class Peer:
                     and self.state_request_count > 2
                 ):
                     return  # the post-completion refresh response is lost
+                self.snapshot_responses += 1
                 self.respond(
                     frame,
                     {
@@ -742,6 +782,12 @@ class Peer:
                     send({"type": "agent_start"})
                     self.end("background complete", pending=False)
                     self.settled = True
+                elif self.scenario == "settled-with-pending":
+                    # The background job finishes: native state goes positively
+                    # idle. The later all-idle snapshot is the completion proof.
+                    self.async_hint = None
+                    send({"type": "agent_start"})
+                    self.end("background complete", pending=False)
                 else:
                     send({"type": "agent_start"})
                     stop = {
