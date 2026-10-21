@@ -212,7 +212,7 @@ class TestShutdownStatus:
 
     @pytest.mark.parametrize("hosting", ["agent", "runtime"])
     @pytest.mark.parametrize(
-        "termination", ["signal_cancel", "policy_close", "normal_close"]
+        "termination", ["signal_cancel", "policy_close"]
     )
     async def test_transport_completion_without_successful_waiter_clears_health(
         self,

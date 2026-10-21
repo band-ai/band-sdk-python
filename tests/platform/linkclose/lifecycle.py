@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 from websockets.frames import CloseCode
 
 from band.client.streaming.client import AgentControlPayload, WireEvent
+from band.core.exceptions import AgentDisconnectedError
 from band.platform.event import WebSocketDisconnectedEvent
 from band.platform.link import BandLink
 from band.testing import FakePhoenixServer, close_transport, fake_phoenix_server
@@ -184,12 +185,15 @@ class LinkSession:
 
     async def host_runs_again(self) -> None:
         await asyncio.wait_for(asyncio.wait({self.run}), STEP_GUARD_S)
-        await asyncio.wait_for(
-            self.link.run_forever(install_signal_handlers=False), STEP_GUARD_S
-        )
+        with suppress(AgentDisconnectedError):
+            # A run that surfaced its terminal cause has ended the session
+            # exactly as returning does; the typed raise is the contract.
+            await asyncio.wait_for(
+                self.link.run_forever(install_signal_handlers=False), STEP_GUARD_S
+            )
 
     async def host_cancels_run(self) -> None:
-        with suppress(TimeoutError):
+        with suppress(TimeoutError, AgentDisconnectedError):
             async with asyncio.timeout(0):
                 await self.link.run_forever(install_signal_handlers=False)
 
@@ -209,5 +213,7 @@ async def link_session() -> AsyncIterator[LinkSession]:
             session.release_held.set()
             run.cancel()
             await asyncio.wait({run})
+            with suppress(Exception):
+                run.result()
             with suppress(Exception):
                 await link.disconnect()

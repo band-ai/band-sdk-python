@@ -6,14 +6,14 @@ from __future__ import annotations
 import asyncio
 
 from band.client.streaming import AgentControlPayload
-from tests.bridge.test_bridge import _build_runner
+from tests.bridge.kit import build_runner
 
 
 class TestCloseAfterControl:
     async def test_a_play_applied_during_disconnect_never_outlives_close(
         self,
     ) -> None:
-        runner, _, link = _build_runner()
+        runner, _, link = build_runner()
         story: list[str] = []
         nudge_started = asyncio.Event()
 
