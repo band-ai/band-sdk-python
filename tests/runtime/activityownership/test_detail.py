@@ -15,15 +15,18 @@ from band.runtime.activity import (
 )
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
-from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import (
+from tests.activitysupport import (
     IDLE_BODY,
     MEMORY_BODY,
     PERMISSION_BODY,
     REASONING_BODY,
+    tool_body,
+)
+from tests.conftest import make_message_event
+from tests.runtime.activityownership.kit import (
     ActivityPlatform,
     ObservedIdle,
-    tool_body,
+    past_a_keep_alive,
 )
 from tests.runtime.helpers import ROOM_ID
 
@@ -60,7 +63,7 @@ class TestOwnedDetail:
         ]
 
     @pytest.mark.looptime
-    async def test_settled_owner_remains_authoritative_and_transient_tools_are_quiet(
+    async def test_a_settled_owner_keeps_reporting_its_worker_detail(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
@@ -71,30 +74,66 @@ class TestOwnedDetail:
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
-            if captured:
-                await report_tool_activity(tools, "unrelated")
-                return
             captured.append(tools)
+            await activity_platform.shown(report_tool_activity(tools, "Bash"))
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
-            await set_permission_wait(tools, True)
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="original"))
-        await ctx._process_event(make_message_event(msg_id="busy"))
-        await asyncio.sleep(6.1)
-        assert activity_platform.activity_bodies[-2:] == [PERMISSION_BODY] * 2
-        await report_tool_activity(captured[0], "Bash")
-        await activity_platform.shown(set_permission_wait(captured[0], False))
-        assert activity_platform.activity_bodies[-1] == tool_body("Bash")
+        await ctx._process_event(make_message_event())
+        owner = captured[0]
+        await activity_platform.shown(set_permission_wait(owner, True))
+        await activity_platform.bodies_reach(len(activity_platform.activity_bodies) + 1)
+        # Hidden behind the wait: the room keeps seeing permission.
+        await report_tool_activity(owner, "Edit")
+        await activity_platform.shown(set_permission_wait(owner, False))
         release.set()
         await workers[0].task
-        await asyncio.sleep(0)
+        await activity_platform.bodies_reach(len(activity_platform.activity_bodies) + 1)
         await ctx._join_activity_completion()
-        assert activity_platform.activity_bodies[-1] == IDLE_BODY
-        before = list(activity_platform.activity_bodies)
-        await end_tool_activity(captured[0])
-        assert activity_platform.activity_bodies == before
+        await end_tool_activity(owner)
+        await past_a_keep_alive()
+        assert activity_platform.activity_bodies == [
+            REASONING_BODY,
+            tool_body("Bash"),
+            PERMISSION_BODY,
+            PERMISSION_BODY,
+            tool_body("Edit"),
+            IDLE_BODY,
+        ]
 
+    @pytest.mark.looptime
+    async def test_a_busy_delivery_never_changes_the_owner_detail(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        release = asyncio.Event()
+        workers: list[TurnTask] = []
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            tools = AgentTools.from_context(ctx)
+            if workers:
+                await report_tool_activity(tools, "unrelated")
+                await set_permission_wait(tools, True)
+                return
+            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
+
+        ctx = execution(handler)
+        await ctx._process_event(make_message_event(msg_id="owner"))
+        await ctx._process_event(make_message_event(msg_id="busy"))
+        await activity_platform.bodies_reach(len(activity_platform.activity_bodies) + 1)
+        release.set()
+        await workers[0].task
+        await activity_platform.bodies_reach(len(activity_platform.activity_bodies) + 1)
+        assert activity_platform.activity_bodies == [
+            REASONING_BODY,
+            tool_body("Bash"),
+            tool_body("Bash"),
+            IDLE_BODY,
+        ]
+
+    @pytest.mark.looptime
     async def test_settled_turn_cannot_restart_reporting(
         self,
         execution: Callable[..., ExecutionContext],
@@ -110,6 +149,7 @@ class TestOwnedDetail:
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
         await report_tool_activity(captured[0], "Bash")
+        await past_a_keep_alive()
         assert before[-1] == IDLE_BODY
         assert activity_platform.activity_bodies == before
 
@@ -179,6 +219,7 @@ class TestOwnedDetail:
             IDLE_BODY,
         ]
 
+    @pytest.mark.looptime
     async def test_observation_from_a_waiting_delivery_never_starts_reporting(
         self,
         execution: Callable[..., ExecutionContext],
@@ -212,6 +253,7 @@ class TestOwnedDetail:
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
         await report_tool_activity(waiting_tools[0], "Bash")
+        await past_a_keep_alive()
         assert before[-1] == IDLE_BODY
         assert activity_platform.activity_bodies == before
         waiting_release.set()
@@ -245,24 +287,30 @@ class TestOwnedDetail:
             IDLE_BODY,
         ]
 
+    @pytest.mark.looptime
     async def test_a_tool_never_waits_for_the_platform(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
     ) -> None:
         observed_before_delivery: list[bool] = []
+        seconds_until_sent: list[float] = []
 
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
+            loop = asyncio.get_running_loop()
             activity_platform.hold_next_activity = True
+            observed_at = loop.time()
             observing = asyncio.create_task(report_tool_activity(tools, "Bash"))
             await activity_platform.activity_entered.wait()
+            seconds_until_sent.append(loop.time() - observed_at)
             observed_before_delivery.append(observing.done())
             activity_platform.activity_release.set()
 
         ctx = execution(handler)
         await ctx._process_event(make_message_event())
         assert observed_before_delivery == [True]
+        assert seconds_until_sent == [0]
         assert activity_platform.activity_bodies[1] == tool_body("Bash")
 
     @pytest.mark.parametrize("excluded", ["disabled", "hub"])

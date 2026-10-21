@@ -9,18 +9,30 @@ from typing import Any, Literal
 import httpx
 
 from band.platform.activity import API_VERSION_HEADER
+from band.runtime.activity import (
+    end_tool_activity,
+    report_memory_activity,
+    report_tool_activity,
+    set_permission_wait,
+)
+from band.runtime.sessionconfig import SessionConfig
 from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import ALICE, LifecyclePlatform, page
 
-REASONING_BODY = {"working": True, "activity": {"kind": "reasoning"}}
-PERMISSION_BODY = {"working": True, "activity": {"kind": "permission"}}
-MEMORY_BODY = {"working": True, "activity": {"kind": "memory"}}
-BOOLEAN_BODY = {"working": True}
-IDLE_BODY = {"working": False}
+KEEP_ALIVE_SECONDS = SessionConfig().working_keep_alive_seconds
 
 
-def tool_body(name: str) -> dict[str, Any]:
-    return {"working": True, "activity": {"kind": "tool_call", "name": name}}
+async def past_a_keep_alive() -> None:
+    """Let a keep-alive fall due, so a wrongly woken reporter would have sent."""
+    await asyncio.sleep(2 * KEEP_ALIVE_SECONDS)
+
+
+async def report_every_kind(tools: object) -> None:
+    await report_tool_activity(tools, "Bash")
+    await set_permission_wait(tools, True)
+    await report_memory_activity(tools)
+    await set_permission_wait(tools, False)
+    await end_tool_activity(tools)
 
 
 class ActivityPlatform(LifecyclePlatform):
@@ -34,6 +46,7 @@ class ActivityPlatform(LifecyclePlatform):
         self.hold_next_activity = False
         self.activity_entered = asyncio.Event()
         self.activity_release = asyncio.Event()
+        self.late_changes: list[float] = []
         self._reported = asyncio.Condition()
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
@@ -57,10 +70,19 @@ class ActivityPlatform(LifecyclePlatform):
         return self.activity_bodies
 
     async def shown(self, observation: Awaitable[None]) -> None:
-        """Make a visible change and wait until the platform has received it."""
+        """Make a visible change and wait until the platform has received it.
+
+        A body that arrives only after virtual time passed came from a
+        keep-alive, not the change; it is recorded in ``late_changes`` rather
+        than raised, because a handler would swallow the error as a failed turn.
+        """
+        loop = asyncio.get_running_loop()
         count = len(self.activity_bodies)
+        observed_at = loop.time()
         await observation
         await self.bodies_reach(count + 1)
+        if waited := loop.time() - observed_at:
+            self.late_changes.append(waited)
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]

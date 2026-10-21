@@ -10,13 +10,9 @@ from band.platform.event import PlatformEvent
 from band.runtime.activity import report_memory_activity, report_tool_activity
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
+from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import (
-    IDLE_BODY,
-    REASONING_BODY,
-    ActivityPlatform,
-    tool_body,
-)
+from tests.runtime.activityownership.kit import ActivityPlatform, past_a_keep_alive
 
 
 @pytest.mark.looptime
@@ -89,6 +85,7 @@ class TestControlledTurnDetail:
         await ctx._process_event(make_message_event())
         assert cancelled.is_set()
         await report_tool_activity(captured[0], "Edit")
+        await past_a_keep_alive()
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
             tool_body("Bash"),

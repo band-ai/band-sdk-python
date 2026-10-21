@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-from band.runtime.activity import (
-    end_tool_activity,
-    report_memory_activity,
-    report_tool_activity,
-    set_permission_wait,
-)
-from tests.runtime.activityownership.kit import ActivityPlatform
+from band.runtime.tools.agent import AgentTools
+from band.testing import FakeAgentTools
+from tests.runtime.activityownership.kit import ActivityPlatform, report_every_kind
 
 
 class TestObserverlessProducers:
-    async def test_producers_are_silent_without_an_observer(
-        self, observerless_tools: object, activity_platform: ActivityPlatform
+    async def test_producers_accept_tools_that_carry_no_observer(self) -> None:
+        await report_every_kind(FakeAgentTools())
+
+    async def test_tools_outside_an_execution_report_nothing(
+        self, bare_tools: AgentTools, activity_platform: ActivityPlatform
     ) -> None:
-        await report_tool_activity(observerless_tools, "Bash")
-        await set_permission_wait(observerless_tools, True)
-        await report_memory_activity(observerless_tools)
-        await set_permission_wait(observerless_tools, False)
-        await end_tool_activity(observerless_tools)
+        await report_every_kind(bare_tools)
         assert activity_platform.activity_bodies == []

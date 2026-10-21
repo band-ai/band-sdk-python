@@ -9,13 +9,9 @@ from band.platform.event import PlatformEvent
 from band.runtime.activity import report_tool_activity, set_permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
+from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import (
-    IDLE_BODY,
-    REASONING_BODY,
-    ActivityPlatform,
-    tool_body,
-)
+from tests.runtime.activityownership.kit import ActivityPlatform
 
 CAP_SECONDS = 10.0
 # Keep-alives at 3, 6 and 9 s; the one due at 12 s finds the cap passed.
