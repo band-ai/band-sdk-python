@@ -19,13 +19,14 @@ Workflow skills can be selected when their descriptions match the task;
 `band-code-review` requires explicit invocation. If the host has no skill
 loader, read the referenced `SKILL.md` directly. Workflow execution follows
 [the shared runtime guidance](.claude/skills/workflow-runtime.md).
+When both personal `my-*` and project `band-*` workflows are available, use
+the project workflow for Band work unless the user names another one. Do not
+modify or remove personal skills as part of a repository change.
 
 | Skill | Use when |
 |---|---|
-| [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | writing or editing Python source |
+| [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
 | [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing or editing tests under `tests/` |
-| [band-python-comment-style](.claude/skills/band-python-comment-style/SKILL.md) | writing comments or docstrings |
-| [band-python-error-handling](.claude/skills/band-python-error-handling/SKILL.md) | raising/handling exceptions, formatting validation errors |
 
 | Skill | Use when |
 |---|---|
@@ -38,6 +39,8 @@ loader, read the referenced `SKILL.md` directly. Workflow execution follows
 | [band-code-review](.claude/skills/band-code-review/SKILL.md) | running the team's fixed-criteria review on a PR or branch |
 | [band-here-is-a-review](.claude/skills/band-here-is-a-review/SKILL.md) | handling review feedback on a PR or pasted review findings |
 | [band-pr-triage](.claude/skills/band-pr-triage/SKILL.md) | a quick read-only check of whether a PR can merge or needs a full review |
+| [band-ci-triage](.claude/skills/band-ci-triage/SKILL.md) | investigating failing GitHub Actions checks on the current commit |
+| [band-security-review](.claude/skills/band-security-review/SKILL.md) | a requested security review of tool, permission, credential, or workspace boundaries |
 | [band-stacked-prs](.claude/skills/band-stacked-prs/SKILL.md) | splitting work into stacked PRs or managing a PR chain with `gh stack` |
 | [band-desktop-setup](.claude/skills/band-desktop-setup/SKILL.md) | setting up, upgrading, or troubleshooting Claude Desktop as a Band agent |
 | [bug-hunting-via-example](.claude/skills/bug-hunting-via-example/SKILL.md) | using real runnable examples to reproduce and root-cause integration, concurrency, or lifecycle bugs |
@@ -384,7 +387,7 @@ install` it and exercise the real call in this repo's venv.
 
 ## Pre-Commit Checklist
 
-Before running the commands below, re-read your own diff once against the
+Before selecting checks, re-read your own diff once against the
 `band-python-conventions` skill — including code you just wrote this session, not only
 code you started from. The two rules that get skipped under time pressure:
 
@@ -399,11 +402,28 @@ code you started from. The two rules that get skipped under time pressure:
 Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
 these, so this step is the only gate for them.
 
+Choose validation for the behavior the diff can affect. Explicit user limits
+take precedence; report checks not run instead of implying they passed.
+
+| Change | Local validation |
+|---|---|
+| Documentation or skill instructions only | Check links, frontmatter, references, and relevant workflow scenarios. Execute affected runnable Markdown snippets. Do not run the SDK unit suite or wait for CI solely for prose changes. |
+| Executable skill helpers, examples, or scripts | Run the relevant behavioral tests and script checks; use the affected environment. A script inside a skill is executable code, not a prose-only change. |
+| Localized Python source or tests | Run relevant lint, format, type checks, and the affected behavioral tests. Broaden when shared callers or regressions warrant it. |
+| Shared runtime/protocol behavior, dependencies, packaging, or broad refactors | Run the full gate below in the appropriate dependency environments, plus boundary-specific checks such as conformance, wheel smoke, or live E2E where needed. |
+| CI workflows | Run actionlint and affected workflow guards; validate server-side behavior when local checks cannot exercise it. Avoid publishing during a probe. |
+
+Mixed changes use the union of applicable checks. Existing required CI checks
+remain required for merging; selecting local checks does not bypass them.
+Do not repeat a passing gate without new relevant changes or evidence of a problem.
+
+Full Python gate (commands are a toolbox, not a requirement for prose changes):
+
 ```bash
-uv run ruff check .
-uv run ruff format .
-uv run pyrefly check
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run --all-packages ruff check .
+uv run --all-packages ruff format --check .
+uv run --all-packages pyrefly check
+uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -q
 ```
 
 ## Git Workflow

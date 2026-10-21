@@ -14,7 +14,7 @@ and consequences differ.
 - DRY, single source of truth, no magic numbers or strings
   (`band-python-conventions`): a repeated comparison or shape counts too; if
   no constant or helper exists, the fix creates one.
-- Comments (`band-python-comment-style`).
+- Comments (`band-python-conventions`, "Comment Style").
 - Files that mix unrelated concerns (`band-python-conventions`).
 
 **B — Design & Reuse**
@@ -89,4 +89,5 @@ Surviving findings carry their flow in `fix_note`.
 - Skeptic-confirmed findings (E and F) ship with their proof and are always
   `issue:` — only confirmed defects, never nits or suggestions.
 
-Security review is out of scope.
+Security review is a separate task: use [band-security-review](../band-security-review/SKILL.md)
+when requested. Do not imply these six angles establish security coverage.

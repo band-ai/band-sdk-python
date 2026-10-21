@@ -1,6 +1,6 @@
 ---
 name: band-python-conventions
-description: Band Python SDK coding standards. Use when writing or editing Python source in this repo.
+description: Band Python SDK conventions for Python source, comments, docstrings, and error handling. Read before editing Python in this repository.
 paths:
   - "**/*.py"
 ---
@@ -81,3 +81,32 @@ paths:
   or `try`/`except` added at the call site. Prefer the fix that deletes or
   simplifies. If the same area needs a second or third fix, stop and rethink
   the design.
+
+
+## Comment Style
+
+Comments state facts about the code as it is now, not narration of how it
+got there — never "extracted from X", "ported from Y", "changed from Z",
+no session/PR/ticket/line-number history. Git already owns that history.
+
+A comment earns its place only by saying something a reader can't get
+from the code itself: a non-obvious invariant, a race/ordering guarantee,
+a workaround for a specific external bug, a scope boundary that looks
+like it should be wider than it is. Never restate what the code already
+says in prose.
+
+If a function needs a long comment to be understood, that's a signal the
+function itself is doing too much — split it into named sub-functions
+whose names carry the "what," and keep the comment for the one "why" that
+can't be named away. Prefer trimming/removing this class of comment
+outright over compressing it.
+
+Docstrings follow PEP 257: a one-line summary first, in the imperative mood.
+
+
+## Error Handling
+
+Beyond the `ValidationError`/`ValueError` rules above, format tool validation errors with `format_tool_validation_error`
+(`src/band/runtime/tools/schema.py`) or `format_validation_error`
+(`src/band/runtime/custom_tools.py`) rather than hand-rolling the message. Who
+acts on each exception class is in `src/band/core/exceptions.py`.

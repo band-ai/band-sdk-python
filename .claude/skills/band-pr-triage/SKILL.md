@@ -65,6 +65,8 @@ session's working-directory diff, not a PR.
      thread digest. Pull the reviews and
      inline comments (`gh api --paginate .../pulls/<n>/reviews` and
      `.../comments`), thread state (`reviewThreads`), and the PR's commits.
+     Use [the shared feedback intake](../band-here-is-a-review/pr-feedback.md)
+     for pagination and comment identities, retaining resolved history.
      A **round** is a review with inline comments, followed by commits. Signals
      (the numbers are starting points; tune them):
      - **Hotspot** — one file with at least 3 threads.
@@ -112,7 +114,9 @@ session's working-directory diff, not a PR.
       other doubt. Name the angle groups warranted (E and F for lifecycle or
       any hypothesis, else A–D) and end with `/band-code-review <n>`.
    4. **MERGE** — every signal clear and the scans returned nothing beyond
-      nits (list them as non-blocking). With CI pending: "MERGE once CI is
+      nits (list them as non-blocking). For a requested CI diagnosis, use
+      `band-ci-triage` rather than reproducing failures during readiness triage.
+      With CI pending: "MERGE once CI is
       green".
 6. **Cleanup.** Await every scan worker, or stop it through the host's agent
    controls using its recorded ID and confirm it stopped. Only then remove

@@ -269,7 +269,8 @@ size, not an exact total — compare it within one provider, never across provid
 
 ## Quick recipe: validate a change across all runnable lanes, then commit
 
-1. `uv sync --locked --all-packages --extra dev` → full unit suite + `pyrefly check` + `ruff check`.
+1. Select local checks from `AGENTS.md` "Pre-Commit Checklist"; prepare the
+   matching environment before executing the requested live lanes.
 2. `BAND_E2E_LANE=core` then `google` live (dev).
 3. `uv sync --locked --all-packages --extra dev-crewai` → `BAND_E2E_LANE=crewai` live → `uv sync --locked --all-packages --extra dev`.
    Same for `strands`/`nooa` (`dev-strands-nooa`) and `parlant` (`dev-parlant`).

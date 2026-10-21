@@ -52,25 +52,9 @@ evidence.
   the PR head checked out and in sync, and whether fixes can be pushed.
   Without push access, use verdict-only mode throughout: verify and propose
   fixes, skip Phases 4–5, and leave confirmed unfixed findings open in Phase 6.
-- Pull the review threads with `gh api graphql` on the PR's `reviewThreads`: each
-  thread's `id`, `isResolved`, `isOutdated`, `path`, `line`, and its comments
-  (`author { login }`, `body`). Walk `pageInfo` until `hasNextPage` is false. The
-  thread `id` is all Phase 6 needs to reply and resolve.
-- Also pull review bodies (`gh api --paginate repos/{o}/{r}/pulls/{n}/reviews`) and
-  top-level comments (`gh api --paginate repos/{o}/{r}/issues/{n}/comments`) for
-  findings that sit outside a thread. These have no resolved state: retain each
-  comment's ID and URL, and skip a finding only when a later reply explicitly
-  records its published fix, rejection, deferral, authorized drop, or answer.
-  A confirmation with a proposed but unpublished fix remains open; an unrelated
-  author comment is not an acknowledgement. Before skipping a claimed fix,
-  verify that it still addresses the finding at the current head.
-  Skip empty review bodies (the wrapper around a batch of inline comments).
-- Handle only unresolved threads. An outdated thread still counts: verify it
-  against the current code like any other. Skip `band-code-review`'s no-fix
-  records (`.claude/skills/band-code-review/no-fix-records.md`): they are
-  dropped claims, not feedback.
-- Read the whole thread, not just its first comment — later replies may narrow,
-  withdraw, or already answer the claim.
+- Read [pr-feedback.md](pr-feedback.md) for thread pagination, non-thread
+  findings, settled dispositions, and no-fix records. Keep the full discussion
+  with each finding when assigning verdicts.
 
 ### Called with structured findings
 
@@ -124,8 +108,7 @@ Two axes: does the finding matter, and is it in the current task's scope.
 Only CONFIRMED and PARTIALLY-RIGHT findings that **matter** proceed to fixing.
 "Matters" means: user-visible breakage, data corruption, security exposure, a real
 maintenance trap, or a violated project invariant or rule (`AGENTS.md` and the
-guideline skills `band-python-conventions`, `band-python-test-conventions`,
-`band-python-comment-style`, `band-python-error-handling` — e.g. duplicated logic,
+guideline skills `band-python-conventions` and `band-python-test-conventions` — e.g. duplicated logic,
 magic literals, narrating comments). Filter out:
 
 - Pedantry and taste conflicts with the project's established conventions
@@ -199,10 +182,10 @@ user's confirmation before implementing. Routine fixes proceed without asking.
 1. Implement the planned fixes, root cause first.
 2. For each CONFIRMED or PARTIALLY RIGHT bug, make the regression test the guard: it
    fails on the old code, passes on the new.
-3. Run the project's full verification gate (lint, format, typecheck, unit tests —
-   as AGENTS.md "Pre-Commit Checklist" / CI defines). All green before claiming done. Run it
-   quietly: quiet flags (e.g. `pytest -q`), output redirected to a scratchpad file, and
-   read only the failures and the summary line.
+3. Select and run the applicable checks from AGENTS.md "Pre-Commit Checklist".
+   Prose-only edits do not require the SDK unit suite. Executable helpers are
+   code and need behavioral checks. Run checks quietly and distinguish passed,
+   failed, blocked, and not-run checks in the report.
 4. Re-check each fixed finding against its original failure scenario.
 5. For a PR review, commit the fixes on the PR branch following AGENTS.md "Commit
    Messages", then push. A delegated worker returns its verified diff and proposed

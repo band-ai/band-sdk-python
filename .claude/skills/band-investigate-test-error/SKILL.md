@@ -1,6 +1,6 @@
 ---
 name: band-investigate-test-error
-description: Use this skill when a test is failing or erroring and the root cause is not obvious — when the user asks to "investigate this test failure", "figure out why this test is flaky", "why is this test erroring", "find the root cause of this failure", or wants a rigorous multi-hypothesis diagnosis before touching code. Runs competing investigation passes (adapter/product bug, test-case assumptions, test tooling/toolkit bug, LLM flakiness), delegated within host capacity or sequentially when unavailable. Each hypothesis must be validated empirically before presenting a ranked conclusion.
+description: Diagnose a concrete failing or flaky test when its root cause is unclear. Compare product, test-assumption, toolkit, and model hypotheses using empirical evidence. Use band-ci-triage to identify the failing GitHub Actions job first; use bug-hunting-via-example when the task starts from runnable examples rather than a failing test.
 ---
 
 # Investigate Test Error
@@ -16,6 +16,10 @@ assigned one competing hypothesis for the root cause. Every investigator must
 push back on unsupported claims, issue follow-ups, and deliver a ranked conclusion.
 
 ## When to use
+
+Start from an identified test and failure. For a CI status or job-log request,
+first use `band-ci-triage`; for a named runnable example without a failing test,
+use `bug-hunting-via-example`. Do not launch all three workflows for one symptom.
 
 - A test fails or errors and the cause isn't immediately obvious from the traceback.
 - A test is intermittently flaky and you need to isolate why.
