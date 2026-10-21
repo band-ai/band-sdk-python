@@ -6,12 +6,13 @@ from band.core.protocols import (
     HistoryConverter,
     Preprocessor,
 )
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter, SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 
 __all__ = [
     "AgentInput",
     "AgentToolsProtocol",
+    "BatchInputAdapter",
     "FrameworkAdapter",
     "HistoryConverter",
     "HistoryProvider",

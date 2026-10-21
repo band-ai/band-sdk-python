@@ -22,8 +22,8 @@ from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.defaultmodels import OPENAI_MODEL
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
-from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.core.simple_adapter import BatchInputAdapter
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage, ids_of
 from band.integrations.crewai import (
     CrewAIToolContext,
     EmitToolCallsReporter,
@@ -139,7 +139,7 @@ class CrewAIAdapterConfig(BaseAdapterConfig):
     allow_delegation: bool = False
 
 
-class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
+class CrewAIAdapter(BatchInputAdapter[CrewAIMessages]):
     """CrewAI adapter using the official CrewAI SDK.
 
     Integrates the CrewAI framework (https://docs.crewai.com/) with Band
@@ -162,7 +162,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
-    supports_batch_input: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -287,28 +286,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             fallback_loop=self._tool_loop,
         )
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: CrewAIMessages,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        """Handle one message as a turn of one."""
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
         messages: Sequence[PlatformMessage],
@@ -321,9 +298,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         room_id: str,
     ) -> None:
         """Handle a turn's original messages with one CrewAI kickoff."""
-        logger.debug(
-            "Handling messages %s in room %s", [m.id for m in messages], room_id
-        )
+        logger.debug("Handling messages %s in room %s", ids_of(messages), room_id)
 
         if not self._crewai_agent:
             message = "CrewAI agent not initialized - ensure on_started() was called"
@@ -454,7 +429,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         logger.info(
             "Room %s: CrewAI turn over for %s (output=%s chars, history=%s)",
             room_id,
-            [m.id for m in messages],
+            ids_of(messages),
             len(final_text),
             len(self._message_history[room_id]),
         )
