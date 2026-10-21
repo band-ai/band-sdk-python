@@ -38,11 +38,12 @@ and consequences differ.
 
 **D — Test Quality**
 Test code gets every angle above, more strictly, plus:
-- Every assertion checks real behavior (`band-python-test-conventions`).
-- Prefer realistic end-to-end-shaped flows where the behavior is about
-  integration; unit tests only for genuinely isolated logic.
-- High coverage of the changed code is a real target; flag missing feasible
-  e2e coverage.
+- Apply `band-python-test-conventions` "Coverage and realistic flows" to the
+  changed behavior and relevant existing tests, even when no test file changed.
+  Map scenarios to meaningful assertions, identify gaps, and name the concrete
+  regression each proposed test would catch. Check complete complex flows at
+  a boundary that preserves their real interactions; passing tests or high
+  line coverage alone are not sufficient evidence.
 - A skipped, disabled, or silently-ignored failing test is always a blocking
   issue (`band-python-test-conventions`).
 

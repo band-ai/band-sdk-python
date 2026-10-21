@@ -78,6 +78,11 @@ reuse, target location, precedents, and any coverage overlap).
 
 ## Phase 2 — Plan the test
 
+Apply [test conventions](../band-python-test-conventions/SKILL.md)
+"Coverage and realistic flows" when mapping existing coverage and selecting
+the scenario. Show which meaningful gap this test closes and which complete
+interaction it proves.
+
 Write a concrete plan (not code yet). It must answer:
 
 1. **What real thing are we testing?** State the behaviour and what *correct* looks like,

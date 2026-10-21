@@ -26,7 +26,7 @@ modify or remove personal skills as part of a repository change.
 | Skill | Use when |
 |---|---|
 | [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
-| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing or editing tests under `tests/` |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests or assessing meaningful coverage and realistic flows |
 
 | Skill | Use when |
 |---|---|

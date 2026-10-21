@@ -1,11 +1,40 @@
 ---
 name: band-python-test-conventions
-description: Band Python SDK test conventions. Use when writing or editing tests under tests/.
+description: Band Python SDK test conventions and coverage assessment. Use when writing or reviewing tests, assessing whether changed behavior is adequately covered, or checking that tests validate meaningful outcomes and realistic complex flows.
 paths:
   - "tests/**/*.py"
 ---
 
 # Test Conventions
+
+## Coverage and realistic flows
+
+Assess the relevant existing tests whenever behavior changes or coverage is
+reviewed, even if the diff adds no tests. A green suite, a test count, or a
+line-coverage percentage alone does not establish adequate coverage.
+
+- Map user-visible scenarios and important invariants to the tests and
+  assertions that prove them. Identify missing or weak coverage, prioritizing
+  consequential behavior, changed branches, and regressions over a numeric target.
+- For each test, name the plausible bug it would catch. Assert the observable
+  outcome and relevant side effects; a test that only checks that a mock was
+  called or that nothing raised may leave the real behavior unverified.
+- Exercise complex flows as realistic sequences, not just isolated steps.
+  Where relevant, cover follow-up turns, failure and recovery, cancellation,
+  restart/rehydration, concurrent rooms or agents, permissions, and cleanup.
+  Select scenarios the actual feature can reach; do not add every case to
+  every change.
+- Drive the real entry point and interacting components at the lowest level
+  that preserves the behavior under test. Use realistic peers or fakes at
+  external boundaries; do not mock away the interaction whose correctness
+  the test claims to prove. Use the baseline toolkit for needed live E2E
+  coverage, not as a mandatory layer for every test.
+- Extend useful existing tests before duplicating them. Add or strengthen
+  tests for meaningful in-scope gaps; report remaining gaps and unverified
+  scenarios explicitly. Follow `AGENTS.md` for synchronization and validation
+  scope, without silently expanding the task or launching unrelated suites.
+
+## Test implementation
 
 - In tests, never derive repository-anchored paths with per-file
   `Path(__file__).parents[N]` arithmetic — import the anchors from
