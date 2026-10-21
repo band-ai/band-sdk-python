@@ -60,4 +60,3 @@ Scope rules:
 - Out-of-scope but important: small (localized, no design or API change) →
   fold in and flag as an in-passing extra; large → a non-goal and a candidate
   followup for Phase 6.
-
