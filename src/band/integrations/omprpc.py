@@ -64,6 +64,10 @@ _ABORT_TIMEOUT_S = 1.0
 _PROCESS_EXIT_TIMEOUT_S = 1.0
 _CALLBACK_EXIT_TIMEOUT_S = 1.0
 _PROCESS_SCOPE_VALUE = "1"
+# Completion protection budget, armed only at protocol-supported completion
+# boundaries (see OmpRpcClient._guard_completion). Read at call time so tests
+# can shrink it; the adapter's overall turn deadline remains the backstop.
+COMPLETION_TIMEOUT_S = 30.0
 _PAYLOAD_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _EVENT_TYPES = frozenset(OmpEventType)
 _UI_NOTIFICATIONS = frozenset(
@@ -92,6 +96,14 @@ class OmpProcessError(RuntimeError):
 
 class OmpProtocolError(OmpProcessError):
     """An invalid or incorrectly correlated native RPC frame."""
+
+
+class OmpCompletionTimeout(OmpProcessError):
+    """A completion wait stayed stuck past the budget; the turn outcome is uncertain.
+
+    The answer and its side effects may already have been delivered; only the
+    correlated result, native settlement, or final drain remained unfinished.
+    """
 
 
 class OmpPromptError(RuntimeError):
@@ -178,6 +190,11 @@ class PromptRun:
         self.callbacks: dict[tuple[OmpCallbackKind, str], asyncio.Task[None]] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
+        self.result_owed = True
+        self.terminal_seen = False
+        self.awaiting_async = False
+        self.events_pending = 0
+        self.snapshot: tuple[int, OmpState] | None = None
 
     def fail(self, error: BaseException) -> None:
         if not self.failure.done():
@@ -199,6 +216,8 @@ class PromptRun:
             ):
                 self.last_assistant = event.message
             case OmpEventType.AGENT_END:
+                self.terminal_seen = self.terminal_seen or event.isTerminal is True
+                self.awaiting_async = event.awaitingAsyncWork is True
                 self.last_assistant = next(
                     (
                         message
@@ -207,7 +226,44 @@ class PromptRun:
                     ),
                     self.last_assistant,
                 )
+        self.events_pending += 1
         self.changed.set()
+
+    def record_snapshot(self, sequence: int, state: OmpState) -> None:
+        self.snapshot = (sequence, state)
+
+    def settled_proven(self) -> bool:
+        if self.settled_sequence > self.last_activity_sequence:
+            return True
+        if self.snapshot is None:
+            return False
+        sequence, state = self.snapshot
+        return state.isSettled and sequence >= self.last_activity_sequence
+
+    def boundary_reached(self) -> bool:
+        return self.result.done() or self.terminal_seen or self.settled_proven()
+
+    def completion_evidence_complete(self) -> bool:
+        if self.result_owed and not self.result.done():
+            return False
+        if not self.settled_proven():
+            return False
+        return self.events_pending == 0 and all(
+            task.done() for task in self.callback_tasks
+        )
+
+    def busy_proven(self) -> bool:
+        if self.awaiting_async:
+            return True
+        if self.snapshot is None or self.snapshot[0] <= self.last_activity_sequence:
+            return False
+        _, state = self.snapshot
+        return bool(
+            state.isStreaming
+            or state.hasPendingAsyncWork
+            or state.queuedMessageCount > 0
+            or state.isCompacting
+        )
 
 
 class OmpProcessScope:
@@ -322,6 +378,7 @@ class OmpRpcClient:
         self._max_reassembled_bytes = OMP_REASSEMBLED_BYTES
         self._pending: dict[str, PendingRequest] = {}
         self._turn: PromptRun | None = None
+        self._retirement_error: OmpProcessError | None = None
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
@@ -330,6 +387,8 @@ class OmpRpcClient:
     async def start(self) -> None:
         """Start the supplied command and require native RPC protocol v2."""
         async with self._start_lock:
+            if self._retirement_error is not None:
+                raise self._retirement_error
             if self._closing:
                 await self.close()
                 self._proc = None
@@ -466,6 +525,7 @@ class OmpRpcClient:
         *,
         request_id: str | None = None,
         allow_closing: bool = False,
+        completion: bool = False,
     ) -> ReceivedResponse:
         if not allow_closing:
             self._ensure_running()
@@ -481,7 +541,17 @@ class OmpRpcClient:
         self._pending[request_id] = PendingRequest(command, future)
         try:
             await self._write_line(frame.model_dump_json())
-            response = await future
+            if completion:
+                try:
+                    async with asyncio.timeout(COMPLETION_TIMEOUT_S):
+                        response = await future
+                except TimeoutError as cause:
+                    raise OmpCompletionTimeout(
+                        f"OMP {command} response timed out during prompt completion;"
+                        " the turn outcome is uncertain"
+                    ) from cause
+            else:
+                response = await future
             if isinstance(response, (OmpRpcError, OmpProcessError)):
                 raise response
             return response
@@ -517,6 +587,7 @@ class OmpRpcClient:
         event_worker = asyncio.create_task(self._deliver_events(turn))
         turn.event_worker = event_worker
         work = asyncio.create_task(self._complete_prompt(turn, message))
+        guard = asyncio.create_task(self._guard_completion(turn))
         try:
             done, _ = await asyncio.wait(
                 (work, turn.failure), return_when=asyncio.FIRST_COMPLETED
@@ -526,16 +597,93 @@ class OmpRpcClient:
             await work
         except OmpRpcError:
             if not turn.rejected:
-                await self.close()
+                await self._close_preserving(cause_of_failure=True)
             raise
         except OmpPromptError:
             raise
         except BaseException:
-            await self.close()
+            await self._close_preserving(cause_of_failure=True)
             raise
         finally:
             self._turn = None
-            await self._cancel_tasks([work, event_worker, *turn.callback_tasks])
+            await self._cancel_tasks([work, event_worker, guard, *turn.callback_tasks])
+
+    async def _close_preserving(self, *, cause_of_failure: bool) -> None:
+        # A retirement failure must not replace the honest completion failure;
+        # it stays recorded so retirement-dependent restarts fail closed.
+        try:
+            await self.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as cleanup:  # retirement outcome recorded
+            if cause_of_failure:
+                logger.error("OMP retirement failed after prompt error: %s", cleanup)
+            else:
+                raise
+
+    async def _guard_completion(self, turn: PromptRun) -> None:
+        """Arm the completion budget only on positively proven idle evidence.
+
+        Any newer activity or busy evidence invalidates and stops an armed
+        timer; re-arming requires a new eligible observation. The guard never
+        synthesizes a result or marks work complete: on expiry it fails the
+        turn with the typed uncertain-outcome error, which unwinds through the
+        same retirement path as any transport failure.
+        """
+        armed_since: float | None = None
+        try:
+            while True:
+                # Clear before evaluating so any change observed afterwards
+                # is visible to the next wait; evaluation then always sees
+                # the freshest state at the moment the wait is armed.
+                turn.changed.clear()
+                if self._turn is not turn or turn.rejected:
+                    return
+                if turn.completion_evidence_complete():
+                    return
+                if turn.result_owed and not turn.boundary_reached():
+                    armed_since = None
+                    await turn.changed.wait()
+                    continue
+                if turn.busy_proven():
+                    armed_since = None
+                    await turn.changed.wait()
+                    continue
+                stale = (
+                    turn.snapshot is None
+                    or turn.snapshot[0] <= turn.last_activity_sequence
+                )
+                if stale:
+                    received = await self._request_frame(
+                        "get_state", {}, completion=True
+                    )
+                    turn.record_snapshot(
+                        received.sequence,
+                        OmpState.model_validate(self._response_data(received.frame)),
+                    )
+                    continue
+                now = asyncio.get_running_loop().time()
+                if armed_since is None:
+                    armed_since = now
+                    continue
+                remaining = COMPLETION_TIMEOUT_S - (now - armed_since)
+                if remaining <= 0:
+                    turn.fail(
+                        OmpCompletionTimeout(
+                            "OMP completion stayed idle without its result,"
+                            " settlement, or final drain; the turn outcome is"
+                            " uncertain"
+                        )
+                    )
+                    return
+                try:
+                    await asyncio.wait_for(turn.changed.wait(), remaining)
+                except TimeoutError:
+                    pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- belongs to the awaiting prompt
+            turn.fail(error)
 
     async def _complete_prompt(self, turn: PromptRun, message: str) -> None:
         try:
@@ -550,9 +698,11 @@ class OmpRpcClient:
             OmpPromptAcceptance,
             "Invalid OMP prompt acceptance protocol data",
         )
+        turn.result_owed = acceptance.agentInvoked is not False
+        turn.changed.set()
         outcome: OmpPromptResult | None = None
         # A synchronous local command explicitly owes no prompt_result.
-        if acceptance.agentInvoked is not False:
+        if turn.result_owed:
             outcome = await turn.result
         await self._wait_for_settlement(turn)
         await turn.events.join()
@@ -561,7 +711,10 @@ class OmpRpcClient:
                 turn.callback_tasks, timeout=_CALLBACK_EXIT_TIMEOUT_S
             )
             if pending:
-                raise OmpProcessError("OMP callbacks did not finish after settlement")
+                raise OmpCompletionTimeout(
+                    "OMP callbacks did not finish after settlement;"
+                    " the turn outcome is uncertain"
+                )
         if outcome is not None and outcome.status != OmpPromptStatus.COMPLETED:
             raise OmpPromptError(
                 outcome.status,
@@ -580,17 +733,23 @@ class OmpRpcClient:
             )
 
     async def _wait_for_settlement(self, turn: PromptRun) -> None:
-        snapshot = await self._request_frame("get_state", {})
-        state = self._parse_response(
-            snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
-        )
-        if state.isSettled and snapshot.sequence >= turn.last_activity_sequence:
-            return
-        # An old, uncorrelated session_settled cannot overrule a newer busy snapshot.
-        while (
-            turn.settled_sequence <= snapshot.sequence
-            or turn.settled_sequence <= turn.last_activity_sequence
-        ):
+        while True:
+            snapshot = await self._request_frame("get_state", {}, completion=True)
+            state = self._parse_response(
+                snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
+            )
+            turn.record_snapshot(snapshot.sequence, state)
+            # A settled snapshot newer than every observed event proves native
+            # completion, as does a session_settled frame that postdates the
+            # snapshot and all activity. An old, uncorrelated session_settled
+            # cannot overrule a newer busy snapshot, so each wake re-snapshots.
+            if (
+                state.isSettled and snapshot.sequence >= turn.last_activity_sequence
+            ) or (
+                turn.settled_sequence > snapshot.sequence
+                and turn.settled_sequence > turn.last_activity_sequence
+            ):
+                return
             turn.changed.clear()
             await turn.changed.wait()
 
@@ -602,6 +761,7 @@ class OmpRpcClient:
                     await turn.on_event(event)
                 finally:
                     turn.events.task_done()
+                    turn.events_pending -= 1
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 -- arbitrary callback failures belong to the awaiting prompt
@@ -733,6 +893,7 @@ class OmpRpcClient:
                 result = OmpPromptResult.model_validate(payload)
                 if turn is not None and result.id == turn.id and not turn.result.done():
                     turn.result.set_result(result)
+                    turn.changed.set()
             case OmpFrameType.SESSION_SETTLED:
                 if turn is not None and (
                     turn.last_activity_sequence > 0 or turn.result.done()
@@ -970,6 +1131,7 @@ class OmpRpcClient:
             return self._proc
 
     async def _close_process(self) -> None:
+        errors: list[Exception] = []
         turn = self._turn
         self._fail_pending(self._failure or OmpProcessError("OMP RPC client closed"))
         if turn is not None:
@@ -977,6 +1139,15 @@ class OmpRpcClient:
             if turn.event_worker is not None:
                 workers.append(turn.event_worker)
             await self._cancel_tasks(workers)
+            survivors = [task for task in workers if not task.done()]
+            if survivors:
+                retirement = OmpProcessError(
+                    f"OMP callbacks survived cancellation: {len(survivors)} task(s)"
+                    " still pending; retirement is unproven"
+                )
+                if self._retirement_error is None:
+                    self._retirement_error = retirement
+                errors.append(retirement)
 
         owner = self._windows_process
         scope = self._process_scope
@@ -1036,8 +1207,6 @@ class OmpRpcClient:
                 await self._await_contained_exit(process)
                 await asyncio.to_thread(scope.close, process, _PROCESS_EXIT_TIMEOUT_S)
             await self._await_contained_exit(process)
-            self._windows_process = None
-            self._process_scope = None
         finally:
             # A cancelled pipe read on Windows stays pending until the child is
             # killed; drain stdout only after that reader finishes.
@@ -1048,3 +1217,9 @@ class OmpRpcClient:
             if self._stderr_task is not None:
                 drains.append(self._stderr_task)
             await self._cancel_tasks(drains)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("OMP process cleanup failed", errors)
+        self._windows_process = None
+        self._process_scope = None
