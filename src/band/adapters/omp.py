@@ -817,7 +817,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     event.toolName, args, preserve_native_semantics=True
                 )
                 turn.calls[event.toolCallId] = (name, arguments)
-                await report_tool_activity(turn.tools, name)
+                if Emit.TOOL_CALLS in self.features.emit:
+                    await report_tool_activity(turn.tools, name)
                 if Emit.TOOL_CALLS in self.features.emit:
                     await send_event_safe(
                         turn.tools,
@@ -829,7 +830,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if call is None:
                     return
                 name, _arguments = call
-                await end_tool_activity(turn.tools)
+                if Emit.TOOL_CALLS in self.features.emit:
+                    await end_tool_activity(turn.tools)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if Emit.TOOL_CALLS in self.features.emit:
