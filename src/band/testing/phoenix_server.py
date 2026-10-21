@@ -17,7 +17,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from http import HTTPStatus
 from urllib.parse import parse_qsl, urlsplit
@@ -76,6 +76,40 @@ class Upgrade:
         )
 
 
+@dataclass
+class PhoenixConnection:
+    """Observations belong to one accepted socket, including its rejoin pass."""
+
+    socket: ServerConnection
+    joined_topics: set[str] = field(default_factory=set)
+    heartbeats: list[ChannelMessage] = field(default_factory=list)
+    # Phoenix discards pushes carrying a different join reference.
+    join_refs: dict[str, str | None] = field(default_factory=dict)
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def notify(self) -> None:
+        self.changed.set()
+        self.changed = asyncio.Event()
+
+    async def wait_for_join(self, topic: str) -> None:
+        while topic not in self.joined_topics:
+            await self.changed.wait()
+
+    async def wait_for_heartbeats(self, count: int) -> None:
+        while len(self.heartbeats) < count:
+            await self.changed.wait()
+
+
+@dataclass
+class DeferredJoin:
+    """A selected join request retained without blocking heartbeat handling."""
+
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    connection: PhoenixConnection | None = None
+    message: ChannelMessage | None = None
+    outcome: JoinOutcome = JoinOutcome.OK
+
+
 class FakePhoenixServer:
     """A real loopback WebSocket server speaking Phoenix Channels V2.
 
@@ -87,11 +121,17 @@ class FakePhoenixServer:
         *,
         join_outcomes: dict[str, Sequence[JoinOutcome]],
         refuse_upgrades: bool,
+        reply_heartbeats: bool,
     ) -> None:
         self._join_outcomes = {
             topic: list(outcomes) for topic, outcomes in join_outcomes.items()
         }
         self._refuse_upgrades = refuse_upgrades
+        self.reply_heartbeats = reply_heartbeats
+        self.connections: list[PhoenixConnection] = []
+        self._connections_changed = asyncio.Event()
+        self._refusal: HTTPStatus | None = None
+        self._deferred_joins: dict[str, DeferredJoin] = {}
         self._protocol = PHXProtocolHandler(
             protocol_version=PhoenixChannelsProtocolVersion.V2
         )
@@ -104,10 +144,6 @@ class FakePhoenixServer:
         self.connection_count = 0
         self._connection: ServerConnection | None = None
         self._connection_ready = asyncio.Event()
-        # The client drops any message whose join_ref doesn't match the
-        # ref it joined that topic with (protocol_handler.py's stale
-        # join_ref guard), so a push() must echo the real one back.
-        self._join_refs: dict[str, str | None] = {}
 
     def _next_join_outcome(self, topic: str) -> JoinOutcome:
         """Consume one outcome off ``topic``'s declared sequence, holding on
@@ -126,16 +162,19 @@ class FakePhoenixServer:
         """Answer a refused upgrade with an HTTP response before the handshake
         completes; ``None`` lets it proceed."""
         self.upgrades.append(Upgrade.from_request(request))
+        if self._refusal is not None:
+            return connection.respond(self._refusal, "Upgrade refused")
         if self._refuse_upgrades:
             return connection.respond(HTTPStatus.CONFLICT, _CONFLICT_BODY)
         return None
 
-    def _forget_topic(self, topic: str) -> None:
+    def _forget_topic(self, observed: PhoenixConnection, topic: str) -> None:
         """Drop ``topic`` from joined-membership bookkeeping -- shared by a
         leave and a rejected join, since both mean the server no longer
         considers the topic joined."""
         self.joined_topics.discard(topic)
-        self._join_refs.pop(topic, None)
+        observed.joined_topics.discard(topic)
+        observed.join_refs.pop(topic, None)
 
     async def _reply(
         self,
@@ -161,28 +200,41 @@ class FakePhoenixServer:
         # only calls .send() -- ServerConnection satisfies that identically.
         await self._protocol.send_message(connection, reply)  # pyrefly: ignore[bad-argument-type]
 
+    async def _complete_join(
+        self, observed: PhoenixConnection, message: ChannelMessage, outcome: JoinOutcome
+    ) -> None:
+        await self._reply(observed.socket, message, outcome=outcome)
+        if outcome is JoinOutcome.OK:
+            self.joined_topics.add(message.topic)
+            observed.joined_topics.add(message.topic)
+            observed.join_refs[message.topic] = message.join_ref
+        else:
+            self._forget_topic(observed, message.topic)
+        observed.notify()
+
     async def _handle_message(
-        self, connection: ServerConnection, message: ChannelMessage
+        self, observed: PhoenixConnection, message: ChannelMessage
     ) -> None:
         self.received.append(message)
         match message.event:
             case PHXEvent.join:
                 outcome = self._next_join_outcome(message.topic)
-                if outcome is JoinOutcome.OK:
-                    self.joined_topics.add(message.topic)
-                    self._join_refs[message.topic] = message.join_ref
+                deferred = self._deferred_joins.pop(message.topic, None)
+                if deferred is not None:
+                    deferred.connection = observed
+                    deferred.message = message
+                    deferred.outcome = outcome
+                    deferred.ready.set()
                 else:
-                    # A rejected (re)join means the server does not consider
-                    # this topic joined -- including a stale entry from an
-                    # earlier, since-superseded successful join on the same
-                    # topic (e.g. a rejoin-after-reconnect rejection).
-                    self._forget_topic(message.topic)
-                await self._reply(connection, message, outcome=outcome)
+                    await self._complete_join(observed, message, outcome)
             case PHXEvent.leave:
-                self._forget_topic(message.topic)
-                await self._reply(connection, message, outcome=JoinOutcome.OK)
+                self._forget_topic(observed, message.topic)
+                await self._reply(observed.socket, message, outcome=JoinOutcome.OK)
             case _ if message.topic == "phoenix":
-                await self._reply(connection, message, outcome=JoinOutcome.OK)
+                if self.reply_heartbeats:
+                    await self._reply(observed.socket, message, outcome=JoinOutcome.OK)
+                observed.heartbeats.append(message)
+                observed.notify()
             case _:
                 logger.debug(
                     "Fake Phoenix server ignoring inbound event %s", message.event
@@ -191,15 +243,56 @@ class FakePhoenixServer:
     async def _handler(self, connection: ServerConnection) -> None:
         self._connection = connection
         self.connection_count += 1
+        observed = PhoenixConnection(connection)
+        self.connections.append(observed)
+        self._connections_changed.set()
+        self._connections_changed = asyncio.Event()
         self._connection_ready.set()
         try:
             async for raw in connection:
                 message = self._protocol.parse_message(raw)
-                await self._handle_message(connection, message)
+                await self._handle_message(observed, message)
         except ConnectionClosed:
-            # Expected on abort_connection()/close_connection() and on a
-            # genuine client-side drop -- not a fake-server failure.
             logger.debug("Connection closed")
+
+    async def wait_for_connection(self, number: int) -> PhoenixConnection:
+        """Wait for a particular accepted connection (one-based)."""
+        if number < 1:
+            raise ValueError("Connection number must be positive")
+        while len(self.connections) < number:
+            await self._connections_changed.wait()
+        return self.connections[number - 1]
+
+    @contextmanager
+    def refusing_upgrades(self, status: HTTPStatus) -> Iterator[None]:
+        """Temporarily refuse upgrades, including the SDK's diagnostic probe."""
+        previous = self._refusal
+        self._refusal = status
+        try:
+            yield
+        finally:
+            self._refusal = previous
+
+    @contextmanager
+    def defer_join(self, topic: str) -> Iterator[DeferredJoin]:
+        """Capture the next selected join; all other frames keep flowing."""
+        if topic in self._deferred_joins:
+            raise ValueError("A join is already deferred for this topic")
+        deferred = DeferredJoin()
+        self._deferred_joins[topic] = deferred
+        try:
+            yield deferred
+        finally:
+            if self._deferred_joins.get(topic) is deferred:
+                del self._deferred_joins[topic]
+
+    async def release_join(self, deferred: DeferredJoin) -> None:
+        """Reply on the captured socket/reference, never on its replacement."""
+        await deferred.ready.wait()
+        assert deferred.connection is not None and deferred.message is not None
+        message = deferred.message
+        deferred.message = None
+        await self._complete_join(deferred.connection, message, deferred.outcome)
 
     async def push(self, topic: str, event: str, payload: dict) -> None:
         """Inject an inbound event on an already-joined topic, as if the
@@ -210,7 +303,7 @@ class FakePhoenixServer:
             topic=topic,
             event=Event(event),
             payload=payload,
-            join_ref=self._join_refs.get(topic),
+            join_ref=self.connections[-1].join_refs.get(topic),
         )
         await self._protocol.send_message(self._connection, message)  # pyrefly: ignore[bad-argument-type]
 
@@ -245,9 +338,14 @@ async def fake_phoenix_server(
     *,
     join_outcomes: dict[str, Sequence[JoinOutcome]] | None = None,
     refuse_upgrades: bool = False,
+    reply_heartbeats: bool = True,
 ) -> AsyncIterator[FakePhoenixServer]:
     """A real loopback Phoenix Channels server for exercising BandLink's real
     WebSocketClient/PHXChannelsClient stack, no mocks below BandLink.
+
+    ``reply_heartbeats`` defaults to automatic replies; disabling it preserves
+    frame reading and WebSocket Ping/Pong. Connection-specific observations
+    identify successful replacement joins rather than historical membership.
 
     ``join_outcomes`` declares the whole join scenario up front, as data: a
     topic maps to the sequence of outcomes its successive join attempts get.
@@ -259,7 +357,9 @@ async def fake_phoenix_server(
     (``push``, ``close_connection``, ``abort_connection``).
     """
     server = FakePhoenixServer(
-        join_outcomes=join_outcomes or {}, refuse_upgrades=refuse_upgrades
+        join_outcomes=join_outcomes or {},
+        refuse_upgrades=refuse_upgrades,
+        reply_heartbeats=reply_heartbeats,
     )
     async with serve(
         server._handler,

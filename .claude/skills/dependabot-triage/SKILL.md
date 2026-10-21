@@ -155,7 +155,7 @@ Step 6. It goes to Step 8 as an excluded bump.
 ## Step 5 — Run the full suite
 
 Prove the consolidated set. The lint/type gate and unit tests are the floor;
-integration and e2e run when their credentials are present (see CLAUDE.md's
+integration and e2e run when their credentials are present (see AGENTS.md's
 Environment Variables — they need Band + LLM keys, and e2e needs
 `E2E_TESTS_ENABLED=true`).
 
@@ -190,12 +190,8 @@ green local run means a green CI job:
 
 ```bash
 uv sync --extra dev-crewai
-# the pytest targets from .github/workflows/ci.yml's "Run crewai tests" step
-uv run pytest tests/adapters/test_crewai_flow_phase3.py \
-  tests/integrations/test_crewai_flow_real_sdk.py \
-  tests/integrations/test_crewai_real_tools.py \
-  tests/test_capability_gating_e2e.py \
-  tests/framework_conformance/ -k crewai
+# then copy the `run:` block (env included) of ci.yml's "Run crewai tests" step
+# verbatim; tests/framework_conformance/test_crewai_job_coverage.py keeps it honest
 ```
 
 Do not widen this to `-k crewai` over `tests/adapters/`: pytest still *collects*

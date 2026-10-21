@@ -17,6 +17,28 @@ and `src/band/platform/event.py`. What the code cannot say for itself:
   tracking, participant roster and self-echo rules, with delivery metadata for
   deduplication.
 
+## Transport heartbeat ownership
+
+Phoenix owns heartbeat sending, matching pending acknowledgements, timeout
+closure, cleanup and reconnect. The SDK forwards Core `SessionPolicy`'s
+`heartbeat_interval_s` and `dead_threshold_s` (30 and 60 seconds by default).
+A 60-second threshold limits acknowledgement silence; it does not add another
+60 seconds after a heartbeat is sent. Pong and unrelated traffic do not renew it.
+
+Each socket's deadline starts at establishment, including during startup,
+rejoin and reconnect reconciliation. Accepted pending replies renew it; rejoin
+completion grants no extra grace. Enabled monitoring keeps one heartbeat
+outstanding, pausing sends while its reply is pending. A custom long threshold
+does not prevent the server from enforcing its own inactivity timeout. The
+threshold bounds close initiation, subject to transport close-handshake cleanup.
+
+Initial connection failures remain classified and retried by Core Session.
+After successful entry, Phoenix owns automatic reconnect. A background upgrade
+refused with HTTP 403 is terminal and raises through `WebSocketClient` and
+`BandLink.run_forever`; the runtime's existing finally cleanup stops the agent.
+Normal WebSocket closes still reconnect under the SDK's explicit policy, and a
+terminal supersede still shuts the transport down.
+
 ## Room reconciliation
 
 `ExecutionContext` checks a persistent monotonic deadline before dequeuing events.

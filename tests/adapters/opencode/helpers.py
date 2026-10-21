@@ -12,8 +12,13 @@ import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter
-from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
-from band.adapters.opencode.approvals import DECLINED_QUESTION_ANSWER
+from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
+from band.adapters.opencode.approvals.wording import (
+    APPROVAL_HANDLED_TEMPLATE,
+    APPROVAL_REQUESTED_TEMPLATE,
+    DECLINED_QUESTION_ANSWER,
+)
+from band.client.rest import MessageSentResponse
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -26,7 +31,7 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing import FakeAgentTools
-from tests.adapters.dispatch import deliver_message
+from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.mcpbackends import BackendStarts
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
@@ -213,6 +218,15 @@ def event_session_idle(session_id: str) -> RawOpencodeEvent:
     return {"type": "session.idle", "properties": {"sessionID": session_id}}
 
 
+def model_answer(message_id: str, text: str) -> list[ServerStep]:
+    """The model streams ``text`` as one assistant message, then goes idle."""
+    return [
+        event_message_updated("sess-1", message_id),
+        event_text_part("sess-1", message_id, text),
+        event_session_idle("sess-1"),
+    ]
+
+
 def event_session_error(session_id: str, message: str) -> RawOpencodeEvent:
     return {
         "type": "session.error",
@@ -240,6 +254,29 @@ def agent_input(content: str, tools: FakeAgentTools) -> AgentInput:
     )
 
 
+class ObservedOpencodeAdapter(OpencodeAdapter):
+    """Expose watcher readiness without replacing its deadline logic."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.watcher_started = asyncio.Event()
+        self.background_tasks: set[asyncio.Task[Any]] = set()
+
+    def record_background_task(self) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        self.background_tasks.add(task)
+
+    async def _run_event_loop(self) -> None:
+        self.record_background_task()
+        await super()._run_event_loop()
+
+    async def _await_turn(self, turn: TurnState) -> None:
+        self.record_background_task()
+        self.watcher_started.set()
+        await super()._await_turn(turn)
+
+
 class RaisingSendTools(FakeAgentTools):
     """FakeAgentTools whose send_notice always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
@@ -249,6 +286,23 @@ class RaisingSendTools(FakeAgentTools):
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> dict[str, Any]:
         raise BandToolError("send failed")
+
+
+class HeldReplyTools(FakeAgentTools):
+    """FakeAgentTools that hold every ``send_message`` until ``release`` is set,
+    keeping the turn's watcher in the delivery tail after the model has finished."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reply_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> MessageSentResponse | None:
+        self.reply_entered.set()
+        await self.release.wait()
+        return await super().send_message(content, mentions)
 
 
 class TaskEventFailingTools(FakeAgentTools):
@@ -407,6 +461,11 @@ class FakeOpencodeClient:
         await self._queue.put(None)
 
 
+def idle_client() -> FakeOpencodeClient:
+    """A client whose single prompt goes straight to idle."""
+    return FakeOpencodeClient(prompt_event_sequences=[[event_session_idle("sess-1")]])
+
+
 class AnyHTTPStatusError(httpx.HTTPStatusError):
     def __init__(self, status_code: int, session_id: str) -> None:
         request = httpx.Request("GET", f"http://localhost/session/{session_id}")
@@ -434,6 +493,9 @@ class BandMCPCalls:
 
 #: Virtual seconds an ask waits for a human in looptime tests.
 ASK_DEADLINE_S = 60.0
+
+#: Virtual ``turn_timeout_s`` compute budget in looptime turn tests.
+COMPUTE_BUDGET_S = 8.0
 
 
 async def time_passes(seconds: float) -> None:
@@ -468,6 +530,86 @@ async def run_single_turn(
         is_session_bootstrap=True,
         room_id="room-1",
     )
+
+
+async def deliver_followup(
+    adapter: OpencodeAdapter, tools: FakeAgentTools, *, content: str
+) -> None:
+    """Deliver a later message of the room's existing ``sess-1`` session."""
+    await deliver_message(
+        adapter,
+        make_platform_message(content=content),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+
+PERMISSION_ID = "req-1"
+FOLLOW_UP = "and then?"
+FIRST_ANSWER = "first answer"
+SECOND_ANSWER = "second answer"
+
+
+def parked_turn_client(
+    *,
+    after_approval: list[ServerStep],
+    later_prompts: list[list[ServerStep]] | None = None,
+) -> FakeOpencodeClient:
+    """OpenCode asks for a permission, then runs ``after_approval``; each of
+    ``later_prompts`` answers one later prompt."""
+    parked: list[ServerStep] = [event_permission("sess-1", PERMISSION_ID)]
+    return FakeOpencodeClient(
+        prompt_event_sequences=[parked, *(later_prompts or [])],
+        reply_permission_events={PERMISSION_ID: after_approval},
+    )
+
+
+async def park_turn(adapter: OpencodeAdapter, tools: FakeAgentTools) -> None:
+    """Run a turn's ``on_event`` until the permission ask releases it."""
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await deliver_event(adapter, agent_input("run it", tools))
+
+
+async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
+    """A person approves the parked ask; returns the approval's own tools."""
+    approver_tools = FakeAgentTools()
+    control = agent_input(f"approve {PERMISSION_ID}", approver_tools)
+    assert await adapter.try_handle_control(control.msg, control.tools)
+    return approver_tools
+
+
+#: The notices a ``parked_turn_client`` turn posts to the room by the time
+#: ``approve`` has handled its ask.
+APPROVED_ASK_NOTICES = [
+    APPROVAL_REQUESTED_TEMPLATE.format(
+        permission="bash", patterns="rm -rf tmp", request_id=PERMISSION_ID
+    ),
+    APPROVAL_HANDLED_TEMPLATE.format(request_id=PERMISSION_ID, reply="once"),
+]
+
+
+async def room_turn(adapter: OpencodeAdapter, *, room_id: str = "room-1") -> TurnState:
+    """The turn that currently owns ``room_id``."""
+    turn = (await adapter._get_or_create_room_state(room_id)).turn
+    assert turn is not None
+    return turn
+
+
+async def turn_finished(turn: TurnState) -> None:
+    """Wait until the turn's watcher has delivered its result."""
+    assert turn.watcher is not None
+    await turn.watcher
+
+
+def assert_left_untouched(tools: FakeAgentTools) -> None:
+    """A refused delivery neither ran nor judged a turn of its own."""
+    assert not tools.turn.complete
+    assert tools.events_sent == []
+    assert tools.messages_sent == []
 
 
 class AskFactory:

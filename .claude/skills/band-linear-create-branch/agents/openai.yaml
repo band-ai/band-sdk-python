@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Linear Branch"
+  short_description: "Create branches from Linear issues with git lb."
+  default_prompt: "Create a Git branch for this Linear issue using git lb."

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
@@ -11,8 +12,22 @@ from band.adapters.nooa import NooaAdapter
 from band.core.types import Emit, MessageType
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, events_of_type
-from band.testing.nooa import code_turn, result_turn, room_call, scripted_llm
-from tests.adapters.nooa.kit import delegating_room_agent, run_turn, started_adapter
+from band.testing.nooa import (
+    code_turn,
+    result_turn,
+    room_agent_class,
+    room_call,
+    scripted_llm,
+)
+from tests.adapters.nooa.kit import (
+    CleanupWork,
+    SlowInput,
+    carrying,
+    delegating_room_agent,
+    run_turn,
+    started_adapter,
+    thoughts,
+)
 from tests.adapters.usage_events import recorded_usage_payloads
 
 REASONED_DECLINE = [
@@ -55,6 +70,46 @@ class TestTurnTelemetry:
 
         await run_turn(adapter, tools)
 
+        assert recorded_usage_payloads(tools) == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 15,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ]
+
+    async def test_usage_includes_a_child_finishing_during_owned_cleanup(
+        self, tools: FakeAgentTools
+    ) -> None:
+        work = CleanupWork()
+        llm = FakeLLMClient(
+            [
+                code_turn(
+                    "self.work.pending = asyncio.create_task("
+                    "self.room.slow(arguments={}))\n"
+                    "await self.work.entered.wait()\n"
+                    f"{room_call(BandTool.NO_REPLY)}"
+                ),
+                result_turn(),
+            ]
+        )
+        adapter = NooaAdapter(
+            agent=room_agent_class(llm, namespace=carrying("work", work)),
+            additional_tools=[(SlowInput, work.handler)],
+            emit={Emit.USAGE, Emit.THOUGHTS},
+        )
+        await adapter.on_started("Agent", "A test agent")
+
+        try:
+            await run_turn(adapter, tools)
+        finally:
+            if work.pending is not None:
+                await asyncio.gather(work.pending, return_exceptions=True)
+
+        assert work.completed
+        assert work.cancelled
+        assert thoughts(tools) == []
         assert recorded_usage_payloads(tools) == [
             {
                 "input_tokens": 100,

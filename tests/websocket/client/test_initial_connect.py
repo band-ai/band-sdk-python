@@ -170,9 +170,6 @@ class TestInitialConnect:
         assert init_kwargs["auto_reconnect"] is False
         assert client.client.auto_reconnect is True
 
-        # A successful __aenter__ starts the watchdog against this double, which
-        # has no real `.connection` -- __aexit__ stops it before returning so it
-        # can never fire `_force_close_if_stale` against a torn-down test.
         await client.__aexit__(None, None, None)
 
     async def test_aenter_reusable_after_aexit_ends_the_session(self, monkeypatch):
@@ -232,8 +229,6 @@ class TestInitialConnect:
         assert no_real_sleep == [1.0, 5.0]
         assert client.client.auto_reconnect is True
 
-        # no_real_sleep never advances the clock; an un-stopped watchdog's
-        # deadline-check loop would spin on it with no real yield point.
         await client.__aexit__(None, None, None)
 
     async def test_aenter_trips_dead_after_rapid_disconnect_threshold(

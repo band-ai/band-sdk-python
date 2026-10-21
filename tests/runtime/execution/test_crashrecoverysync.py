@@ -8,6 +8,7 @@ import pytest
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import MessageMetadata
+from band.platform.event import ParticipantAddedEvent, PlatformEvent
 from band.runtime.execution import (
     ExecutionContext,
     ResyncOutcome,
@@ -20,6 +21,7 @@ from tests.conftest import (
     make_participant_added_event,
 )
 from tests.runtime.conftest import wait_for_condition
+from tests.runtime.helpers import running_execution
 
 
 class TestCrashRecoverySync:
@@ -177,9 +179,21 @@ class TestCrashRecoverySync:
         await ctx.stop()
 
     async def test_sync_removes_duplicate_from_ws_queue(
-        self, mock_link_with_next, mock_handler
-    ):
+        self, mock_link_with_next: MagicMock, mock_handler: AsyncMock
+    ) -> None:
         """Sync should dedupe when non-message events are ahead of sync-point WS copy."""
+
+        participant_started = asyncio.Event()
+        release_participant = asyncio.Event()
+        participant_finished = asyncio.Event()
+
+        async def handle_event(_ctx: ExecutionContext, event: PlatformEvent) -> None:
+            if isinstance(event, ParticipantAddedEvent):
+                participant_started.set()
+                await release_participant.wait()
+                participant_finished.set()
+
+        mock_handler.side_effect = handle_event
 
         sync_msg = PlatformMessage(
             id="msg-sync-001",
@@ -218,41 +232,41 @@ class TestCrashRecoverySync:
         # Queue should contain both events
         assert ctx.queue.qsize() == 2
 
-        # Start triggers sync
-        await ctx.start()
-        # Two handler dispatches expected (sync message + participant event);
-        # queue must be fully drained so Phase 2's participant processing has
-        # also settled, not just the sync-point crash-recovery phase.
-        await wait_for_condition(
-            lambda: mock_handler.call_count >= 2 and ctx.queue.qsize() == 0
-        )
+        async with running_execution(ctx):
+            await participant_started.wait()
+            assert ctx.is_processing
+            assert not ctx._idle_event.is_set()
+            release_participant.set()
+            await participant_finished.wait()
+            await ctx._idle_event.wait()
+            assert not ctx.is_processing
+            assert ctx.is_running
+            assert ctx.queue.empty()
 
-        # Sync point reached and duplicate removed from WS phase
-        assert ctx._first_ws_msg_id is None
-        assert ctx._sync_complete is True
-        mock_link_with_next.mark_processing.assert_called_once_with(
-            "room-123", "msg-sync-001"
-        )
-        mock_link_with_next.mark_processed.assert_called_once_with(
-            "room-123", "msg-sync-001"
-        )
-        mock_link_with_next.mark_failed.assert_not_called()
+            # Sync point reached and duplicate removed from WS phase
+            assert ctx._first_ws_msg_id is None
+            assert ctx._sync_complete is True
+            mock_link_with_next.mark_processing.assert_called_once_with(
+                "room-123", "msg-sync-001"
+            )
+            mock_link_with_next.mark_processed.assert_called_once_with(
+                "room-123", "msg-sync-001"
+            )
+            mock_link_with_next.mark_failed.assert_not_called()
 
-        # Message handler should run once for sync message, and participant once.
-        processed_message_ids = [
-            call.args[1].payload.id
-            for call in mock_handler.call_args_list
-            if call.args[1].type == "message_created" and call.args[1].payload
-        ]
-        assert processed_message_ids.count("msg-sync-001") == 1
-        participant_events = [
-            call
-            for call in mock_handler.call_args_list
-            if call.args[1].type == "participant_added"
-        ]
-        assert len(participant_events) == 1
-
-        await ctx.stop()
+            # Message handler should run once for sync message, and participant once.
+            processed_message_ids = [
+                call.args[1].payload.id
+                for call in mock_handler.call_args_list
+                if call.args[1].type == "message_created" and call.args[1].payload
+            ]
+            assert processed_message_ids.count("msg-sync-001") == 1
+            participant_events = [
+                call
+                for call in mock_handler.call_args_list
+                if call.args[1].type == "participant_added"
+            ]
+            assert len(participant_events) == 1
 
     async def test_ws_replay_with_processed_metadata_is_not_reopened(
         self, mock_link_with_next, mock_handler
