@@ -8,7 +8,8 @@ from band_rest import AgentActivityDetail
 
 from band.platform.activity import ActivitySupport
 from band.platform.link import BandLink
-from tests.platform.activity.kit import DETAIL, ActivityPeer
+from tests.activitysupport import BOOLEAN_BODY, DETAIL_BODY
+from tests.platform.activity.kit import ActivityPeer
 
 
 @pytest.mark.usefixtures("learned")
@@ -28,9 +29,9 @@ class TestActivityFallback:
         assert await link.report_activity("first", True, activity=detail)
         assert await second_link.report_activity("second", True, activity=detail)
         assert activity_peer.reports == [
-            {"working": True, "activity": DETAIL},
-            {"working": True},
-            {"working": True},
+            DETAIL_BODY,
+            BOOLEAN_BODY,
+            BOOLEAN_BODY,
         ]
 
     @pytest.mark.parametrize(
@@ -66,7 +67,7 @@ class TestActivityFallback:
         )
         assert not await link.report_activity("room", True, activity=detail)
         assert await link.report_activity("room", True, activity=detail)
-        assert activity_peer.reports == [{"working": True, "activity": DETAIL}] * 2
+        assert activity_peer.reports == [DETAIL_BODY] * 2
 
     async def test_fallback_echoed_false_keeps_stop_notification(
         self, link: BandLink, activity_peer: ActivityPeer, detail: AgentActivityDetail
@@ -82,4 +83,4 @@ class TestActivityFallback:
             "room", True, activity=detail, on_stopped=stopped
         )
         stopped.assert_called_once_with()
-        assert activity_peer.reports[-1] == {"working": True}
+        assert activity_peer.reports[-1] == BOOLEAN_BODY

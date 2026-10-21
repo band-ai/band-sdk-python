@@ -7,8 +7,8 @@ from band_rest import AgentActivityDetail
 
 from band.platform.activity import ActivitySupport
 from band.platform.link import BandLink
-from tests.activitysupport import install_activity_support
-from tests.platform.activity.kit import DETAIL, ActivityPeer
+from tests.activitysupport import DETAIL, install_activity_support
+from tests.platform.activity.kit import ActivityPeer
 from tests.runtime.helpers import rest_client_over
 
 

@@ -7,7 +7,8 @@ import pytest
 from band_rest import AgentActivityDetail
 
 from band.platform.link import BandLink
-from tests.platform.activity.kit import DETAIL, ActivityPeer
+from tests.activitysupport import BOOLEAN_BODY, DETAIL_BODY
+from tests.platform.activity.kit import ActivityPeer
 
 DEADLINE_SECONDS = 2
 # Under the deadline alone, but the deadline cannot cover it plus a full resend.
@@ -35,8 +36,8 @@ class TestActivityDeadline:
         )
         assert asyncio.get_running_loop().time() - started == DEADLINE_SECONDS
         assert stalled_resend.reports == [
-            {"working": True, "activity": DETAIL},
-            {"working": True},
+            DETAIL_BODY,
+            BOOLEAN_BODY,
         ]
 
     async def test_downgrade_survives_a_timed_out_resend(
@@ -47,4 +48,4 @@ class TestActivityDeadline:
         )
         stalled_resend.stall_post_number = None
         assert await link.report_activity("next", True, activity=detail)
-        assert stalled_resend.reports[-1] == {"working": True}
+        assert stalled_resend.reports[-1] == BOOLEAN_BODY

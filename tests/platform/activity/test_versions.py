@@ -4,8 +4,14 @@ import pytest
 from band_rest import AgentActivityDetail
 
 from band.platform.link import BandLink
-from tests.activitysupport import SUPPORTED_VERSION
-from tests.platform.activity.kit import DETAIL, ActivityPeer
+from tests.activitysupport import (
+    BOOLEAN_BODY,
+    DETAIL_BODY,
+    IDLE_BODY,
+    SUPPORTED_VERSION,
+    detail_body,
+)
+from tests.platform.activity.kit import ActivityPeer
 
 
 class TestActivityVersion:
@@ -34,10 +40,8 @@ class TestActivityVersion:
         activity_peer.version = version
         assert await link.report_activity("room", True, activity=detail)
         assert await link.report_activity("room", True, activity=detail)
-        later = (
-            {"working": True, "activity": DETAIL} if supported else {"working": True}
-        )
-        assert activity_peer.reports == [{"working": True}, later]
+        later = DETAIL_BODY if supported else BOOLEAN_BODY
+        assert activity_peer.reports == [BOOLEAN_BODY, later]
         assert all(
             request.url.path.endswith("/activity") for request in activity_peer.requests
         )
@@ -51,7 +55,7 @@ class TestActivityVersion:
     ) -> None:
         assert await link.report_activity("first", True)
         assert await second_link.report_activity("second", True, activity=detail)
-        assert activity_peer.reports[-1] == {"working": True, "activity": DETAIL}
+        assert activity_peer.reports[-1] == DETAIL_BODY
 
     @pytest.mark.parametrize("kind", ["reasoning", "memory", "permission"])
     async def test_non_tool_detail_omits_name_and_false_omits_detail(
@@ -62,6 +66,6 @@ class TestActivityVersion:
         assert await link.report_activity("room", True, activity=detail)
         assert await link.report_activity("room", False, activity=detail)
         assert activity_peer.reports[1:] == [
-            {"working": True, "activity": {"kind": kind}},
-            {"working": False},
+            detail_body(kind),
+            IDLE_BODY,
         ]

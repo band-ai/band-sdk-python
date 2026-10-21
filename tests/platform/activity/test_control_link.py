@@ -4,8 +4,9 @@ import pytest
 from band_rest import AgentActivityDetail
 
 from band.platform.link import BandLink
+from tests.activitysupport import DETAIL_BODY
 from tests.e2e.baseline.toolkit.control import ControlLink, ControlRuntime
-from tests.platform.activity.kit import DETAIL, ActivityPeer
+from tests.platform.activity.kit import ActivityPeer
 
 
 @pytest.mark.usefixtures("learned")
@@ -18,4 +19,4 @@ class TestControlLinkActivity:
         control_link.control = ControlRuntime()
         control_link.control_room_id = "room"
         assert await control_link.report_activity("room", True, activity=detail)
-        assert activity_peer.reports == [{"working": True, "activity": DETAIL}]
+        assert activity_peer.reports == [DETAIL_BODY]

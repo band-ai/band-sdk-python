@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from band_rest import AgentActivityDetail
 
-from band.runtime.activity import TurnActivity
+from band.runtime.activity import UNKNOWN_ACTIVITY_TOOL_NAME, TurnActivity
 
 
 class TestTurnActivity:
@@ -26,7 +26,9 @@ class TestTurnActivity:
     def test_a_nameless_tool_is_reported_as_unknown(self) -> None:
         activity = TurnActivity()
         activity.apply(activity=AgentActivityDetail(kind="tool_call", name=""))
-        assert activity.detail == AgentActivityDetail(kind="tool_call", name="unknown")
+        assert activity.detail == AgentActivityDetail(
+            kind="tool_call", name=UNKNOWN_ACTIVITY_TOOL_NAME
+        )
 
     def test_a_person_wait_overrides_progress_without_losing_it(self) -> None:
         activity = TurnActivity()
