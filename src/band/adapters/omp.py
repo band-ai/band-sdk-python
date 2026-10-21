@@ -73,6 +73,7 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+from band.runtime.activity import set_permission_wait
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -85,6 +86,7 @@ from band.runtime.prompts import (
     TURN_COMPLETION_GUIDANCE,
     render_system_prompt,
 )
+from band.runtime.toolactivity import end_tool_activity, report_tool_activity
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     get_band_tool_category,
@@ -870,14 +872,18 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         options = tuple(request.options or ())
         choice = None
         if self._resolve_permission is not None:
-            choice = await self._resolve_permission(
-                OmpPermissionRequest(
-                    room_id=room_id,
-                    session_id=session_id,
-                    title=request.title or "",
-                    options=options,
+            await set_permission_wait(tools, True)
+            try:
+                choice = await self._resolve_permission(
+                    OmpPermissionRequest(
+                        room_id=room_id,
+                        session_id=session_id,
+                        title=request.title or "",
+                        options=options,
+                    )
                 )
-            )
+            finally:
+                await set_permission_wait(tools, False)
         elif options == ("Approve", "Deny"):
             choice = "Approve"
         response = (
@@ -951,6 +957,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 )
                 turn.calls[event.toolCallId] = (name, arguments)
                 if Emit.TOOL_CALLS in self.features.emit:
+                    await report_tool_activity(turn.tools, name)
                     await send_event_safe(
                         turn.tools,
                         self._encode_tool_call(name, arguments, event.toolCallId),
@@ -961,6 +968,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if call is None:
                     return
                 name, _arguments = call
+                if Emit.TOOL_CALLS in self.features.emit:
+                    await end_tool_activity(turn.tools)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if Emit.TOOL_CALLS in self.features.emit:

@@ -14,6 +14,7 @@ from pydantic import JsonValue
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
+from band.core.types import Emit
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
@@ -531,3 +532,38 @@ async def ask_turn(
 async def ask_frames(adapter: OmpAdapter) -> list[dict[str, JsonValue]]:
     checkpoint = await adapter._rooms["room-123"].runtime.request("checkpoint")
     return cast(list[dict[str, JsonValue]], checkpoint["frames"])
+
+
+EMIT_ON: tuple[Emit, ...] = (Emit.TOOL_CALLS,)
+EMIT_OFF: tuple[Emit, ...] = ()
+
+
+def make_adapter(
+    tmp_path: Path,
+    emit: tuple[Emit, ...],
+    resolve_permission=None,  # type: ignore[no-untyped-def]
+) -> OmpAdapter:
+    return OmpAdapter(
+        OmpAdapterConfig(cwd=str(tmp_path)),
+        emit=emit,
+        resolve_permission=resolve_permission,
+    )
+
+
+def tool_start(call_id: str, name: str, **args: object) -> OmpEvent:
+    return OmpEvent(
+        type="tool_execution_start",
+        toolCallId=call_id,
+        toolName=name,
+        args=args,
+    )
+
+
+def tool_end(call_id: str, name: str, *, is_error: bool = False) -> OmpEvent:
+    return OmpEvent(
+        type="tool_execution_end",
+        toolCallId=call_id,
+        toolName=name,
+        result=OmpToolResult(content=[OmpContent(type="text", text="private-result")]),
+        isError=is_error,
+    )
