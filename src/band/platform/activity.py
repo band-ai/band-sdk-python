@@ -20,7 +20,9 @@ RELEASE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 
 def _supports_detail(version: str | None) -> bool:
-    match = RELEASE_VERSION.fullmatch(version) if version is not None else None
+    if version is None:
+        return False
+    match = RELEASE_VERSION.fullmatch(version)
     return (
         match is not None
         and tuple(map(int, match.groups())) >= MINIMUM_ACTIVITY_VERSION
