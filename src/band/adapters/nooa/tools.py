@@ -114,12 +114,22 @@ class TurnBinding:
     async def close(self) -> None:
         self.open = False
         for task in self.in_flight:
-            task.cancel()
-        await asyncio.gather(*self.in_flight, return_exceptions=True)
+            if not task.cancelling():
+                task.cancel()
         if caller_is_cancelled():
             for task in self.thoughts:
                 task.cancel()
-        await asyncio.gather(*self.thoughts, return_exceptions=True)
+        pending = asyncio.gather(
+            *self.in_flight, *self.thoughts, return_exceptions=True
+        )
+        try:
+            # Caller cancellation must reach us before interrupting owned cleanup.
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            for task in self.thoughts:
+                task.cancel()
+            await pending
+            raise
 
 
 # Context-local, not an attribute of the room's RoomTools: a task the model's code
@@ -174,9 +184,10 @@ class RoomTools:
         binding = self._binding(name)
         call = binding.start(self._call(binding, name, arguments))
         try:
-            return await call
+            return await asyncio.shield(call)
         except asyncio.CancelledError:
             if caller_is_cancelled():
+                call.cancel()
                 raise
             raise BandToolError(
                 f"{name} was cancelled because its turn ended first"

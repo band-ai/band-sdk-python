@@ -170,6 +170,7 @@ class Gate:
         self.entered = asyncio.Event()
         self.committed = False
         self.cancelled = False
+        self.cancellation_started = asyncio.Event()
 
     async def handler(self) -> str:
         self.entered.set()
@@ -177,6 +178,7 @@ class Gate:
             await self.opened.wait()
         except asyncio.CancelledError:
             self.cancelled = True
+            self.cancellation_started.set()
             raise
         self.committed = True
         return "done"
@@ -472,6 +474,18 @@ def tool_results(tools: FakeAgentTools) -> list[dict[str, Any]]:
     return [
         json.loads(event["content"])
         for event in events_of_type(tools, MessageType.TOOL_RESULT)
+    ]
+
+
+def tool_outcomes(tools: FakeAgentTools) -> list[tuple[str, object, bool]]:
+    """Each reported tool's name, output and error decision."""
+    return [
+        (
+            result[ToolEventKey.NAME],
+            result[ToolEventKey.OUTPUT],
+            result[ToolEventKey.IS_ERROR],
+        )
+        for result in tool_results(tools)
     ]
 
 
