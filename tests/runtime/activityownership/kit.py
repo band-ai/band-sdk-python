@@ -14,12 +14,12 @@ from band.platform.event import PlatformEvent
 from band.runtime.activity import set_permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
-from band.runtime.tools.agent import AgentTools
 from band.runtime.toolactivity import (
     end_tool_activity,
     report_memory_activity,
     report_tool_activity,
 )
+from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
 
