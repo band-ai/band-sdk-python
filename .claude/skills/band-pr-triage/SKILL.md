@@ -1,6 +1,6 @@
 ---
 name: band-pr-triage
-description: Use this skill when the user wants a quick, cheap, read-only check of whether a PR can be merged or needs the heavy band-code-review — also invoked as /band-pr-triage [target] [--level low|medium]. Never posts, fixes, or changes anything. Reads cheap signals (CI, size, file kinds, tests alongside source, skipped tests, open threads, ticket scope) plus a scan of the diff, reads the PR's earlier review history for signs the review is not converging, and returns MERGE, HEAVY REVIEW (naming the angles and the command to run), CHANGES NEEDED, or RETHINK (repeated comments on the same area; stop patching); any doubt escalates. --level low (default) adds one scan agent; --level medium adds Edge-Case and Logical-Bug hypothesis scans, still unproven. Does not call the built-in code-review skill.
+description: Use this skill when the user wants a quick, cheap, read-only check of whether a PR can be merged or needs the heavy band-code-review — also invoked as /band-pr-triage [target] [--level low|medium]. Never posts, fixes, or changes anything. Reads cheap signals (CI, size, file kinds, tests alongside source, skipped tests, open threads, ticket scope) plus a scan of the diff, reads the PR's earlier review history for signs the review is not converging, and returns DRAFT, MERGE, HEAVY REVIEW (naming the angles and the command to run), CHANGES NEEDED, or RETHINK (repeated comments on the same area; stop patching); any doubt escalates. --level low (default) adds one scan agent; --level medium adds Edge-Case and Logical-Bug hypothesis scans, still unproven. Does not call the built-in code-review skill.
 argument-hint: "[target] [--level low|medium]"
 ---
 
@@ -12,6 +12,10 @@ produce leads that only ever push the verdict toward more review.
 
 Follow [the shared runtime guidance](../workflow-runtime.md) for available
 tools, model selection, bounded parallel work, scratch files, and cleanup.
+
+This is a cheap read-only assessment, not the author's readiness review in
+`AGENTS.md` "PR Lifecycle and Readiness Review". Do not mark a draft ready or
+treat this scan as evidence that planning, implementation, and testing are complete.
 
 ## Invocation
 
@@ -39,6 +43,12 @@ session's working-directory diff, not a PR.
    (never `gh pr diff`, which refuses past 20,000 lines). Agents read only from the worktree
    and the diff, and never run git checkout/switch/reset/stash/commit.
 3. **Signals** (no LLM; `gh` and `git` only):
+   - Stage and author readiness: read `isDraft` and inspect the linked evidence
+     for the current implementation. Missing material readiness evidence is
+     a gap, not proof that the work was never done; report what is missing.
+     This repo skips its main CI jobs for drafts, so an expected draft skip
+     is not itself a disabled regression test. A failed rollup on a draft
+     does not establish that its product tests ran and failed.
    - CI: `gh pr checks <n>`. Failing blocks; pending means not green yet.
    - Size and file kinds from `git diff --numstat <merge-base> <headRefOid>`:
      source, tests, docs, dependencies or lockfiles, CI or release config,
@@ -98,22 +108,26 @@ session's working-directory diff, not a PR.
    short structured list (`file`, `line`, `severity`, one-sentence `body`) and
    nothing else. Treat every item as an unverified lead.
 5. **Verdict**, taking the first row that matches:
-   1. **RETHINK** — fix-induced rounds, or any two of the other history
+   1. **DRAFT** — the PR is a draft. List any blockers and scan leads, and
+      identify remaining author readiness work; do not issue a MERGE verdict.
+      Early feedback is allowed, but promotion requires the author's review.
+   2. **RETHINK** — fix-induced rounds, or any two of the other history
       signals. Patching further is the wrong move: do not recommend
       `band-code-review --fix`. Name the hotspot files with their thread counts,
       the signals that fired, and the shared concern the scan agent found,
       marked as an unverified lead. Still list any CHANGES NEEDED blockers.
-   2. **CHANGES NEEDED** — failing CI, an added skipped or disabled test, or
+   3. **CHANGES NEEDED** — failing CI, an added skipped or disabled test, or
       a scan item you confirm yourself by reading the cited lines to be a
       plain defect. List each with `file:line`. Never confirm by running a
       repro; that is `band-code-review`'s skeptic.
-   3. **HEAVY REVIEW** — any of: touches stateful, concurrent, lifecycle, or
+   4. **HEAVY REVIEW** — any of: touches stateful, concurrent, lifecycle, or
       protocol logic; public API or signature change; dependency, migration,
       or CI-config change; a scan `issue:` or hypothesis you didn't confirm;
       unresolved threads; scope mismatch; source change without tests; any
-      other doubt. Name the angle groups warranted (E and F for lifecycle or
+      material author-readiness evidence missing; or other doubt. Name the
+      angle groups warranted (E and F for lifecycle or
       any hypothesis, else A–D) and end with `/band-code-review <n>`.
-   4. **MERGE** — every signal clear and the scans returned nothing beyond
+   5. **MERGE** — every signal clear and the scans returned nothing beyond
       nits (list them as non-blocking). For a requested CI diagnosis, use
       `band-ci-triage` rather than reproducing failures during readiness triage.
       With CI pending: "MERGE once CI is

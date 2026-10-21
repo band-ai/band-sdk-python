@@ -494,6 +494,57 @@ history, or repeated addenda. Keep validation evidence and unresolved failures
 in the linked Linear issue or evidence attachments. The PR template follows
 this format.
 
+### PR Lifecycle and Readiness Review
+
+Open new PRs as **drafts**. A draft is the place to share work in progress,
+seek early design feedback, and expose unfinished validation. Mark it ready
+for review only after the developer's readiness review passes. Ready means
+the author has completed the engineering work and considers it fit for peer
+review; it does not mean peers have approved it or that it is mergeable.
+
+The readiness review checks the actual diff and relevant existing tests:
+
+- **Problem understood:** a bug has a supported root-cause explanation and
+  failure scenario; a feature has a clear underlying need and design rationale.
+  Do not invent a root cause for documentation or mechanical changes.
+- **Solution planned:** the approach, owning layer, scope, compatibility, and
+  expected scenarios were considered before implementation. A small change
+  may need a short explanation; complex or cross-component work needs a
+  written plan. Reconcile the final implementation with that plan.
+- **Implementation complete:** the diff solves the cause or need at its
+  authoritative boundary, is focused and maintainable, and has no known
+  blocking defects or unfinished in-scope work hidden as follow-ups.
+- **Coverage meaningful:** apply the test-conventions skill's "Coverage and
+  realistic flows" guidance. Map important scenarios to assertions, include
+  relevant complex interactions and failure/recovery paths, and close material
+  in-scope gaps. Passing tests and coverage percentages alone are insufficient.
+- **Validation evidenced:** the applicable author checks from the Pre-Commit
+  Checklist passed for the implementation being reviewed. Record the reviewed
+  head, checks and outcomes, scenario coverage, and material limitations in
+  the linked Linear issue or evidence attachment. Reuse earlier results only
+  when subsequent changes do not affect what they prove. Keep the PR body in
+  the existing Why / What / Scope format.
+
+If a criterion fails or required author validation is blocked or unrun, keep
+the PR in draft and state what remains. Do not replace evidence with a
+checklist assertion. After substantive changes or a newly discovered blocking
+defect, reassess readiness and return the PR to draft when the criteria no
+longer hold; an ordinary reviewer suggestion alone does not invalidate it.
+
+This repo starts its main CI jobs on `ready_for_review`, so green CI is not a
+prerequisite for leaving draft. Applicable author validation must still pass;
+CI pending after promotion is not a claimed pass and all required checks and
+approvals remain merge gates. If an essential scenario can only be validated
+in CI, use an authorized draft-compatible run or keep the PR in draft.
+
+This review is an author responsibility, not a requirement to invoke the full
+publishing code-review skill. A cheap PR triage verdict cannot substitute for
+it. Agents should use `gh pr create --draft` when PR creation is authorized;
+promote with `gh pr ready <pr>` only after the review passes and the task
+authorizes that transition. Do not change unrelated PRs' stages or treat
+readiness as permission to merge. See the
+[GitHub stage documentation](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/changing-the-stage-of-a-pull-request).
+
 ### Pre-Commit Checklist
 
 See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.

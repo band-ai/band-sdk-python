@@ -20,6 +20,10 @@ the current session, and follow its permissions and repository instructions.
 - A workflow does not expand the user's scope. Keep local review local
   unless publication is authorized. Loading another skill is not permission
   to post reviews, change tickets, push branches, or merge a PR.
+- When creating or preparing a PR, follow `AGENTS.md` "PR Lifecycle and
+  Readiness Review": start as draft and promote only after the author review
+  passes. Planning, early feedback, and a cheap readiness signal do not
+  establish implementation or validation completion.
 
 ## Delegation and ownership
 

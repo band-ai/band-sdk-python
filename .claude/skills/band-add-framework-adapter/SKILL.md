@@ -202,6 +202,10 @@ Integration"), in this order, running the named suites after each step:
 
 ## Phase 7 — Gates & ship
 
+- If publishing a PR is authorized, create it as a draft. Before promotion,
+  perform the author readiness review in `AGENTS.md` "PR Lifecycle and
+  Readiness Review", using the plan, final diff, scenario coverage, and
+  applicable validation evidence. Early draft feedback is welcome.
 - `AGENTS.md` "Pre-Commit Checklist" (ruff, pyrefly and the full unit suite).
 - Small, focused commits; no issue-tracker IDs in code (branch names, commit
   messages, and PR descriptions may reference them).

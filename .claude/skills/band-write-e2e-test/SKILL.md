@@ -200,7 +200,9 @@ under a still-live zombie. When reruns are justified, classify them with
 `flaky_model(reason)` or `flaky_infra(reason)` from `tests/e2e/baseline/flaky.py` — a
 raw `@pytest.mark.flaky` fails collection.
 
-- **On pass:** report the result plainly (command + outcome). Done.
+- **On pass:** report the result plainly (command + outcome). A passing test
+  alone does not make a PR ready. When publishing is part of the task, follow
+  `AGENTS.md` "PR Lifecycle and Readiness Review" before promoting its draft.
 - **On failure or flake:** invoke the **`band-investigate-test-error`** skill to find the true
   root cause before touching anything — the fault may be product code, the test's
   assumptions, the toolkit, or the model, and each has a different owner.

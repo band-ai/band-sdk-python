@@ -187,6 +187,9 @@ user's confirmation before implementing. Routine fixes proceed without asking.
    code and need behavioral checks. Run checks quietly and distinguish passed,
    failed, blocked, and not-run checks in the report.
 4. Re-check each fixed finding against its original failure scenario.
+   If the fixes materially change the design, scope, or tested behavior,
+   reassess author readiness under `AGENTS.md` "PR Lifecycle and Readiness
+   Review" before any authorized draft-to-ready transition.
 5. For a PR review, commit the fixes on the PR branch following AGENTS.md "Commit
    Messages", then push. A delegated worker returns its verified diff and proposed
    replies for the coordinator to commit and publish. Without push access, use

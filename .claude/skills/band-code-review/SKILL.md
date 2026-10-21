@@ -38,6 +38,10 @@ the symptom is a bolt-on and doesn't count.
 
 ## Resolve the target and scope
 
+Draft PRs may be reviewed for early feedback. Assess author readiness against
+`AGENTS.md` "PR Lifecycle and Readiness Review"; finishing this skill does not
+automatically promote a PR, establish mergeability, or waive missing validation.
+
 Follow [pr-target-scope.md](pr-target-scope.md): it resolves the
 target and PR state, then writes the scope statement every subagent gets.
 

@@ -2,7 +2,7 @@
 
 Shared by `band-code-review` and `band-pr-triage`. Run once, before spawning anyone.
 
-1. No target → `gh pr view --json number,state,headRefOid,baseRefName`.
+1. No target → `gh pr view --json number,state,isDraft,headRefOid,baseRefName`.
 2. Bare number or PR URL → use it.
 3. Else `gh pr list --head <target> --json number`; a hit is a branch name.
 4. Else it's a path that must exist in the repo: use the current branch's PR

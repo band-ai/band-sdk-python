@@ -33,6 +33,9 @@ Sections, in order, each short; "n/a" is fine where one doesn't apply:
 9. **Definition of done:** automated checks as exact commands (the targeted
    `uv run pytest ...` and applicable checks from `AGENTS.md`'s Pre-Commit Checklist) and manual
    checks (live E2E, editor flows), each with its expected result.
+   Include the draft-first PR lifecycle and author readiness review from
+   `AGENTS.md`; approval of this plan is not proof that implementation or
+   testing is complete.
 
 Design rules:
 
