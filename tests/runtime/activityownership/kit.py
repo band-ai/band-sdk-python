@@ -46,7 +46,7 @@ class ActivityPlatform(LifecyclePlatform):
         self.hold_next_activity = False
         self.activity_entered = asyncio.Event()
         self.activity_release = asyncio.Event()
-        self.late_changes: list[float] = []
+        self.late_changes: list[tuple[dict[str, Any], float]] = []
         self._reported = asyncio.Condition()
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
@@ -69,20 +69,29 @@ class ActivityPlatform(LifecyclePlatform):
             await self._reported.wait_for(lambda: len(self.activity_bodies) >= count)
         return self.activity_bodies
 
+    async def body_at(self, index: int) -> dict[str, Any]:
+        await self.bodies_reach(index + 1)
+        return self.activity_bodies[index]
+
+    async def next_body(self) -> dict[str, Any]:
+        """Wait for the platform to receive one more activity body."""
+        return await self.body_at(len(self.activity_bodies))
+
     async def shown(self, observation: Awaitable[None]) -> None:
         """Make a visible change and wait until the platform has received it.
 
-        A body that arrives only after virtual time passed came from a
-        keep-alive, not the change; it is recorded in ``late_changes`` rather
+        Assumes looptime: under real time every change would look late. A body
+        that arrives only after virtual time passed came from a keep-alive, not
+        the change; it is recorded with that delay in ``late_changes`` rather
         than raised, because a handler would swallow the error as a failed turn.
         """
         loop = asyncio.get_running_loop()
-        count = len(self.activity_bodies)
+        index = len(self.activity_bodies)
         observed_at = loop.time()
         await observation
-        await self.bodies_reach(count + 1)
+        body = await self.body_at(index)
         if waited := loop.time() - observed_at:
-            self.late_changes.append(waited)
+            self.late_changes.append((body, waited))
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         tail = request.url.path.rsplit("/", 1)[-1]

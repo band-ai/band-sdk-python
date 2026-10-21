@@ -23,7 +23,9 @@ from tests.runtime.helpers import (
 def activity_platform() -> Iterator[ActivityPlatform]:
     platform = ActivityPlatform()
     yield platform
-    assert platform.late_changes == [], "a visible change waited for a keep-alive"
+    assert platform.late_changes == [], (
+        f"visible changes waited for a keep-alive (body, seconds): {platform.late_changes}"
+    )
 
 
 @pytest.fixture

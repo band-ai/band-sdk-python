@@ -12,7 +12,11 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, past_a_keep_alive
+from tests.runtime.activityownership.kit import (
+    ActivityPlatform,
+    ObservedIdle,
+    past_a_keep_alive,
+)
 
 
 @pytest.mark.looptime
@@ -90,5 +94,68 @@ class TestControlledTurnDetail:
             REASONING_BODY,
             tool_body("Bash"),
             tool_body("Read"),
+            IDLE_BODY,
+        ]
+
+    async def test_graceful_stop_keeps_the_draining_turn_detail_current(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        captured: list[AgentTools] = []
+        handler_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            captured.append(AgentTools.from_context(ctx))
+            handler_started.set()
+            await release.wait()
+
+        ctx = execution(handler)
+        idle = ctx._idle_event = ObservedIdle()
+        await ctx.start()
+        await ctx.on_event(make_message_event())
+        await handler_started.wait()
+        stopping = asyncio.create_task(ctx.stop(timeout=30))
+        await idle.awaited.wait()
+        await activity_platform.shown(report_tool_activity(captured[0], "Bash"))
+        release.set()
+        assert await stopping
+        assert activity_platform.activity_bodies == [
+            REASONING_BODY,
+            tool_body("Bash"),
+            IDLE_BODY,
+        ]
+
+    async def test_an_interrupted_turn_cannot_change_detail_while_unwinding(
+        self,
+        execution: Callable[..., ExecutionContext],
+        activity_platform: ActivityPlatform,
+    ) -> None:
+        cleanup_entered = asyncio.Event()
+        cleanup_release = asyncio.Event()
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            tools = AgentTools.from_context(ctx)
+            await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await report_memory_activity(tools)
+                cleanup_entered.set()
+                await cleanup_release.wait()
+                raise
+
+        ctx = execution(handler)
+        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        await activity_platform.bodies_reach(2)
+        ctx.interrupt()
+        await cleanup_entered.wait()
+        await past_a_keep_alive()
+        cleanup_release.set()
+        await turn
+        assert activity_platform.activity_bodies == [
+            REASONING_BODY,
+            tool_body("Bash"),
             IDLE_BODY,
         ]
