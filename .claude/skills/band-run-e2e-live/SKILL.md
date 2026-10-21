@@ -75,7 +75,7 @@ with `@lane(Lane.X)` (that's a `band-write-e2e-test` concern).
 | `google` | dev | gemini, google_adk (split out for rate-limit isolation) | GOOGLE/GEMINI key |
 | `crewai` | **dev-crewai** | crewai, crewai_flow | OPENAI key |
 | `backends` | dev | codex, opencode, copilot_acp, cursor_acp, omp_acp | see gotchas below |
-| `letta` | dev | letta (matrix fan) | docker Letta server + OPENAI key — see "letta lane" below |
+| `letta` | dev | letta (matrix fan; Linux-only in CI) | docker Letta server + OPENAI key — see "letta lane" below |
 | `strands` | **dev-strands-nooa** | strands | OPENAI key |
 | `nooa` | **dev-strands-nooa** | nooa | ANTHROPIC key; Python 3.12–3.13 on POSIX; Linux-only in CI |
 | `parlant` | **dev-parlant** | none — a bespoke `@lane(Lane.PARLANT)`-pinned smoke, no matrix adapter | OPENAI key; the smoke runs its own in-process Parlant server |

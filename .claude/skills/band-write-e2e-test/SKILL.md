@@ -50,8 +50,8 @@ conversation) and returns a tight written summary, not file dumps. You keep the
 conclusions.
 
 1. **Docs sweep.** "Read `tests/e2e/baseline/README.md` and
-   `tests/e2e/baseline/ADDING_AN_ADAPTER.md` in full, plus the `AGENTS.md` E2E
-   sections. Return: the toolkit's rules, the `@with_adapters` vs `@per_adapter` decision,
+   `tests/e2e/baseline/ADDING_AN_ADAPTER.md` in full, plus the `AGENTS.md`
+   "Testing Structure" and "Environment Variables" sections. Return: the toolkit's rules, the `@with_adapters` vs `@per_adapter` decision,
    the assertion strategy (cheap-first, judge-last), the fail-loud/validation policy, the
    CI-lane model, and any env vars a test needs. Quote the exact decorator/fixture names."
 

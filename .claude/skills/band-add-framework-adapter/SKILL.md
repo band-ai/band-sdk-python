@@ -3,7 +3,7 @@ name: band-add-framework-adapter
 description: Use this skill when the user asks to add a new framework adapter to the Band Python SDK — "add an adapter for framework X", "integrate SDK Y as an adapter", "implement the Z adapter from this ticket". Takes a ticket + context and drives the full process — parallel research (repo patterns + online SDK source), installed-package ground-truthing as a hard gate, a fillable plan template, a five-question plan gate, TDD implementation, the concrete quality bar (config per the Adapter Constructor Shape, shared constants, no bolt-ons), scrutinized review rounds, live runtime probes, live E2E, and ship gates.
 ---
 
-# Adding a Framework Adapter — plan template & execution playbook
+# Add a Framework Adapter
 
 A skill-style instruction document for an AI coding agent (or a developer)
 tasked with adding a new framework adapter to this SDK. Input: a ticket plus
@@ -33,10 +33,11 @@ holds its invariants beats a feature-complete one that leaks state.
 
 ---
 
-# Half 1 — The plan template
+## Half 1 — The plan template
 
-Before writing any code, produce `docs/<framework>-adapter-plan.md` (or a
-ticket/Linear document) by copying the skeleton below and filling every
+Before writing any code, produce a plan (a Linear attachment per
+`band-plan/publish.md`, or a file outside the tracked docs, which run as
+tests) by copying the skeleton below and filling every
 section from real research. Sections you cannot fill are research you have
 not done yet.
 
@@ -178,7 +179,7 @@ per room lifecycle. See Half 2 §4 for the concrete quality bar.
 
 ---
 
-# Half 2 — The execution process
+## Half 2 — The execution process
 
 ## Team & roles
 
@@ -284,17 +285,9 @@ Integration"), in this order, running the named suites after each step:
 
 ## Phase 4 — Quality bar (concrete standards)
 
-- **Constructor shape** (`AGENTS.md` → "Adapter Constructor Shape"):
-  `<Framework>AdapterConfig` subclasses `BaseAdapterConfig` (or
-  `EnvAdapterConfig` when env vars may set it) from
-  `src/band/core/adapterconfig.py` — frozen, rejects unknown fields, plain
-  data only so it loads from YAML/JSON. Validate settings in the config, not
-  the constructor. The converter, custom tools and live objects (clients,
-  factories, LLM objects, callbacks) stay keyword-only ctor args, plus
-  `**features`. A routing policy is one argument (`None | "mode" |
+- **Constructor shape**: exactly as `AGENTS.md` "Adapter Constructor Shape"
+  describes. In addition, a routing policy is one argument (`None | "mode" |
   handler`), not parallel booleans/callbacks that can contradict each other.
-  `tests/framework_conformance/adaptershape/test_adaptershape.py` enforces
-  the shape.
 - **No magic strings**: use `MessageType` (StrEnum) for event types; shared
   constants for cross-adapter facts (`ToolEventKey` in `core/types.py`);
   single-source metadata keys shared between adapter (writer) and converter
@@ -302,10 +295,6 @@ Integration"), in this order, running the named suites after each step:
   tool results, injected prompt guidance) is design surface, not string
   filler: shared constants, unit-tested, and taught in the system prompt —
   the model should not first learn a contract from its first tool result.
-- **No `nonlocal`, no closure-smuggled state, no bolt-ons.** If a design
-  forces a closure to leak results, restructure ownership instead (e.g. a
-  registry `get`/`store` beats a factory callback returning through
-  `nonlocal`). Flat methods with real parameters beat nested closures.
 - **Explicit resource ownership**: injected client = borrowed (never stopped
   by the adapter); factory/default = owned (stopped at `cleanup_all`).
   Mutually-exclusive inputs raise `BandConfigError`.
@@ -313,12 +302,9 @@ Integration"), in this order, running the named suites after each step:
   `on_started` *with rollback* (a failed start must not leak a subprocess);
   `cleanup_all` releases adapter-wide resources; failed/timed-out turns
   abort + evict the session so the next message starts clean.
-- **PEP 257 docstrings** (summary on the first line, imperative mood);
-  comments state constraints and WHY, never mechanics; `%s` logging with
-  room/session ids traceable per lifecycle.
-- Repo idioms from the `band-python-conventions` skill apply throughout
-  (typing, no `print`, comprehensions over `continue`, no underscores in
-  file or class names, no issue-tracker IDs in code).
+- `%s` logging with room/session ids traceable per lifecycle.
+- The `band-python-conventions` and `band-python-comment-style` skills apply
+  throughout.
 
 ## Phase 5 — Review rounds
 
@@ -359,8 +345,7 @@ Integration"), in this order, running the named suites after each step:
 
 ## Phase 7 — Gates & ship
 
-- `uv run ruff check . && uv run ruff format . && uv run pyrefly check` and
-  the full unit suite.
+- `AGENTS.md` "Pre-Commit Checklist" (ruff, pyrefly and the full unit suite).
 - Small, focused commits; no issue-tracker IDs in code (branch names, commit
   messages, and PR descriptions may reference them).
 - Keep the **PR description current** as the branch evolves (features pulled

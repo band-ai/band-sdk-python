@@ -42,3 +42,7 @@ paths:
   passes after it.
 - For a stateful lifecycle component, add a Hypothesis model-based test over
   generated step sequences (see `tests/platform/linkclose/test_lifecycle_model.py`).
+- Ordering, concurrency and timeout behavior is proven with explicit
+  synchronization and a controlled clock: `AGENTS.md` "Test Synchronization".
+- File layout (one test class per file, packages for larger suites):
+  `AGENTS.md` "Testing Structure".
