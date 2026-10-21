@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
+
+from band.runtime.activity import ActivityObserver
+
+
+class ObservableTools(Protocol):
+    _activity_observer: ActivityObserver | None
+
+
+_Tools = TypeVar("_Tools", bound=ObservableTools)
+
+SHOWN_REASONING: dict[str, Any] = {"kind": "reasoning"}
+SHOWN_MEMORY: dict[str, Any] = {"kind": "memory"}
+
+
+def shown_tool(name: str) -> dict[str, Any]:
+    """A recorded ``tool_call`` observation for ``name``."""
+    return {"kind": "tool_call", "name": name}
 
 
 class ActivityRecorder:
@@ -13,6 +30,11 @@ class ActivityRecorder:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
+    def observing(self, tools: _Tools) -> _Tools:
+        """Bind this recorder as the turn observer of ``tools``."""
+        tools._activity_observer = self
+        return tools
+
     async def update(self, activity: AgentActivityDetail) -> None:
         self.events.append(activity.model_dump(exclude_none=True))
 
@@ -20,7 +42,4 @@ class ActivityRecorder:
         self.events.append({"waiting": waiting})
 
     def assert_completed_tool(self, name: str) -> None:
-        assert self.events == [
-            {"kind": "tool_call", "name": name},
-            {"kind": "reasoning"},
-        ]
+        assert self.events == [shown_tool(name), SHOWN_REASONING]

@@ -7,8 +7,8 @@ import pytest
 
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.event import PlatformEvent
-from band.runtime.activity import report_memory_activity, report_tool_activity
 from band.runtime.execution import ExecutionContext
+from band.runtime.toolactivity import report_memory_activity, report_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event

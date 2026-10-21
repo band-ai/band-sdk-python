@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 from band.core.protocols import AgentToolsProtocol
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.integrations.crewai.reporting import CrewAIToolReporter
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     BandTool,
     file_content_placeholder,
@@ -29,7 +30,6 @@ from band.runtime.tools import (
     serialize_tool_result,
     validate_tool_arguments,
 )
-from band.runtime.turn import tool_activity
 
 # --- Rendering a tool result as the text CrewAI hands the model ---
 

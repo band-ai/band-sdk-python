@@ -25,6 +25,7 @@ from pydantic_core import SchemaValidator, core_schema
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import AdapterFeatures, MessageType
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     BandTool,
     ToolDefinition,
@@ -37,7 +38,6 @@ from band.runtime.tools import (
     turn_effect,
     validate_tool_arguments,
 )
-from band.runtime.turn import model_tool_activity
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ def _dispatcher(
         # something to hand the model as a tool error it could act on.
         method = _resolve_method(ctx.deps, definition)
         try:
-            async with model_tool_activity(ctx.deps, definition.name):
+            async with tool_activity(ctx.deps, definition.name):
                 result = await method(**kwargs)
         except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return await _dispatch_failed(ctx, definition, error, notify_room=True)

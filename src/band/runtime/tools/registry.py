@@ -10,7 +10,7 @@ rather than hardcoding their own tool lists.
 from __future__ import annotations
 
 import base64
-from collections.abc import Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
 from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel
@@ -918,6 +918,16 @@ def decode_image_block(block: Mapping[str, Any]) -> tuple[bytes, str]:
 def decode_image_blocks(result: Mapping[str, Any]) -> list[tuple[bytes, str]]:
     """Decode every block of an image-file read into (raw bytes, mime type)."""
     return [decode_image_block(block) for block in result["content"]]
+
+
+def agent_tool_methods(
+    cls: type,
+) -> Iterator[tuple[ToolDefinition, Callable[..., Awaitable[Any]]]]:
+    """Each agent tool ``cls`` itself defines, with its method."""
+    for definition in TOOL_DEFINITIONS.values():
+        method = cls.__dict__.get(definition.method_name)
+        if definition.surface == Surface.AGENT and method is not None:
+            yield definition, method
 
 
 def selected_tool_definitions(

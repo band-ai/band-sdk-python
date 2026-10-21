@@ -16,8 +16,8 @@ from band.integrations.parlant.sessiontools import (
     require_session_tools,
 )
 from band.runtime.custom_tools import CustomToolDef, execute_custom_tool
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import tool_result_text
-from band.runtime.turn import tool_activity
 
 # Parlant delivers every argument as a string, which only lax validation
 # converts, so even a strict field is validated laxly.

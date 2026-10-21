@@ -5,39 +5,14 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from mcp import types
-from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from band.integrations.mcp.engine import (
-    EmbeddedResolver,
-    EngineSpec,
-    build_engine,
-    build_tool_registration,
-    extend_with_chat_id,
-)
 from band.runtime.tools import AgentTools
 from band.runtime.tools.registry import TOOL_DEFINITIONS
 from band.runtime.tools.types import BandTool
 from band.testing.activity import ActivityRecorder
 from tests.runtime.helpers import ROOM_ID
-
-
-def participants_server(tools: AgentTools, request_ids: list[Any]) -> FastMCP:
-    """An MCP engine serving ``band_get_participants`` over ``tools``."""
-    definition = TOOL_DEFINITIONS[BandTool.GET_PARTICIPANTS]
-
-    def resolve(room_id: str) -> AgentTools:
-        request_ids.append(server.get_context().request_context.request_id)
-        return tools
-
-    registration = build_tool_registration(
-        definition,
-        extend_with_chat_id(definition.input_model, None),
-        resolver=EmbeddedResolver(get_tools=resolve),
-        strip_chat_id=True,
-    )
-    server = build_engine(EngineSpec(name="activity", tools=(registration,)))
-    return server
+from tests.runtime.toolactivity.kit import band_tool_server
 
 
 def cancel_request(request_id: Any) -> types.ClientNotification:
@@ -67,7 +42,9 @@ class TestCancelledToolActivity:
         participants = mock_rest_client.agent_api_participants
         participants.list_agent_chat_participants.side_effect = held
         request_ids: list[Any] = []
-        server = participants_server(tools, request_ids)
+        server = band_tool_server(
+            tools, TOOL_DEFINITIONS[BandTool.GET_PARTICIPANTS], request_ids=request_ids
+        )
         async with create_connected_server_and_client_session(server) as session:
             request = asyncio.create_task(
                 session.call_tool(BandTool.GET_PARTICIPANTS, {"chat_id": ROOM_ID})

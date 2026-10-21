@@ -72,12 +72,12 @@ class TestOpencodeAdmission:
                 assert activity_platform.marked("processed") == ["original"]
                 assert activity_platform.marked("failed") == []
                 assert len(client.prompt_calls) == 1
-                assert activity_platform.indicator_changes == [KEEP_ALIVE]
+                assert activity_platform.reports_without_refreshes == [KEEP_ALIVE]
 
                 activity_platform.release.set()
                 await turn_finished(first_turn)
                 await ctx._join_activity_completion()
-                assert activity_platform.indicator_changes == [KEEP_ALIVE, IDLE]
+                assert activity_platform.reports_without_refreshes == [KEEP_ALIVE, IDLE]
 
                 await ctx._reconcile()
                 await ctx._join_activity_completion()
@@ -88,7 +88,7 @@ class TestOpencodeAdmission:
                     FIRST_ANSWER,
                     SECOND_ANSWER,
                 ]
-                assert activity_platform.indicator_changes == [
+                assert activity_platform.reports_without_refreshes == [
                     KEEP_ALIVE,
                     IDLE,
                     KEEP_ALIVE,

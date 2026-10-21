@@ -12,8 +12,8 @@ from band.integrations.parlant.customtools import build_custom_tool
 from band.integrations.parlant.sessiontools import set_session_tools
 from band.integrations.parlant.tools import create_parlant_tools
 from band.testing import FakeAgentTools
-from band.testing.activity import ActivityRecorder
-from tests.integrations.parlant.activity.kit import LookupInput
+from band.testing.activity import ActivityRecorder, shown_tool
+from tests.integrations.activitykit import LookupInput
 from tests.integrations.parlant.helpers import ToolServer
 
 
@@ -22,10 +22,9 @@ class TestParlantActivity:
     async def test_real_server_reports_only_calling_session_and_always_ends(
         self, plugin_server: ToolServer, failed: bool
     ) -> None:
-        tools, other = FakeAgentTools(), FakeAgentTools()
         recorder, quiet = ActivityRecorder(), ActivityRecorder()
-        tools._activity_observer = recorder
-        other._activity_observer = quiet
+        tools = recorder.observing(FakeAgentTools())
+        other = quiet.observing(FakeAgentTools())
         set_session_tools("calling", tools)
         set_session_tools("other", other)
         entered, release = asyncio.Event(), asyncio.Event()
@@ -48,7 +47,7 @@ class TestParlantActivity:
         )
         try:
             await entered.wait()
-            assert recorder.events == [{"kind": "tool_call", "name": "lookup"}]
+            assert recorder.events == [shown_tool("lookup")]
             assert not quiet.events
         finally:
             release.set()
@@ -60,10 +59,10 @@ class TestParlantActivity:
         assert not tools.events_sent
 
     async def test_custom_handler_cancellation_ends_activity(self) -> None:
-        tools = FakeAgentTools()
+        # The plugin server finishes a handler whose client disconnected, so
+        # only a direct call can deliver a cancellation to it.
         recorder = ActivityRecorder()
-        tools._activity_observer = recorder
-        set_session_tools("cancelled", tools)
+        set_session_tools("cancelled", recorder.observing(FakeAgentTools()))
         entered = asyncio.Event()
 
         async def lookup(args: LookupInput) -> str:

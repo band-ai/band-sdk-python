@@ -1,5 +1,5 @@
 """Names-only room activity detail, the per-turn state that holds it, and the
-producers a turn reports it through."""
+observer a turn reports it through."""
 
 from __future__ import annotations
 
@@ -59,26 +59,12 @@ class TurnActivity:
 
 def activity_observer_of(tools: object) -> ActivityObserver | None:
     """The turn observer bound to ``tools``, if it declares one."""
-    # A dynamic proxy (``__getattr__``, a mock) would conjure an observer it
-    # never had; only a declared attribute counts.
+    # Only a declared attribute counts: a dynamic proxy (``__getattr__``, a
+    # mock) would conjure an observer it never had. The second, dynamic read
+    # resolves a declared property such as a wrapper's pass-through.
     if getattr_static(tools, "_activity_observer", None) is None:
         return None
     return getattr(tools, "_activity_observer", None)
-
-
-async def report_tool_activity(tools: object, name: str) -> None:
-    if observer := activity_observer_of(tools):
-        await observer.update(tool_call_activity(name))
-
-
-async def end_tool_activity(tools: object) -> None:
-    if observer := activity_observer_of(tools):
-        await observer.update(REASONING)
-
-
-async def report_memory_activity(tools: object) -> None:
-    if observer := activity_observer_of(tools):
-        await observer.update(MEMORY)
 
 
 async def set_permission_wait(tools: object, waiting: bool) -> None:

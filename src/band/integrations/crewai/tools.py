@@ -53,6 +53,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
     BandTool,
@@ -61,7 +62,6 @@ from band.runtime.tools import (
     get_tool_description,
     withheld_tool_names,
 )
-from band.runtime.turn import tool_activity
 
 logger = logging.getLogger(__name__)
 

@@ -185,12 +185,14 @@ class LifecyclePlatform:
         self.activity_reports: list[ActivityReport] = []
 
     @property
-    def indicator_changes(self) -> list[ActivityReport]:
-        """The room's working-state reports with repeated refreshes collapsed."""
+    def reports_without_refreshes(self) -> list[ActivityReport]:
+        """The room's working-state reports with each run of keep-alive
+        refreshes collapsed; a repeated idle still shows twice."""
+        reports = self.activity_reports
         return [
             report
-            for index, report in enumerate(self.activity_reports)
-            if index == 0 or report != self.activity_reports[index - 1]
+            for index, report in enumerate(reports)
+            if not (report == KEEP_ALIVE and index and reports[index - 1] == KEEP_ALIVE)
         ]
 
     def add_message(self, message_id: str, *, content: str = "hello") -> None:

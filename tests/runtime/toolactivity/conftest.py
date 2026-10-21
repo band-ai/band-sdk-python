@@ -17,6 +17,4 @@ def recorder() -> ActivityRecorder:
 @pytest.fixture
 def tools(mock_rest_client: MagicMock, recorder: ActivityRecorder) -> AgentTools:
     """Real Band tools whose turn observer is the recorder."""
-    tools = AgentTools(ROOM_ID, mock_rest_client)
-    tools._activity_observer = recorder
-    return tools
+    return recorder.observing(AgentTools(ROOM_ID, mock_rest_client))

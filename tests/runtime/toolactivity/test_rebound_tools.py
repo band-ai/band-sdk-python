@@ -29,7 +29,7 @@ class TestReboundToolActivity:
         call = asyncio.create_task(tools.get_participants())
         await entered.wait()
         next_turn = ActivityRecorder()
-        tools._activity_observer = next_turn
+        next_turn.observing(tools)
         release.set()
         await call
 

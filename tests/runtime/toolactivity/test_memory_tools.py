@@ -7,7 +7,7 @@ import pytest
 
 from band.runtime.tools import AgentTools
 from band.runtime.tools.types import BandTool
-from band.testing.activity import ActivityRecorder
+from band.testing.activity import SHOWN_MEMORY, SHOWN_REASONING, ActivityRecorder
 
 MEMORY_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -39,7 +39,7 @@ class TestMemoryToolActivity:
         self, tools: AgentTools, recorder: ActivityRecorder, call: ToolCall
     ) -> None:
         await call(tools)
-        assert recorder.events == [{"kind": "memory"}, {"kind": "reasoning"}]
+        assert recorder.events == [SHOWN_MEMORY, SHOWN_REASONING]
 
     @pytest.mark.parametrize(
         ("name", "call"),

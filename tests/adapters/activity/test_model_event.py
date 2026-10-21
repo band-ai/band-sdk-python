@@ -1,43 +1,40 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
-from pydantic_ai import RunContext
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
 
-from band.integrations.mcp.engine import dispatch_tool
-from band.integrations.pydantic_ai.tools import _dispatcher
-from band.runtime.tools.registry import TOOL_DEFINITIONS
+from band.runtime.tools import AgentTools
 from band.runtime.tools.types import BandTool
 from band.testing.activity import ActivityRecorder
-from band.testing.fake_tools import FakeAgentTools
+from tests.adapters.activity.kit import MODEL_CALLS, ModelCall
+from tests.runtime.helpers import ROOM_ID
 
-SEND_EVENT = TOOL_DEFINITIONS[BandTool.SEND_EVENT]
-ARGUMENTS = {"content": "model", "message_type": "thought"}
-
-
-async def dispatch_over_mcp(tools: FakeAgentTools) -> None:
-    await dispatch_tool(tools, SEND_EVENT, ARGUMENTS)
+EVENT = {"content": "model telemetry", "message_type": "thought"}
 
 
-async def dispatch_over_pydantic_ai(tools: FakeAgentTools) -> None:
-    dispatch = _dispatcher(SEND_EVENT, SEND_EVENT.input_model)
-    await dispatch(
-        RunContext(deps=tools, model=TestModel(), usage=RunUsage()), **ARGUMENTS
+class TestModelToolActivity:
+    """A model's tool call shows exactly once, whichever framework dispatched it."""
+
+    @pytest.mark.parametrize("call", MODEL_CALLS)
+    @pytest.mark.parametrize(
+        ("name", "arguments"),
+        [(BandTool.SEND_EVENT, EVENT), (BandTool.GET_PARTICIPANTS, {})],
+        ids=["send_event", "get_participants"],
     )
-
-
-class TestModelEventActivity:
-    @pytest.mark.parametrize("dispatch", [dispatch_over_mcp, dispatch_over_pydantic_ai])
-    async def test_a_model_event_reports_while_raw_telemetry_stays_quiet(
-        self, dispatch: Callable[[FakeAgentTools], Awaitable[None]]
+    async def test_the_call_shows_once_while_adapter_telemetry_stays_quiet(
+        self,
+        mock_rest_client: MagicMock,
+        call: ModelCall,
+        name: BandTool,
+        arguments: dict[str, Any],
     ) -> None:
-        tools = FakeAgentTools()
         recorder = ActivityRecorder()
-        tools._activity_observer = recorder
-        await tools.send_event("internal", "thought")
+        tools = recorder.observing(AgentTools(ROOM_ID, mock_rest_client))
+        await tools.send_event("adapter telemetry", "thought")
         assert recorder.events == []
-        await dispatch(tools)
-        recorder.assert_completed_tool(BandTool.SEND_EVENT)
+
+        await call(tools, name, arguments)
+
+        recorder.assert_completed_tool(name)

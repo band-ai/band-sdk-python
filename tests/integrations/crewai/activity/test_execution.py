@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -10,8 +11,8 @@ from band.integrations.crewai.tools import (
     build_band_crewai_tools,
 )
 from band.testing import FakeAgentTools
-from band.testing.activity import ActivityRecorder
-from tests.integrations.crewai.activity.kit import LookupInput
+from band.testing.activity import ActivityRecorder, shown_tool
+from tests.integrations.activitykit import LookupInput
 
 pytest.importorskip("crewai")
 
@@ -22,12 +23,13 @@ class TestCrewAIActivity:
         self, failed: bool
     ) -> None:
         recorder = ActivityRecorder()
-        tools = FakeAgentTools()
-        tools._activity_observer = recorder
+        tools = recorder.observing(FakeAgentTools())
+        shown_while_running: list[dict[str, Any]] = []
+        received: list[str] = []
 
         async def lookup(args: LookupInput) -> str:
-            assert recorder.events == [{"kind": "tool_call", "name": "lookup"}]
-            assert args.note == "private-argument"
+            shown_while_running.extend(recorder.events)
+            received.append(args.note)
             if failed:
                 raise ValueError("private-error")
             return "private-result"
@@ -40,5 +42,7 @@ class TestCrewAIActivity:
         lookup_tool = next(tool for tool in built if tool.name == "lookup")
         result = json.loads(lookup_tool.run(note="private-argument"))
         assert result["status"] == ("error" if failed else "success")
+        assert received == ["private-argument"]
+        assert shown_while_running == [shown_tool("lookup")]
         recorder.assert_completed_tool("lookup")
         assert not tools.events_sent

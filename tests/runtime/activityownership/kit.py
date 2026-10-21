@@ -9,13 +9,13 @@ from typing import Any, Literal
 import httpx
 
 from band.platform.activity import API_VERSION_HEADER
-from band.runtime.activity import (
+from band.runtime.activity import set_permission_wait
+from band.runtime.sessionconfig import SessionConfig
+from band.runtime.toolactivity import (
     end_tool_activity,
     report_memory_activity,
     report_tool_activity,
-    set_permission_wait,
 )
-from band.runtime.sessionconfig import SessionConfig
 from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
 

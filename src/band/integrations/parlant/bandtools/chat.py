@@ -15,8 +15,8 @@ from band.integrations.parlant.mentions import (
     split_mentions,
 )
 from band.integrations.parlant.sessiontools import require_session_tools
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import BandTool, ParticipantAddStatus, serialize_tool_result
-from band.runtime.turn import tool_activity
 
 EVENT_MESSAGE_TYPES: tuple[str, ...] = get_args(EventMessageType)
 

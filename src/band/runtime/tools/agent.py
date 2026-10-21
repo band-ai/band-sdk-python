@@ -63,6 +63,7 @@ from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
 from band.runtime.participants import log_roster_call, participant_snapshot
+from band.runtime.toolactivity import reports_tool_activity, tool_activity
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -74,11 +75,7 @@ from band.runtime.tools.schema import (
     serialize_tool_result,
     validate_tool_arguments,
 )
-from band.runtime.turn import (
-    model_tool_activity,
-    records_turn_effects,
-    reports_tool_activity,
-)
+from band.runtime.turn import records_turn_effects
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -2047,7 +2044,7 @@ class AgentTools(AgentToolsProtocol):
 
         try:
             method = getattr(self, definition.method_name)
-            async with model_tool_activity(self, tool_name):
+            async with tool_activity(self, tool_name):
                 result = await method(**arguments)
             return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
         except (BandToolError, RoomExecutionStoppedError):

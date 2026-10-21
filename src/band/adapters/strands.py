@@ -66,6 +66,7 @@ from band.runtime.custom_tools import (
     reject_conflicting_tool_names,
 )
 from band.runtime.prompts import render_system_prompt, with_system_updates
+from band.runtime.toolactivity import tool_activity
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     ToolCallOutcome,
@@ -354,7 +355,8 @@ class PlatformToolBridge(StrandsToolBridge):
                 Callable[..., Awaitable[object]],
                 getattr(self._tools, self._definition.method_name),
             )
-            value = await method(**validated)
+            async with tool_activity(self._tools, self._definition.name):
+                value = await method(**validated)
         except Exception as error:
             logger.exception("Platform tool %s failed", self.tool_name)
             message = f"Error executing {self.tool_name}: {error}"
