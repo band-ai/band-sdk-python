@@ -8,7 +8,7 @@ so the decision is applied once there and never per adapter.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
@@ -23,14 +23,19 @@ class ToolNamesObserver:
     """Hide tool names while leaving every other activity detail intact.
 
     Permission waits and memory activity name no content, so they report
-    whatever the tool-name choice is.
+    whatever the tool-name choice is. ``hidden`` is consulted at report time,
+    never bound at construction: an observer attached before the adapter's
+    emit sync must still follow the turn's live choice.
     """
 
-    def __init__(self, inner: ActivityObserver) -> None:
+    def __init__(
+        self, inner: ActivityObserver, hidden: Callable[[], bool] = lambda: True
+    ) -> None:
         self._inner = inner
+        self._hidden = hidden
 
     async def update(self, activity: AgentActivityDetail) -> None:
-        if activity.kind == "tool_call":
+        if activity.kind == "tool_call" and self._hidden():
             await self._inner.update(AgentActivityDetail(kind="reasoning"))
             return
         await self._inner.update(activity)
