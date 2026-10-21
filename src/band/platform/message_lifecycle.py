@@ -412,6 +412,47 @@ class MessageLifecycle:
             [_platform_message(item, room_id) for item in response.data], next_cursor
         )
 
+    async def get_actionable_messages(
+        self, rest: AsyncRestClient, room_id: str
+    ) -> list[PlatformMessage]:
+        """Collect a complete, deduplicated snapshot before delivery statuses change."""
+        messages: dict[str, PlatformMessage] = {}
+        page = 1
+        pagination: dict[str, Any] = {}
+        seen_cursors: set[str] = set()
+        while True:
+            response = await rest.agent_api_messages.list_agent_messages(
+                chat_id=room_id,
+                sort_order="asc",
+                limit=ACTIONABLE_PAGE_SIZE,
+                request_options=DEFAULT_REQUEST_OPTIONS,
+                **pagination,
+            )
+            for item in response.data:
+                messages.setdefault(item.id, _platform_message(item, room_id))
+
+            cursor = response.metadata.next_cursor
+            if response.metadata.has_more is True and cursor:
+                if cursor in seen_cursors:
+                    raise ValueError("Message listing has no usable pagination cursor")
+                seen_cursors.add(cursor)
+                pagination = {"cursor": cursor}
+                continue
+
+            total_pages = response.metadata.total_pages
+            if (
+                "cursor" not in pagination
+                and total_pages is not None
+                and page < total_pages
+            ):
+                page += 1
+                pagination = {"page": page}
+                continue
+
+            if response.metadata.has_more is True:
+                raise ValueError("Message listing has no usable pagination cursor")
+            return list(messages.values())
+
     async def get_actionable_message(
         self, rest: AsyncRestClient, room_id: str, message_id: str
     ) -> PlatformMessage | None:
