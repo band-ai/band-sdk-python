@@ -40,6 +40,7 @@ from band.runtime.agentconfig import AgentConfig
 from band.workspaces import WorkspaceResolver
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
+from tests.e2e.baseline.toolkit.restclient import baseline_rest_client
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 if TYPE_CHECKING:
@@ -203,7 +204,7 @@ def user_rest_client(
     )
     if not api_key:
         raise ValueError(f"{name} is required for the user REST client")
-    return AsyncRestClient(api_key=api_key, base_url=settings.endpoints.rest_url)
+    return baseline_rest_client(api_key=api_key, base_url=settings.endpoints.rest_url)
 
 
 def agent_rest_client(
@@ -218,7 +219,9 @@ def agent_rest_client(
     left to be reclaimed at event-loop teardown rather than closed explicitly.
     ``ReplyCapture`` reuses one client per agent to bound how many are opened.
     """
-    return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
+    return baseline_rest_client(
+        api_key=agent.api_key, base_url=settings.endpoints.rest_url
+    )
 
 
 class PeerActor:
@@ -463,24 +466,25 @@ class ResourceManager:
         if room_id in self._provisioned_room_ids:
             self._provisioned_room_ids.remove(room_id)
 
-    async def reap_all(self) -> None:
-        """Best-effort teardown of everything provisioned this run.
-
-        Logs ids before deleting so they stay recoverable from logs, and keeps
-        going past individual failures (rooms first, then agents).
-        """
-        for room_id in list(self._provisioned_room_ids):
-            logger.info("Reaping room %s", room_id)
-            try:
-                await self.reap_room(room_id)
-            except Exception:
-                logger.warning("Failed to reap room %s", room_id, exc_info=True)
-        for agent_id in list(self._provisioned_agent_ids):
-            logger.info("Reaping agent %s", agent_id)
-            try:
-                await self.reap_agent(agent_id)
-            except Exception:
-                logger.warning("Failed to reap agent %s", agent_id, exc_info=True)
+    async def reap_all(self, *, strict: bool = False) -> None:
+        """Attempt every owned deletion; strict acceptance reports all failures."""
+        failures: list[Exception] = []
+        for kind, ids, reap in (
+            ("room", list(self._provisioned_room_ids), self.reap_room),
+            ("agent", list(self._provisioned_agent_ids), self.reap_agent),
+        ):
+            for resource_id in ids:
+                logger.info("Reaping %s %s", kind, resource_id)
+                try:
+                    await reap(resource_id)
+                except Exception as error:
+                    error.add_note(f"Cleanup incomplete for {kind} {resource_id}")
+                    failures.append(error)
+                    logger.warning(
+                        "Failed to reap %s %s", kind, resource_id, exc_info=True
+                    )
+        if strict and failures:
+            raise ExceptionGroup("Platform resource cleanup incomplete", failures)
 
     @asynccontextmanager
     async def reap_on_exit(self, *, enabled: bool = True) -> AsyncGenerator[None, None]:

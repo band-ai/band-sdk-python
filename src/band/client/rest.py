@@ -67,6 +67,10 @@ from band_rest.types import ChatMessageRequestMentionsItem
 # We set max_retries=3 to handle transient rate limit errors gracefully.
 DEFAULT_REQUEST_OPTIONS: RequestOptions = {"max_retries": 3}
 
+# For writes the platform may commit before its response is lost, where a
+# transport-level retry would observe the already-applied state instead.
+NO_RETRY_REQUEST_OPTIONS: RequestOptions = {"max_retries": 0}
+
 
 async def aclose_rest_client(client: AsyncRestClient) -> None:
     """Close ``client``'s underlying httpx client.

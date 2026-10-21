@@ -2,15 +2,17 @@
 
 Mock builders for Letta API objects (messages, responses, agents,
 conversations, MCP servers/tools, async streams) and platform messages, used
-by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
+by the ``letta`` test package, ``test_letta_mcp.py``, and
 ``test_letta_orgscope.py``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 from uuid import uuid4
@@ -169,6 +171,18 @@ def ready_letta_adapter(
     return adapter, client
 
 
+def band_mcp_registrations(adapter: LettaAdapter) -> dict[str, Any]:
+    """The adapter's real Band MCP tools by name: the path Letta's MCP client
+    reaches."""
+    return {
+        registration.name: registration
+        for registration in build_resolved_band_mcp_tool_registrations(
+            get_tools=adapter._get_room_tools,
+            capabilities=adapter.features.capabilities,
+        )
+    }
+
+
 def scripted_letta_turn(
     adapter: LettaAdapter,
     *,
@@ -182,13 +196,7 @@ def scripted_letta_turn(
     path Letta's MCP client reaches), then the turn's messages come back as
     Letta's response.
     """
-    registrations = {
-        registration.name: registration
-        for registration in build_resolved_band_mcp_tool_registrations(
-            get_tools=adapter._get_room_tools,
-            capabilities=adapter.features.capabilities,
-        )
-    }
+    registrations = band_mcp_registrations(adapter)
 
     async def create(**_kwargs: Any) -> MagicMock:
         messages: list[Any] = []
@@ -332,3 +340,78 @@ def make_mock_async_stream(*messages: MagicMock) -> Any:
                 yield stream_message
 
     return _AsyncStream(list(messages))
+
+
+class RecordingLettaClient:
+    """A Letta server that records each turn sent and each run cancelled.
+
+    ``hold()`` keeps every create in flight until ``release`` is set, as a
+    Letta agent mid-turn does. ``hold_cancel()`` does the same for each run
+    cancel, which is journaled only once it finishes. ``reject_cancels``
+    answers each cancel with the server error Letta returns without Redis.
+    """
+
+    def __init__(self) -> None:
+        self.journal: list[str] = []
+        self.release = asyncio.Event()
+        self.release.set()
+        self.reject_cancels = False
+        self.cancel_started = asyncio.Event()
+        self._cancel_release: asyncio.Event | None = None
+        self.agents = SimpleNamespace(
+            messages=SimpleNamespace(
+                create=self._create_agent_turn, cancel=self._cancel_agent_runs
+            ),
+            delete=self._delete_agent,
+        )
+        self.conversations = SimpleNamespace(
+            messages=SimpleNamespace(create=self._create_conversation_turn),
+            cancel=self._cancel_conversation_runs,
+        )
+
+    def hold(self) -> None:
+        self.release.clear()
+
+    def hold_cancel(self) -> asyncio.Event:
+        """Each cancel waits for the returned event after it has started."""
+        self._cancel_release = asyncio.Event()
+        return self._cancel_release
+
+    @property
+    def sent(self) -> list[str]:
+        return [entry for entry in self.journal if entry.startswith("send ")]
+
+    @property
+    def cancels(self) -> list[str]:
+        return [entry for entry in self.journal if entry.startswith("cancel ")]
+
+    async def _create_agent_turn(
+        self, *, agent_id: str, messages: list[dict[str, str]]
+    ) -> MagicMock:
+        self.journal.append(f"send agent {agent_id}")
+        await self.release.wait()
+        return make_letta_response(make_assistant_message())
+
+    async def _create_conversation_turn(
+        self, *, conversation_id: str, messages: list[dict[str, str]]
+    ) -> Any:
+        self.journal.append(f"send conversation {conversation_id}")
+        await self.release.wait()
+        return make_mock_async_stream(make_assistant_message())
+
+    async def _cancel_agent_runs(self, agent_id: str) -> None:
+        await self._cancel(f"cancel agent {agent_id}")
+
+    async def _cancel_conversation_runs(self, conversation_id: str) -> None:
+        await self._cancel(f"cancel conversation {conversation_id}")
+
+    async def _delete_agent(self, agent_id: str) -> None:
+        self.journal.append(f"delete agent {agent_id}")
+
+    async def _cancel(self, entry: str) -> None:
+        self.cancel_started.set()
+        if self._cancel_release is not None:
+            await self._cancel_release.wait()
+        self.journal.append(entry)
+        if self.reject_cancels:
+            raise RuntimeError("Run cancellation requires Redis on the Letta server")

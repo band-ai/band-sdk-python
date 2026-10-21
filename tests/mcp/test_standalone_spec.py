@@ -4,7 +4,7 @@ Covers the integration behavior test_registrar.py used to (scope/tools
 filtering, duplicate-name detection, per-tool room classification, pinning)
 against the new EngineSpec-based factory. The lower-level pieces it composes
 -- extend_with_chat_id/pin_existing_chat_id (tests/mcp/test_engine.py),
-classify_room_binding (tests/runtime/test_tools.py), StandaloneResolver
+StandaloneResolver
 (tests/mcp/test_shared.py) -- have their own dedicated tests and are not
 re-tested here; this file is about standalone_spec's own wiring.
 """

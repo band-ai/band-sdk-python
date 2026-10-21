@@ -39,6 +39,7 @@ from tests.e2e.baseline.smoke.samples.sample_tools import (
     lookup_code_instruction,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.logs import apply_run_log_level
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     running_provisioned_agent,
@@ -120,6 +121,9 @@ def parlant_live_turn(test: LiveTest) -> LiveTest:
 
 def showcase_adapter(**kwargs: Any) -> ParlantAdapter:
     """An adapter-owned Parlant server and agent, as a customer builds one."""
+    server_options = dict(kwargs.pop("server_options", {}) or {})
+    if level := BaselineSettings().run.log_level.strip():
+        server_options.setdefault("log_level", level.lower())
     return ParlantAdapter(
         ParlantAdapterConfig(
             name="E2E Showcase Agent",
@@ -127,6 +131,7 @@ def showcase_adapter(**kwargs: Any) -> ParlantAdapter:
             custom_section=_SHORT,
         ),
         nlp_service=p.NLPServices.openai,
+        server_options=server_options or None,
         **kwargs,
     )
 
@@ -185,6 +190,9 @@ async def test_parlant_executes_custom_tool(
     async with running_provisioned_agent(
         adapter, resource_manager, label="parlant-tool"
     ) as agent:
+        # Parlant sets its logger while booting; re-apply so the tool-caller
+        # debug lines from this turn are not filtered back to info.
+        apply_run_log_level()
         room_id = await resource_manager.provision_room(
             title="e2e-parlant-custom-tool", participants=[agent.id]
         )

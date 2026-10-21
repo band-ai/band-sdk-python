@@ -75,7 +75,7 @@ RUN if [ -n "$SDK_EXTRA" ]; then \
     fi
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
-FROM ${PYTHON_BASE_IMAGE}
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 ARG BAND_SDK_HOME
 
 # Build-only: ARG (not ENV) so it doesn't leak into the final runtime image env.
@@ -91,19 +91,13 @@ ARG DEBIAN_FRONTEND=noninteractive
 # of core band-sdk) shells out to git for clone/checkout/rev-parse and to
 # ssh-keygen for SSH host-key verification — both are needed in the base
 # runtime image because repo initialization runs directly inside it.
-# util-linux: provides setpriv, which entrypoint.sh uses to drop from root to
-# the non-root agent user. Essential in trixie-slim (so present today), but
-# install it explicitly so container startup doesn't silently break on a base
-# bump that stops shipping it.
-# openssl: entrypoint.sh validates the decoded proxy CA with `openssl x509`
-# before trusting it, so the CLI must be present in the runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
+    curl \
     ca-certificates \
     git \
     openssh-client \
     openssl \
-    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
@@ -142,20 +136,35 @@ ENV BAND_SDK_PYTHON=${BAND_SDK_HOME}/venv/bin/python
 # and never download or upgrade uv at runtime.
 ENV BAND_SDK_UV=${BAND_SDK_HOME}/bin/uv
 
-# Fixed system path, deliberately NOT under ${BAND_SDK_HOME}: ENTRYPOINT's
-# exec-form JSON array is one of the few Dockerfile instructions Docker does
-# NOT substitute ARG/ENV into, so a literal path is unavoidable here — keep
-# it independent of the configurable SDK home rather than letting a
-# --build-arg BAND_SDK_HOME override silently break container startup.
-COPY docker/band_python_kit/entrypoint.sh /usr/local/bin/band-entrypoint.sh
-RUN chmod +x /usr/local/bin/band-entrypoint.sh
-
-RUN useradd -m -u 1000 -s /bin/bash agent
+RUN useradd -m -u 1000 -s /bin/bash agent \
+    && touch /etc/sandbox-persistent.sh
+ENV BASH_ENV=/etc/sandbox-persistent.sh
 ENV HOME=/home/agent
 WORKDIR /home/agent
+USER agent
+ENTRYPOINT ["/bin/bash", "-c", "exec \"$BAND_SDK_PYTHON\" -m band.docker.launcher"]
+CMD []
 
-# Container starts as root: the entrypoint decodes the sandbox's per-session
-# proxy CA (only root can update the system trust store), then drops to the
-# non-root "agent" user via setpriv before handing off to CMD.
-ENTRYPOINT ["/usr/local/bin/band-entrypoint.sh"]
-CMD ["bash"]
+FROM runtime AS cli
+USER root
+# Keep nodejs on the image — the codex and claude CLIs are node programs and
+# fail at runtime without it (do NOT purge/autoremove node here).
+# Pin the CLI versions so a rehearsed image matches the show run (never @latest).
+ARG CODEX_VERSION=0.145.0
+ARG CLAUDE_CODE_VERSION=2.1.217
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && npm i -g "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && rm -rf /var/lib/apt/lists/* \
+    && codex --version \
+    && codex app-server --help >/dev/null \
+    && claude --version
+
+# The CLIs need writable homes; the kit runs the agent as uid 1000 (`agent`).
+ENV CODEX_HOME=/home/agent/.codex
+RUN mkdir -p /home/agent/.codex /home/agent/.claude \
+    && chown -R agent:agent /home/agent/.codex /home/agent/.claude
+
+USER agent
+
+# Default publication excludes the optional coding CLIs.
+FROM runtime AS default

@@ -15,7 +15,7 @@ name: Release baseline gate
 # it meaningful (non-green blocks; a stale green stops vouching) live in
 # .github/scripts/check-release-baseline.sh.
 #
-# Both triggers mirror ci.yml's required checks: `pull_request` for immediate
+# Both triggers mirror ci.yml's triggers: `pull_request` for immediate
 # feedback while the PR is open, `merge_group` so the check also reports against the
 # merge queue's temporary merge commit — without it the queue would wait forever once
 # this job's name is added as a required status check.
@@ -36,6 +36,8 @@ permissions:
 
 jobs:
   release-baseline-gate:
+    # Drafts get no CI; ready_for_review above fires the first real run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: release-baseline-gate
     runs-on: ubuntu-latest
     steps:

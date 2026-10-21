@@ -126,9 +126,13 @@ def test_core_checkout_uses_the_scoped_read_secret() -> None:
     assert "Generate GitHub App Token (scoped to band-sdk-core)" not in names
 
 
-def test_coverage_job_skips_dependabot_without_the_read_secret() -> None:
-    coverage = load_workflow()["jobs"]["coverage"]
-    assert coverage["if"] == "github.actor != 'dependabot[bot]'"
+def test_coverage_job_skips_dependabot_and_draft_pull_requests() -> None:
+    workflow = load_workflow()
+    assert "ready_for_review" in workflow["on"]["pull_request"]["types"]
+    assert workflow["jobs"]["coverage"]["if"] == (
+        "github.actor != 'dependabot[bot]' && "
+        "(github.event_name != 'pull_request' || github.event.pull_request.draft == false)"
+    )
 
 
 def test_prerelease_guard_runs_before_the_cross_repo_checkout() -> None:

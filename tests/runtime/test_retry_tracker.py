@@ -4,7 +4,7 @@ Capacity/overflow/bound mechanics live in band_sdk_core and are tested there;
 these tests verify the SDK's public compatibility facade actually delegates to
 the installed artifact and preserves its own log emission on top of it.
 ExecutionContext constructs RetryTracker directly and never uses this facade
-(see tests/runtime/test_execution.py for the delivery-path coverage).
+(see tests/runtime/execution/ for the delivery-path coverage).
 """
 
 from __future__ import annotations

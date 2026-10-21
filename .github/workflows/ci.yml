@@ -3,17 +3,30 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  # Run on the merge queue's temporary branch so these required checks report
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Run on the merge queue's temporary branch so the required ci-status reports
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
 
 # Every job here only reads the repo; nothing uses GITHUB_TOKEN for writes.
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its running CI. Merge-queue runs are
+# never cancelled: each one is the verdict for the commit that lands. They each
+# get their own group, since a requeue on the same base reuses the queue ref.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
 
   lint:
+    # Drafts get no CI; ready_for_review above fires the first real run.
+    if: &not-draft github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -58,11 +71,22 @@ jobs:
 
 
   test:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
+    strategy: &suite-strategy
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
+        # The queue validates the merged result on one Ubuntu leg.
+        run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
+        # Older Windows interpreters run weekly, manually, and before releases.
+        full-windows: ["${{ github.event_name != 'pull_request' || github.head_ref == 'release-please--branches--main' }}"]
+        exclude:
+        - {run-for: queue, os: windows-latest}
+        - {run-for: queue, python-version: '3.11'}
+        - {run-for: queue, python-version: '3.13'}
+        - {full-windows: false, os: windows-latest, python-version: '3.11'}
+        - {full-windows: false, os: windows-latest, python-version: '3.12'}
       fail-fast: false
 
     # Use bash on every OS so these steps stay identical (Git Bash ships on the
@@ -109,12 +133,9 @@ jobs:
 
 
   test-crewai:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -160,6 +181,9 @@ jobs:
       run: |
         uv run --all-packages pytest \
           tests/adapters/test_crewai_flow_phase3.py \
+          tests/adapters/crewaiworker/test_native_settlement.py \
+          tests/adapters/crewaiworker/test_flow_admission.py \
+          tests/adapters/crewaiworker/test_parallel_settlement.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
           tests/integrations/test_crewai_real_tools.py \
           tests/integrations/test_crewai_completion.py \
@@ -178,12 +202,9 @@ jobs:
 
 
   test-strands-nooa:
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -226,7 +247,7 @@ jobs:
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
-          tests/adapters/test_strands_adapter.py \
+          tests/adapters/strands/ \
           tests/adapters/nooa/ \
           tests/converters/test_strands.py \
           tests/framework_conformance/ -k 'strands or nooa or legacy or probe_registry'
@@ -251,12 +272,9 @@ jobs:
 
 
   test-parlant:
+    if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-      fail-fast: false
+    strategy: *suite-strategy
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -307,6 +325,8 @@ jobs:
           tests/integrations/parlant/test_customtools.py \
           tests/integrations/parlant/test_filetools.py \
           tests/integrations/parlant/test_guard.py \
+          tests/integrations/parlant/test_preambletask.py \
+          tests/integrations/parlant/test_selection.py \
           tests/integrations/parlant/test_server.py \
           tests/integrations/parlant/test_tasktools.py \
           tests/integrations/parlant/test_vocabulary.py \
@@ -321,6 +341,7 @@ jobs:
 
 
   packaging:
+    if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -453,6 +474,7 @@ jobs:
 
 
   wheel-extra-cases:
+    if: *pr-only
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}
@@ -486,3 +508,42 @@ jobs:
       run: uv build --wheel
     - name: Check published extras and provider startup
       run: python3 .github/scripts/check-wheel-extras.py dist/band_sdk-*.whl --case ${{ matrix.case }}
+
+  ci-status:
+    # The one required CI check. Every other job in this file is in needs and in
+    # the loop below with the results it may end in
+    # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
+    # lint must succeed, so a draft run, which skips every job, is red. The jobs
+    # allowed to skip are the ones omitted from the merge queue.
+    # always(), not !cancelled(): a skipped required check counts as passing.
+    if: always()
+    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Verify every CI job passed or was skipped
+      run: |
+        set -euo pipefail
+        failed=0
+        for entry in \
+          "lint:${{ needs.lint.result }}:success" \
+          "test:${{ needs.test.result }}:success" \
+          "test-crewai:${{ needs.test-crewai.result }}:success" \
+          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \
+          "test-parlant:${{ needs.test-parlant.result }}:success" \
+          "packaging:${{ needs.packaging.result }}:success|skipped" \
+          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success|skipped" \
+          "wheel-extras:${{ needs.wheel-extras.result }}:success|skipped"; do
+          job="${entry%%:*}"
+          remainder="${entry#*:}"
+          result="${remainder%%:*}"
+          allowed="${remainder#*:}"
+          case "|$allowed|" in
+            *"|$result|"*) printf 'ok      %-18s %s\n' "$job" "$result" ;;
+            *) printf 'FAILED  %-18s %s (expected %s)\n' "$job" "$result" "$allowed"; failed=1 ;;
+          esac
+        done
+        if [ "$failed" -ne 0 ]; then
+          echo "::error::one or more CI jobs did not pass"
+          exit 1
+        fi
+        echo "All CI jobs passed or were skipped."

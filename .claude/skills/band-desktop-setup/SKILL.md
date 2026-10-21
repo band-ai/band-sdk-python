@@ -3,7 +3,7 @@ name: band-desktop-setup
 description: "Set up, upgrade, or troubleshoot Claude Desktop as a Band agent. Use when installing or wiring agent-scope band-mcp and band-room-view, locating an agent key, configuring a self-hosted platform, replacing a standalone agent process with Desktop, or diagnosing Desktop presence, widgets, unanswered mentions, or room synchronization."
 ---
 
-# Band Desktop setup
+# Band Desktop Setup
 
 The canonical setup, operating, and verification guide is
 [docs/adapters/claude_desktop.md](../../../docs/adapters/claude_desktop.md).

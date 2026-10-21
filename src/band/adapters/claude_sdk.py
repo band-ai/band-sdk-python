@@ -90,12 +90,16 @@ from band.core.protocols import (
     AgentToolsProtocol,
     TurnResultAlreadyReported,
 )
-from band.core.retention import RoomRetentionConfig, require_disabled_retention
+from band.core.retention import (
+    RoomRetentionConfig,
+    require_disabled_retention,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.turn import judge_detached_turn
 from band.core.turn_lifecycle import (
     TURN_SETTLE_GRACE_S,
     ApprovalInterruptMixin,
+    BackendTurns,
     TurnSettleTimeout,
     TurnTask,
     bind_turn_task,
@@ -690,6 +694,13 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         # client. The TurnTask cancels it for STOP and interrupts; leaving the
         # room cancels it through the RetainedRoom, which fences admission first.
         self._turn_tasks: dict[str, TurnTask] = {}
+        self._backend_turns = BackendTurns[str](
+            self._stop_claude_backend, provider=_PROVIDER
+        )
+
+    @property
+    def backend_turns(self) -> BackendTurns[str]:
+        return self._backend_turns
 
     @property
     def _approvals(self) -> ClaudeApprovalOptions:
@@ -869,7 +880,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        self._admit_turn(room_id, "Claude")
+        await self._admit_turn(room_id, "Claude")
         session = self._session_manager.room(room_id)
         if self.config.approvals is not None:
             self._room_last_sender[room_id] = {
@@ -993,13 +1004,27 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         """Run one turn under the room's lease; always releases ``release_future``."""
         owner = await owner_ready
         try:
-            async with self._turn_lease(session, tools, resume_from) as client:
+            async with (
+                self.backend_turns.running(session.room_id, session.room_id),
+                self._turn_lease(session, tools, resume_from) as client,
+            ):
                 await self._converse(owner, session, client, tools, full_message)
             logger.debug("Message %s processed successfully", msg_id)
         finally:
             self._release_turn(session.room_id, release_future)
             if self._turn_tasks.get(session.room_id) is owner:
                 del self._turn_tasks[session.room_id]
+
+    async def _stop_claude_backend(self, room_id: str) -> None:
+        """Retire the room's CLI when its backend turn is stopped out of band."""
+        if self._session_manager is None:
+            return
+        session = self._session_manager.session(room_id)
+        if session is None:
+            return
+        generation = session.generation
+        session.recover("Turn stopped before its result")
+        await session.retained.wait_released(generation=generation)
 
     @asynccontextmanager
     async def _turn_lease(
@@ -1642,6 +1667,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
         await self._mcp.close_after(
             self._stop_sessions(), retention=self.config.retention
         )
+        await self.backend_turns.drain()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow

@@ -59,14 +59,14 @@ from band.adapters.codex import (
     CodexSandboxMode,
 )
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.adapters.opencode.approvals import (
+from band.adapters.opencode.approvals.commands import PermissionReplyWord
+from band.adapters.opencode.approvals.wording import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_NO_LONGER_PENDING_TEMPLATE,
     APPROVAL_TIMED_OUT_TEMPLATE,
-    PermissionReplyWord,
     format_question_prompt,
 )
-from band.adapters.opencode.approvals import (
+from band.adapters.opencode.approvals.wording import (
     APPROVAL_REQUESTED_TEMPLATE as OPENCODE_REQUESTED,
 )
 from band.client.streaming import MessageCreatedPayload

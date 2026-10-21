@@ -9,9 +9,9 @@ from contextlib import AbstractAsyncContextManager
 
 import pytest
 
-from band.core.retention import RoomRetentionConfig
 from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import PROCESS_NOT_READY_ERROR
+from tests.core.retention.kit import ManualClock
 from tests.integrations.acp.acp_toolkit import (
     DEFAULT_ROOM,
     AcpSession,
@@ -19,15 +19,14 @@ from tests.integrations.acp.acp_toolkit import (
     accepted_work_finished,
     acp_adapter,
     fake_agent_config,
-    released,
 )
 from tests.integrations.acp.roomownership.kit import (
-    SHORT_TRANSITION_S,
     TEST_GUARD_S,
     cursor,
     inline,
     stop,
 )
+from tests.toolkit.tasks import background
 
 
 def adapter_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -43,21 +42,25 @@ class TestStartup:
 
     @pytest.mark.asyncio
     async def test_a_start_that_never_answers_fails_at_its_bound_and_recovers(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, loop_clock: ManualClock
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
-        agent.holds_next_initialize()
-        config = fake_agent_config(
-            retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S)
-        )
-        async with acp_adapter(agent, config) as session:
+        starting = agent.holds_next_initialize()
+        config = fake_agent_config()
+        async with (
+            acp_adapter(agent, config) as session,
+            background(session.send("hello")) as first,
+        ):
+            await starting.received.wait()
+            await loop_clock.advance(config.retention.transition_timeout_s)
             with pytest.raises(TimeoutError):
-                await session.send("hello")
+                await first
             assert session.last_reply.errors == [PROCESS_NOT_READY_ERROR]
             assert adapter_warnings(caplog) == [
                 (
                     f"Room {DEFAULT_ROOM}: ACP agent process not ready: "
-                    f"Room {DEFAULT_ROOM} start abandoned after {SHORT_TRANSITION_S}s"
+                    f"Room {DEFAULT_ROOM} start abandoned after "
+                    f"{config.retention.transition_timeout_s}s"
                 )
             ]
 
@@ -75,8 +78,10 @@ class TestStartup:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
         # The default start bound is far away: the stop, not the bound, frees it.
-        async with opened(agent) as session:
-            first = asyncio.create_task(session.send("hello"))
+        async with (
+            opened(agent) as session,
+            background(session.send("hello")) as first,
+        ):
             await starting.received.wait()
 
             await stop(session, first)
@@ -89,18 +94,20 @@ class TestStartup:
 
     @pytest.mark.asyncio
     async def test_a_start_outlasting_the_transition_timeout_fails_and_recovers(
-        self,
+        self, loop_clock: ManualClock
     ) -> None:
         agent = FakeACPAgent().will_say("ok")
         starting = agent.holds_next_initialize()
-        config = fake_agent_config(
-            retention=RoomRetentionConfig(transition_timeout_s=SHORT_TRANSITION_S)
-        )
-        async with acp_adapter(agent, config) as session:
+        config = fake_agent_config()
+        async with (
+            acp_adapter(agent, config) as session,
+            background(session.send("hello")) as first,
+        ):
+            await starting.received.wait()
+            await loop_clock.advance(config.retention.transition_timeout_s)
             with pytest.raises(TimeoutError):
-                await session.send("hello")
+                await first
             starting.release.set()
-            await released(session.room())
 
             served = await session.send("again")
 

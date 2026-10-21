@@ -1,8 +1,9 @@
 """The ``self.room`` tool surface a NOOA model calls from its generated code.
 
 Each Band tool, and each portable custom tool, becomes an async method on a
-``RoomTools`` subclass whose signature and docstring are rendered from the
-tool's input model. A call works only while the turn that made it is running.
+``RoomTools`` subclass. Platform methods expose named parameters; custom
+methods receive the original Pydantic validation payload. A call works only
+while the turn that made it is running.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import inspect
 import json
 import keyword
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -21,6 +23,7 @@ from uuid import uuid4
 
 from nooa import Image, hidden
 from nooa.agentdoc import doc
+from nooa.agentdoc.ext import format_type
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
@@ -48,28 +51,41 @@ logger = logging.getLogger(__name__)
 
 ToolRunner = Callable[[AgentToolsProtocol, dict[str, Any]], Awaitable[object]]
 
+INPUT_CONFIG_KEYS = (
+    "populate_by_name",
+    "validate_by_alias",
+    "validate_by_name",
+    "strict",
+    "extra",
+)
+
 
 @dataclass(frozen=True)
 class RoomToolSpec:
     """One tool the model can call as ``await self.room.<name>(...)``."""
 
     name: str
-    input_model: type[BaseModel]
     run: ToolRunner
+    method: Callable[..., Awaitable[Any]]
+    reference_types: tuple[type[BaseModel], ...] = ()
 
 
 @dataclass
 class TurnBinding:
-    """One turn's tools for one room, and the tool calls that turn started.
+    """One turn's tools for one room, and the tool calls and thoughts it started.
 
-    The turn owns its calls: when it ends, calls still running are cancelled
-    and awaited, so none can commit an effect after the turn is judged.
+    The turn owns its calls and thoughts: when it ends, calls still running are
+    cancelled and thoughts still posting are awaited, so none can commit after
+    the turn is judged. Every event the turn posts waits its turn on
+    ``posting``, whose waiters ``asyncio.Lock`` serves in arrival order.
     """
 
     room: RoomTools
     tools: AgentToolsProtocol
     open: bool = True
     in_flight: set[asyncio.Task[Any]] = field(default_factory=set)
+    thoughts: set[asyncio.Task[None]] = field(default_factory=set)
+    posting: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def start(self, call: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         task = asyncio.ensure_future(call)
@@ -77,11 +93,44 @@ class TurnBinding:
         task.add_done_callback(self.in_flight.discard)
         return task
 
+    def post_thought(self, text: str) -> None:
+        """Post *text* as a thought ahead of the tool calls its model call starts.
+
+        NOOA calls this from ``LLMComplete`` on the turn's event loop, before the
+        call's code runs. The task is created here, synchronously, so the loop
+        steps it, and it queues on ``posting``, before any tool call that code
+        creates. It must run on the loop thread: ``ensure_future`` needs it.
+        """
+        if not self.open:
+            return
+        task = asyncio.ensure_future(self._post_thought(text))
+        self.thoughts.add(task)
+        task.add_done_callback(self.thoughts.discard)
+
+    async def _post_thought(self, text: str) -> None:
+        # Taking the lock must stay this coroutine's first await; see post_thought.
+        async with self.posting:
+            await send_event_safe(self.tools, text, MessageType.THOUGHT)
+
     async def close(self) -> None:
         self.open = False
         for task in self.in_flight:
-            task.cancel()
-        await asyncio.gather(*self.in_flight, return_exceptions=True)
+            if not task.cancelling():
+                task.cancel()
+        if caller_is_cancelled():
+            for task in self.thoughts:
+                task.cancel()
+        pending = asyncio.gather(
+            *self.in_flight, *self.thoughts, return_exceptions=True
+        )
+        try:
+            # Caller cancellation must reach us before interrupting owned cleanup.
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            for task in self.thoughts:
+                task.cancel()
+            await pending
+            raise
 
 
 # Context-local, not an attribute of the room's RoomTools: a task the model's code
@@ -111,15 +160,17 @@ class RoomTools:
 
     @hidden
     @asynccontextmanager
-    async def bound_to(self, tools: AgentToolsProtocol) -> AsyncIterator[None]:
+    async def bound_to(self, tools: AgentToolsProtocol) -> AsyncIterator[TurnBinding]:
         """Route this turn's calls to its tools; refuse or cancel them afterwards."""
         binding = TurnBinding(self, tools)
         token = _turn_binding.set(binding)
         try:
-            yield
+            yield binding
         finally:
-            await binding.close()
-            _turn_binding.reset(token)
+            try:
+                await binding.close()
+            finally:
+                _turn_binding.reset(token)
 
     def _binding(self, name: str) -> TurnBinding:
         """The binding of the turn this call belongs to, if it is still running."""
@@ -132,23 +183,24 @@ class RoomTools:
 
     async def _invoke(self, name: str, arguments: dict[str, Any]) -> Any:
         binding = self._binding(name)
-        call = binding.start(self._call(binding.tools, name, arguments))
+        call = binding.start(self._call(binding, name, arguments))
         try:
-            return await call
+            return await asyncio.shield(call)
         except asyncio.CancelledError:
             if caller_is_cancelled():
+                call.cancel()
                 raise
             raise BandToolError(
                 f"{name} was cancelled because its turn ended first"
             ) from None
 
     async def _call(
-        self, tools: AgentToolsProtocol, name: str, arguments: dict[str, Any]
+        self, binding: TurnBinding, name: str, arguments: dict[str, Any]
     ) -> Any:
         """Run one tool call and report it, inside the turn that owns it."""
         call_id = uuid4().hex
         await self._report(
-            tools,
+            binding,
             MessageType.TOOL_CALL,
             {
                 ToolEventKey.NAME: name,
@@ -157,27 +209,29 @@ class RoomTools:
             },
         )
         try:
-            value = serialize_tool_result(await self._specs[name].run(tools, arguments))
+            value = serialize_tool_result(
+                await self._specs[name].run(binding.tools, arguments)
+            )
         except asyncio.CancelledError:
             message = f"{name} was cancelled because its turn ended first"
-            await self._report_result(tools, name, call_id, message, is_error=True)
+            await self._report_result(binding, name, call_id, message, is_error=True)
             raise
         except Exception as error:
             message = f"{name} failed: {error}"
             logger.warning("Band tool %s failed: %s", name, error)
-            await self._report_result(tools, name, call_id, message, is_error=True)
+            await self._report_result(binding, name, call_id, message, is_error=True)
             raise BandToolError(message) from error
         if (image_result := image_passthrough_result(name, value)) is not None:
             images = images_from_result(image_result)
             output = image_block_placeholder(len(images))
-            await self._report_result(tools, name, call_id, output, is_error=False)
+            await self._report_result(binding, name, call_id, output, is_error=False)
             return images
-        await self._report_result(tools, name, call_id, value, is_error=False)
+        await self._report_result(binding, name, call_id, value, is_error=False)
         return value
 
     async def _report_result(
         self,
-        tools: AgentToolsProtocol,
+        binding: TurnBinding,
         name: str,
         call_id: str,
         output: object,
@@ -185,7 +239,7 @@ class RoomTools:
         is_error: bool,
     ) -> None:
         await self._report(
-            tools,
+            binding,
             MessageType.TOOL_RESULT,
             {
                 ToolEventKey.NAME: name,
@@ -197,13 +251,20 @@ class RoomTools:
 
     async def _report(
         self,
-        tools: AgentToolsProtocol,
+        binding: TurnBinding,
         message_type: MessageType,
         payload: Mapping[ToolEventKey, object],
     ) -> None:
-        if not self._emit_tool_calls:
+        # A call's TOOL_CALL report waits its turn even when tool events are off:
+        # the call runs only after it, so its effect (such as a reply) cannot
+        # overtake a thought queued first.
+        if not (self._emit_tool_calls or message_type is MessageType.TOOL_CALL):
             return
-        await send_event_safe(tools, json.dumps(payload, default=str), message_type)
+        async with binding.posting:
+            if self._emit_tool_calls:
+                await send_event_safe(
+                    binding.tools, json.dumps(payload, default=str), message_type
+                )
 
 
 def images_from_result(result: ImageContentResult) -> list[Image]:
@@ -254,22 +315,76 @@ def tool_method_signature(input_model: type[BaseModel]) -> inspect.Signature:
     return inspect.Signature(parameters, return_annotation=Any)
 
 
-def tool_method(spec: RoomToolSpec) -> Callable[..., Awaitable[Any]]:
+def tool_method(
+    name: str, input_model: type[BaseModel]
+) -> Callable[..., Awaitable[Any]]:
     """An async method that forwards its keyword arguments to the tool."""
 
     async def method(self: RoomTools, **arguments: Any) -> Any:
-        return await self._invoke(spec.name, arguments)
+        return await self._invoke(name, arguments)
 
-    method.__name__ = spec.name
-    method.__qualname__ = f"{RoomTools.__name__}.{spec.name}"
-    method.__doc__ = tool_method_doc(spec.input_model)
-    method.__signature__ = tool_method_signature(spec.input_model)  # type: ignore[attr-defined]
+    describe_method(method, name, tool_method_doc(input_model))
+    method.__signature__ = tool_method_signature(input_model)  # type: ignore[attr-defined]
+    return method
+
+
+def describe_method(
+    method: Callable[..., Awaitable[Any]], name: str, description: str
+) -> None:
+    method.__name__ = name
+    method.__qualname__ = f"{RoomTools.__name__}.{name}"
+    method.__doc__ = description
+
+
+def custom_field_doc(name: str, model_field: FieldInfo) -> str:
+    """Document field metadata without claiming to describe a validation grammar."""
+    requirement = (
+        "required"
+        if model_field.is_required()
+        else f"default={documented_default(model_field)!r}"
+    )
+    return (
+        f"{name}: {format_type(model_field.annotation)}; "
+        f"validation_alias={model_field.validation_alias!r}; {requirement}. "
+        f"{model_field.description or ''}"
+    )
+
+
+def custom_tool_method(
+    name: str, input_model: type[BaseModel]
+) -> Callable[..., Awaitable[Any]]:
+    """Expose the original validation payload without reinterpreting its keys."""
+
+    async def method(self: RoomTools, *, arguments: dict[str, Any]) -> Any:
+        return await self._invoke(name, arguments)
+
+    fields = "\n".join(
+        custom_field_doc(field_name, model_field)
+        for field_name, model_field in input_model.model_fields.items()
+    )
+    # Generated aliases are resolved on each field; callable config adds no input keys.
+    input_config = {
+        key: input_model.model_config.get(key)
+        for key in INPUT_CONFIG_KEYS
+        if key in input_model.model_config
+    }
+    describe_method(
+        method,
+        name,
+        f"{inspect.cleandoc(input_model.__doc__ or '')}\n\n"
+        "Pass arguments as the original Pydantic validation payload, unchanged.\n"
+        f"Model fields (attributes, not method keyword arguments):\n{fields}\n"
+        "AliasChoices are ordered; AliasPath describes a nested payload.\n"
+        f"Input configuration: {input_config!r}\n"
+        "By default use the validation alias when present, otherwise the attribute name.\n"
+        "Model configuration and validators may impose different payload rules.",
+    )
     return method
 
 
 def room_tools_class(specs: list[RoomToolSpec]) -> type[RoomTools]:
     """A ``RoomTools`` subclass exposing exactly *specs* as methods."""
-    namespace: dict[str, Any] = {spec.name: tool_method(spec) for spec in specs}
+    namespace: dict[str, Any] = {spec.name: spec.method for spec in specs}
     namespace["_specs"] = {spec.name: spec for spec in specs}
     namespace["__doc__"] = RoomTools.__doc__
     namespace["__module__"] = RoomTools.__module__
@@ -283,7 +398,13 @@ def room_tools_reference(tools_class: type[RoomTools]) -> str:
     NOOA's view of ``self`` shows only the first docstring line of a referenced
     type's methods, which would drop each tool's argument descriptions.
     """
-    return doc(tools_class)
+    references = dict.fromkeys(
+        model for spec in tools_class._specs.values() for model in spec.reference_types
+    )
+    # NOOA's multi-object renderer truncates referenced types; render each root separately.
+    sections = [doc(tools_class)]
+    sections.extend(doc(model, inline_depth=sys.maxsize) for model in references)
+    return "\n\n".join(sections)
 
 
 def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
@@ -299,7 +420,9 @@ def platform_tool_spec(definition: ToolDefinition) -> RoomToolSpec:
             raise BandToolError(outcome.error_message or str(outcome.value))
         return outcome.value
 
-    return RoomToolSpec(definition.name, definition.input_model, run)
+    return RoomToolSpec(
+        definition.name, run, tool_method(definition.name, definition.input_model)
+    )
 
 
 def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
@@ -307,25 +430,12 @@ def custom_tool_spec(tool_def: CustomToolDef) -> RoomToolSpec:
     input_model, _ = tool_def
 
     async def run(tools: AgentToolsProtocol, arguments: dict[str, Any]) -> object:
-        return await execute_custom_tool(
-            tool_def, by_alias(input_model, arguments), turn=tools.turn
-        )
+        return await execute_custom_tool(tool_def, arguments, turn=tools.turn)
 
-    return RoomToolSpec(get_custom_tool_name(input_model), input_model, run)
-
-
-def by_alias(input_model: type[BaseModel], arguments: dict[str, Any]) -> dict[str, Any]:
-    """Re-key keyword arguments from field names to the aliases validation expects.
-
-    The model calls a tool with Python keyword arguments, which are always field
-    names, while ``model_validate`` reads each field under its alias.
-    """
-    aliases = {
-        name: model_field.alias
-        for name, model_field in input_model.model_fields.items()
-        if model_field.alias
-    }
-    return {aliases.get(key, key): value for key, value in arguments.items()}
+    name = get_custom_tool_name(input_model)
+    return RoomToolSpec(
+        name, run, custom_tool_method(name, input_model), (input_model,)
+    )
 
 
 def validate_custom_tool_names(custom_tools: list[CustomToolDef]) -> None:

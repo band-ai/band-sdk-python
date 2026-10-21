@@ -1,8 +1,7 @@
 """Sandbox kit launcher: boots a locked customer Python project as a Band agent.
 
 Runs as `$BAND_SDK_PYTHON -m band.docker.launcher` from the kit's startup
-command, after the base image entrypoint has installed the proxy CA and
-dropped to the non-root agent user. The flow, one module per concern:
+command, as the image-configured non-root agent user. The flow, one module per concern:
 
 1. `config`    — read `band.yaml` (strict) and the supported env overrides.
 2. `paths`     — resolve and fence every configurable path.

@@ -29,6 +29,7 @@ async def left(runtime: AgentRuntime, room_id: str) -> None:
 async def until_admitted(runtime: AgentRuntime, room_id: str) -> None:
     """Let the convergence that admits the room finish."""
     await settled(runtime, room_id)
+    assert runtime.rooms.serving(room_id)
 
 
 class QueueLink:

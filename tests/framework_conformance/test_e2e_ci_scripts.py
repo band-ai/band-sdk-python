@@ -43,9 +43,16 @@ posix_shell_only = pytest.mark.skipif(
 )
 
 
-@posix_shell_only
-def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
+def _run_baseline(
+    tmp_path: Path, *, extra: dict[str, str] | None = None, fail: bool = False
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run the baseline script against a uv stub and return its recorded command.
+
+    ``BAND_E2E_LOG_LEVEL`` is dropped from the inherited environment so a
+    developer's shell cannot change which flags the script is expected to pass.
+    """
     stub = tmp_path / "uv"
+    exit_line = "sys.exit(1)\n" if fail else ""
     stub.write_text(
         "#!/usr/bin/env python3\n"
         "import os, sys\n"
@@ -53,7 +60,7 @@ def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
         "with Path(os.environ['CALL_LOG']).open('a') as log:\n"
         "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
         "Path(os.environ['BAND_E2E_SCORECARD_JSON']).write_text('[]')\n"
-        "sys.exit(1)\n"
+        f"{exit_line}"
     )
     stub.chmod(0o755)
     call_log = tmp_path / "calls.txt"
@@ -61,19 +68,71 @@ def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
         ["bash", str(_RUN_BASELINE_E2E)],
         cwd=REPO_ROOT,
         env={
-            **os.environ,
+            key: value
+            for key, value in os.environ.items()
+            if key != "BAND_E2E_LOG_LEVEL"
+        }
+        | {
             "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
             "CALL_LOG": str(call_log),
             "FINAL": str(tmp_path / "scorecard.json"),
+            **(extra or {}),
         },
         capture_output=True,
         text=True,
         check=False,
     )
-    assert result.returncode == 1
     (command,) = call_log.read_text().splitlines()
+    return result, command
+
+
+@posix_shell_only
+def test_baseline_runner_records_one_failed_attempt(tmp_path: Path) -> None:
+    result, command = _run_baseline(tmp_path, fail=True)
+
+    assert result.returncode == 1
     assert "-p no:rerunfailures" in command
+    assert "--log-cli-level=INFO" in command
+    assert "--log-level=INFO" in command
     assert "--last-failed" not in command
+
+
+@posix_shell_only
+@pytest.mark.parametrize(
+    ("extra", "present", "absent"),
+    [
+        (
+            {"BAND_E2E_LOG_LEVEL": "DEBUG"},
+            ("--log-level=DEBUG", "--log-cli-level=DEBUG"),
+            ("--log-cli-level=WARNING",),
+        ),
+        (
+            {
+                "BAND_E2E_LOG_LEVEL": "DEBUG",
+                "BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS": "true",
+            },
+            ("--log-level=DEBUG", "--log-cli-level=DEBUG"),
+            ("--log-cli-level=WARNING",),
+        ),
+        (
+            {"BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS": "true"},
+            ("--log-cli-level=INFO", "--log-level=INFO"),
+            ("--log-cli-level=WARNING",),
+        ),
+    ],
+    ids=["level-only", "level-and-diagnostics", "diagnostics-only"],
+)
+def test_baseline_runner_forwards_a_diagnostic_log_level(
+    tmp_path: Path,
+    extra: dict[str, str],
+    present: tuple[str, ...],
+    absent: tuple[str, ...],
+) -> None:
+    result, command = _run_baseline(tmp_path, extra=extra)
+
+    assert result.returncode == 0
+    assert all(flag in command for flag in present)
+    assert all(flag not in command for flag in absent)
 
 
 def _emit_lane_matrix(lane: str, os_id: str) -> subprocess.CompletedProcess[str]:

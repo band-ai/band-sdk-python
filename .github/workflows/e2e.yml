@@ -99,6 +99,10 @@ on:
         description: "Optional pytest -k expression for a scoped diagnostic run."
         type: string
         default: ""
+      log_level:
+        description: "Pytest, Band, and Parlant log level (empty = ordinary levels)."
+        type: string
+        default: ""
 
 # Concurrency is scoped per (event kind, lane, OS) on the e2e job below — NOT
 # workflow-wide. A fresh dispatch cancels only the same lane+OS still in flight
@@ -323,6 +327,7 @@ jobs:
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
         BAND_E2E_FIRST_ATTEMPT_DIAGNOSTICS: ${{ inputs.first_attempt_diagnostics && 'true' || 'false' }}
         BAND_E2E_TEST_SELECTOR: ${{ inputs.test_selector || '' }}
+        BAND_E2E_LOG_LEVEL: ${{ inputs.log_level || '' }}
       run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
