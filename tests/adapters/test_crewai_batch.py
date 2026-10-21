@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 from band.adapters.crewai import CURRENT_INPUT_LABEL, CrewAIAdapter
-from tests.framework_conformance.batchprobes import (
-    ALICE_FIRST,
-    BATCH,
-    EARLIER_QUESTION,
-    deliver,
-    delivery_input,
+from tests.framework_conformance.batchprobes import BATCH, EARLIER_QUESTION
+from tests.framework_conformance.batchprobes.laterturn import (
+    deliver_batch_then_next_turn,
 )
 
 
@@ -27,11 +23,7 @@ class TestCrewAIBatchHistory:
         crew = MagicMock(kickoff_async=AsyncMock(return_value=MagicMock(raw="noted")))
         adapter._crewai_agent = crew
 
-        await deliver(adapter, await delivery_input(BATCH))
-        later = replace(
-            await delivery_input((ALICE_FIRST,)), is_session_bootstrap=False
-        )
-        await deliver(adapter, later)
+        await deliver_batch_then_next_turn(adapter)
 
         second_prompt = crew.kickoff_async.call_args_list[1].args[0]
         assert earlier_user_lines(second_prompt) == [
