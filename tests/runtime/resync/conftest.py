@@ -14,6 +14,7 @@ from band.platform.event import MessageEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
+from tests.conftest import mirror_settlement_results
 from tests.runtime.helpers import (
     AGENT_ID,
     ROOM_ID,
@@ -53,8 +54,10 @@ def mock_link() -> MagicMock:
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    mirror_settlement_results(link)
     link.report_activity = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)
+    link.get_actionable_page = AsyncMock()
     link.get_stale_processing_messages = AsyncMock(return_value=[])
 
     async def empty_aiter():

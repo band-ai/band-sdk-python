@@ -17,6 +17,7 @@ conftest when building oneshot/REST-side fixtures.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -35,8 +36,21 @@ from band_rest import (
 from band.core.types import PlatformConnection, PlatformMessage
 from band.runtime.presence import RoomPresence
 from tests.activitysupport import install_activity_support
-from tests.conftest import make_participant_mock
-from tests.runtime.helpers import AGENT_ID
+from tests.conftest import make_participant_mock, mirror_settlement_results
+from tests.runtime.helpers import AGENT_ID, QUIET_SECONDS, WAIT_SECONDS
+
+
+@pytest.fixture(autouse=True)
+def periodic_wake_after_the_full_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin a room's jittered first periodic resync to the interval's end.
+
+    A wake at a random point lands inside a test's quiet window, and a jitter that
+    is not a whole number of microseconds leaves looptime's integer clock just
+    short of that timer, so a virtual jump past it never fires.
+    """
+    monkeypatch.setattr(
+        "band.runtime.resync.first_wake_offset", lambda interval: interval
+    )
 
 
 async def wait_for_condition(
@@ -48,6 +62,19 @@ async def wait_for_condition(
         if asyncio.get_running_loop().time() >= deadline:
             pytest.fail("Timed out waiting for condition")
         await asyncio.sleep(interval)
+
+
+class Waiting:
+    """What a test waits on in a started room, on the loop's clock."""
+
+    @staticmethod
+    async def until(condition: Callable[[], bool]) -> None:
+        await wait_for_condition(condition, timeout=WAIT_SECONDS)
+
+    @staticmethod
+    async def quiesce() -> None:
+        """Let the room run until it has nothing left to do, on the virtual clock."""
+        await asyncio.sleep(QUIET_SECONDS)
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:
@@ -238,6 +265,7 @@ def make_link_mock(
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    mirror_settlement_results(link)
     link.report_activity = AsyncMock(return_value=True)
     link.disconnect = AsyncMock()
     return link
@@ -256,6 +284,7 @@ def link(mock_rest_client: MagicMock) -> MagicMock:
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
+    mirror_settlement_results(link)
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)

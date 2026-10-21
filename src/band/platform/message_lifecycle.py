@@ -40,6 +40,7 @@ from band.core.settlement import SettlementResult
 from band.core.types import metadata_to_dict
 from band.platform.activity import activity_support
 from band.runtime.messages import PlatformMessage
+from band.runtime.sessionconfig import ACTIONABLE_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,6 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
     )
 
 
-ACTIONABLE_PAGE_SIZE = 100
 WriteKey = tuple[str, DeliveryStatus]
 FailureCause = tuple[type[Exception], int | None]
 # Diagnostic suppression stays bounded; evicted intents warn again on retry.

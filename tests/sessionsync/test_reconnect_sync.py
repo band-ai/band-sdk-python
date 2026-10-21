@@ -5,9 +5,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.platform.event import ReconnectedEvent
-from band.runtime.execution import ExecutionContext, ResyncRequest
+from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncRequest
 from band.runtime.sessionconfig import SessionConfig
-from tests.sessionsync.kit import make_message
+from tests.runtime.scheduler.driver import attempt_delivery
+from tests.sessionsync.kit import (
+    make_message,
+)
 
 
 class TestReconnectSync:
@@ -40,7 +44,7 @@ class TestReconnectSync:
         """Queued reconnect events should run sync inside the execution loop."""
         mock_link.get_next_message.side_effect = [make_message("reconnected"), None]
 
-        await ctx._process_event(ReconnectedEvent())
+        await attempt_delivery(ctx, ReconnectedEvent())
 
         assert ctx.claims.completed_ids(ctx.room_id) == ["reconnected"]
         ctx._handler_mock.assert_awaited_once()

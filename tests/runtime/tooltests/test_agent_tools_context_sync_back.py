@@ -5,9 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.execution import ExecutionContext
-from band.runtime.tools import (
-    AgentTools,
-)
+from band.runtime.tools import AgentTools
 from tests.conftest import make_participant_mock
 
 
@@ -22,8 +20,8 @@ class TestAgentToolsContextSyncBack:
 
     @pytest.mark.asyncio
     async def test_add_participant_persists_across_recreated_tools(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Added participant must survive tools recreation via from_context().
 
         Uses real ExecutionContext — its ``participants`` property returns a
@@ -64,8 +62,8 @@ class TestAgentToolsContextSyncBack:
 
     @pytest.mark.asyncio
     async def test_remove_participant_persists_across_recreated_tools(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Removed participant must stay removed after tools recreation.
 
         Uses real ExecutionContext — its ``participants`` property returns a

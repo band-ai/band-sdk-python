@@ -32,6 +32,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.identifiers import UUID_ID
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 @asynccontextmanager
@@ -72,6 +73,14 @@ async def memory_client() -> AsyncIterator[tuple[AsyncRestClient, list[httpx.Req
 
 AGENT_ID = "agent-123"
 ROOM_ID = "room-123"
+SENDER_ID = "user-1"
+EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
+# The longest a test waits for something that must happen, and for a stop.
+WAIT_SECONDS = 5.0
+STOP_SECONDS = 2.0
+# Longer than any step a room takes and shorter than its periodic wake: on the
+# virtual clock the loop only gets here once nothing is runnable.
+QUIET_SECONDS = 1.0
 
 
 def run_through(
@@ -89,6 +98,7 @@ def run_through(
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
         on_message_control=agent._on_control,
+        is_message_control=agent._is_control,
     )
 
 
@@ -106,11 +116,12 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
     """Deliver one user message live over the socket, or from the backlog."""
     match path:
         case "live":
-            await ctx._process_event(
-                make_message_event(room_id=ROOM_ID, sender_id="user-1")
+            await attempt_delivery(
+                ctx, make_message_event(room_id=ROOM_ID, sender_id="user-1")
             )
         case "backlog":
-            await ctx._process_backlog_message(
+            await attempt_delivery(
+                ctx,
                 PlatformMessage(
                     id="msg-backlog",
                     room_id=ROOM_ID,
@@ -121,7 +132,7 @@ async def deliver(ctx: ExecutionContext, path: str) -> None:
                     message_type="text",
                     metadata={},
                     created_at=datetime.now(UTC),
-                )
+                ),
             )
 
 
@@ -195,21 +206,30 @@ class LifecyclePlatform:
             if not (report == KEEP_ALIVE and index and reports[index - 1] == KEEP_ALIVE)
         ]
 
-    def add_message(self, message_id: str, *, content: str = "hello") -> None:
-        self.messages.append(
-            {
-                "id": message_id,
-                "chat_room_id": ROOM_ID,
-                "content": content,
-                "sender_id": "user-1",
-                "sender_type": "User",
-                "sender_name": "User",
-                "message_type": "text",
-                "metadata": {},
-                "inserted_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-            }
-        )
+    def add_message(
+        self,
+        message_id: str,
+        *,
+        content: str = "hello",
+        listed: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Store a message and return its row; an unlisted one is on the WebSocket only."""
+        row = {
+            "id": message_id,
+            "chat_room_id": ROOM_ID,
+            "content": content,
+            "sender_id": "user-1",
+            "sender_type": "User",
+            "sender_name": "User",
+            "message_type": "text",
+            "metadata": metadata or {},
+            "inserted_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        if listed:
+            self.messages.append(row)
+        return row
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path

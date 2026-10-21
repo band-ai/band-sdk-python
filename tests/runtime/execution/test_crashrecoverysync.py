@@ -9,21 +9,23 @@ import pytest
 from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import MessageMetadata
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.platform.event import ParticipantAddedEvent, PlatformEvent
+from band.platform.message_lifecycle import ActionablePage
 from band.runtime import resync
-from band.runtime.execution import (
-    ExecutionContext,
-    ResyncOutcome,
-    TurnOutcome,
-)
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.messages import PlatformMessage
+from band.runtime.scheduler import ResyncOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import (
     make_message_event,
     make_participant_added_event,
+    mirror_settlement_results,
 )
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import running_execution
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestCrashRecoverySync:
@@ -50,7 +52,9 @@ class TestCrashRecoverySync:
         link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
+        mirror_settlement_results(link)
         link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
+        link.get_actionable_page = AsyncMock(return_value=ActionablePage([], None))
         link.get_stale_processing_messages = AsyncMock(return_value=[])  # No stale msgs
         link.report_activity = AsyncMock(return_value=True)
 
@@ -62,12 +66,13 @@ class TestCrashRecoverySync:
         """First WebSocket message should set sync point marker."""
         ctx = ExecutionContext("room-123", mock_link_with_next, mock_handler)
 
-        assert ctx._first_ws_msg_id is None
+        assert ctx.scheduler.first_ws_id is None
 
         event = make_message_event(room_id="room-123", msg_id="msg-ws-001")
         await ctx.on_event(event)
 
-        assert ctx._first_ws_msg_id == "msg-ws-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-ws-001"
 
     async def test_subsequent_ws_messages_dont_change_marker(
         self, mock_link_with_next, mock_handler
@@ -81,7 +86,8 @@ class TestCrashRecoverySync:
         await ctx.on_event(event1)
         await ctx.on_event(event2)
 
-        assert ctx._first_ws_msg_id == "msg-ws-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-ws-001"
 
     async def test_sync_completes_with_no_backlog(
         self, mock_link_with_next, mock_handler
@@ -90,9 +96,9 @@ class TestCrashRecoverySync:
         ctx = ExecutionContext("room-123", mock_link_with_next, mock_handler)
 
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
-        assert ctx._sync_complete is True
+        assert ctx.scheduler.sync_complete is True
         mock_link_with_next.get_next_message.assert_called()
 
         await ctx.stop()
@@ -167,14 +173,15 @@ class TestCrashRecoverySync:
         # Enqueue WS message first (sets marker)
         ws_event = make_message_event(room_id="room-123", msg_id="msg-sync-001")
         await ctx.on_event(ws_event)
-        assert ctx._first_ws_msg_id == "msg-sync-001"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-sync-001"
 
         # Start should sync and find sync point
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         # Marker should be cleared
-        assert ctx._first_ws_msg_id is None
+        assert ctx.scheduler.first_ws_id is None
         # Dedupe cache should keep processed sync id to avoid WS reprocessing
         assert "msg-sync-001" in ctx.claims.completed_ids(ctx.room_id)
 
@@ -246,8 +253,8 @@ class TestCrashRecoverySync:
             assert ctx.queue.empty()
 
             # Sync point reached and duplicate removed from WS phase
-            assert ctx._first_ws_msg_id is None
-            assert ctx._sync_complete is True
+            assert ctx.scheduler.first_ws_id is None
+            assert ctx.scheduler.sync_complete is True
             mock_link_with_next.mark_processing.assert_called_once_with(
                 "room-123", "msg-sync-001"
             )
@@ -282,7 +289,7 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         event = make_message_event(
             room_id="room-123",
@@ -328,7 +335,7 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=True),
         )
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         event = make_message_event(room_id="room-123", msg_id="msg-stale-replay")
         await ctx.on_event(event)
@@ -395,7 +402,7 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        result = await ctx._process_backlog_message(msg)
+        result = await attempt_delivery(ctx, msg)
 
         assert result is TurnOutcome.ADVANCED
         mock_handler.assert_not_awaited()
@@ -498,11 +505,11 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        backlog_task = asyncio.create_task(ctx._process_backlog_message(pending_msg))
+        backlog_task = asyncio.create_task(attempt_delivery(ctx, pending_msg))
         await processing_started.wait()
 
         ws_event = make_message_event(room_id="room-123", msg_id="msg-race")
-        await ctx._process_event(ws_event)
+        await attempt_delivery(ctx, ws_event)
 
         assert mock_link_with_next.mark_processing.await_count == 1
         assert mock_handler.await_count == 0
@@ -609,9 +616,9 @@ class TestCrashRecoverySync:
         second_context = fresh_context()
         event = make_message_event(room_id="room-123", msg_id="msg-fresh-peer")
 
-        first_task = asyncio.create_task(first_context._process_event(event))
+        first_task = asyncio.create_task(attempt_delivery(first_context, event))
         await asyncio.wait_for(handler_started.wait(), timeout=1.0)
-        second_task = asyncio.create_task(second_context._process_event(event))
+        second_task = asyncio.create_task(attempt_delivery(second_context, event))
 
         await asyncio.sleep(0)
         release_handler.set()
@@ -635,7 +642,7 @@ class TestCrashRecoverySync:
         )
 
         event = make_message_event(room_id="room-123", msg_id="msg-claim-fails")
-        await ctx._process_event(event)
+        await attempt_delivery(ctx, event)
 
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-claim-fails"
@@ -662,10 +669,10 @@ class TestCrashRecoverySync:
         )
         event = make_message_event(room_id="room-123", msg_id="msg-handler-fails")
 
-        assert await ctx._process_event(event) is TurnOutcome.ADVANCED
+        assert await attempt_delivery(ctx, event) is TurnOutcome.ADVANCED
 
         mock_link_with_next.mark_failed.assert_awaited_once_with(
-            "room-123", "msg-handler-fails", "handler failed"
+            "room-123", "msg-handler-fails", GENERIC_PROVIDER_FAILURE_MESSAGE
         )
         assert ctx.claims.inflight_ids(ctx.room_id) == []
 
@@ -694,7 +701,7 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        result = await ctx._process_backlog_message(msg)
+        result = await attempt_delivery(ctx, msg)
 
         assert result is TurnOutcome.RETRY_LATER
         mock_handler.assert_awaited_once()
@@ -719,7 +726,7 @@ class TestCrashRecoverySync:
         )
 
         event = make_message_event(room_id="room-123", msg_id="msg-ws-ack-fails")
-        await ctx._process_event(event)
+        await attempt_delivery(ctx, event)
 
         mock_handler.assert_awaited_once()
         mock_link_with_next.mark_processed.assert_awaited_once_with(
@@ -728,6 +735,7 @@ class TestCrashRecoverySync:
         assert "msg-ws-ack-fails" not in ctx.claims.completed_ids(ctx.room_id)
         assert ctx.claims.is_ack_pending(ctx.room_id, "msg-ws-ack-fails")
 
+    @pytest.mark.looptime
     async def test_backlog_processed_ack_failure_retries_ack_without_handler_replay(
         self, mock_link_with_next, mock_handler
     ):
@@ -753,18 +761,21 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
-        assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
+        assert await attempt_delivery(ctx, msg) is TurnOutcome.RETRY_LATER
+        await asyncio.sleep(ctx.config.idle_resync_seconds)
+        assert await attempt_delivery(ctx, msg) is TurnOutcome.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
         assert "msg-backlog-ack-retry" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-backlog-ack-retry")
 
-    async def test_processed_ack_retry_budget_exhaustion_keeps_local_completion(
+    @pytest.mark.looptime
+    async def test_ack_retry_budget_exhaustion_keeps_the_intent_pending(
         self, mock_link_with_next, mock_handler
     ):
-        """Permanent processed ack failure should not deadlock or replay local side effects."""
+        """An unconfirmed terminal write is retained, not dropped, once its
+        retry budget is spent: dropping it would let the room replay effects."""
 
         msg = PlatformMessage(
             id="msg-ack-budget",
@@ -778,7 +789,9 @@ class TestCrashRecoverySync:
             created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
-        mock_link_with_next.mark_processed = AsyncMock(return_value=False)
+        mock_link_with_next.mark_processed = AsyncMock(
+            side_effect=[False, False, False, True]
+        )
         ctx = ExecutionContext(
             "room-123",
             mock_link_with_next,
@@ -789,14 +802,23 @@ class TestCrashRecoverySync:
             ),
         )
 
-        assert await ctx._process_backlog_message(msg) is TurnOutcome.RETRY_LATER
-        assert await ctx._process_backlog_message(msg) is TurnOutcome.ADVANCED
+        outcomes = []
+        for _ in range(4):
+            outcomes.append(await attempt_delivery(ctx, msg))
+            await asyncio.sleep(ctx.config.idle_resync_seconds)
 
+        assert outcomes == [
+            TurnOutcome.RETRY_LATER,
+            TurnOutcome.RETRY_LATER,
+            TurnOutcome.RETRY_LATER,
+            TurnOutcome.ADVANCED,
+        ]
         mock_handler.assert_awaited_once()
-        assert mock_link_with_next.mark_processed.await_count == 2
+        assert mock_link_with_next.mark_processed.await_count == 4
         assert "msg-ack-budget" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-budget")
 
+    @pytest.mark.looptime
     async def test_websocket_processed_ack_failure_retries_ack_without_handler_replay(
         self, mock_link_with_next, mock_handler
     ):
@@ -811,14 +833,16 @@ class TestCrashRecoverySync:
         )
 
         event = make_message_event(room_id="room-123", msg_id="msg-ws-ack-retry")
-        await ctx._process_event(event)
-        await ctx._process_event(event)
+        await attempt_delivery(ctx, event)
+        await asyncio.sleep(ctx.config.idle_resync_seconds)
+        await attempt_delivery(ctx, event)
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
         assert "msg-ws-ack-retry" in ctx.claims.completed_ids(ctx.room_id)
         assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ws-ack-retry")
 
+    @pytest.mark.looptime
     async def test_ack_pending_message_survives_lru_pressure_without_replay(
         self, mock_link_with_next, mock_handler
     ):
@@ -845,8 +869,8 @@ class TestCrashRecoverySync:
         )
 
         async def deliver(message_id: str) -> None:
-            await ctx._process_event(
-                make_message_event(room_id="room-123", msg_id=message_id)
+            await attempt_delivery(
+                ctx, make_message_event(room_id="room-123", msg_id=message_id)
             )
 
         # Handler completes but the durable ack fails → ACK_PENDING.
@@ -858,6 +882,7 @@ class TestCrashRecoverySync:
         executions_before_redelivery = mock_handler.await_count
         mock_link_with_next.mark_processed = AsyncMock(return_value=True)
 
+        await asyncio.sleep(ctx.config.idle_resync_seconds)
         await deliver("msg-unacked")
 
         assert mock_handler.await_count == executions_before_redelivery
@@ -865,10 +890,12 @@ class TestCrashRecoverySync:
             "room-123", "msg-unacked"
         )
 
-    async def test_websocket_processed_ack_failure_retries_ack_before_newer_queue(
+    @pytest.mark.looptime
+    async def test_websocket_processed_ack_failure_is_retried_by_the_loop_without_replay(
         self, mock_link_with_next, mock_handler
     ):
-        """The process loop should retry a failed WebSocket processed ack before newer events."""
+        """The process loop retries a failed WebSocket processed ack on its next
+        reconciliation, however many newer events ran in the meantime."""
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_processed = AsyncMock(side_effect=[False, True, True])
         ctx = ExecutionContext(
@@ -879,11 +906,13 @@ class TestCrashRecoverySync:
         )
 
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-old-ws"))
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-new-ws"))
         await wait_for_condition(
-            lambda: mock_link_with_next.mark_processed.await_count >= 3
+            lambda: mock_link_with_next.mark_processed.await_count >= 3,
+            timeout=2 * ctx.config.idle_resync_seconds,
+            interval=1.0,
         )
 
         assert [call.args[1].payload.id for call in mock_handler.await_args_list] == [
@@ -929,7 +958,7 @@ class TestCrashRecoverySync:
         )
         ctx.claims.remember_ack_pending("room-123", "msg-stuck")
 
-        await ctx._wait_until_resync_complete()
+        await ctx.scheduler.run_pass(recovery=True)
 
         # The stuck ACK is retried before the newer backlog message is fetched.
         assert mock_link_with_next.mark_processed.await_args_list[0].args == (
@@ -975,7 +1004,8 @@ class TestCrashRecoverySync:
             lambda: mock_link_with_next.mark_processing.await_count >= 1
         )
 
-        assert ctx._first_ws_msg_id == "msg-sync-claim-fails"
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-sync-claim-fails"
         mock_handler.assert_not_called()
         assert "msg-sync-claim-fails" not in ctx.claims.completed_ids(ctx.room_id)
 
@@ -1006,10 +1036,10 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        synchronized = await ctx._synchronize_with_next()
+        synchronized = await ctx.scheduler.run_pass(recovery=True)
 
-        assert synchronized is False
-        assert ctx._sync_complete is False
+        assert synchronized is ResyncOutcome.BLOCKED
+        assert ctx.scheduler.sync_complete is False
         mock_link_with_next.get_next_message.assert_awaited_once()
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-startup-claim-fails"
@@ -1045,8 +1075,8 @@ class TestCrashRecoverySync:
         )
 
         for _ in range(3):
-            assert await ctx._synchronize_with_next() is False
-        assert await ctx._synchronize_with_next() is True
+            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.BLOCKED
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
 
         mock_handler.assert_awaited_once()
         assert not ctx._retry_tracker.is_permanently_failed(msg.id)
@@ -1104,8 +1134,9 @@ class TestCrashRecoverySync:
             * mock_link_with_next.mark_processing.await_count
         )
         mock_handler.assert_not_called()
-        assert ctx._sync_complete is False
-        assert ctx._first_ws_msg_id == "msg-newer-ws"
+        assert ctx.scheduler.sync_complete is False
+        ctx.scheduler.absorb()
+        assert ctx.scheduler.first_ws_id == "msg-newer-ws"
 
         await ctx.stop()
 
@@ -1134,9 +1165,9 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
 
-        synchronized = await ctx._resync_pending_messages()
+        synchronized = await ctx.scheduler.run_pass(recovery=True)
 
-        assert synchronized is ResyncOutcome.RETRY
+        assert synchronized is ResyncOutcome.BLOCKED
         mock_link_with_next.get_next_message.assert_awaited_once()
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-resync-claim-fails"
@@ -1173,7 +1204,7 @@ class TestCrashRecoverySync:
         )
 
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await ctx.request_resync()
         await ctx.on_event(
             make_message_event(room_id="room-123", msg_id="msg-resync-newer-ws")
@@ -1220,7 +1251,7 @@ class TestCrashRecoverySync:
         ctx._retry_tracker.mark_permanently_failed("msg-failed-001")
 
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         # Handler should NOT be called for failed message
         assert mock_handler.call_count == 0
@@ -1290,17 +1321,16 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False, max_message_retries=1),
         )
 
-        # Attempt 1 (attempts=1, within max_retries=1) invokes the handler and
-        # fails. Attempt 2 (attempts=2, exceeds max_retries=1) is the allowed
-        # budget's last attempt getting saturated -- record_attempt reports
-        # exceeded before the handler would run, so it is skipped here too.
-        await ctx._process_backlog_message(msg)
-        await ctx._process_backlog_message(msg)
+        # Confirmation exhausts this original's only permitted execution.
+        await attempt_delivery(ctx, msg)
+        await attempt_delivery(ctx, msg)
         assert failing_handler.await_count == 1
-        assert ctx._retry_tracker.is_permanently_failed("msg-saturates")
+        mock_link_with_next.mark_failed.assert_awaited_once_with(
+            "room-123", "msg-saturates", GENERIC_PROVIDER_FAILURE_MESSAGE
+        )
 
         # A further delivery of the same message must not invoke the handler.
-        result = await ctx._process_backlog_message(msg)
+        result = await attempt_delivery(ctx, msg)
 
         assert result is TurnOutcome.ADVANCED
         assert failing_handler.await_count == 1

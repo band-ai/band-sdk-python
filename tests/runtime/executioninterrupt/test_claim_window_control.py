@@ -5,16 +5,20 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestControlSignalInClaimWindow:
-    """Signals landing after a message is claimed but before its cancellable
-    cycle task exists (the mark_processing/hydration window) must not be lost.
+    """Signals landing while processing acceptance is still pending.
+
+    The scope is admitted only after every acceptance is confirmed, so a signal
+    in this window consumes nothing and leaves the message recoverable.
     """
 
     @staticmethod
@@ -31,26 +35,29 @@ class TestControlSignalInClaimWindow:
 
         return AsyncMock(side_effect=_gate)
 
-    async def test_interrupt_in_window_aborts_before_handler(self, mock_link):
+    async def test_interrupt_in_window_consumes_nothing(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
         mock_link.mark_processing = self._gated_mark_processing(claiming, release)
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w1")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="w1"))
+        )
         await claiming.wait()
 
-        # No cycle task to cancel yet, but the signal must still take effect.
+        # Not admitted yet: nothing to terminate, but the signal is not lost.
         assert ctx._active_cycle_task is None
-        assert ctx.interrupt() is True
+        assert ctx.interrupt() is False
 
         release.set()
         result = await proc
 
-        assert result is TurnOutcome.ADVANCED
+        assert result is TurnOutcome.RETRY_LATER
         assert handler.invoked == []  # handler never ran
-        mock_link.mark_processed.assert_awaited_once_with("room-123", "w1")  # consumed
-        assert "w1" in ctx.claims.completed_ids(ctx.room_id)
+        mock_link.mark_processed.assert_not_awaited()
+        assert "w1" not in ctx.claims.completed_ids(ctx.room_id)
+        assert not ctx.claims.is_ack_pending(ctx.room_id, "w1")
 
     async def test_stop_in_window_leaves_message_actionable(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
@@ -58,7 +65,9 @@ class TestControlSignalInClaimWindow:
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w2")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="w2"))
+        )
         await claiming.wait()
 
         ctx.stop_room()  # sets _stopped and records the pending stop
@@ -72,23 +81,25 @@ class TestControlSignalInClaimWindow:
         mock_link.mark_processed.assert_not_awaited()  # left for replay on play
         assert "w2" not in ctx.claims.completed_ids(ctx.room_id)
 
-    async def test_interrupt_in_backlog_window_aborts_and_advances(self, mock_link):
+    async def test_interrupt_in_backlog_window_defers_without_consuming(
+        self, mock_link
+    ):
         claiming, release = asyncio.Event(), asyncio.Event()
         mock_link.mark_processing = self._gated_mark_processing(claiming, release)
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(ctx._process_backlog_message(backlog_message("bw1")))
+        proc = asyncio.create_task(attempt_delivery(ctx, backlog_message("bw1")))
         await claiming.wait()
 
-        assert ctx.interrupt() is True
+        assert ctx.interrupt() is False
 
         release.set()
         result = await proc
 
-        assert result is TurnOutcome.ADVANCED
+        assert result is TurnOutcome.RETRY_LATER
         assert handler.invoked == []
-        mock_link.mark_processed.assert_awaited_once_with("room-123", "bw1")
+        mock_link.mark_processed.assert_not_awaited()
 
     async def test_interrupt_between_cycles_arms_nothing(self, mock_link):
         """A truly idle interrupt (no claim in flight) stays a no-op and does not
@@ -99,6 +110,6 @@ class TestControlSignalInClaimWindow:
         assert ctx.interrupt() is False
 
         # The next message runs to completion, unaffected.
-        result = await ctx._process_event(make_message_event(msg_id="n1"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="n1"))
         assert result is TurnOutcome.ADVANCED
         assert handler.completed == ["n1"]

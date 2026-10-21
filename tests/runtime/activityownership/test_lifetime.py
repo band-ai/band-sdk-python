@@ -12,6 +12,7 @@ from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
 from tests.runtime.helpers import IDLE, KEEP_ALIVE, LifecyclePlatform
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestProviderLifetime:
@@ -31,9 +32,9 @@ class TestProviderLifetime:
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="original"))
+        await attempt_delivery(ctx, make_message_event(msg_id="original"))
         await asyncio.sleep(3.1)
-        await ctx._process_event(make_message_event(msg_id="busy"))
+        await attempt_delivery(ctx, make_message_event(msg_id="busy"))
         assert activity_platform.activity_reports == [KEEP_ALIVE, KEEP_ALIVE]
         assert activity_platform.marked("processed") == ["original", "busy"]
         release.set()
@@ -57,7 +58,7 @@ class TestProviderLifetime:
             await release.wait()
 
         ctx = execution(handler)
-        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        turn = asyncio.create_task(attempt_delivery(ctx, make_message_event()))
         await finished.wait()
         assert activity_platform.activity_reports == [KEEP_ALIVE]
         release.set()
@@ -82,7 +83,7 @@ class TestProviderLifetime:
             )
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="original"))
+        await attempt_delivery(ctx, make_message_event(msg_id="original"))
         assert ctx.interrupt(kind=mode)
         await asyncio.gather(workers[0].task, return_exceptions=True)
         await ctx._join_activity_completion()
@@ -108,8 +109,8 @@ class TestProviderLifetime:
                 )
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="original"))
-        await ctx._process_event(make_message_event(msg_id="busy"))
+        await attempt_delivery(ctx, make_message_event(msg_id="original"))
+        await attempt_delivery(ctx, make_message_event(msg_id="busy"))
         activity_platform.stopped = True
         await asyncio.sleep(3.1)
         assert workers[0].task.cancelled()
@@ -135,9 +136,9 @@ class TestProviderLifetime:
                 )
 
         ctx = execution(handler, max_working_state_seconds=4.0)
-        await ctx._process_event(make_message_event(msg_id="original"))
+        await attempt_delivery(ctx, make_message_event(msg_id="original"))
         await asyncio.sleep(3.1)
-        await ctx._process_event(make_message_event(msg_id="busy"))
+        await attempt_delivery(ctx, make_message_event(msg_id="busy"))
         await asyncio.sleep(6)
         assert activity_platform.activity_reports == [KEEP_ALIVE, KEEP_ALIVE]
         assert not workers[0].task.done()
@@ -163,7 +164,7 @@ class TestProviderLifetime:
             )
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await attempt_delivery(ctx, make_message_event())
         await ctx.stop()
         assert activity_platform.activity_reports == [KEEP_ALIVE, IDLE]
         assert not workers[0].task.done()
@@ -193,8 +194,10 @@ class TestProviderLifetime:
             )
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="original"))
-        turn = asyncio.create_task(ctx._process_event(make_message_event(msg_id="new")))
+        await attempt_delivery(ctx, make_message_event(msg_id="original"))
+        turn = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="new"))
+        )
         await entered.wait()
         releases[0].set()
         await workers[0].task

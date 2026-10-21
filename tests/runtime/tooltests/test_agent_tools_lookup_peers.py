@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from band.runtime.tools import (
-    AgentTools,
-)
+from unittest.mock import MagicMock
+
+from band.runtime.tools import AgentTools
 
 
 class TestAgentToolsLookupPeers:
     """Test lookup_peers tool."""
 
-    async def test_lookup_peers_success(self, mock_rest_client):
+    async def test_lookup_peers_success(self, mock_rest_client: MagicMock) -> None:
         """lookup_peers() should return the Fern response directly."""
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -19,7 +19,9 @@ class TestAgentToolsLookupPeers:
         assert result.data[0].name == "Agent Two"
         assert result.metadata.page == 1
 
-    async def test_lookup_peers_filters_by_room(self, mock_rest_client):
+    async def test_lookup_peers_filters_by_room(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """lookup_peers() should filter by not_in_chat."""
         tools = AgentTools("room-123", mock_rest_client)
 

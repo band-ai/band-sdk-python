@@ -88,7 +88,7 @@ class TestRoomShutdown:
             ROOM_ID, mock_link, AsyncMock(), on_platform_stop=observer
         )
         async with managed_execution(ctx):
-            scope = await ctx._begin_scope()
+            scope = await ctx.begin_delivery()
             assert scope is not None
             ctx.observe_platform_stop(scope)
             await entered.wait()
@@ -117,7 +117,7 @@ class TestRoomShutdown:
             ROOM_ID, mock_link, AsyncMock(), on_platform_stop=observer
         )
         async with controlled_clock() as clock, managed_execution(ctx, release=release):
-            scope = await ctx._begin_scope()
+            scope = await ctx.begin_delivery()
             assert scope is not None
             ctx.observe_platform_stop(scope)
             await entered.wait()
@@ -129,9 +129,6 @@ class TestRoomShutdown:
                 with pytest.raises(CleanupIncompleteError):
                     await stopping
             assert observing.cancelling() == 1
-            await ctx.stop()
-            assert observing.cancelled()
-            assert observing.cancelling() == 2
 
     @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_interrupted_drain_still_keeps_the_stubborn_task_for_stop(

@@ -6,12 +6,15 @@ from band.platform.link import BandLink
 from band.runtime.execution import (
     ExecutionContext,
 )
+from band.runtime.scheduler import ResyncOutcome
 from band.runtime.sessionconfig import SessionConfig
 from tests.runtime.helpers import LifecyclePlatform, rest_client_over
 
 
 class TestStoppedStartupUsesNextGateNotProcessingList:
-    async def test_stopped_startup_uses_next_gate_not_processing_list(self) -> None:
+    async def test_stopped_startup_uses_next_gate_not_processing_list(
+        self,
+    ) -> None:
         peer = LifecyclePlatform(stopped=True)
         peer.add_message("stale")
         peer.add_message("newer")
@@ -29,12 +32,12 @@ class TestStoppedStartupUsesNextGateNotProcessingList:
                 handler,
                 config=SessionConfig(enable_context_hydration=False),
             )
-            assert await ctx._synchronize_with_next()
+            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.EMPTY
             assert invoked == []
             assert peer.accepted_marks == []
             assert peer.processing_list_reads == 0
             peer.stopped = False
-            assert await ctx._synchronize_with_next()
+            assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
             assert invoked == ["stale", "newer"]
             assert peer.accepted_marks == [
                 ("stale", "processing"),

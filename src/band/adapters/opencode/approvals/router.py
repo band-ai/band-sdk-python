@@ -53,7 +53,8 @@ ReplyRoute: TypeAlias = (
 def route_reply(asks: PendingAsks, content: str) -> ReplyRoute | None:
     """Where a room message goes, decided from the pending state alone.
 
-    It has no side effects. ``None`` means the message is not a reply to any ask.
+    The one parser behind recognition and handling; it has no side effects.
+    ``None`` means the message is not a reply to any ask.
     """
     if not (raw := content.strip()):
         return None

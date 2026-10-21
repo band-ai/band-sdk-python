@@ -6,14 +6,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from band_rest import (
-    GetAgentChatContextResponse,
-)
+from band_rest import GetAgentChatContextResponse
 
-from band.client.rest import (
-    DEFAULT_REQUEST_OPTIONS,
-    NotFoundError,
-)
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, NotFoundError
 from band.config.settings import RuntimeSettings
 from band.core.exceptions import BandToolError
 from band.runtime.execution import ExecutionContext
@@ -43,7 +38,9 @@ class TestFileTools:
     # --- list_room_files ---
 
     @pytest.mark.asyncio
-    async def test_list_room_files_dedupes_by_attachment_id(self, mock_rest_client):
+    async def test_list_room_files_dedupes_by_attachment_id(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         shared = _attachment("file-1")
         other = _attachment("file-2")
         response = _context_response(
@@ -67,8 +64,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_list_room_files_forwards_cursor_and_returns_next(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         response = _context_response(
             [_message_with_attachments("msg-1", [_attachment()])],
             next_cursor="cursor-2",
@@ -91,7 +88,9 @@ class TestFileTools:
     # --- read_room_file ---
 
     @pytest.mark.asyncio
-    async def test_read_room_file_inlines_small_text(self, mock_rest_client):
+    async def test_read_room_file_inlines_small_text(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(content_type="text/plain", size=5)
         _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
@@ -107,8 +106,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_non_utf8_text_flags_lossy_decode(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A Windows-1252-encoded file (no charset in content_type -- the
         platform derives it from magic bytes alone) must not come back
         looking like a clean decode: 0x93/0x94 are curly quotes in
@@ -129,7 +128,9 @@ class TestFileTools:
         assert "not valid UTF-8" in result["description"]
 
     @pytest.mark.asyncio
-    async def test_read_room_file_inlines_small_image(self, mock_rest_client):
+    async def test_read_room_file_inlines_small_image(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(content_type="image/png", size=100)
         _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
@@ -146,8 +147,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_text_exactly_at_limit_downloads(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(content_type="text/plain", size=MAX_INLINE_TEXT_BYTES)
         _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
@@ -161,8 +162,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_text_one_byte_over_limit_skips_download(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(
             content_type="text/plain", size=MAX_INLINE_TEXT_BYTES + 1
         )
@@ -179,8 +180,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_image_exactly_at_limit_downloads(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(content_type="image/png", size=MAX_INLINE_IMAGE_BYTES)
         _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
@@ -194,8 +195,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_image_one_byte_over_limit_skips_download(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(
             content_type="image/png", size=MAX_INLINE_IMAGE_BYTES + 1
         )
@@ -212,8 +213,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_non_previewable_type_is_described(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(content_type="application/pdf", size=10)
         _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
@@ -227,8 +228,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_unknown_id_raises_band_tool_error(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
             return_value=_context_response([])
         )
@@ -239,8 +240,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_download_not_found_raises_band_tool_error(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         attachment = _attachment(content_type="text/plain", size=5)
         _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
@@ -252,7 +253,9 @@ class TestFileTools:
             await tools.read_room_file("file-1")
 
     @pytest.mark.asyncio
-    async def test_read_room_file_searches_past_the_first_page(self, mock_rest_client):
+    async def test_read_room_file_searches_past_the_first_page(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """_find_attachment must walk every page -- the target file may be
         older than the first page returned."""
         page_one = _context_response(
@@ -284,7 +287,9 @@ class TestFileTools:
         assert second_call_kwargs["cursor"] == "cursor-2"
 
     @pytest.mark.asyncio
-    async def test_find_attachment_stops_on_repeated_cursor(self, mock_rest_client):
+    async def test_find_attachment_stops_on_repeated_cursor(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A malformed response repeating a cursor must not loop forever --
         the only pagination guard, since a room's history has no realistic
         depth ceiling to cap against (unlike iter_chat_pages's room count)."""
@@ -308,7 +313,9 @@ class TestFileTools:
         assert get_context.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_find_attachment_searches_past_fifty_pages(self, mock_rest_client):
+    async def test_find_attachment_searches_past_fifty_pages(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A room with more than 50 pages of history before the target file
         must still resolve it -- there is no depth cap."""
         target_page = 60
@@ -347,8 +354,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_find_attachment_skips_pagination_on_cache_hit(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A second lookup for the same (room, rest, file_id) must not
         re-paginate -- _find_attachment delegates to a shared @alru_cache
         keyed on those three, not on the AgentTools instance calling it."""
@@ -363,8 +370,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_find_attachment_does_not_share_cache_across_rooms(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """The same file_id looked up in two different rooms must not
         cache-hit across them -- room_id is part of the cache key, not
         just file_id."""
@@ -381,8 +388,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_find_attachment_does_not_share_cache_across_rest_clients(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """The same (room_id, file_id) looked up through two different REST
         clients must not cache-hit across them -- the rest client identity is
         part of the cache key, so two agents (or a pool of clients) never
@@ -401,8 +408,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_find_attachment_retries_pagination_after_a_miss(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A miss must not be cached: a file posted after a failed lookup is
         still findable on the next attempt, not permanently "not found"."""
         mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
@@ -419,7 +426,9 @@ class TestFileTools:
         assert result.id == "file-1"
 
     @pytest.mark.asyncio
-    async def test_find_attachment_rejects_expired_cached_entry(self, mock_rest_client):
+    async def test_find_attachment_rejects_expired_cached_entry(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """An attachment past its own expires_at must not be handed back
         from cache -- it's evicted and re-fetched once (the cached copy may
         just predate the platform extending the deadline), and only raised
@@ -442,7 +451,9 @@ class TestFileTools:
         )
 
     @pytest.mark.asyncio
-    async def test_find_attachment_refreshes_an_expired_entry(self, mock_rest_client):
+    async def test_find_attachment_refreshes_an_expired_entry(
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A cache entry whose expires_at has passed gets exactly one
         real re-fetch -- if that comes back not-expired (the platform
         extended it), it's returned, not rejected on the stale cached
@@ -483,14 +494,14 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_find_attachment_rejects_expired_naive_timestamp(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """A naive (offset-less) expires_at -- the Fern model doesn't enforce
         one -- must be treated as UTC, not raise on comparison to aware
         now()."""
         expired = _attachment(
             "file-1",
-            expires_at=datetime(2020, 1, 1),
+            expires_at=datetime(2020, 1, 1, tzinfo=UTC).replace(tzinfo=None),
         )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
@@ -522,8 +533,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_caches_attachments_across_recreated_tools(
-        self, mock_rest_client
-    ):
+        self, mock_rest_client: MagicMock
+    ) -> None:
         """Real ExecutionContext + from_context(): a file found by one turn's
         AgentTools must skip re-pagination on the next turn's recreated
         instance, since AgentTools.from_context() rebuilds fresh every turn.
@@ -552,8 +563,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_uploads_and_posts_message(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         uploaded = _attachment("file-9", name="report.txt")
         upload_response = MagicMock()
         upload_response.data = uploaded
@@ -582,8 +593,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_exactly_at_limit_succeeds(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         uploaded = _attachment("file-9")
         upload_response = MagicMock()
         upload_response.data = uploaded
@@ -599,8 +610,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_one_byte_over_limit_raises_before_upload(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         tools = AgentTools("room-123", mock_rest_client, participants)
         body = "a" * (MAX_SEND_CONTENT_BYTES + 1)
 
@@ -611,8 +622,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_non_ascii_filename_raises_before_upload(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         """x-file-name travels as a raw HTTP header value -- httpx refuses to
         encode a non-ASCII header and raises UnicodeEncodeError deep inside
         the upload call. Catch it before uploading with a clear message
@@ -626,8 +637,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_crlf_in_filename_raises_before_upload(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         """A bare '\\r'/'\\n' encodes to ASCII fine, so an "is it ASCII"
         check alone would wave a header-injection payload straight through
         to the upload call -- only rejected there, deep inside h11, as an
@@ -643,8 +654,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_upload_not_found_raises_band_tool_error(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
             side_effect=NotFoundError(body=MagicMock())
         )
@@ -655,8 +666,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_empty_mentions_raises_before_upload(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         """Sharing a file is a send_message call under the hood, so a missing
         mention must fail before the upload -- not after, which would leave
         an orphaned attachment nothing points at."""
@@ -669,8 +680,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_empty_caption_uses_default(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         """The platform rejects blank message content outright
         (``validate_length(:content, min: 1)``, unconditional even with
         ``attachment_ids`` set) -- an omitted caption must never reach
@@ -696,8 +707,11 @@ class TestFileTools:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caption", BLANK_CONTENT_CASES)
     async def test_send_room_file_blank_caption_uses_default(
-        self, mock_rest_client, participants, caption
-    ):
+        self,
+        mock_rest_client: MagicMock,
+        participants: list[dict[str, str]],
+        caption: str,
+    ) -> None:
         """A caption that only *looks* non-empty falls back to the default
         too: the send refuses content with no visible characters and returns
         ``None``, so anything narrower than the platform's own rule here
@@ -722,8 +736,8 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_send_room_file_discoverable_from_a_new_agenttools_instance(
-        self, mock_rest_client, participants
-    ):
+        self, mock_rest_client: MagicMock, participants: list[dict[str, str]]
+    ) -> None:
         """AgentTools is recreated per execution (a fresh instance per turn),
         so a file must be discoverable through the REST layer alone, not
         through any in-process state the sending instance happened to hold.

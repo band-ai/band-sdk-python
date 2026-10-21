@@ -9,7 +9,12 @@ from tests.runtime.helpers import (
     deliver,
     run_through,
 )
-from tests.runtime.verdict.kit import ScriptedAdapter, Step, crash, execution_logger
+from tests.runtime.verdict.kit import (
+    ScriptedAdapter,
+    Step,
+    crash,
+    delivery_logger,
+)
 
 
 class TestOnlyAnUnreportedFailureIsLoggedAsARuntimeError:
@@ -35,7 +40,7 @@ class TestOnlyAnUnreportedFailureIsLoggedAsARuntimeError:
         traceback."""
         ctx = run_through(ScriptedAdapter(steps), link)
 
-        with caplog.at_level(logging.DEBUG, logger=execution_logger):
+        with caplog.at_level(logging.DEBUG, logger=delivery_logger):
             await deliver(ctx, path)
 
         (record,) = [

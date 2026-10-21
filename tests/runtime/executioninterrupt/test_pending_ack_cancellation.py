@@ -10,11 +10,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     backlog_message,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestPendingAckCancellationGap:
@@ -65,7 +67,7 @@ class TestPendingAckCancellationGap:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
         async with self._running(
-            ctx._process_event(make_message_event(msg_id="ws-cancel-ack"))
+            attempt_delivery(ctx, make_message_event(msg_id="ws-cancel-ack"))
         ) as proc:
             await entered.wait()
 
@@ -87,7 +89,7 @@ class TestPendingAckCancellationGap:
         # A subsequent delivery against the same live registry retries only
         # the ack -- the handler is never re-invoked.
         mock_link.mark_processed = AsyncMock(return_value=True)
-        result = await ctx._process_event(make_message_event(msg_id="ws-cancel-ack"))
+        result = await attempt_delivery(ctx, make_message_event(msg_id="ws-cancel-ack"))
 
         assert result is TurnOutcome.ADVANCED
         assert handler.invocations == 1
@@ -101,7 +103,7 @@ class TestPendingAckCancellationGap:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         msg = backlog_message("bk-cancel-ack")
 
-        async with self._running(ctx._process_backlog_message(msg)) as proc:
+        async with self._running(attempt_delivery(ctx, msg)) as proc:
             await entered.wait()
 
             assert handler.completed == ["bk-cancel-ack"]
@@ -116,7 +118,7 @@ class TestPendingAckCancellationGap:
         assert not ctx.claims.is_completed("room-123", "bk-cancel-ack")
 
         mock_link.mark_processed = AsyncMock(return_value=True)
-        result = await ctx._process_backlog_message(msg)
+        result = await attempt_delivery(ctx, msg)
 
         assert result is TurnOutcome.ADVANCED
         assert handler.invocations == 1

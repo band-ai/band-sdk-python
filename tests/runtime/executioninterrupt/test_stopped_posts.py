@@ -12,7 +12,8 @@ import pytest
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS, bind_turn_task
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
 from tests.runtime.executioninterrupt.kit import (
@@ -22,6 +23,7 @@ from tests.runtime.helpers import (
     LifecyclePlatform,
     rest_client_over,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStoppedPosts:
@@ -57,7 +59,7 @@ class TestStoppedPosts:
 
             ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
             assert (
-                await ctx._process_event(make_message_event(msg_id="stopped"))
+                await attempt_delivery(ctx, make_message_event(msg_id="stopped"))
                 is TurnOutcome.RETRY_LATER
             )
             assert not ctx.is_stopped
@@ -66,7 +68,7 @@ class TestStoppedPosts:
             mock_link.mark_failed.assert_not_awaited()
             assert peer.posts == ["messages" if post == "message" else "events"]
             assert (
-                await ctx._process_backlog_message(backlog_message("stopped"))
+                await attempt_delivery(ctx, backlog_message("stopped"))
                 is TurnOutcome.ADVANCED
             )
             assert invoked == ["stopped", "stopped"]
@@ -80,7 +82,7 @@ class TestStoppedPosts:
             invoked.append(event.payload.id)
 
         ctx = ExecutionContext("room-123", mock_link, handler)
-        await ctx._process_event(make_message_event(msg_id="old"))
+        await attempt_delivery(ctx, make_message_event(msg_id="old"))
         claiming, release = asyncio.Event(), asyncio.Event()
 
         async def claim(*_: Any) -> bool:
@@ -92,7 +94,9 @@ class TestStoppedPosts:
         mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
             side_effect=RoomExecutionStoppedError(ctx.room_id)
         )
-        task = asyncio.create_task(ctx._process_event(make_message_event(msg_id="new")))
+        task = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="new"))
+        )
         try:
             await claiming.wait()
             with pytest.raises(asyncio.CancelledError):
@@ -117,7 +121,7 @@ class TestStoppedPosts:
         ctx = ExecutionContext(
             "room-123", mock_link, handler, on_platform_stop=observer
         )
-        await ctx._process_event(make_message_event(msg_id="old"))
+        await attempt_delivery(ctx, make_message_event(msg_id="old"))
         await ctx.resume_room()
         mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
             side_effect=RoomExecutionStoppedError(ctx.room_id)
@@ -127,7 +131,7 @@ class TestStoppedPosts:
         observer.assert_not_awaited()
         assert not ctx.is_stopped
         assert (
-            await ctx._process_event(make_message_event(msg_id="new"))
+            await attempt_delivery(ctx, make_message_event(msg_id="new"))
             is TurnOutcome.ADVANCED
         )
 
@@ -152,7 +156,7 @@ class TestStoppedPosts:
         ctx = ExecutionContext(
             "room-123", mock_link, handler, on_platform_stop=observer
         )
-        await ctx._process_event(make_message_event(msg_id="detached"))
+        await attempt_delivery(ctx, make_message_event(msg_id="detached"))
         mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
             side_effect=RoomExecutionStoppedError(ctx.room_id)
         )
@@ -161,7 +165,7 @@ class TestStoppedPosts:
             await provider
         await cleanup.wait()
         assert (
-            await ctx._process_event(make_message_event(msg_id="after"))
+            await attempt_delivery(ctx, make_message_event(msg_id="after"))
             is TurnOutcome.ADVANCED
         )
 
@@ -175,7 +179,7 @@ class TestStoppedPosts:
             ctx = ExecutionContext(
                 "room-123", mock_link, AsyncMock(), agent_id="agent-123"
             )
-            await ctx._begin_scope()
+            await ctx.begin_delivery()
             tools = AgentTools.from_context(ctx)
             refused = asyncio.Event()
             refused_at: list[float] = []
@@ -194,7 +198,7 @@ class TestStoppedPosts:
                 await asyncio.Future[None]()
 
             worker = bind_turn_task(tools, asyncio.create_task(released_worker()))
-            await ctx._begin_scope()
+            await ctx.begin_delivery()
             await refused.wait()
             await asyncio.wait({worker.task}, timeout=5 * CYCLE_CANCEL_GRACE_SECONDS)
 
