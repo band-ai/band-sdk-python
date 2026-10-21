@@ -13,7 +13,7 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS, TurnState
-from band.adapters.opencode.approvals import DECLINED_QUESTION_ANSWER
+from band.adapters.opencode.approvals.wording import DECLINED_QUESTION_ANSWER
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage

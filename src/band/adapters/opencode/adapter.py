@@ -16,7 +16,8 @@ import httpx
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
-from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.adapters.opencode.approvals.ports import ApprovalPorts
+from band.adapters.opencode.approvals.room import RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.delivery import relay_reply
