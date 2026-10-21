@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.opencode.approvals import (
+from band.adapters.opencode.approvals.wording import (
     APPROVAL_HANDLED_TEMPLATE,
     APPROVAL_REQUESTED_TEMPLATE,
 )
