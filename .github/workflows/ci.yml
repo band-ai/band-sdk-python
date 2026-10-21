@@ -7,6 +7,9 @@ on:
   # Run on the merge queue's temporary branch so the required ci-status reports
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
 
 # Every job here only reads the repo; nothing uses GITHUB_TOKEN for writes.
 permissions:
@@ -74,13 +77,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
-        # The merge queue re-checks only that the merged result still works; the full
-        # OS x Python grid already ran on the PR.
+        # The queue validates the merged result on one Ubuntu leg.
         run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
+        # Older Windows interpreters run weekly, manually, and before releases.
+        full-windows: ["${{ github.event_name != 'pull_request' || github.head_ref == 'release-please--branches--main' }}"]
         exclude:
         - {run-for: queue, os: windows-latest}
         - {run-for: queue, python-version: '3.11'}
         - {run-for: queue, python-version: '3.13'}
+        - {full-windows: false, os: windows-latest, python-version: '3.11'}
+        - {full-windows: false, os: windows-latest, python-version: '3.12'}
       fail-fast: false
 
     # Use bash on every OS so these steps stay identical (Git Bash ships on the
@@ -196,7 +202,7 @@ jobs:
 
 
   test-strands-nooa:
-    if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ${{ matrix.os }}
     strategy: *suite-strategy
 
@@ -335,7 +341,7 @@ jobs:
 
 
   packaging:
-    if: *pr-only
+    if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -500,7 +506,7 @@ jobs:
     # the loop below with the results it may end in
     # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
     # lint must succeed, so a draft run, which skips every job, is red. The jobs
-    # allowed to skip are the ones that run on pull requests only.
+    # allowed to skip are the ones omitted from the merge queue.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
     needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]

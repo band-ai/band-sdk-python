@@ -16,7 +16,8 @@ import httpx
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
-from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.adapters.opencode.approvals.ports import ApprovalPorts
+from band.adapters.opencode.approvals.room import RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.delivery import relay_reply
@@ -110,6 +111,11 @@ class TurnState:
     # Set while that watcher reports a timeout, so the stop it requested
     # aborts the session without cancelling the task that still posts the report.
     reports_timeout: bool = False
+
+    @property
+    def running(self) -> bool:
+        """The turn owns the room until its watcher has delivered the result."""
+        return self.watcher is None or not self.watcher.done()
 
 
 # Resolves to the TurnState an ApprovalPorts bundle acts on -- either pinned
@@ -457,10 +463,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 agent_id or self.agent_name
             )
 
-        if room_state.turn and (
-            not room_state.turn.turn_future.done()
-            or room_state.approvals.awaiting_human()
-        ):
+        if room_state.turn and room_state.turn.running:
             raise InputNotAccepted("The room already has an active OpenCode turn")
 
         # MCP calls keep the active turn's tools until that turn finishes.

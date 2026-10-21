@@ -38,10 +38,13 @@ def needed_jobs(job: dict[str, Any]) -> set[str]:
     return {needs} if isinstance(needs, str) else set(needs)
 
 
-def pr_only_jobs() -> set[str]:
-    """Jobs gated to pull requests, plus jobs that need only such jobs."""
+def queue_skippable_jobs() -> set[str]:
+    """Jobs excluded from the queue, plus jobs that need only those jobs."""
     jobs = ci_jobs()
-    gated = {name for name, job in jobs.items() if job.get("if") == PR_ONLY}
+    outside_queue = f"github.event_name != 'merge_group' && ({jobs['lint']['if']})"
+    gated = {
+        name for name, job in jobs.items() if job.get("if") in {PR_ONLY, outside_queue}
+    }
     return gated | {
         name
         for name, job in jobs.items()
@@ -64,12 +67,12 @@ class TestCiStatusCoverage:
     def test_gate_runs_whatever_its_needs_concluded(self) -> None:
         assert ci_jobs()[GATE_JOB]["if"] == "always()"
 
-    def test_only_pull_request_only_jobs_may_skip(self) -> None:
+    def test_only_jobs_excluded_from_the_queue_may_skip(self) -> None:
         # Any other skipped job would leave a ready pull request green untested.
         may_skip = {
             job for job, allowed in allowed_results().items() if "skipped" in allowed
         }
-        assert may_skip == pr_only_jobs()
+        assert may_skip == queue_skippable_jobs()
 
     def test_gate_requires_exactly_the_merge_queue_jobs(self) -> None:
         must_pass = {

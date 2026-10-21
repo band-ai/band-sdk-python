@@ -26,7 +26,8 @@ import pytest
 from band_rest import AsyncRestClient
 
 from band.adapters.opencode import OpencodeAdapterConfig
-from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.adapters.opencode.approvals.ports import ApprovalPorts
+from band.adapters.opencode.approvals.room import RoomApprovals
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import OpencodeClientProtocol, OpencodePermissionRequest
 from band.runtime.formatters import replace_uuid_mentions
