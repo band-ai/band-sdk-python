@@ -55,6 +55,12 @@ requirements. Follow an explicit user choice of workflow and respect each skill'
 activation rules. Do not modify or remove personal skills as part of a repository
 change.
 
+As the project evolves, keep guidance accurate. When work reveals an outdated
+rule, recurring gap, or better established practice, propose a focused update to
+the relevant existing skill or `AGENTS.md`. Prefer improving existing guidance
+over adding new skills. Create new skills or change personal skills only with
+explicit user approval.
+
 | Skill | Use when |
 |---|---|
 | [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
