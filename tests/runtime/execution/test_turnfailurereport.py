@@ -26,6 +26,8 @@ from band.runtime.tools import AgentTools
 from tests.conftest import (
     make_message_event,
 )
+from tests.runtime.executioninterrupt.kit import auxiliary_context
+from tests.runtime.helpers import LifecyclePlatform, rest_client_over
 from tests.runtime.scheduler.driver import attempt_delivery
 
 
@@ -186,36 +188,37 @@ class TestTurnFailureReport:
 
     @pytest.mark.parametrize("path", ["websocket", "backlog"])
     async def test_hydration_failure_keeps_the_original_recoverable_without_charging_execution(
-        self, mock_link: MagicMock, error_events: AsyncMock, path: str
+        self, path: str
     ) -> None:
+        peer = LifecyclePlatform()
+        peer.add_message("msg-hydration")
         handler = AsyncMock()
-        ctx = self._context(mock_link, handler, max_message_retries=1)
-        ctx.prepare_delivery_context = AsyncMock(
-            side_effect=RuntimeError("history down")
+        original = (
+            peer.event("msg-hydration")
+            if path == "websocket"
+            else self._backlog_message("msg-hydration")
         )
+        async with rest_client_over(peer.answer) as rest:
+            ctx = auxiliary_context(rest, handler)
+            ctx.prepare_delivery_context = AsyncMock(
+                side_effect=RuntimeError("history down")
+            )
+            assert await attempt_delivery(ctx, original) is TurnOutcome.RETRY_LATER
+            while_down = (
+                handler.await_count,
+                list(peer.requested_marks),
+                list(peer.posts),
+            )
 
-        async def deliver() -> TurnOutcome:
-            if path == "websocket":
-                return await attempt_delivery(
-                    ctx,
-                    make_message_event(
-                        room_id="room-123", msg_id="msg-hydration", sender_id="user-1"
-                    ),
-                )
-            return await attempt_delivery(ctx, self._backlog_message("msg-hydration"))
+            ctx.prepare_delivery_context = AsyncMock()
+            assert await attempt_delivery(ctx, original) is TurnOutcome.ADVANCED
 
-        assert await deliver() is TurnOutcome.RETRY_LATER
-        handler.assert_not_awaited()
-        mock_link.mark_processing.assert_not_awaited()
-        mock_link.mark_failed.assert_not_awaited()
-        error_events.assert_not_awaited()
-
-        ctx.prepare_delivery_context = AsyncMock()
-        assert await deliver() is TurnOutcome.ADVANCED
-        handler.assert_awaited_once()
-        mock_link.mark_processed.assert_awaited_once_with("room-123", "msg-hydration")
-        mock_link.mark_failed.assert_not_awaited()
-        error_events.assert_not_awaited()
+        assert while_down == (0, [], [])
+        assert (handler.await_count, peer.requested_marks, peer.posts) == (
+            1,
+            [("msg-hydration", "processing"), ("msg-hydration", "processed")],
+            [],
+        )
 
     async def test_failure_the_adapter_reported_is_not_repeated(
         self, mock_link: MagicMock, error_events: AsyncMock

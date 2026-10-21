@@ -16,11 +16,10 @@ from band.runtime.delivery import TurnOutcome
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
-from tests.runtime.executioninterrupt.kit import (
-    backlog_message,
-)
+from tests.runtime.executioninterrupt.kit import auxiliary_context, backlog_message
 from tests.runtime.helpers import (
     LifecyclePlatform,
+    ResponseGate,
     rest_client_over,
 )
 from tests.runtime.scheduler.driver import attempt_delivery
@@ -73,7 +72,7 @@ class TestStoppedPosts:
             )
             assert invoked == ["stopped", "stopped"]
 
-    async def test_old_post_cannot_cancel_new_claim_window(self, mock_link) -> None:
+    async def test_old_post_cannot_cancel_new_claim_window(self) -> None:
         captured: list[AgentTools] = []
         invoked: list[str] = []
 
@@ -81,33 +80,32 @@ class TestStoppedPosts:
             captured.append(AgentTools.from_context(ctx))
             invoked.append(event.payload.id)
 
-        ctx = ExecutionContext("room-123", mock_link, handler)
-        await attempt_delivery(ctx, make_message_event(msg_id="old"))
-        claiming, release = asyncio.Event(), asyncio.Event()
-
-        async def claim(*_: Any) -> bool:
-            claiming.set()
-            await release.wait()
-            return True
-
-        mock_link.mark_processing.side_effect = claim
-        mock_link.rest.agent_api_events.create_agent_chat_event = AsyncMock(
-            side_effect=RoomExecutionStoppedError(ctx.room_id)
-        )
-        task = asyncio.create_task(
-            attempt_delivery(ctx, make_message_event(msg_id="new"))
-        )
-        try:
-            await claiming.wait()
-            with pytest.raises(asyncio.CancelledError):
-                await captured[0].send_event("late", "thought")
-            release.set()
-            assert await task is TurnOutcome.ADVANCED
-        finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        peer = LifecyclePlatform()
+        peer.add_message("old")
+        peer.add_message("new")
+        gate = ResponseGate(peer, "/processing")
+        gate.release.set()
+        async with rest_client_over(gate.answer) as rest:
+            ctx = auxiliary_context(rest, handler)
+            await attempt_delivery(ctx, peer.event("old"))
+            gate.entered.clear()
+            gate.release.clear()
+            task = asyncio.create_task(attempt_delivery(ctx, peer.event("new")))
+            try:
+                await gate.entered.wait()
+                # The old turn's tools post into a room the platform now holds stopped.
+                peer.stopped = True
+                with pytest.raises(asyncio.CancelledError):
+                    await captured[0].send_event("late", "thought")
+                peer.stopped = False
+                gate.release.set()
+                assert await task is TurnOutcome.ADVANCED
+            finally:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         assert invoked == ["old", "new"]
+        assert peer.marked("processed") == ["old", "new"]
 
     async def test_delayed_stop_after_play_does_not_notify_old_control(
         self, mock_link

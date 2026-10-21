@@ -23,7 +23,6 @@ def mock_link():
         return_value=MagicMock(data=[])
     )
     link.get_next_message = AsyncMock(return_value=None)
-    link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
     link.get_stale_processing_messages = AsyncMock(return_value=[])

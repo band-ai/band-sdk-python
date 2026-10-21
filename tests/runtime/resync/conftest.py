@@ -51,7 +51,6 @@ def mock_link() -> MagicMock:
     api_response.metadata.total_pages = None
     link.rest.agent_api_chats.list_agent_chats = AsyncMock(return_value=api_response)
 
-    link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
     mirror_settlement_results(link)

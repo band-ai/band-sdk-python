@@ -105,7 +105,6 @@ class TestSynchronizeWithNext:
         while not ctx.queue.empty():
             await attempt_delivery(ctx, ctx.queue.get_nowait())
 
-        mock_link.mark_processing.assert_called_once_with("room-123", "sync-001")
         mock_link.mark_processed.assert_called_once_with("room-123", "sync-001")
         mock_link.mark_failed.assert_not_called()
 
