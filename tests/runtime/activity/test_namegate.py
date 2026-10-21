@@ -127,3 +127,37 @@ class TestActivityToolNameGate:
             assert ctx._activity_tool_names is False
             sync_activity_tool_names(SimpleNamespace(), frozenset())
             assert ctx._activity_tool_names is False
+
+    async def test_continuation_frame_after_takeover_never_reaches_wire(
+        self,
+    ) -> None:
+        # F-8's only surviving window: an OMP continuation (#763
+        # background-yield) whose observer outlives its turn. Once the next
+        # room-message turn owns activity, the stale observer's reports are
+        # fenced before they can name anything; in-turn flips are already
+        # covered by test_flip_after_binding_hides_names_in_the_running_turn.
+        # Together the two seal R-02 for continuations. Falsifiable: drop
+        # the ownership check in observe_activity and a third named frame
+        # appears.
+        peer = DetailPeer()
+        bound: list = []
+        turns = {"n": 0}
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            turns["n"] += 1
+            tools = AgentTools.from_context(ctx)
+            if turns["n"] == 1:
+                bound.append(ctx.activity_observer(ctx.current_scope))
+                await report_tool_activity(tools, "bash")
+                return
+            # The new turn owns activity; the continuation then wakes up.
+            await report_tool_activity(tools, "exec")
+            await bound[0].update(tool_call_activity("band_send_message"))
+
+        async with activity_context(peer, handler, AsyncMock()) as ctx:
+            await ctx._process_event(make_message_event(msg_id="turn-one"))
+            await ctx._process_event(make_message_event(msg_id="turn-two"))
+        named = [
+            d.get("name") for d in peer.details if d and d.get("kind") == "tool_call"
+        ]
+        assert named == ["bash", "exec"]
