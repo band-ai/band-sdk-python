@@ -4,7 +4,7 @@ import asyncio
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools, failure_reports
+from band.testing import FakeAgentTools, events_of_type, failure_reports
 from tests.adapters.dispatch import deliver_event, deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -117,5 +117,5 @@ class TestReplyDelivery:
         # The reply could not be delivered (no mention), so it surfaced as an
         # error event rather than hanging or vanishing silently.
         assert tools.messages_sent == []
-        assert any(e["message_type"] == "error" for e in tools.events_sent)
+        assert events_of_type(tools, "error")
         await adapter.on_cleanup("room-1")

@@ -5,7 +5,7 @@ import json
 from band.adapters.opencode import OpencodeAdapter
 from band.core.types import Capability, Emit
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.dispatch import deliver_message
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
@@ -64,10 +64,8 @@ class TestToolReports:
             room_id="room-1",
         )
 
-        tool_calls = [e for e in tools.events_sent if e["message_type"] == "tool_call"]
-        tool_results = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_calls = events_of_type(tools, "tool_call")
+        tool_results = events_of_type(tools, "tool_result")
         assert len(tool_calls) == 1
         assert len(tool_results) == 1
         assert json.loads(tool_calls[0]["content"])["name"] == "bash"
@@ -128,7 +126,7 @@ class TestToolReports:
             room_id="room-1",
         )
 
-        tool_calls = [e for e in tools.events_sent if e["message_type"] == "tool_call"]
+        tool_calls = events_of_type(tools, "tool_call")
         assert len(tool_calls) == 1
         assert json.loads(tool_calls[0]["content"])["args"] == {
             "subject": "write tests"
@@ -171,9 +169,7 @@ class TestToolReports:
             room_id="room-1",
         )
 
-        tool_results = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_results = events_of_type(tools, "tool_result")
         assert len(tool_results) == 1
         assert json.loads(tool_results[0]["content"])["output"] == 0
 
@@ -212,9 +208,7 @@ class TestToolReports:
             room_id="room-1",
         )
 
-        tool_results = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_results = events_of_type(tools, "tool_result")
         assert len(tool_results) == 1
         content = json.loads(tool_results[0]["content"])
         assert content["is_error"] is True
@@ -265,14 +259,10 @@ class TestToolReports:
         await run_single_turn(adapter, tools)
 
         tool_calls = [
-            json.loads(e["content"])
-            for e in tools.events_sent
-            if e["message_type"] == "tool_call"
+            json.loads(e["content"]) for e in events_of_type(tools, "tool_call")
         ]
         tool_results = [
-            json.loads(e["content"])
-            for e in tools.events_sent
-            if e["message_type"] == "tool_result"
+            json.loads(e["content"]) for e in events_of_type(tools, "tool_result")
         ]
         assert [c["name"] for c in tool_calls] == ["band_store_memory"]
         assert [r["name"] for r in tool_results] == ["band_store_memory"]
