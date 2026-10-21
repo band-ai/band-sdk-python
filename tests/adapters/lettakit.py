@@ -2,7 +2,7 @@
 
 Mock builders for Letta API objects (messages, responses, agents,
 conversations, MCP servers/tools, async streams) and platform messages, used
-by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
+by the ``letta`` test package, ``test_letta_mcp.py``, and
 ``test_letta_orgscope.py``.
 """
 

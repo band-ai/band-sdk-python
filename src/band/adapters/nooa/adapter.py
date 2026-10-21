@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -23,6 +23,7 @@ from typing_extensions import Unpack
 from band.adapters.nooa.agent import NooaRoomAgent
 from band.adapters.nooa.tools import (
     RoomTools,
+    TurnBinding,
     custom_tool_spec,
     platform_tool_spec,
     room_tools_class,
@@ -32,17 +33,12 @@ from band.adapters.nooa.tools import (
 from band.converters.nooa import NooaHistoryConverter, NooaTranscript
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.handoff import context_handoff
-from band.core.protocols import (
-    AgentToolsProtocol,
-    generic_provider_failure,
-    send_event_safe,
-)
+from band.core.protocols import AgentToolsProtocol, generic_provider_failure
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     Capability,
     Emit,
     FeatureKwargs,
-    MessageType,
     PlatformMessage,
     TurnUsage,
 )
@@ -121,15 +117,20 @@ class TurnObserver:
     bus, so watching only the room's agent would miss their calls. NOOA scopes
     hooks to a ``ContextVar``, so while the turn runs every agent it calls passes
     through ``before_agent_call``, which subscribes that agent's bus. Hooks that
-    were already installed keep receiving every call.
+    were already installed keep receiving every call. Each call's reasoning goes
+    to ``on_reasoning`` as soon as the call completes.
     """
 
-    def __init__(self, wrapped: InstrumentationHooks | None) -> None:
+    def __init__(
+        self,
+        wrapped: InstrumentationHooks | None,
+        on_reasoning: Callable[[str], None] | None = None,
+    ) -> None:
         self._wrapped = wrapped
+        self._on_reasoning = on_reasoning
         self._unsubscribe: dict[int, Callable[[], None]] = {}
         self._closed = False
         self.usage = TurnUsage()
-        self.reasoning: list[str] = []
 
     def observe(self, agent: Agent) -> None:
         """Record *agent*'s model calls until the turn closes."""
@@ -166,8 +167,10 @@ class TurnObserver:
             output_tokens=event.completion_tokens,
             cache_read_tokens=event.cached_tokens,
         )
-        if reasoning := event.reasoning_content.strip():
-            self.reasoning.append(reasoning)
+        if self._on_reasoning is not None and (
+            reasoning := event.reasoning_content.strip()
+        ):
+            self._on_reasoning(reasoning)
 
 
 def ignore_hook(*args: Any, **kwargs: Any) -> None:
@@ -175,10 +178,12 @@ def ignore_hook(*args: Any, **kwargs: Any) -> None:
 
 
 @contextmanager
-def observing_turn(agent: NooaRoomAgent) -> Iterator[TurnObserver]:
+def observing_turn(
+    agent: NooaRoomAgent, *, on_reasoning: Callable[[str], None] | None = None
+) -> Iterator[TurnObserver]:
     """Observe *agent* and every agent it calls for the rest of this block."""
     previous = get_hooks()
-    observer = TurnObserver(previous)
+    observer = TurnObserver(previous, on_reasoning)
     observer.observe(agent)
     # NOOA calls hooks by name (getattr), so the forwarding __getattr__ covers
     # the protocol methods TurnObserver does not define itself.
@@ -188,12 +193,6 @@ def observing_turn(agent: NooaRoomAgent) -> Iterator[TurnObserver]:
     finally:
         set_hooks(previous)
         observer.close()
-
-
-async def report_thoughts(tools: AgentToolsProtocol, reasoning: list[str]) -> None:
-    """Post each model call's reasoning as a thought event, in order."""
-    for text in reasoning:
-        await send_event_safe(tools, text, MessageType.THOUGHT)
 
 
 class NooaAdapterConfig(BaseAdapterConfig):
@@ -211,7 +210,8 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
     """Run a NOOA agent class in Band rooms, one agent instance per room.
 
     ``Emit.THOUGHTS`` posts each model call's **raw** ``reasoning_content`` as a
-    thought event, which can surface chain-of-thought. Like every supported
+    thought event as soon as that call completes, ahead of the tool calls its
+    code makes. This can surface chain-of-thought. Like every supported
     emit it is on when ``emit`` is omitted; pass an ``emit`` without it to keep
     reasoning out of the room.
     """
@@ -358,30 +358,39 @@ class NooaAdapter(SimpleAdapter[NooaTranscript]):
             message = with_system_updates(
                 msg.format_for_llm(), participants_msg, contacts_msg
             )
-            with observing_turn(agent) as observer:
-                try:
-                    async with agent.room.bound_to(tools):
+            observer: TurnObserver | None = None
+            try:
+                # Usage includes owned cleanup; the closed binding refuses late thoughts.
+                with ExitStack() as observation:
+                    async with agent.room.bound_to(tools) as binding:
+                        observer = observation.enter_context(
+                            observing_turn(
+                                agent, on_reasoning=self._thought_poster(binding)
+                            )
+                        )
                         handoff.consume()
                         await agent.respond(message)
-                except Exception as error:
-                    if not handoff.consumed:
-                        raise
-                    if tools.turn.complete:
-                        # A settled turn must not invite a duplicate delivery.
-                        logger.warning(
-                            "Room %s: NOOA failed after the turn was settled: %s",
-                            room_id,
-                            error,
-                        )
-                        return
-                    logger.exception("Room %s: NOOA turn failed", room_id)
-                    await tools.send_failure(generic_provider_failure(_PROVIDER, error))
+            except Exception as error:
+                if not handoff.consumed:
                     raise
-                finally:
-                    if handoff.consumed:
-                        if Emit.THOUGHTS in self.features.emit:
-                            await report_thoughts(tools, observer.reasoning)
-                        await self.emit_usage(tools, observer.usage)
+                if tools.turn.complete:
+                    # A settled turn must not invite a duplicate delivery.
+                    logger.warning(
+                        "Room %s: NOOA failed after the turn was settled: %s",
+                        room_id,
+                        error,
+                    )
+                    return
+                logger.exception("Room %s: NOOA turn failed", room_id)
+                await tools.send_failure(generic_provider_failure(_PROVIDER, error))
+                raise
+            finally:
+                if observer is not None:
+                    await self.emit_usage(tools, observer.usage)
+
+    def _thought_poster(self, binding: TurnBinding) -> Callable[[str], None] | None:
+        """Where the turn's reasoning goes: the room, only with ``Emit.THOUGHTS``."""
+        return binding.post_thought if Emit.THOUGHTS in self.features.emit else None
 
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's agent when Band removes the adapter from a room."""
