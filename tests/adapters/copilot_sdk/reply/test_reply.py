@@ -21,6 +21,7 @@ from tests.adapters.copilot_sdk.fakes import (
     run_event,
     run_message,
 )
+from tests.framework_conformance.batchprobes import current_records
 
 if _COPILOT_SDK_AVAILABLE:
     from copilot import ToolInvocation
@@ -37,7 +38,9 @@ if _COPILOT_SDK_AVAILABLE:
         ToolExecutionCompleteError,
     )
 
-from tests.adapters.copilot_sdk.reply.kit import CreateChatroomFakeTools
+from tests.adapters.copilot_sdk.reply.kit import (
+    CreateChatroomFakeTools,
+)
 
 pytestmark = requires_copilot_sdk
 
@@ -54,7 +57,7 @@ class TestReply:
         assert len(tools.messages_sent) == 1
         sent = tools.messages_sent[0]
         assert sent["content"] == "Hi Alice!"
-        assert sent["mentions"] == [{"id": "user-1", "name": "Alice"}]
+        assert sent["mentions"] == [{"id": "user-1"}]
         # The relayed final text is the turn's reply.
         assert tools.turn.complete
 
@@ -84,7 +87,9 @@ class TestReply:
 
         prompt = client.sessions[0].prompts[0]
         assert CHAT_ID_FIELD_NAME not in prompt
-        assert "[Alice]: What's up?" in prompt
+        assert [record["content"] for record in current_records(prompt)] == [
+            "What's up?"
+        ]
 
     @pytest.mark.asyncio
     async def test_silent_turn_is_reported_by_the_shared_verdict(self):

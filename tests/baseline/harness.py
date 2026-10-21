@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from anthropic.types import TextBlock, ToolUseBlock
 
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, PlatformMessage
+from band.runtime.formatters import CURRENT_INPUTS_HEADING
 from band.testing import feature_kwargs
 from tests.baseline.decisions import ModelDecision
 from tests.baseline.tools import BaselineTools
@@ -173,8 +175,15 @@ class BaselineScenario:
         return Observation(tools=self.tools, script=self.script)
 
     def history_contents(self, room_id: str = "room-baseline") -> list[str]:
-        """The adapter's in-memory history for a room, as plain content strings."""
-        return [entry["content"] for entry in self.adapter._message_history[room_id]]
+        """The adapter's in-memory history for a room, as plain content strings.
+
+        A turn's current inputs are shown as ``[Sender]: content`` lines, one
+        per original, whatever record format the model was given.
+        """
+        return [
+            _plain_text(entry["content"])
+            for entry in self.adapter._message_history[room_id]
+        ]
 
     def assert_complete(self) -> None:
         """Assert that every decision supplied for a multi-turn scenario ran."""
@@ -203,3 +212,13 @@ class BaselineScenario:
             content=content,
             usage=None,
         )
+
+
+def _plain_text(content: str) -> str:
+    """Render a current-inputs block as the ``[Sender]: content`` lines it holds."""
+    if not content.startswith(CURRENT_INPUTS_HEADING):
+        return content
+    records = [
+        json.loads(line) for line in content.splitlines() if line.startswith("{")
+    ]
+    return "\n".join(f"[{r['sender_name']}]: {r['content']}" for r in records)

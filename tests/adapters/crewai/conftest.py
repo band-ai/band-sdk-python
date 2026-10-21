@@ -14,7 +14,9 @@ from band.core.types import PlatformMessage
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
 
-from tests.adapters.crewai.kit import MockBaseTool
+from tests.adapters.crewai.kit import (
+    MockBaseTool,
+)
 
 
 @pytest.fixture

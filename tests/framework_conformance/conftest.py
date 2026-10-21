@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
 import pytest
 
+from band.runtime.sessionconfig import SessionConfig
+from tests.e2e.baseline.toolkit import provisioning
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.framework_configs.adapters import ADAPTER_CONFIGS
 from tests.framework_configs.converters import CONVERTER_CONFIGS
 
@@ -34,3 +41,22 @@ def make_converter(converter_config):
 def output(converter_config):
     """Output adapter for the current converter config."""
     return converter_config.output_adapter
+
+
+@pytest.fixture
+def started_with(monkeypatch: pytest.MonkeyPatch) -> list[SessionConfig | None]:
+    """The session config of each agent started."""
+    configs: list[SessionConfig | None] = []
+
+    @asynccontextmanager
+    async def running_agent(
+        provisioned: ProvisionedAgent,
+        adapter: Any,
+        settings: Any,
+        session_config: SessionConfig | None = None,
+    ) -> AsyncIterator[ProvisionedAgent]:
+        configs.append(session_config)
+        yield provisioned
+
+    monkeypatch.setattr(provisioning, "running_agent", running_agent)
+    return configs

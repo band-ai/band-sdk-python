@@ -2,7 +2,7 @@
 
 ``CopilotSDKAdapter(..., ask_user="room")`` bridges the model's built-in
 ``ask_user`` tool to the Band room itself: the question is posted as a
-room message (mentioning whoever triggered the turn) and the tool call
+room message (mentioning the turn's senders) and the tool call
 resolves immediately with :data:`QUESTION_DELIVERED_ANSWER`, so the turn
 ends and the user's reply arrives as the *next* message on the same
 persisted Copilot session.

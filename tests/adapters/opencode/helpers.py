@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, TypeAlias, cast
 from uuid import uuid4
@@ -56,6 +56,19 @@ def make_platform_message(
         message_type="text",
         metadata={},
         created_at=datetime.now(UTC),
+    )
+
+
+#: Participants as (sender id, sender name), for turns with several senders.
+ALICE = ("user-1", "Alice")
+HELPER = ("agent-7", "Helper")
+CAROL = ("user-3", "Carol")
+
+
+def message_from(sender: tuple[str, str], content: str) -> PlatformMessage:
+    sender_id, sender_name = sender
+    return make_platform_message(
+        content=content, sender_id=sender_id, sender_name=sender_name
     )
 
 
@@ -277,6 +290,34 @@ class ObservedOpencodeAdapter(OpencodeAdapter):
         await super()._await_turn(turn)
 
 
+def batch_input(
+    messages: Sequence[PlatformMessage],
+    tools: FakeAgentTools,
+    *,
+    is_session_bootstrap: bool = False,
+) -> AgentInput:
+    """What the runtime hands the adapter for a turn over ``messages``."""
+    return AgentInput(
+        msg=messages[0],
+        messages=tuple(messages),
+        tools=tools_protocol(tools),
+        history=HistoryProvider(raw=[]),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=is_session_bootstrap,
+        room_id=messages[0].room_id,
+    )
+
+
+async def deliver_turn(adapter: OpencodeAdapter, inp: AgentInput) -> None:
+    """Dispatch as the runtime does: several originals through ``on_messages``,
+    one through the singleton path."""
+    if len(inp.messages) > 1:
+        await adapter.on_messages(inp)
+    else:
+        await deliver_event(adapter, inp)
+
+
 class RaisingSendTools(FakeAgentTools):
     """FakeAgentTools whose send_notice always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
@@ -471,6 +512,44 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
         request = httpx.Request("GET", f"http://localhost/session/{session_id}")
         response = httpx.Response(status_code=status_code, request=request)
         super().__init__("status error", request=request, response=response)
+
+
+#: The first ask each scripted OpenCode turn raises in the control tests.
+PERMISSION_ASK = event_permission("sess-1", "req-1")
+QUESTION_ASK = event_question("sess-1", "q-1", "Which word?")
+TWO_QUESTIONS_ASK = event_question("sess-1", "q-1", "First?", "Second?")
+
+
+def client_asking(*asks: RawOpencodeEvent) -> FakeOpencodeClient:
+    """OpenCode runs the first turn by raising ``asks``."""
+    return FakeOpencodeClient(prompt_event_sequences=[list(asks)])
+
+
+def room_reply(content: str, sender_id: str = "user-2") -> PlatformMessage:
+    """A room message from someone other than the first turn's sender."""
+    return make_platform_message(content=content, sender_id=sender_id)
+
+
+async def handle_control(adapter: OpencodeAdapter, message: PlatformMessage) -> bool:
+    """Offer ``message`` to the adapter's control handler on its own delivery tools."""
+    return await adapter.try_handle_control(message, tools_protocol(FakeAgentTools()))
+
+
+class HeldPermissionReplyClient(FakeOpencodeClient):
+    """Keeps the first permission reply in flight until a test releases it."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.reply_in_flight = asyncio.Event()
+        self.release_reply = asyncio.Event()
+
+    async def reply_permission(
+        self, permission_id: str, *, reply: ApprovalReply, message: str | None = None
+    ) -> None:
+        if not self.reply_in_flight.is_set():
+            self.reply_in_flight.set()
+            await self.release_reply.wait()
+        await super().reply_permission(permission_id, reply=reply, message=message)
 
 
 class BandMCPCalls:
