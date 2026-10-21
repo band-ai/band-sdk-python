@@ -34,6 +34,15 @@ def short_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(omprpc, "COMPLETION_TIMEOUT_S", GUARD_S)
 
 
+async def snapshots_observed(client: OmpRpcClient, count: int) -> None:
+    """Barrier: the peer answered at least ``count`` snapshot requests, and a
+    final checkpoint round trip proves the client dispatched those answers —
+    so any settlement wait has re-evaluated before the assertion continues."""
+    while (await client.request("checkpoint"))["snapshots"] < count:
+        pass
+    await client.request("checkpoint")
+
+
 class TestCompletionGuard:
     @pytest.mark.parametrize(
         "scenario", ["no-result", "stale-idle-result", "lost-settlement"]
@@ -54,6 +63,24 @@ class TestCompletionGuard:
         # The transport retires with the failure: it is not left reusable.
         with pytest.raises(OmpProcessError):
             await client.request("get_state")
+
+    async def test_settled_snapshot_with_pending_work_cannot_end_turn(
+        self, client_factory: ClientFactory, short_guard: None
+    ) -> None:
+        # Background work can outlive the answer: a producer may report
+        # isSettled while hasPendingAsyncWork stays set. That contradictory
+        # snapshot must not settle the wait (red before: it ended the turn on
+        # the strength of isSettled alone), the guard must not arm on it, and
+        # completion must arrive only through the later all-idle snapshot.
+        client = await client_factory("settled-with-pending")
+        observer = Observer()
+        running = prompt_task(client, observer)
+        await observer.wait_for("agent_end")
+        await snapshots_observed(client, 1)
+        assert not running.done()
+        await client.request("release")  # job finishes; state goes all-idle
+        async with asyncio.timeout(10):
+            await running
 
     async def test_silent_background_completion_recovers_by_resnapshot(
         self, client_factory: ClientFactory, short_guard: None
