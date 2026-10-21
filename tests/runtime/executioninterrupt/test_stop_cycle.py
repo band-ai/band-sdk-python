@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestStopInFlightCycle:
@@ -14,7 +16,9 @@ class TestStopInFlightCycle:
         mark_processed, not remembered) so the platform replays it on play."""
         handler = BlockingHandler()
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
-        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="s1")))
+        proc = asyncio.create_task(
+            attempt_delivery(ctx, make_message_event(msg_id="s1"))
+        )
         await handler.started.wait()
 
         ctx.interrupt(kind="stop")

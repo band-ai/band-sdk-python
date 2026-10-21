@@ -1300,6 +1300,15 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/behavior/test_failure_continuation.py::TestFailureContinuation::test_confirmed_failure_permits_a_successful_retry",
+      "adapter": "suite",
+      "lanes": [
+        "core"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/behavior/test_isolation.py::test_capture_scopes_to_current_turn",
       "adapter": "suite",
       "lanes": [

@@ -14,6 +14,7 @@ from tests.adapters.lifecycle.runtime import ReplyingPlatform
 from tests.adapters.roompeer import write_instruction
 from tests.conftest import make_message_event
 from tests.runtime.helpers import AGENT_ID, ROOM_ID, rest_client_over, run_through
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestRuntimeClosing:
@@ -41,23 +42,24 @@ class TestRuntimeClosing:
             try:
                 async with closing:
                     if delivery == "live":
-                        await context._process_event(
+                        await attempt_delivery(
+                            context,
                             make_message_event(
                                 room_id=ROOM_ID,
                                 msg_id=message_id,
                                 content=content,
                                 sender_id="user-1",
-                            )
+                            ),
                         )
                     else:
-                        await context._reconcile()
+                        await context.scheduler.run_pass(recovery=True)
                     assert platform.marked("processed") == []
                     assert platform.marked("failed") == []
                     assert platform.replies == platform.errors == []
                     assert host.exited == [False]
                 await leaving
-                await context._reconcile()
-                await context._reconcile()
+                await context.scheduler.run_pass(recovery=True)
+                await context.scheduler.run_pass(recovery=True)
                 assert platform.marked("processed") == [message_id]
                 assert platform.marked("failed") == []
                 assert platform.replies == ["after"]

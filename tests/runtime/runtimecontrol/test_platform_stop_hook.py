@@ -34,7 +34,7 @@ class TestPlatformStopHook:
         ctx = await runtime.rooms.admit("room-1")
         assert isinstance(ctx, ExecutionContext)
         try:
-            await ctx._begin_scope()
+            await ctx.begin_delivery()
             scope = ctx.current_scope
             assert scope is not None
             ctx.observe_platform_stop(scope)

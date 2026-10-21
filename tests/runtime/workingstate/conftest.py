@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.conftest import mirror_settlement_results
+
 
 @pytest.fixture
-def mock_link():
+def mock_link() -> MagicMock:
     link = MagicMock()
     link.agent_id = "agent-123"
     link.rest = MagicMock()
@@ -30,9 +32,9 @@ def mock_link():
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)
-    return link
+    return mirror_settlement_results(link)
 
 
 @pytest.fixture
-def mock_handler():
+def mock_handler() -> AsyncMock:
     return AsyncMock()

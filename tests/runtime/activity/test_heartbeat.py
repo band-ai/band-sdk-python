@@ -7,7 +7,8 @@ import pytest
 
 from band.core.turn_lifecycle import CYCLE_CANCEL_GRACE_SECONDS
 from band.platform.event import PlatformEvent
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.activity.kit import ActivityPeer, activity_context
@@ -16,6 +17,7 @@ from tests.runtime.helpers import (
     KEEP_ALIVE,
     STOP_ECHO,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityHeartbeat:
@@ -41,7 +43,7 @@ class TestActivityHeartbeat:
             peer, handler, observer, max_cycle_seconds=keep_alive - 0.5
         ) as ctx:
             assert (
-                await ctx._process_event(make_message_event(msg_id="trigger"))
+                await attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 is TurnOutcome.RETRY_LATER
             )
 
@@ -51,14 +53,16 @@ class TestActivityHeartbeat:
             observer.assert_awaited_once()
 
     @pytest.mark.looptime
-    async def test_heartbeat_stop_cancels_once_and_preserves_replay(self) -> None:
+    async def test_heartbeat_stop_cancels_once_and_preserves_replay(
+        self,
+    ) -> None:
         peer = ActivityPeer()
         handler = BlockingHandler(block=1)
         observer = AsyncMock()
         async with activity_context(peer, handler, observer) as ctx:
             event = make_message_event(msg_id="trigger")
             async with asyncio.TaskGroup() as tasks:
-                turn = tasks.create_task(ctx._process_event(event))
+                turn = tasks.create_task(attempt_delivery(ctx, event))
                 await handler.started.wait()
                 peer.stopped = True
                 await turn
@@ -73,7 +77,7 @@ class TestActivityHeartbeat:
 
             peer.stopped = False
             await ctx.resume_room()
-            await ctx._process_event(event)
+            await attempt_delivery(ctx, event)
             assert handler.invoked == ["trigger", "trigger"]
             assert handler.completed == ["trigger"]
             assert peer.marked("processed") == ["trigger"]

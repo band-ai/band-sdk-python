@@ -21,6 +21,7 @@ from tests.runtime.helpers import (
     rest_client_over,
     run_through,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestCursorMessageDelivery:
@@ -47,11 +48,15 @@ class TestCursorMessageDelivery:
                     ),
                 )
                 ctx.add_participant(ALICE)
-                await ctx._process_event(
-                    make_message_event(room_id=ROOM_ID, msg_id="A", content="run it")
+                await attempt_delivery(
+                    ctx,
+                    make_message_event(room_id=ROOM_ID, msg_id="A", content="run it"),
                 )
-                await ctx._process_event(
-                    make_message_event(room_id=ROOM_ID, msg_id="B", content="then this")
+                await attempt_delivery(
+                    ctx,
+                    make_message_event(
+                        room_id=ROOM_ID, msg_id="B", content="then this"
+                    ),
                 )
                 await adapter.on_interrupt(ROOM_ID, ControlMode.STOP)
                 await ctx.stop()

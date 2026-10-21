@@ -1010,7 +1010,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev-strands-nooa'", specifier = ">=0.75.0,<2" },
     { name = "async-lru", specifier = ">=2.3.0" },
     { name = "band-client-rest", specifier = "==0.0.46" },
-    { name = "band-sdk-core", specifier = "==2.8.0" },
+    { name = "band-sdk-core", specifier = "==2.10.0" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-parlant'", specifier = "==0.1.4" },
@@ -1201,17 +1201,17 @@ provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic
 
 [[package]]
 name = "band-sdk-core"
-version = "2.8.0"
+version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/2b/5bdf3dca7abe80e916c643f39a2d4ed817f39aeffce92cc8c0f193f50b69/band_sdk_core-2.8.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:3fc2314b5e4f720e589dfd7cb9bbaa770cf981d1183d5594789b3b9892bf63ab", size = 516944, upload-time = "2026-10-04T12:56:29.276Z" },
-    { url = "https://files.pythonhosted.org/packages/32/dd/2989980909a3fb1636b4f1389a269b8b50c55274478dc451fad0b3157c02/band_sdk_core-2.8.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:3f4cfc0dfcc69475f639e08c2241cea3c7f61ac837cec9adb9d3b2cb38905749", size = 521715, upload-time = "2026-10-04T12:56:31.247Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/04/81b623017fafd1e18105f0cf69525a64b71b71193f484bf90778a6302c79/band_sdk_core-2.8.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e68f7c75ae32baaac4f7e6b2bed3dd657d5d144433f824a0febb7d67f1663ac0", size = 570826, upload-time = "2026-10-04T12:56:32.712Z" },
-    { url = "https://files.pythonhosted.org/packages/30/e3/0fbb058d0c9555afd16bba3e63404f65907f2a30aa4c0a87747f8ace7b36/band_sdk_core-2.8.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a98dad777ed251ab3d0a65f7800a9b04a72dec2c05980f73273e6f888a2f11fc", size = 565904, upload-time = "2026-10-04T12:56:34.344Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/25/e17dca65b86fae83ed0d74bebf5362f00c5e651cbb61f87ef432278131e3/band_sdk_core-2.8.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:10e893e7ad049ca17b6adf49a86993faff77e68165a4279f38db1d200c4b56e6", size = 749106, upload-time = "2026-10-04T12:56:36.049Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/b0/77e612f18774beb4b085c39b74898089ac9dfe13842f7543d9753bc18c41/band_sdk_core-2.8.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:770bf348a47469defe3c83b9769cfff706f8d53a0d166bc685a5b1349d440761", size = 786495, upload-time = "2026-10-04T12:56:37.448Z" },
-    { url = "https://files.pythonhosted.org/packages/29/23/5b44118677b9ff40e148d3077f60f3dd0f10443b6cbfd22c30c03b96746d/band_sdk_core-2.8.0-cp311-abi3-win_amd64.whl", hash = "sha256:b6e46e2d975dd3d611d0c96a8dbd6c389a0ff7e557d90a29c93867a97b54ae06", size = 384499, upload-time = "2026-10-04T12:56:39.047Z" },
-    { url = "https://files.pythonhosted.org/packages/67/fc/e5aed7d0371d8481ee15af26f18a52b53d82716decd2b62edd527359b772/band_sdk_core-2.8.0-cp311-abi3-win_arm64.whl", hash = "sha256:47fb449cca5baed1434abb77b89618e5cdd87857297a38c8582b801503863430", size = 367086, upload-time = "2026-10-04T12:56:40.588Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/03/2b793faa739d70cb56e1e70d49b671b7f96add37e7ad82c8602e9b3f908e/band_sdk_core-2.10.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:bcbdd25c53ef44154f87f718466ed142ba155db61e2fbf9fb4309ba078b056f7", size = 542535, upload-time = "2026-10-15T07:27:32.026Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/91/ab5bcc7197f0924289b0f6c24d69c1555b772969dc26735543d62a48a99b/band_sdk_core-2.10.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:271802a329b8dd1ef324383802552d623384bc5777e7ac38bd5ea41d5ec1cb40", size = 548109, upload-time = "2026-10-15T07:27:33.946Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/54/23c0ec974b2dcfd0fd3e9edf0242f8b7f1d46659223ebc853526251260fb/band_sdk_core-2.10.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e9dfc3738e5955590d03806172b7f4a2396d58b467358f96373f2e55ca56db5f", size = 599912, upload-time = "2026-10-15T07:27:35.442Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/a4/d8fd2e2823d22a05040da461b5280c27602a3d7a8698ef3d52344447c126/band_sdk_core-2.10.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ecddcf303aa9e4f78d14c75db8650055a5e6cb5c0c3bb1aed59ed789016c9528", size = 593983, upload-time = "2026-10-15T07:27:37.414Z" },
+    { url = "https://files.pythonhosted.org/packages/41/39/8361736f7376676a9850b89214818089b84fbf40bf4e0c4bc4c330a5ff68/band_sdk_core-2.10.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:21ed57a7341654fe58badd5c6f333f651c45ed2c75578953991e96081b64122e", size = 777830, upload-time = "2026-10-15T07:27:39.013Z" },
+    { url = "https://files.pythonhosted.org/packages/91/7b/68e398162629cdc217b69bd994bc2b170bb888a39ebf19bc4c460fac03fa/band_sdk_core-2.10.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:cbaa6436aa6ead678c588d000f45f4769a63d81c0e9c04a88b299fe0b8644662", size = 814095, upload-time = "2026-10-15T07:27:40.638Z" },
+    { url = "https://files.pythonhosted.org/packages/07/8a/fe27c90077d9ad7359a5a49a9ce551e3b23f68c7fb9ee9ffcca228e83473/band_sdk_core-2.10.0-cp311-abi3-win_amd64.whl", hash = "sha256:e1a0810f483f15b3d441bd7bf09d09227067957651ed1dda72181f0f1cd14339", size = 408845, upload-time = "2026-10-15T07:27:42.337Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/77/57f4675198454e9c1416c3ea61888ce2d58b74d716596c73f011e62b1f3d/band_sdk_core-2.10.0-cp311-abi3-win_arm64.whl", hash = "sha256:eb6f8ee9461b2a4375023e9a13b1815ffa4b383881de34ee1a1b9b4e87964696", size = 389286, upload-time = "2026-10-15T07:27:43.923Z" },
 ]
 
 [[package]]

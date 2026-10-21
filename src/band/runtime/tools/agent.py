@@ -52,6 +52,7 @@ from band.core.task_types import (
     task_ref,
     validate_include,
 )
+from band.core.timestamps import assume_utc
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.turn import Turn
 from band.core.turn_lifecycle import TurnTask
@@ -1326,15 +1327,12 @@ class AgentTools(AgentToolsProtocol):
 
     @staticmethod
     def _attachment_expired(attachment: Attachment) -> bool:
-        """True once ``expires_at`` has passed. A naive value (no offset --
-        the Fern model doesn't enforce one) is treated as UTC, the platform's
-        only timezone, rather than raising on a naive/aware comparison."""
+        """True once ``expires_at`` has passed. The Fern model doesn't enforce an
+        offset, so a naive value reads as UTC rather than failing the comparison."""
         expires_at = attachment.expires_at
         if expires_at is None:
             return False
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        return expires_at <= datetime.now(UTC)
+        return assume_utc(expires_at) <= datetime.now(UTC)
 
     async def _find_attachment(self, file_id: str) -> Attachment:
         """Locate an attachment by id -- see ``_attachment_cache`` for the

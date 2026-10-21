@@ -5,6 +5,11 @@ from __future__ import annotations
 import random
 
 
+def first_wake_offset(interval: float) -> float:
+    """When a room's first periodic resync is due; random so rooms spread their reads."""
+    return random.uniform(0, interval)
+
+
 class ResyncSchedule:
     """Keep periodic recovery independent of queue activity."""
 
@@ -19,7 +24,7 @@ class ResyncSchedule:
 
     def start(self, now: float) -> None:
         self.interval = self.base
-        self.due_at = now + random.uniform(0, self.base)
+        self.due_at = now + first_wake_offset(self.base)
 
     def reset(self, now: float, *, stopped: bool) -> None:
         self.interval = self.stopped if stopped else self.base

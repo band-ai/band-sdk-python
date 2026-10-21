@@ -421,7 +421,7 @@ class ClaudeSDKAdapterConfig(BaseAdapterConfig):
 
 
 # Chat-facing approval prompt/resolution text (mirrors
-# band.adapters.opencode.approvals's constant style) -- named so callers
+# band.adapters.opencode.approvals.wording's constant style) -- named so callers
 # (e.g. E2E smokes) can anchor on the exact wording instead of re-typing it.
 
 

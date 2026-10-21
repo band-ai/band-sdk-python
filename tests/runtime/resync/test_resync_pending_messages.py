@@ -1,13 +1,13 @@
-"""Tests for ExecutionContext._resync_pending_messages()."""
+"""Tests for ExecutionContext.scheduler.run_pass(recovery=True)."""
 
 from __future__ import annotations
 
-from band.runtime.execution import ExecutionContext, ResyncOutcome
+from band.runtime.execution import ExecutionContext
 from tests.runtime.resync.kit import ReconciledRoom, make_platform_message
 
 
 class TestResyncPendingMessages:
-    """Tests for ExecutionContext._resync_pending_messages()."""
+    """Tests for ExecutionContext.scheduler.run_pass(recovery=True)."""
 
     async def test_empty_returns_immediately(self, mock_link, mock_handler):
         """/next returning None immediately should not call the handler."""
@@ -15,7 +15,7 @@ class TestResyncPendingMessages:
 
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
         # Call directly without starting the loop
-        await ctx._resync_pending_messages()
+        await ctx.scheduler.run_pass(recovery=True)
 
         mock_handler.assert_not_called()
 
@@ -26,7 +26,7 @@ class TestResyncPendingMessages:
         ctx, peer, invoked = reconciled_room
         peer.add_message("missed-1")
 
-        assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+        await ctx.scheduler.run_pass(recovery=True)
         assert invoked == ["missed-1"]
         assert peer.marked("processed") == ["missed-1"]
 
@@ -39,7 +39,7 @@ class TestResyncPendingMessages:
         # Mark the message as already processed
         ctx.claims.remember_completed(ctx.room_id, "dup-1")
 
-        await ctx._resync_pending_messages()
+        await ctx.scheduler.run_pass(recovery=True)
 
         mock_handler.assert_not_called()
 
@@ -49,4 +49,4 @@ class TestResyncPendingMessages:
 
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
         # Should complete without raising
-        await ctx._resync_pending_messages()
+        await ctx.scheduler.run_pass(recovery=True)

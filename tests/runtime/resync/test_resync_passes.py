@@ -6,11 +6,11 @@ import asyncio
 from typing import Any
 
 import pytest
-from band_sdk_core import RetryTracker
 
 from band.client.streaming import ParticipantRemovedPayload
 from band.platform.event import ParticipantRemovedEvent, ReconnectedEvent
-from band.runtime.execution import ExecutionContext, ResyncOutcome
+from band.runtime.execution import ExecutionContext
+from band.runtime.scheduler import ResyncOutcome
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import (
     ROOM_ID,
@@ -30,7 +30,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         await asyncio.sleep(200)
         peer.add_message("explicit")
         match signal:
@@ -51,7 +51,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         ctx.stop_room()
         peer.add_message("played")
         if signal == "request":
@@ -68,7 +68,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, _ = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         gate = ResponseGate(peer, "/next")
         async with rest_client_over(gate.answer) as rest:
             ctx.link.rest = rest
@@ -100,7 +100,7 @@ class TestResyncPasses:
 
         ctx._on_execute = handler
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         participant = ParticipantRemovedEvent(
             room_id=ROOM_ID,
             payload=ParticipantRemovedPayload(id="other", name="Other", type="User"),
@@ -123,7 +123,7 @@ class TestResyncPasses:
     ) -> None:
         ctx, peer, invoked = reconciled_room
         await ctx.start()
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
         gate = ResponseGate(peer, "/next")
         async with rest_client_over(gate.answer) as rest:
             ctx.link.rest = rest
@@ -136,14 +136,16 @@ class TestResyncPasses:
         assert invoked == []
 
     @pytest.mark.looptime
-    @pytest.mark.parametrize("path", ["startup", "resync"])
+    @pytest.mark.parametrize(
+        "reconciled_room",
+        [{"max_message_retries": 3, "report_turn_failures_to_room": False}],
+        indirect=True,
+    )
     async def test_retryable_handler_failure_is_retried_in_the_same_drain(
-        self, reconciled_room: ReconciledRoom, path: str
+        self, reconciled_room: ReconciledRoom
     ) -> None:
         ctx, peer, invoked = reconciled_room
         peer.add_message("retryable")
-        ctx._retry_tracker = RetryTracker(max_retries=3)
-        ctx.config.report_turn_failures_to_room = False
 
         async def transient_handler(context: ExecutionContext, event: Any) -> None:
             invoked.append(event.payload.id)
@@ -151,22 +153,25 @@ class TestResyncPasses:
                 raise RuntimeError("transient failure")
 
         ctx._on_execute = transient_handler
-        if path == "startup":
-            assert await ctx._synchronize_with_next()
-        else:
-            assert await ctx._resync_pending_messages() is ResyncOutcome.WORK
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
         assert invoked == ["retryable", "retryable"]
         assert peer.marked("processed") == ["retryable"]
 
     @pytest.mark.looptime
-    async def test_unchanged_completed_head_defers_without_spinning(
+    async def test_completed_head_is_excluded_without_blocking_later_work(
         self,
         reconciled_room: ReconciledRoom,
     ) -> None:
         ctx, peer, invoked = reconciled_room
         ctx.claims.remember_completed(ROOM_ID, "stuck")
         peer.add_message("stuck")
-        assert await ctx._resync_pending_messages() is ResyncOutcome.BLOCKED
-        assert len(peer.next_reads) == 2
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.EMPTY
+        assert len(peer.next_reads) == 1
         assert peer.requested("processed") == []
         assert invoked == []
+
+        peer.add_message("follower")
+        assert await ctx.scheduler.run_pass(recovery=True) is ResyncOutcome.WORK
+        assert invoked == ["follower"]
+        assert peer.marked("processed") == ["follower"]
+        assert peer.requested("processing") == ["follower"]
