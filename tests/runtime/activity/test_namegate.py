@@ -16,6 +16,7 @@ from band.runtime.working_state import (
     report_memory_activity,
     report_tool_activity,
     set_permission_wait,
+    tool_call_activity,
 )
 from tests.conftest import make_message_event
 from tests.runtime.activity.kit import ActivityPeer, activity_context
@@ -94,6 +95,26 @@ class TestActivityToolNameGate:
         kinds = [detail and detail.get("kind") for detail in peer.details]
         assert "memory" in kinds
         assert "permission" in kinds
+
+    async def test_flip_after_binding_hides_names_in_the_running_turn(
+        self,
+    ) -> None:
+        # The codex ordering: the observer is bound to the turn before the
+        # adapter's emit sync flips the flag. The gate must read the live
+        # choice at report time, not the choice at construction time.
+        peer = DetailPeer()
+        bound: list = []
+
+        async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
+            bound.append(ctx.activity_observer(ctx.current_scope))
+            ctx.set_activity_tool_names(False)
+            await bound[0].update(tool_call_activity("Bash"))
+
+        async with activity_context(peer, handler, AsyncMock()) as ctx:
+            await ctx._process_event(make_message_event(msg_id="trigger"))
+        tool_frames = [d for d in peer.details if d and d.get("kind") == "tool_call"]
+        assert not tool_frames
+        assert {"kind": "reasoning"} in peer.details
 
     async def test_sync_resolves_names_from_the_emit_choice(self) -> None:
         async with activity_context(
