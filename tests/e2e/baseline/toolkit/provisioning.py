@@ -112,6 +112,7 @@ def agent_name(*, token: str, label: str) -> str:
 
     Underscores become hyphens: models rewrite ``omp_acp`` as ``omp-acp`` when
     repeating a name, so an adapter-id label must already be in the form they echo.
+    Native adapter labels such as ``omp`` already have their echoed form.
     """
     return f"{NAME_PREFIX}{token}{TOKEN_LABEL_SEPARATOR}{normalized_label(label)}"
 

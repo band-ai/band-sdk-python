@@ -10,9 +10,11 @@ from band.integrations.omp import (
 )
 from band.integrations.ompprocess import (
     DEFAULT_OMP_COMMAND,
+    OMP_NATIVE_PINNED_PACKAGE,
     omp_rpc_command_in_workspace,
     omp_runtime_env,
 )
+from tests.paths import CI_SCRIPTS
 
 
 class TestNativeLaunchSettings:
@@ -48,3 +50,8 @@ class TestNativeLaunchSettings:
     def test_no_credentials_and_no_env_means_inherit(self) -> None:
         assert omp_runtime_env(env=None, model=None, api_key=None) is None
         assert omp_runtime_env(env={}, model="openai/custom", api_key=None) is None
+
+    def test_setup_omp_script_pins_the_native_package(self) -> None:
+        """The one CI binary serves the native cells, so it carries the native pin."""
+        script = (CI_SCRIPTS / "setup-omp.sh").read_text()
+        assert OMP_NATIVE_PINNED_PACKAGE in script
