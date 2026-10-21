@@ -8,6 +8,7 @@ import pytest
 
 from band.platform.event import ReconnectedEvent
 from tests.runtime.parking.harness import (
+    PARKED_REFUSALS,
     RELENTING_REFUSALS,
     Cell,
     Harness,
@@ -18,7 +19,7 @@ from tests.runtime.parking.harness import (
 
 @pytest.mark.looptime
 class TestReconnect:
-    @pytest.mark.parametrize("refusal", list(Refusal))
+    @pytest.mark.parametrize("refusal", PARKED_REFUSALS)
     async def test_a_reconnect_retries_the_terminal_write_alone_and_a_refusal_keeps_it_parked(
         self, scenario: Cell, room_peer: RoomPeer, room: Harness, refusal: Refusal
     ) -> None:

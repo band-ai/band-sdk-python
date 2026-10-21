@@ -1,4 +1,4 @@
-"""A parked intent puts no backpressure on an independently admitted input."""
+"""A refused terminal write puts no backpressure on an independently admitted input."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ class TestIndependentInput:
         room_peer.refuse(refusal, *scenario.queued)
         await room.join()
         await room.attempted_terminal_writes(len(scenario.queued))
-        parked = scenario.after_first_attempt(parked=refusal.parked)
+        refused = scenario.after_refusal(refusal)
 
         await room.deliver(room_peer.post(OTHER))
         await room.settled(OTHER)
 
-        assert room.outcome() == parked.with_other_settled()
+        assert room.outcome() == refused.with_other_settled()
