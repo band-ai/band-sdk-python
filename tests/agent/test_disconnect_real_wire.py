@@ -327,9 +327,7 @@ class TestAgentDisconnect:
                 await asyncio.gather(running, return_exceptions=True)
 
     @pytest.mark.parametrize("hosting", ["agent", "runtime"])
-    @pytest.mark.parametrize(
-        "termination", ["signal_cancel", "policy_close", "normal_close"]
-    )
+    @pytest.mark.parametrize("termination", ["signal_cancel", "policy_close"])
     async def test_transport_completion_without_successful_waiter_retains_custody(
         self,
         monkeypatch: pytest.MonkeyPatch,

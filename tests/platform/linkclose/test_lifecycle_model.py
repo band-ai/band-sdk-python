@@ -5,10 +5,13 @@ keeps the invariants a host relies on."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
+from contextlib import suppress
 
 import pytest
 from hypothesis import Phase, example, given, settings
 
+from band.core.exceptions import AgentDisconnectedError
 from tests.platform.linkclose.lifecycle import (
     STEP_GUARD_S,
     LinkSession,
@@ -25,18 +28,26 @@ async def play(steps: list[Step]) -> None:
         await assert_invariants(session)
 
 
+def await_run(session: LinkSession) -> Awaitable[None]:
+    """The run task's end, whether it returned or surfaced its terminal cause."""
+    return asyncio.wait_for(asyncio.shield(session.run), STEP_GUARD_S)
+
+
 async def assert_invariants(session: LinkSession) -> None:
     link, server = session.link, session.server
     if session.ended:
-        # run_forever returning means the transport is shut down for good,
-        # so the connection count below can never grow afterwards.
-        await asyncio.wait_for(asyncio.shield(session.run), STEP_GUARD_S)
+        # A run that ended — by return or by a typed terminal disconnect —
+        # means the transport is shut down for good, so the connection count
+        # below can never grow afterwards.
+        with suppress(AgentDisconnectedError):
+            await await_run(session)
         assert server.connection_count == session.connections_at_end
     else:
         assert not session.run.done()
 
     await asyncio.wait_for(link.disconnect(), STEP_GUARD_S)
-    await asyncio.wait_for(asyncio.shield(session.run), STEP_GUARD_S)
+    with suppress(AgentDisconnectedError):
+        await await_run(session)
 
     assert session.hooks_running == 0
     assert session.applied.ids == session.pushed[: len(session.applied.ids)]

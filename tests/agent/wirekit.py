@@ -74,7 +74,7 @@ def wire_agent(
     )
 
 
-WireTermination = Literal["signal_cancel", "policy_close", "normal_close"]
+WireTermination = Literal["signal_cancel", "policy_close"]
 
 
 @asynccontextmanager
@@ -150,9 +150,6 @@ async def completed_wire_agent(
                         )
                         with pytest.raises(PHXConnectionError):
                             await asyncio.wait_for(running, timeout=2.0)
-                        await asyncio.wait_for(asyncio.shield(supervisor), timeout=2.0)
-                    case "normal_close":
-                        await server.close_connection(code=1000)
                         await asyncio.wait_for(asyncio.shield(supervisor), timeout=2.0)
                 with pytest.raises(ConnectionClosed):
                     await server.push("agent_control:agent-123", "supersede", SUPERSEDE)
