@@ -72,7 +72,7 @@ async def _run_message(
     )
 
 
-async def _run_turn(adapter: StrandsAdapter, tools: FakeAgentTools) -> None:
+async def run_judged_turn(adapter: StrandsAdapter, tools: FakeAgentTools) -> None:
     """Run one turn through ``on_event``, where the shared turn verdict lives."""
     await adapter.on_event(turn_input(tools, msg=_make_msg(ROOM)))
 

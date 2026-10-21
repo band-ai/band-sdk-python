@@ -29,14 +29,19 @@ class TestFailedActivityReport:
         self,
         tools: AgentTools,
         unreachable: UnreachableObserver,
+        mock_rest_client: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        listing = mock_rest_client.agent_api_participants.list_agent_chat_participants
         with caplog.at_level(logging.WARNING, logger="band.runtime.toolactivity"):
             participants = await tools.get_participants()
 
-        assert participants
+        assert participants == listing.return_value.data
         unreachable.assert_completed_tool(BandTool.GET_PARTICIPANTS)
-        assert [record.levelno for record in caplog.records] == [logging.WARNING] * 2
+        assert [record.getMessage() for record in caplog.records] == [
+            "Could not report tool_call activity",
+            "Could not report reasoning activity",
+        ]
 
     async def test_the_tool_keeps_its_own_failure(
         self, tools: AgentTools, mock_rest_client: MagicMock

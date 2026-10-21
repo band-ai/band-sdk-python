@@ -52,3 +52,21 @@ class CancelledObserver(ActivityRecorder):
 
     async def update(self, activity: AgentActivityDetail) -> None:
         raise asyncio.CancelledError
+
+
+class ConjuringProxy:
+    """Answers every attribute dynamically, as a mock or proxy would, and
+    conjures a recording observer it never declared."""
+
+    def __init__(self, conjured: ActivityRecorder) -> None:
+        self.conjured = conjured
+        self.events_sent: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_activity_observer":
+            return self.conjured
+        raise AttributeError(name)
+
+    async def send_event(self, content: str, message_type: str, **_: Any) -> str:
+        self.events_sent.append(content)
+        return "evt-1"

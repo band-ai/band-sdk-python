@@ -10,7 +10,7 @@ from band.adapters.strands import StrandsAdapter
 from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools, TextTurn, ToolTurn
 from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
-from tests.adapters.strands.kit import _run_turn
+from tests.adapters.strands.kit import run_judged_turn
 
 
 class TestStrandsToolActivity:
@@ -31,7 +31,7 @@ class TestStrandsToolActivity:
             TextTurn("finished"),
         )
 
-        await _run_turn(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
         assert recorder.events == [
             shown_tool(BandTool.SEND_EVENT),

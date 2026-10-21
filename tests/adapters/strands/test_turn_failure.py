@@ -49,8 +49,8 @@ from tests.adapters.strands.kit import (
     SEND_TURN,
     _make_msg,
     _run_message,
-    _run_turn,
     _tool_results,
+    run_judged_turn,
 )
 from tests.responsespeer import ResponsesPeer
 from tests.strandskit import outline
@@ -102,7 +102,7 @@ class TestTurnFailure:
         )
         await adapter.on_started("Bot", "A bot")
         first = FakeAgentTools(room_id=ROOM)
-        await _run_turn(adapter, first)
+        await run_judged_turn(adapter, first)
         second = FakeAgentTools(room_id=ROOM)
         await adapter.on_event(
             replace(
@@ -146,7 +146,7 @@ class TestTurnFailure:
         )
         await adapter.on_started("Bot", "A bot")
         first = FakeAgentTools(room_id=ROOM)
-        await _run_turn(adapter, first)
+        await run_judged_turn(adapter, first)
         second = FakeAgentTools(room_id=ROOM)
         await adapter.on_event(
             replace(
@@ -195,7 +195,7 @@ class TestTurnFailure:
         )
         await adapter.on_started("Bot", "A bot")
 
-        await _run_turn(adapter, tools)
+        await run_judged_turn(adapter, tools)
 
         assert len(peer.requests) == (2 if fails else 1)
         assert tools.turn.complete
@@ -232,9 +232,9 @@ class TestTurnFailure:
 
         if fails:
             with pytest.raises(EventLoopException, match="provider down"):
-                await _run_turn(adapter, tools)
+                await run_judged_turn(adapter, tools)
         else:
-            await _run_turn(adapter, tools)
+            await run_judged_turn(adapter, tools)
 
         tools.assert_message_sent(content="hi", count=1)
         (call,) = events_of_type(tools, MessageType.TOOL_CALL)

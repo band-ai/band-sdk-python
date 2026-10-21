@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,20 +26,41 @@ def store(tools: AgentTools) -> Awaitable[Any]:
     )
 
 
+SAVES = [
+    (store, "create_agent_memory"),
+    (lambda tools: tools.supersede_memory(MEMORY_ID), "supersede_agent_memory"),
+    (lambda tools: tools.archive_memory(MEMORY_ID), "archive_agent_memory"),
+]
+SAVE_IDS = ["store", "supersede", "archive"]
+
+
 class TestMemoryToolActivity:
-    @pytest.mark.parametrize(
-        "call",
-        [
-            store,
-            lambda tools: tools.supersede_memory(MEMORY_ID),
-            lambda tools: tools.archive_memory(MEMORY_ID),
-        ],
-        ids=["store", "supersede", "archive"],
-    )
+    @pytest.mark.parametrize(("call", "rest_method"), SAVES, ids=SAVE_IDS)
     async def test_saving_memory_shows_memory_then_reasoning(
-        self, tools: AgentTools, recorder: ActivityRecorder, call: ToolCall
+        self,
+        tools: AgentTools,
+        recorder: ActivityRecorder,
+        mock_rest_client: MagicMock,
+        call: ToolCall,
+        rest_method: str,
     ) -> None:
         await call(tools)
+        getattr(mock_rest_client.agent_api_memories, rest_method).assert_awaited_once()
+        assert recorder.events == [SHOWN_MEMORY, SHOWN_REASONING]
+
+    @pytest.mark.parametrize(("call", "rest_method"), SAVES, ids=SAVE_IDS)
+    async def test_a_failed_save_still_returns_to_reasoning(
+        self,
+        tools: AgentTools,
+        recorder: ActivityRecorder,
+        mock_rest_client: MagicMock,
+        call: ToolCall,
+        rest_method: str,
+    ) -> None:
+        save = getattr(mock_rest_client.agent_api_memories, rest_method)
+        save.side_effect = RuntimeError("memory store down")
+        with pytest.raises(RuntimeError, match="memory store down"):
+            await call(tools)
         assert recorder.events == [SHOWN_MEMORY, SHOWN_REASONING]
 
     @pytest.mark.parametrize(

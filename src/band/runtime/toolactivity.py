@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, TypeVar
+from typing import Any
 
 from band_rest.types.agent_activity_detail import AgentActivityDetail
 
@@ -19,12 +19,14 @@ from band.runtime.activity import (
     tool_call_activity,
 )
 from band.runtime.tools.effects import turn_effect
-from band.runtime.tools.registry import MEMORY_TOOL_NAMES, agent_tool_methods
+from band.runtime.tools.registry import (
+    MEMORY_TOOL_NAMES,
+    ToolsClass,
+    agent_tool_methods,
+)
 from band.runtime.tools.types import BandTool
 
 logger = logging.getLogger(__name__)
-
-_ToolsClass = TypeVar("_ToolsClass", bound=type)
 
 MEMORY_SAVE_TOOLS = frozenset(
     name for name in MEMORY_TOOL_NAMES if turn_effect(name).did_work
@@ -74,20 +76,22 @@ async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
         await _show(observer, REASONING)
 
 
+async def _show_on(tools: object, detail: AgentActivityDetail) -> None:
+    if observer := activity_observer_of(tools):
+        await _show(observer, detail)
+
+
 async def report_tool_activity(tools: object, name: str) -> None:
     """Show ``name`` for a tool whose start and end arrive as separate events."""
-    if observer := activity_observer_of(tools):
-        await _show(observer, tool_detail(name))
+    await _show_on(tools, tool_detail(name))
 
 
 async def end_tool_activity(tools: object) -> None:
-    if observer := activity_observer_of(tools):
-        await _show(observer, REASONING)
+    await _show_on(tools, REASONING)
 
 
 async def report_memory_activity(tools: object) -> None:
-    if observer := activity_observer_of(tools):
-        await _show(observer, MEMORY)
+    await _show_on(tools, MEMORY)
 
 
 def _observing(
@@ -101,7 +105,7 @@ def _observing(
     return observe
 
 
-def reports_tool_activity(cls: _ToolsClass) -> _ToolsClass:
+def reports_tool_activity(cls: ToolsClass) -> ToolsClass:
     """Report each agent tool method that ``method_reports_activity`` selects."""
     for definition, method in agent_tool_methods(cls):
         if method_reports_activity(definition.name):

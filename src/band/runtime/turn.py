@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from band.core.turn import Turn
 from band.runtime.tools.effects import turn_effect
-from band.runtime.tools.registry import agent_tool_methods
+from band.runtime.tools.registry import ToolsClass, agent_tool_methods
 from band.runtime.tools.types import TurnEffect
-
-_ToolsClass = TypeVar("_ToolsClass", bound=type)
 
 
 def record_tool_result(turn: Turn, tool_name: str, result: Any) -> None:
@@ -37,7 +35,7 @@ def _recording(
     return record_on_success
 
 
-def records_turn_effects(cls: _ToolsClass) -> _ToolsClass:
+def records_turn_effects(cls: ToolsClass) -> ToolsClass:
     """Record every agent tool method's effect on the instance's ``turn``.
 
     Wrapping the methods themselves counts every call path: registry dispatch,

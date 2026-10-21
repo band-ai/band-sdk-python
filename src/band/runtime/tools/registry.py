@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -918,6 +918,10 @@ def decode_image_block(block: Mapping[str, Any]) -> tuple[bytes, str]:
 def decode_image_blocks(result: Mapping[str, Any]) -> list[tuple[bytes, str]]:
     """Decode every block of an image-file read into (raw bytes, mime type)."""
     return [decode_image_block(block) for block in result["content"]]
+
+
+ToolsClass = TypeVar("ToolsClass", bound=type)
+"""A tools class a decorator rewrites in place and returns."""
 
 
 def agent_tool_methods(
