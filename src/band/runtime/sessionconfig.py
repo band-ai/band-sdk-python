@@ -11,7 +11,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Keep-alive validation leaves headroom for a missed or slow refresh.
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
-ACTIONABLE_PAGE_SIZE = 100
 DEFAULT_MAX_MESSAGE_RETRIES = 1
 
 

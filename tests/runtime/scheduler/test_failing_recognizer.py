@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from band.platform.event import MessageEvent
@@ -25,7 +27,7 @@ async def never_handled(ctx: ExecutionContext, event: object) -> bool:
 
 class TestFailingRecognizer:
     async def test_message_runs_as_ordinary_input_and_the_room_moves_on(
-        self,
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         peer = RestPeer()
         turns = Turns()
@@ -50,3 +52,10 @@ class TestFailingRecognizer:
                 await ctx.stop(timeout=STOP_SECONDS)
 
         assert turns.ids == [("first",), ("second",)]
+        # Recognition repeats every pass; each message alerts once.
+        alerted = [
+            record.args[1]
+            for record in caplog.records
+            if record.levelno == logging.ERROR and isinstance(record.args, tuple)
+        ]
+        assert alerted == ["first", "second"]

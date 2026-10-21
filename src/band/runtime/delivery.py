@@ -87,8 +87,8 @@ class TurnOutcome(Enum):
     RETRY_LATER = "retry_later"
     NOT_ACCEPTED = "not_accepted"
     DECLINED = "declined"
-    # The platform no longer has the original (deleted, or out of reach): no
-    # turn will run it, and nothing about it was processed.
+    # The platform no longer has the original though the room is still
+    # visible: no turn will run it, and nothing about it was processed.
     ABSENT = "absent"
 
 
@@ -180,6 +180,7 @@ class DeliveryLifecycle:
             else None
         )
         return DeliveryFacts(
+            # Backend nulls would raise TypeError from is_self_echo's str params.
             self_echo=bool(
                 self.agent_id
                 and is_self_echo(
@@ -215,6 +216,30 @@ class DeliveryLifecycle:
         """Whether the original must outlive its write, for the retry it permits."""
         pending = self.claims.pending_settlement(self.room_id, identity)
         return pending is not None and pending["continuation"]["kind"] == "retry"
+
+    async def is_gone(self, identity: str) -> bool:
+        """Whether a 404 on ``identity`` means the message is gone, not that the room is.
+
+        The platform answers a non-participant's every room route with the same
+        404, so only a room read that succeeds proves the message itself is missing.
+        """
+        try:
+            await self.link.get_next_message(self.room_id)
+        except Exception:  # noqa: BLE001 -- a failed read leaves the 404 ambiguous
+            logger.debug(
+                "Room %s unreadable after a 404 on message %s; keeping it",
+                self.room_id,
+                identity,
+            )
+            return False
+        return True
+
+    def retire_gone(self, identity: str) -> None:
+        """Drop the pending settlement of a message the platform no longer has."""
+        # Local completion is the core's only release of a pending settlement;
+        # nothing is written, and no turn can run a message that does not exist.
+        self.claims.remember_completed(self.room_id, identity)
+        self.retry_not_before.pop(identity, None)
 
     @contextlib.contextmanager
     def claim(self, members: tuple[Candidate, ...]) -> Iterator[bool]:
@@ -252,11 +277,12 @@ class DeliveryLifecycle:
             return False
         present: list[MessageEvent] = []
         for event in scope.originals:
+            identity = message_id(event)
             try:
-                result = await self.processing(message_id(event))
+                result = await self.processing(identity)
             except RoomExecutionStoppedError:
                 return False
-            if result is SettlementResult.NOT_FOUND:
+            if result is SettlementResult.NOT_FOUND and await self.is_gone(identity):
                 continue
             if result is not SettlementResult.ACCEPTED or not self.host.owns_delivery(
                 scope, revision
@@ -549,6 +575,8 @@ class DeliveryLifecycle:
                     self.room_id, identity, pending["token"], self.retry_tracker
                 )
                 self.retry_not_before.pop(identity, None)
+            case SettlementResult.NOT_FOUND if await self.is_gone(identity):
+                self.retire_gone(identity)
             case SettlementResult.NOT_FOUND | SettlementResult.REJECTED:
                 reason = (
                     ParkedReason.NotFound
