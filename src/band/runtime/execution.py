@@ -1954,17 +1954,19 @@ class ExecutionContext:
         """Gate tool names in room activity to match tool-call narration.
 
         Permission waits and memory activity are unaffected: they name no
-        content. Observers created after a change pick it up immediately.
+        content. The gate is consulted at report time, so an observer bound
+        before this change (a continuation's adapter pumping tool events while
+        the runner re-reads the choice) still follows the live choice.
         """
         self._activity_tool_names = enabled
 
     def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
         if scope is None or not scope.activity_allowed:
             return None
-        observer: ActivityObserver = ScopeActivityObserver(self, scope)
-        if not self._activity_tool_names:
-            observer = ToolNamesObserver(observer)
-        return observer
+        return ToolNamesObserver(
+            ScopeActivityObserver(self, scope),
+            hidden=lambda: not self._activity_tool_names,
+        )
 
     def owns_activity(self, scope: TurnScope) -> bool:
         return self._activity_owner is scope and not scope.aborted and not self._closing
