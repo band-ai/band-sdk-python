@@ -22,6 +22,7 @@ class Adapter(StrEnum):
     COPILOT_ACP = "copilot_acp"
     CURSOR_ACP = "cursor_acp"
     OMP_ACP = "omp_acp"
+    OMP = "omp"
     LANGGRAPH = "langgraph"
     PYDANTIC_AI = "pydantic_ai"
     GEMINI = "gemini"
