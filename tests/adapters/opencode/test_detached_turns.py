@@ -25,7 +25,8 @@ from tests.adapters.opencode.helpers import (
     event_text_part,
     park_turn,
     parked_turn_client,
-    wait_for,
+    room_turn,
+    turn_finished,
 )
 
 
@@ -38,10 +39,11 @@ class TestDetachedTurns:
         )
 
         await park_turn(adapter, tools)
+        turn = await room_turn(adapter)
         assert failure_reports(tools) == []
 
         await approve(adapter)
-        await wait_for(lambda: bool(failure_reports(tools)))
+        await turn_finished(turn)
         await adapter.on_cleanup("room-1")
 
         assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
@@ -64,10 +66,11 @@ class TestDetachedTurns:
         busy_tools = FakeAgentTools()
 
         await park_turn(adapter, tools)
+        turn = await room_turn(adapter)
         with pytest.raises(InputNotAccepted):
             await deliver_event(adapter, agent_input("are you done?", busy_tools))
         await approve(adapter)
-        await wait_for(lambda: tools.turn.replied)
+        await turn_finished(turn)
         await adapter.on_cleanup("room-1")
 
         assert not busy_tools.turn.complete
@@ -134,9 +137,10 @@ class TestDetachedTurns:
         )
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await deliver_event(adapter, agent_input("ask me which word", tools))
+        turn = await room_turn(adapter)
 
         await deliver_event(adapter, agent_input("reject", FakeAgentTools()))
-        await wait_for(lambda: tools.turn.replied)
+        await turn_finished(turn)
         await adapter.on_cleanup("room-1")
 
         assert tools.messages_sent[-1]["content"] == "OK, I'll go without one."

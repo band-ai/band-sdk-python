@@ -31,12 +31,11 @@ from tests.runtime.activityownership.kit import HeldReplyPlatform
 from tests.runtime.helpers import AGENT_ID, ALICE, IDLE, KEEP_ALIVE, ROOM_ID
 
 
-@pytest.fixture
-async def activity_platform() -> AsyncIterator[HeldReplyPlatform]:
-    yield HeldReplyPlatform(held_reply=FIRST_ANSWER)
-
-
 class TestOpencodeAdmission:
+    @pytest.fixture
+    async def activity_platform(self) -> AsyncIterator[HeldReplyPlatform]:
+        yield HeldReplyPlatform(held_reply=FIRST_ANSWER)
+
     async def test_a_message_during_an_approved_turns_reply_is_deferred_until_it_ends(
         self,
         execution: Callable[..., ExecutionContext],
