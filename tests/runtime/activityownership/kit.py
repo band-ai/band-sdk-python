@@ -2,17 +2,34 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
 from collections.abc import Awaitable
 from typing import Any, Literal
 
 import httpx
 
+from band.platform.activity import API_VERSION_HEADER
+from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import ALICE, LifecyclePlatform, page
+
+REASONING_BODY = {"working": True, "activity": {"kind": "reasoning"}}
+PERMISSION_BODY = {"working": True, "activity": {"kind": "permission"}}
+MEMORY_BODY = {"working": True, "activity": {"kind": "memory"}}
+BOOLEAN_BODY = {"working": True}
+IDLE_BODY = {"working": False}
+
+
+def tool_body(name: str) -> dict[str, Any]:
+    return {"working": True, "activity": {"kind": "tool_call", "name": name}}
 
 
 class ActivityPlatform(LifecyclePlatform):
+    """Activity posts advertise a detail-supporting version; queued responses
+    answer them before the default echo."""
+
     def __init__(self) -> None:
         super().__init__()
+        self.activity_responses: deque[httpx.Response] = deque()
         self.activity_bodies: list[dict[str, Any]] = []
         self.hold_next_activity = False
         self.activity_entered = asyncio.Event()
@@ -22,6 +39,9 @@ class ActivityPlatform(LifecyclePlatform):
     async def respond(self, request: httpx.Request) -> httpx.Response:
         response = self.answer(request)
         if request.url.path.endswith("/activity"):
+            if self.activity_responses:
+                response = self.activity_responses.popleft()
+            response.headers[API_VERSION_HEADER] = SUPPORTED_VERSION
             async with self._reported:
                 self.activity_bodies.append(json.loads(request.content))
                 self._reported.notify_all()
@@ -47,6 +67,7 @@ class ActivityPlatform(LifecyclePlatform):
         if tail == "participants":
             return page([{**ALICE, "role": "member", "status": "active"}])
         if request.method == "POST" and tail == "messages":
+            self.posts.append(tail)
             return httpx.Response(
                 201, json={"data": {"id": "m-1", "success": True, "recipients": []}}
             )

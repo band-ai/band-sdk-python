@@ -10,11 +10,14 @@ from band.platform.link import BandLink
 from tests.platform.activity.kit import DETAIL, ActivityPeer
 
 DEADLINE_SECONDS = 2
+# Under the deadline alone, but the deadline cannot cover it plus a full resend.
+REJECTION_LATENCY_SECONDS = 1.5
 
 
 @pytest.fixture
 def stalled_resend(activity_peer: ActivityPeer) -> ActivityPeer:
-    """The detail POST is rejected and its detail-free resend never answers."""
+    """The detail POST is slowly rejected and its detail-free resend never answers."""
+    activity_peer.post_latency[1] = REJECTION_LATENCY_SECONDS
     activity_peer.responses.append(httpx.Response(422))
     activity_peer.stall_post_number = 2
     return activity_peer

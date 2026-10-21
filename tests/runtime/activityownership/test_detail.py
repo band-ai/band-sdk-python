@@ -16,12 +16,21 @@ from band.runtime.working_state import (
     set_permission_wait,
 )
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, ObservedIdle
+from tests.runtime.activityownership.kit import (
+    IDLE_BODY,
+    MEMORY_BODY,
+    PERMISSION_BODY,
+    REASONING_BODY,
+    ActivityPlatform,
+    ObservedIdle,
+    tool_body,
+)
 from tests.runtime.helpers import ROOM_ID
 
 
 class TestOwnedDetail:
-    async def test_real_tools_observer_reports_canonical_wire_detail(
+    @pytest.mark.looptime
+    async def test_a_turn_through_a_permission_wait_reports_each_visible_step(
         self,
         execution: Callable[..., ExecutionContext],
         activity_platform: ActivityPlatform,
@@ -29,22 +38,25 @@ class TestOwnedDetail:
         async def handler(ctx: ExecutionContext, event: PlatformEvent) -> None:
             tools = AgentTools.from_context(ctx)
             await activity_platform.shown(report_tool_activity(tools, "Bash"))
+            await activity_platform.shown(end_tool_activity(tools))
             await activity_platform.shown(set_permission_wait(tools, True))
             # Hidden behind the wait: the room keeps seeing permission.
-            await end_tool_activity(tools)
-            await report_memory_activity(tools)
+            await report_tool_activity(tools, "Edit")
             await activity_platform.shown(set_permission_wait(tools, False))
-            await activity_platform.shown(end_tool_activity(tools))
+            await activity_platform.shown(report_memory_activity(tools))
+            await tools.send_message("Done", mentions=["alice"])
 
         ctx = execution(handler)
         await ctx._process_event(make_message_event())
+        assert activity_platform.posts == ["messages"]
         assert activity_platform.activity_bodies == [
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
-            {"working": True, "activity": {"kind": "permission"}},
-            {"working": True, "activity": {"kind": "memory"}},
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": False},
+            REASONING_BODY,
+            tool_body("Bash"),
+            REASONING_BODY,
+            PERMISSION_BODY,
+            tool_body("Edit"),
+            MEMORY_BODY,
+            IDLE_BODY,
         ]
 
     @pytest.mark.looptime
@@ -70,21 +82,15 @@ class TestOwnedDetail:
         await ctx._process_event(make_message_event(msg_id="original"))
         await ctx._process_event(make_message_event(msg_id="busy"))
         await asyncio.sleep(6.1)
-        assert (
-            activity_platform.activity_bodies[-2:]
-            == [{"working": True, "activity": {"kind": "permission"}}] * 2
-        )
+        assert activity_platform.activity_bodies[-2:] == [PERMISSION_BODY] * 2
         await report_tool_activity(captured[0], "Bash")
         await activity_platform.shown(set_permission_wait(captured[0], False))
-        assert activity_platform.activity_bodies[-1] == {
-            "working": True,
-            "activity": {"kind": "tool_call", "name": "Bash"},
-        }
+        assert activity_platform.activity_bodies[-1] == tool_body("Bash")
         release.set()
         await workers[0].task
         await asyncio.sleep(0)
         await ctx._join_activity_completion()
-        assert activity_platform.activity_bodies[-1] == {"working": False}
+        assert activity_platform.activity_bodies[-1] == IDLE_BODY
         before = list(activity_platform.activity_bodies)
         await end_tool_activity(captured[0])
         assert activity_platform.activity_bodies == before
@@ -104,9 +110,10 @@ class TestOwnedDetail:
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
         await report_tool_activity(captured[0], "Bash")
-        assert before[-1] == {"working": False}
+        assert before[-1] == IDLE_BODY
         assert activity_platform.activity_bodies == before
 
+    @pytest.mark.looptime
     async def test_graceful_stop_keeps_the_draining_turn_detail_current(
         self,
         execution: Callable[..., ExecutionContext],
@@ -132,9 +139,9 @@ class TestOwnedDetail:
         release.set()
         assert await stopping
         assert activity_platform.activity_bodies == [
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
-            {"working": False},
+            REASONING_BODY,
+            tool_body("Bash"),
+            IDLE_BODY,
         ]
 
     @pytest.mark.looptime
@@ -167,9 +174,9 @@ class TestOwnedDetail:
         cleanup_release.set()
         await turn
         assert activity_platform.activity_bodies == [
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
-            {"working": False},
+            REASONING_BODY,
+            tool_body("Bash"),
+            IDLE_BODY,
         ]
 
     async def test_observation_from_a_waiting_delivery_never_starts_reporting(
@@ -205,11 +212,12 @@ class TestOwnedDetail:
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
         await report_tool_activity(waiting_tools[0], "Bash")
-        assert before[-1] == {"working": False}
+        assert before[-1] == IDLE_BODY
         assert activity_platform.activity_bodies == before
         waiting_release.set()
         await waiting
 
+    @pytest.mark.looptime
     async def test_a_new_turn_starts_at_reasoning(
         self,
         execution: Callable[..., ExecutionContext],
@@ -229,12 +237,12 @@ class TestOwnedDetail:
         await ctx._process_event(make_message_event(msg_id="first"))
         await ctx._process_event(make_message_event(msg_id="second"))
         assert activity_platform.activity_bodies == [
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": True, "activity": {"kind": "tool_call", "name": "Bash"}},
-            {"working": True, "activity": {"kind": "permission"}},
-            {"working": False},
-            {"working": True, "activity": {"kind": "reasoning"}},
-            {"working": False},
+            REASONING_BODY,
+            tool_body("Bash"),
+            PERMISSION_BODY,
+            IDLE_BODY,
+            REASONING_BODY,
+            IDLE_BODY,
         ]
 
     async def test_a_tool_never_waits_for_the_platform(
@@ -255,10 +263,7 @@ class TestOwnedDetail:
         ctx = execution(handler)
         await ctx._process_event(make_message_event())
         assert observed_before_delivery == [True]
-        assert activity_platform.activity_bodies[1] == {
-            "working": True,
-            "activity": {"kind": "tool_call", "name": "Bash"},
-        }
+        assert activity_platform.activity_bodies[1] == tool_body("Bash")
 
     @pytest.mark.parametrize("excluded", ["disabled", "hub"])
     async def test_excluded_reporting_ignores_observations(

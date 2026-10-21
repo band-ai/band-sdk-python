@@ -10,6 +10,8 @@ from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
+from band.runtime.tools.agent import AgentTools
+from band.testing import FakeAgentTools
 from tests.runtime.activityownership.kit import ActivityPlatform
 from tests.runtime.helpers import (
     AGENT_ID,
@@ -56,3 +58,12 @@ async def execution(
         for ctx in contexts:
             activity_platform.activity_release.set()
             await ctx.stop()
+
+
+@pytest.fixture(params=["fake", "bare"])
+async def observerless_tools(
+    request: pytest.FixtureRequest, activity_platform: ActivityPlatform
+) -> AsyncIterator[object]:
+    """Tools built outside an execution, as adapters' unit tests build them."""
+    async with rest_client_over(activity_platform.respond) as rest:
+        yield FakeAgentTools() if request.param == "fake" else AgentTools(ROOM_ID, rest)

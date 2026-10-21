@@ -64,6 +64,7 @@ class TestRefresh:
         await asyncio.sleep(2.1)
         recorder.detail = "Bash"
         reporter.refresh()
-        await asyncio.sleep(1)
+        # The wake finds the cap passed and ends the keep-alive without a report.
+        await reporter._task
         await reporter.stop()
         assert recorder.reports == ["reasoning", None]

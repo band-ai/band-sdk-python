@@ -22,7 +22,10 @@ def lifecycle_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecor
 
 
 class ActivityPeer:
-    """The activity endpoint, advertising ``version`` on every response."""
+    """The activity endpoint, advertising ``version`` on every response.
+
+    ``post_latency`` maps a 1-based POST number to the seconds it takes to answer.
+    """
 
     def __init__(self) -> None:
         self.version: str | None = SUPPORTED_VERSION
@@ -30,11 +33,14 @@ class ActivityPeer:
         self.requests: list[httpx.Request] = []
         self.responses: deque[httpx.Response] = deque()
         self.stall_post_number: int | None = None
+        self.post_latency: dict[int, float] = {}
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         self.requests.append(request)
         self.reports.append(body)
+        if latency := self.post_latency.get(len(self.reports)):
+            await asyncio.sleep(latency)
         if len(self.reports) == self.stall_post_number:
             await asyncio.Event().wait()
         response = (
