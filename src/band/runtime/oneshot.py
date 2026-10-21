@@ -480,8 +480,8 @@ class OneShotInvoker:
     ) -> dict[str, Any]:
         """Run the SDK agent loop for one forwarded message_created event.
 
-        Steps (the message case of ``ExecutionContext._process_event``,
-        adapted for request/response); self-filtering already happened in
+        Steps (the room scheduler's ``DeliveryLifecycle.run``, adapted for
+        request/response); self-filtering already happened in
         ``handle_event`` via ``evaluate_delivery_event``:
 
         1. ``get_next_message`` — if the triggering message isn't the next

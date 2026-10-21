@@ -164,6 +164,12 @@ class Write:
     confirmed: bool
 
 
+def _replying(reply: Reply) -> httpx.Response:
+    return httpx.Response(
+        reply.status, content=reply.body, headers={"content-type": "application/json"}
+    )
+
+
 class RunawayRescan(Exception):
     """Raised by the peer when a room reads without end instead of waiting."""
 
@@ -185,6 +191,8 @@ class RestPeer:
         self.journal: list[str] = []
         self.refuse_processing: set[str] = set()
         self.deleted: set[str] = set()
+        # A non-participant gets 404 not_found on every room route, as a deleted message does.
+        self.participant = True
         self.confirm_terminal = True
         # Answers every terminal write verbatim, confirming none of them.
         self.terminal_error: Reply | None = None
@@ -324,6 +332,8 @@ class RestPeer:
         self._guard_against_runaway()
         cursor = request.url.params.get("cursor")
         limit = int(request.url.params["limit"])
+        if not self.participant:
+            return _replying(NOT_FOUND)
         rows = self._outstanding()
         if cursor is not None:
             rows = [row for row in rows if row.key > self.rows[cursor].key]
@@ -345,6 +355,8 @@ class RestPeer:
     def _next(self) -> httpx.Response:
         self._guard_against_runaway()
         self.nexts.append(asyncio.get_running_loop().time())
+        if not self.participant:
+            return _replying(NOT_FOUND)
         rows = self._outstanding()
         if not rows:
             return httpx.Response(204)
@@ -352,7 +364,7 @@ class RestPeer:
 
     def _write(self, message_id: str, action: DeliveryStatus) -> httpx.Response:
         terminal = action is not DeliveryStatus.PROCESSING
-        if message_id in self.deleted:
+        if message_id in self.deleted or not self.participant:
             failure: Reply | None = NOT_FOUND
         else:
             failure = self.terminal_error if terminal else None
@@ -366,11 +378,7 @@ class RestPeer:
         )
         self.journal.append(write(action, message_id, confirmed=confirmed))
         if failure is not None:
-            return httpx.Response(
-                failure.status,
-                content=failure.body,
-                headers={"content-type": "application/json"},
-            )
+            return _replying(failure)
         if confirmed:
             self.rows[message_id].statuses[AGENT_ID] = action
         return httpx.Response(

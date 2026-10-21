@@ -27,7 +27,7 @@ async def attempt_delivery(
         await scheduler.run_pass(recovery=True)
         return TurnOutcome.ADVANCED
     event = backlog_event(source) if isinstance(source, PlatformMessage) else source
-    scheduler.retain(event)
+    scheduler.pending.add(event)
     with scheduler.discovery():
         if is_ordinary(event):
             candidate = scheduler.classify(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -76,6 +77,9 @@ if TYPE_CHECKING:
     from band.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
+
+# Messages whose failed control recognition already logged its traceback.
+MAX_RECOGNIZER_FAILURES_LOGGED = 256
 
 
 class ExecutionState(StrEnum):
@@ -271,6 +275,7 @@ class ExecutionContext:
         self._on_execute_batch = on_execute_batch
         self._on_message_control = on_message_control
         self._is_message_control = is_message_control
+        self._recognizer_failures: OrderedDict[str | None, None] = OrderedDict()
         self._agent_id = agent_id
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
@@ -1101,12 +1106,25 @@ class ExecutionContext:
         try:
             return self._is_message_control(self, event)
         except Exception:
-            logger.exception(
+            identity = delivery_id(event)
+            # Recognition runs for every candidate on every pass.
+            first = self._first_recognizer_failure(identity)
+            logger.log(
+                logging.ERROR if first else logging.DEBUG,
                 "Room %s: control recognition failed for message %s; handling it as ordinary input",
                 self.room_id,
-                delivery_id(event),
+                identity,
+                exc_info=first,
             )
             return False
+
+    def _first_recognizer_failure(self, identity: str | None) -> bool:
+        if identity in self._recognizer_failures:
+            return False
+        self._recognizer_failures[identity] = None
+        if len(self._recognizer_failures) > MAX_RECOGNIZER_FAILURES_LOGGED:
+            self._recognizer_failures.popitem(last=False)
+        return True
 
     async def _invoke_handler(self, event: PlatformEvent) -> None:
         """Coroutine wrapper around the execution handler so it can run as a

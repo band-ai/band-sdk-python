@@ -159,9 +159,6 @@ class Scheduler:
     def unpark(self) -> None:
         self.owner.claims.unpark_acks(self.owner.room_id)
 
-    def retain(self, event: PlatformEvent) -> None:
-        self.pending.add(event)
-
     def housekeeping(self) -> PlatformEvent | None:
         return next(
             (event for event in self.pending if not isinstance(event, MessageEvent)),
@@ -189,7 +186,7 @@ class Scheduler:
             and not self.sync_complete
         ):
             self.first_ws_id = delivery_id(event)
-        self.retain(event)
+        self.pending.add(event)
 
     def absorb(self) -> None:
         live_request: ResyncRequest | None = None

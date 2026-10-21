@@ -40,7 +40,6 @@ from band.core.settlement import SettlementResult
 from band.core.types import metadata_to_dict
 from band.platform.activity import activity_support
 from band.runtime.messages import PlatformMessage
-from band.runtime.sessionconfig import ACTIONABLE_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +53,7 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
 NOT_FOUND_ERROR_CODE = "not_found"
+ACTIONABLE_PAGE_SIZE = 100
 
 
 def _accepted_response(
