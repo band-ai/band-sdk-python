@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from band.integrations.omprpc.client import OmpRpcClient
 from band.integrations.omprpc.errors import (
+    OmpCompletionTimeout,
     OmpProcessError,
     OmpPromptError,
     OmpProtocolError,
@@ -11,6 +12,7 @@ from band.integrations.omprpc.errors import (
 )
 
 __all__ = [
+    "OmpCompletionTimeout",
     "OmpProcessError",
     "OmpPromptError",
     "OmpProtocolError",
