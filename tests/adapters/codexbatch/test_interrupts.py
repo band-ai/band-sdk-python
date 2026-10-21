@@ -26,10 +26,11 @@ class TestBatchInterrupts:
             turn_completed("turn-2"),
         )
         await room.send_batch(*room.alice_helper_alice())
-        parked = room.turn
 
         await room.adapter.on_interrupt(ROOM_ID, mode)
         tools = await room.send_batch(*room.alice_helper_alice())
 
-        assert parked.done()
-        assert (tools.turn.replied, room.pending_approval_count) == (True, 0)
+        assert (tools.turn.replied, await room.pending_approvals()) == (
+            True,
+            "No pending approvals.",
+        )

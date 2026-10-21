@@ -158,9 +158,9 @@ class CodexBatchRoom:
             if "decision" in result
         ]
 
-    @property
-    def pending_approval_count(self) -> int:
-        return self.adapter._open_approval_count(ROOM_ID)
+    async def pending_approvals(self) -> str:
+        """What ``/approvals`` answers for the room right now."""
+        return (await self.control("/approvals")).messages_sent[-1]["content"]
 
     @property
     def turn(self) -> asyncio.Task[None]:

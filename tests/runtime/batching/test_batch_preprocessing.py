@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 
 from band.preprocessing.default import DefaultPreprocessor
 from tests.conftest import make_message_event
-from tests.runtime.helpers import AGENT_ID
+from tests.runtime.batching.kit import CONTACTS_NOTICE, offered_context, seeded_room
+from tests.runtime.helpers import AGENT_ID, ROOM_ID
 
 
 class TestBatchPreprocessing:
@@ -45,16 +46,22 @@ class TestBatchPreprocessing:
 
         assert await DefaultPreprocessor().process_batch(ctx, [own], AGENT_ID) is None
 
-    async def test_context_is_committed_once_for_the_whole_turn(
-        self, ctx: MagicMock
-    ) -> None:
+    async def test_the_whole_turn_commits_its_context_only_when_told(self) -> None:
+        room = seeded_room()
         events = [
-            make_message_event(msg_id="m1", sender_id="alice"),
-            make_message_event(msg_id="m2", sender_id="bob"),
+            make_message_event(room_id=ROOM_ID, msg_id="m1", sender_id="alice"),
+            make_message_event(room_id=ROOM_ID, msg_id="m2", sender_id="bob"),
         ]
+        preprocessor = DefaultPreprocessor()
 
-        inp = await DefaultPreprocessor().process_batch(ctx, events, AGENT_ID)
-
+        inp = await preprocessor.process_batch(room, events, AGENT_ID)
+        rebuilt = await preprocessor.process_batch(room, events, AGENT_ID)
         assert inp is not None and inp.commit_context is not None
         inp.commit_context()
-        ctx.mark_llm_initialized.assert_called_once_with()
+        later = await preprocessor.process_batch(
+            room, [make_message_event(room_id=ROOM_ID, msg_id="m3")], AGENT_ID
+        )
+
+        assert rebuilt is not None and later is not None
+        assert offered_context(rebuilt) == (True, True, CONTACTS_NOTICE)
+        assert offered_context(later) == (False, False, None)

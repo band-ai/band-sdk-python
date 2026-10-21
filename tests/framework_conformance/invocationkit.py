@@ -9,7 +9,7 @@ from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
@@ -45,17 +45,12 @@ def turn_input(*messages: PlatformMessage, room_id: str = ROOM_ID) -> AgentInput
     )
 
 
-class DecliningAdapter(SimpleAdapter[Any]):
+class DecliningAdapter(BatchInputAdapter[Any]):
     """A batch-capable adapter whose model input builder declines every turn."""
-
-    supports_batch_input = True
 
     def __init__(self) -> None:
         super().__init__()
         self.built: list[tuple[str, ...]] = []
-
-    async def on_message(self, msg: PlatformMessage, *args: Any, **kwargs: Any) -> None:
-        await self.on_turn((msg,), *args, **kwargs)
 
     async def on_turn(
         self,

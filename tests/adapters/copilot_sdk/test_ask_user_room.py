@@ -26,7 +26,9 @@ from tests.adapters.copilot_sdk.fakes import (
     requires_copilot_sdk,
     run_message,
 )
+from tests.adapters.waiting import spin
 from tests.framework_conformance.batchprobes import (
+    ALICE_FIRST,
     BATCH,
     HELPER,
     deliver,
@@ -155,7 +157,7 @@ class TestAskUserRoom:
         answers: list[dict[str, Any]] = []
 
         async def ask_once_released(session: Any) -> None:
-            if len(session.prompts) > 1:  # the queued turn only replies
+            if ALICE_FIRST.content not in session.prompts[-1]:  # the queued turn
                 return
             parked.set()
             await released.wait()
@@ -169,13 +171,13 @@ class TestAskUserRoom:
         running_turn = asyncio.create_task(deliver(adapter, running))
         await parked.wait()
         queued_turn = asyncio.create_task(deliver(adapter, queued))
-        await asyncio.sleep(0)
+        await spin()
         released.set()
         await asyncio.gather(running_turn, queued_turn)
 
-        assert [post["mentions"] for post in posted_messages(running)] == [
-            [{"id": "alice"}, {"id": "helper"}]
-        ]
+        assert [
+            (post["content"], post["mentions"]) for post in posted_messages(running)
+        ] == [(render_room_question(QUESTION), [{"id": "alice"}, {"id": "helper"}])]
         assert [post["mentions"] for post in posted_messages(queued)] == [
             [{"id": "helper"}]
         ]

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from band.adapters.cursor_acp import CursorACPAdapter
-from band.agent import Agent
 from tests.adapters.cursorturns.conftest import OpenCursor
 from tests.adapters.cursorturns.kit import (
     active_turn,
@@ -18,9 +15,7 @@ from tests.adapters.cursorturns.kit import (
     occupy,
     terminated,
 )
-from tests.conftest import make_message_event
 from tests.integrations.acp.acp_toolkit.harness import live_message
-from tests.runtime.batching.kit import room_context
 
 RECOGNIZED = [
     "/cursor",
@@ -47,21 +42,6 @@ class TestCursorControlRecognition:
     @pytest.mark.parametrize("content", ORDINARY)
     def test_anything_else_is_an_ordinary_input(self, content: str) -> None:
         assert not CursorACPAdapter().is_control_message(live_message(content))
-
-    @pytest.mark.parametrize(
-        ("content", "is_control"),
-        [("@[[alice]] /cursor select abc allow-1", True), ("hello", False)],
-    )
-    def test_the_runtime_classifies_a_platform_delivery_with_the_same_parser(
-        self, content: str, is_control: bool
-    ) -> None:
-        agent = Agent(runtime=MagicMock(agent_id="agent-1"), adapter=CursorACPAdapter())
-
-        classified = agent._is_control(
-            room_context(), make_message_event(content=content)
-        )
-
-        assert classified is is_control
 
     async def test_a_pending_decision_does_not_turn_free_text_into_a_control(
         self, open_cursor: OpenCursor

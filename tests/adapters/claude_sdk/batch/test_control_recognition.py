@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import copy
-from typing import Any
-
 import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
@@ -19,15 +16,6 @@ ORDINARY_TEXT = ["list the files", "please /approve it", "/model sonnet", "/appr
 
 def message(content: str) -> PlatformMessage:
     return room_message(content, message_id="m1")
-
-
-def tables_of(adapter: ClaudeSDKAdapter) -> dict[str, Any]:
-    """A snapshot of every table the adapter keeps."""
-    return {
-        name: copy.copy(value)
-        for name, value in vars(adapter).items()
-        if isinstance(value, dict | set | list)
-    }
 
 
 class TestControlRecognition:
@@ -74,7 +62,6 @@ class TestControlRecognition:
         room = await claude_room(with_approvals())
         room.claude.script([LIST_FILES, room.model_reply("Listed.")])
         await room.send("List the files")
-        before = tables_of(room.adapter)
         posted = list(room.tools.messages_sent)
 
         recognized = [
@@ -82,12 +69,10 @@ class TestControlRecognition:
             for command in ("/approve a-1", "/decline a-1", "/approvals", "/status")
         ]
 
-        pending = room.adapter._pending_approvals[room.room_id]
         assert recognized == [True] * 4
-        assert [entry.token for entry in pending.unclaimed()] == ["a-1"]
-        assert not pending.get("a-1").future.done()
         assert room.tools.messages_sent == posted
-        assert tables_of(room.adapter) == before
+        await room.send("/approvals")
+        assert "- `a-1`:" in room.chat[-1]
         await room.send("/approve a-1")
         await room.settled()
         assert room.chat[-1] == "Listed."

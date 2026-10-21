@@ -7,12 +7,12 @@ from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter, SimpleAdapter
 from band.core.types import AgentInput, PlatformMessage
 from tests.framework_conformance.invocationkit import turn_input
 from tests.runtime.conftest import platform_msg
 
-Entry = Callable[[SimpleAdapter[Any], AgentInput], Awaitable[None]]
+Entry = Callable[[BatchInputAdapter[Any], AgentInput], Awaitable[None]]
 
 
 def batch_input() -> AgentInput:
@@ -28,24 +28,17 @@ class UndeclaredAdapter(SimpleAdapter[Any]):
     async def on_message(self, *args: Any, **kwargs: Any) -> None: ...
 
 
-class UnbuiltAdapter(UndeclaredAdapter):
-    """Declares batch support but has no ``on_turn`` turn builder."""
-
-    supports_batch_input = True
+class UnbuiltAdapter(BatchInputAdapter[Any]):
+    """Batch-capable, but has no ``on_turn`` turn builder."""
 
 
-class TurnBuilderAdapter(SimpleAdapter[Any]):
+class TurnBuilderAdapter(BatchInputAdapter[Any]):
     """One turn builder behind both entry points; declines when told to."""
-
-    supports_batch_input = True
 
     def __init__(self, *, declines: bool) -> None:
         super().__init__()
         self.declines = declines
         self.turns: list[tuple[str, ...]] = []
-
-    async def on_message(self, msg: PlatformMessage, *args: Any, **kwargs: Any) -> None:
-        await self.on_turn((msg,), *args, **kwargs)
 
     async def on_turn(
         self,

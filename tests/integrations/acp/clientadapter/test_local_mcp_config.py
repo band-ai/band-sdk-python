@@ -8,11 +8,11 @@ import pytest
 
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
-    SENDER_METADATA_INSTRUCTION,
     ACPClientAdapter,
     ACPClientAdapterConfig,
 )
 from band.integrations.mcp import BandMCPTransport
+from band.runtime.formatters import SENDER_METADATA_INSTRUCTION
 from band.runtime.prompts import COMMUNICATION_INSTRUCTIONS
 from tests.integrations.acp.clientadapter.kit import CODEX
 from tests.mcpbackends import backends_created_by

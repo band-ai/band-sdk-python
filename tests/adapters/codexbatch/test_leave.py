@@ -32,9 +32,9 @@ class TestBatchLeave:
 
         assert (
             room.decisions,
-            room.pending_approval_count,
+            await room.pending_approvals(),
             room.client.closed,
-        ) == ([(10, "decline")], 0, True)
+        ) == ([(10, "decline")], "No pending approvals.", True)
 
     async def test_a_batch_meeting_a_leaving_room_is_refused_not_failed(self) -> None:
         client = CountingCloseClient(
