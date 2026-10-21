@@ -128,7 +128,7 @@ def fast_session_policy(
 ) -> SessionPolicy:
     """A SessionPolicy with real reconnect-backoff defaults (mirroring
     SessionPolicy.default()) but a fast heartbeat/dead-threshold pair, so
-    watchdog/reconnect tests run in real fractional seconds instead of
+    heartbeat/reconnect tests run in real fractional seconds instead of
     production's 30s/60s."""
     return SessionPolicy(
         {
