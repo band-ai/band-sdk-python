@@ -6,8 +6,8 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, TypedDict
 from unittest.mock import MagicMock
 
 import httpx
@@ -20,13 +20,13 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-from band.core.protocols import TURN_FAILURE_PROVIDER, FrameworkAdapter
+from band.core.protocols import TURN_FAILURE_PROVIDER, FrameworkAdapter, Preprocessor
 from band.core.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
     SYNTHETIC_SENDER_TYPE,
     PlatformMessage,
 )
-from band.platform.event import MessageEvent
+from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
@@ -83,22 +83,40 @@ STOP_SECONDS = 2.0
 QUIET_SECONDS = 1.0
 
 
+class AgentHooks(TypedDict):
+    """The callbacks an Agent hands its runtime for message delivery."""
+
+    on_execute: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]]
+    on_message_control: Callable[[ExecutionContext, PlatformEvent], Awaitable[bool]]
+    is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+
+
+def agent_hooks(
+    adapter: FrameworkAdapter, *, preprocessor: Preprocessor | None = None
+) -> AgentHooks:
+    """An unstarted Agent's delivery callbacks, for a room built directly."""
+    agent = Agent(
+        runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter, preprocessor=preprocessor
+    )
+    return AgentHooks(
+        on_execute=agent._on_execute,
+        on_message_control=agent._on_control,
+        is_message_control=agent._is_control,
+    )
+
+
 def run_through(
     adapter: FrameworkAdapter,
     link: BandLink | MagicMock,
     *,
     config: SessionConfig | None = None,
 ) -> ExecutionContext:
-    agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
-
     return ExecutionContext(
         ROOM_ID,
         link,
-        agent._on_execute,
         config=config or SessionConfig(enable_context_hydration=False),
         agent_id=AGENT_ID,
-        on_message_control=agent._on_control,
-        is_message_control=agent._is_control,
+        **agent_hooks(adapter),
     )
 
 
@@ -194,6 +212,7 @@ class LifecyclePlatform:
         self.next_reads: list[float] = []
         self.actionable_cursors: list[str | None] = []
         self.activity_reports: list[ActivityReport] = []
+        self.stamps: dict[str, str] = {}
 
     @property
     def reports_without_refreshes(self) -> list[ActivityReport]:
@@ -214,7 +233,13 @@ class LifecyclePlatform:
         listed: bool = True,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Store a message and return its row; an unlisted one is on the WebSocket only."""
+        """Store a message and return its row; an unlisted one is on the WebSocket only.
+
+        Each message is inserted one second after the previous one, as the
+        platform orders a room's messages.
+        """
+        stamp = (EPOCH + timedelta(seconds=len(self.stamps))).isoformat()
+        self.stamps[message_id] = stamp
         row = {
             "id": message_id,
             "chat_room_id": ROOM_ID,
@@ -224,12 +249,21 @@ class LifecyclePlatform:
             "sender_name": "User",
             "message_type": "text",
             "metadata": metadata or {},
-            "inserted_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
+            "inserted_at": stamp,
+            "updated_at": stamp,
         }
         if listed:
             self.messages.append(row)
         return row
+
+    def event(self, message_id: str, *, content: str = "hello") -> MessageEvent:
+        """The WebSocket delivery of a stored message, stamped as the platform stored it."""
+        return make_message_event(
+            room_id=ROOM_ID,
+            msg_id=message_id,
+            content=content,
+            inserted_at=self.stamps[message_id],
+        )
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
