@@ -127,9 +127,11 @@ class TestApprovalLifetime:
             is_session_bootstrap=False,
             room_id="room-1",
         )
-        await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
         room_state = await adapter._get_or_create_room_state("room-1")
-        await wait_for(lambda: room_state.turn is None or not room_state.turn.running)
+        first_turn = room_state.turn
+        assert first_turn is not None
+        await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
+        await wait_for(lambda: not first_turn.running)
 
         await deliver_message(
             adapter,

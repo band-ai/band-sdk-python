@@ -463,9 +463,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 agent_id or self.agent_name
             )
 
-        if room_state.turn and (
-            room_state.turn.running or room_state.approvals.awaiting_human()
-        ):
+        if room_state.turn and room_state.turn.running:
             raise InputNotAccepted("The room already has an active OpenCode turn")
 
         # MCP calls keep the active turn's tools until that turn finishes.
