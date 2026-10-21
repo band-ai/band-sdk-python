@@ -50,6 +50,7 @@ from band.client.streaming import (
     RoomDeletedPayload,
     RoomRemovedPayload,
 )
+from band.client.streaming.client import RECONNECT_POLICY
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -239,7 +240,7 @@ def isolated_adapter_config_env(request, monkeypatch):
 def _reset_leaked_threading_instrumentation() -> None:
     """Undo OpenTelemetry's ThreadingInstrumentor if a test left it patched.
 
-    Constructing a real Strands ``Tracer`` (tests/adapters/test_strands_adapter.py
+    Constructing a real Strands ``Tracer`` (tests/adapters/strands/
     and friends, which build a live strands.Agent) unconditionally calls
     ``ThreadingInstrumentor().instrument()`` and never undoes it -- correct for a
     long-lived process, but it globally monkeypatches ``threading.Thread.start``
@@ -352,6 +353,31 @@ class BlockingHandler:
 # =============================================================================
 # BandLink Test Helpers
 # =============================================================================
+
+
+# The platform's eviction of an older same-key session (``agent_control``
+# ``supersede``), as the wire carries it.
+TERMINAL_SUPERSEDE: dict[str, Any] = {
+    "reason": "session.already_connected",
+    "message": "Superseded by a newer session",
+    "retryable": False,
+    "retry_after": 15,
+    "target_socket_id": "agent_socket:agent-123",
+    "correlation_id": "evict-1",
+}
+
+
+@pytest.fixture(scope="class")
+def millisecond_reconnects() -> Iterator[None]:
+    """The transport's reconnect backoff shrunk to milliseconds, so a test that
+    reconnects spends its time on the scenario, not on the transport's timers.
+    Class-scoped because Hypothesis rejects function-scoped fixtures."""
+    fast = RECONNECT_POLICY.model_copy(
+        update={"base_delay_s": 0.001, "rapid_disconnect_uptime_s": 0.0}
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("band.client.streaming.client.RECONNECT_POLICY", fast)
+        yield
 
 
 def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:

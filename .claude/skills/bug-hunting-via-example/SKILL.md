@@ -1,6 +1,6 @@
 ---
 name: bug-hunting-via-example
-description: Ask the user which real runnable example or examples to use, then validate them individually, concurrently, and across adapters; use them as executable specifications and differential probes to reproduce failures, instrument complete flows, isolate the failing boundary, find root causes in application code, adapters, dependencies, configuration, orchestration, infrastructure, or external services, implement invariant-level fixes, and add durable regression coverage. Use for example certification, live E2E testing, multi-agent or multi-room failures, adapter integration debugging, concurrency and lifecycle bugs, tool-routing issues, stuck turns, and investigations where assumptions or a narrow component-only review risk a bolt-on patch.
+description: Validate or debug actual runnable repository examples, independently and together, using exact launch commands and the bundled discovery/live runner. Use for named examples, example certification, or interaction failures across examples and rooms. Use band-investigate-test-error for a concrete failing test, band-run-e2e-live to execute existing baseline lanes, and band-ci-triage to locate a failing GitHub Actions job.
 ---
 
 # Bug Hunting via Example

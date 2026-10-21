@@ -3,12 +3,12 @@ name: local-platform-testing
 description: Stand up thenvoi-platform locally (Docker infra + a headless Phoenix server) and point the SDK at it for a real, non-mocked integration test — no VPN, no shared dev/prod platform. Use when asked to test a feature "against a real/live/local platform", when ff_file_transfer or another on-prem-only feature flag needs to be exercised, or when troubleshooting a local platform that won't start, rejects an API key, or serves the wrong platform to the SDK.
 ---
 
-# Local platform testing
+# Local Platform Testing
 
 Runs `thenvoi-platform` from source on this machine and drives it with the SDK
 directly (`AgentTools` + the E2E baseline provisioning toolkit) — a genuine
 end-to-end check with no LLM required, distinct from `tests/e2e/baseline`
-(which targets the shared dev platform over VPN, see `.env.test`/CLAUDE.md's
+(which targets whatever platform `.env.test` names, see AGENTS.md's
 Environment Variables section) and from unit tests (mocked REST client). Reach
 for this when a fix needs to be proven against a real deployment — e.g. an
 on-prem-only feature flag (`ff_file_transfer`) that never exists on SaaS.

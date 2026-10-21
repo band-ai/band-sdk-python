@@ -2,6 +2,30 @@
 
 This is a Python SDK that connects AI agents to the Band collaborative platform.
 
+## Engineering Standard
+
+Understand the problem before changing code. For defects, establish the root
+cause with evidence and fix it at the layer that owns the behavior. For other
+changes, establish the intended outcome and constraints.
+
+Before implementation, form a plan proportional to the work: scope, approach,
+important scenarios, and validation. Prefer focused, clear solutions that reuse
+existing patterns.
+
+Assess whether existing tests meaningfully cover the affected behavior. Close
+material coverage gaps and validate realistic flows, including complex
+interactions and failure paths where relevant. Passing tests or high coverage
+alone do not establish correctness.
+
+Report what was verified, what remains uncertain, and any checks not run.
+Follow the [PR Lifecycle and Readiness Review](#pr-lifecycle-and-readiness-review)
+requirements: start new PRs as drafts and mark them ready only after the
+readiness review passes.
+
+Other developers and agents may be working concurrently. Preserve their
+changes, inspect current local and remote state before integrating or pushing,
+and avoid unrelated edits or destructive Git operations.
+
 ## Core Features
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents, NOOA)
@@ -9,6 +33,57 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 3. ACP integration: Editor-facing server and client adapters over stdio or TCP (Cursor, Codex, Claude Code, GitHub Copilot)
 4. Platform tools for chat, contacts, memory, files, and the room task board
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
+
+## Skills
+
+Project guidelines live in skills under `.claude/skills/`; Codex reads the
+same skills through the `.agents/skills` symlink. Before starting work, identify,
+read, and apply the existing skills relevant to the task. Reassess when the work
+changes, such as moving from investigation to implementation, testing, or review.
+Skill discovery alone does not load its instructions.
+
+Follow each skill's activation rules; `band-code-review` requires explicit
+invocation. Read the referenced `SKILL.md` directly when automatic loading is
+unavailable. Reference only skills that actually exist; disclose missing guidance
+when it materially affects the work. Workflow execution follows
+[the shared runtime guidance](.claude/skills/workflow-runtime.md).
+
+Use relevant personal or other installed skills as well when they help the task;
+the user does not need to name each one. Project skills define the repository's
+requirements; other skills may complement them without weakening those
+requirements. Follow an explicit user choice of workflow and respect each skill's
+activation rules. Do not modify or remove personal skills as part of a repository
+change.
+
+As the project evolves, keep guidance accurate. When work reveals an outdated
+rule, recurring gap, or better established practice, propose a focused update to
+the relevant existing skill or `AGENTS.md`. Prefer improving existing guidance
+over adding new skills. Create new skills or change personal skills only with
+explicit user approval.
+
+| Skill | Use when |
+|---|---|
+| [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests or assessing meaningful coverage and realistic flows |
+
+| Skill | Use when |
+|---|---|
+| [band-plan](.claude/skills/band-plan/SKILL.md) | turning a Linear ticket into a reviewed implementation plan |
+| [band-linear-create-branch](.claude/skills/band-linear-create-branch/SKILL.md) | creating a branch for Linear work with `git lb` |
+| [band-add-framework-adapter](.claude/skills/band-add-framework-adapter/SKILL.md) | adding a new framework adapter |
+| [band-write-e2e-test](.claude/skills/band-write-e2e-test/SKILL.md) | writing or extending an E2E baseline test |
+| [band-run-e2e-live](.claude/skills/band-run-e2e-live/SKILL.md) | running the E2E baseline lanes against the live platform |
+| [band-investigate-test-error](.claude/skills/band-investigate-test-error/SKILL.md) | finding the root cause of a failing or flaky test |
+| [band-code-review](.claude/skills/band-code-review/SKILL.md) | running the team's fixed-criteria review on a PR or branch |
+| [band-here-is-a-review](.claude/skills/band-here-is-a-review/SKILL.md) | handling review feedback on a PR or pasted review findings |
+| [band-pr-triage](.claude/skills/band-pr-triage/SKILL.md) | a quick read-only check of whether a PR can merge or needs a full review |
+| [band-ci-triage](.claude/skills/band-ci-triage/SKILL.md) | investigating failing GitHub Actions checks on the current commit |
+| [band-security-review](.claude/skills/band-security-review/SKILL.md) | a requested security review of tool, permission, credential, or workspace boundaries |
+| [band-stacked-prs](.claude/skills/band-stacked-prs/SKILL.md) | splitting work into stacked PRs or managing a PR chain with `gh stack` |
+| [band-desktop-setup](.claude/skills/band-desktop-setup/SKILL.md) | setting up, upgrading, or troubleshooting Claude Desktop as a Band agent |
+| [bug-hunting-via-example](.claude/skills/bug-hunting-via-example/SKILL.md) | using real runnable examples to reproduce and root-cause integration, concurrency, or lifecycle bugs |
+| [dependabot-triage](.claude/skills/dependabot-triage/SKILL.md) | reviewing, batching, or clearing open Dependabot PRs |
+| [local-platform-testing](.claude/skills/local-platform-testing/SKILL.md) | testing against a locally run thenvoi-platform, including on-prem-only feature flags |
 
 ## Platform Tools
 
@@ -40,7 +115,7 @@ vars may set it) from `src/band/core/adapterconfig.py`. It is frozen, rejects
 unknown fields, and holds plain data only, so it loads from YAML/JSON. Clients,
 graphs, LLM objects, factories and callbacks stay keyword-only constructor
 arguments. Validate settings in the config, not the constructor.
-`tests/framework_conformance/test_adapter_shape.py` enforces the shape.
+`tests/framework_conformance/adaptershape/test_adaptershape.py` enforces the shape.
 
 ## Adapter Feature Flags & Capability Negotiation
 
@@ -114,24 +189,6 @@ JSON-RPC over stdio; the SDK provides both server (`ACPServer` +
 [docs/acp.md](docs/acp.md) for the full session lifecycle, live-emission
 ordering, and permission-pairing rules.
 
-## Comment Style
-
-Comments state facts about the code as it is now, not narration of how it
-got there — never "extracted from X", "ported from Y", "changed from Z",
-no session/PR/ticket/line-number history. Git already owns that history.
-
-A comment earns its place only by saying something a reader can't get
-from the code itself: a non-obvious invariant, a race/ordering guarantee,
-a workaround for a specific external bug, a scope boundary that looks
-like it should be wider than it is. Never restate what the code already
-says in prose.
-
-If a function needs a long comment to be understood, that's a signal the
-function itself is doing too much — split it into named sub-functions
-whose names carry the "what," and keep the comment for the one "why" that
-can't be named away. Prefer trimming/removing this class of comment
-outright over compressing it.
-
 ## Code Structure
 
 ```
@@ -182,8 +239,9 @@ tests/
 `testpaths = ["tests"]`, so **every** test lives here — including tests for code
 outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
 `tests/docker`, `.claude/skills` -> `tests/skills`). A `test_*.py` placed next to
-non-package code is never collected by CI's bare `uv run pytest`; address the code
-under test through an anchor in `tests/paths.py` instead.
+non-package code is never collected by CI's bare
+`uv run --all-packages pytest`; address the code under test through an anchor in
+`tests/paths.py` instead.
 
 **One test class per file, one concern per class.** Each `test_*.py` holds
 exactly one `class Test...` named for the behavior it covers — no
@@ -203,43 +261,46 @@ To wire a new framework adapter into the matrix, follow
 
 ```bash
 # Install dependencies (modern frameworks; see Dependency Conflicts below)
-uv sync --extra dev
+uv sync --all-packages --locked --extra dev
 
 # Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
-uv sync --extra dev-crewai
+uv sync --all-packages --locked --extra dev-crewai
 
 # Install Strands/NOOA adapter deps in their OpenAI-2 environment
-uv sync --extra dev-strands-nooa
+uv sync --all-packages --locked --extra dev-strands-nooa
 
 # Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
-uv sync --extra dev-parlant
+uv sync --all-packages --locked --extra dev-parlant
 
 # Run unit tests
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 
 # Run single test
-uv run pytest tests/ -k "test_name"
+uv run --all-packages pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
+uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
 
 # Run integration tests (requires API key)
-uv run pytest tests/integration/ -v -s --no-cov
+uv run --all-packages pytest tests/integration/ -v -s --no-cov
 
 # Run E2E tests (requires live platform + LLM API keys)
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/ -v -s --no-cov
 
 # Run E2E tests for a single adapter
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -k langgraph -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/ -k langgraph -v -s --no-cov
 
 # Run the baseline toolkit smokes (provision their own agents; only need
 # BAND_API_KEY_USER — see tests/e2e/baseline/README.md)
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
+E2E_TESTS_ENABLED=true uv run --all-packages pytest tests/e2e/baseline/ -v -s --no-cov
 
-# Linting and formatting
-uv run ruff check .
-uv run ruff format .
-uv run pyrefly check
+# Linting, formatting checks, and type checks
+uv run --all-packages ruff check .
+uv run --all-packages ruff format --check .
+uv run --all-packages pyrefly check
+
+# Apply formatting changes
+uv run --all-packages ruff format .
 ```
 
 ## Dependency Conflicts
@@ -286,7 +347,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, and cursor_acp coding agents), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex, opencode, copilot_acp, cursor_acp, and omp_acp coding agents), `letta` (self-hosted letta server), `strands` (`dev-strands-nooa` extra), `nooa` (same `dev-strands-nooa` extra, Linux-only: it imports `fcntl`), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -337,7 +398,7 @@ Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown
 — so `python` snippets in the docs must stay correct and runnable, not rot:
 
 ```bash
-uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
+uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
 uv run --locked --isolated --python 3.12 --all-packages --extra dev-strands-nooa pytest --markdown-docs docs/adapters/nooa.md --no-cov
 ```
 
@@ -366,100 +427,11 @@ committing to one, verify the capability you need ships in the *released*
 version you'd actually install, not just on `latest`/`master` docs — `pip
 install` it and exercise the real call in this repo's venv.
 
-## Coding Standards
-
-- Always use type hints for function parameters and return types
-- Use `from __future__ import annotations` as the first import in every file
-- **Imports go at the top of the file, full absolute path (`from band.x.y
-  import Z`), never inside a function body.** This gets missed constantly —
-  check it explicitly before finishing any edit that touches an import. The
-  one legitimate exception: a module gated behind an optional extra not
-  installed in every lane's venv (e.g. `band.adapters.copilot_acp` imports
-  `acp`, the `agent-client-protocol` package — importing it at module level
-  would break test *collection* for a venv that lacks that extra, such as
-  `dev-crewai`). Even then the deferred import belongs only at the specific
-  call site that needs it, and only because collection-time safety genuinely
-  requires it — never as a default habit. If the module has no such
-  extra-gated dependency (true for the vast majority, including every
-  adapter that only shells out to a CLI, like `codex`), the import is
-  top-level, full stop.
-- Import symbols directly from the module that owns them. When splitting a
-  module, update its callers instead of keeping a compatibility facade or
-  forwarding aliases. Do not preserve obsolete import paths. Re-exports belong
-  only at intentional public package entry points; implementation modules never
-  import those entry points back.
-  Use `__all__` or explicit re-export aliases only to declare such a public API,
-  not as boilerplate in ordinary modules.
-- No underscores in file names or class names: modules get a clean single word
-  (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
-  PascalCase with no leading underscore. Exception: patterns a tool requires,
-  e.g. pytest's `test_*.py` / `conftest.py`.
-- Never read configuration with `os.environ` / `os.getenv` — define a
-  `pydantic-settings` `BaseSettings` class (field name == env var name,
-  `SettingsConfigDict(extra="ignore", case_sensitive=False, env_ignore_empty=True)`
-  — the last so a set-but-empty var like `CI=` falls back to the field default
-  instead of raising a bool/int ValidationError) and read its fields; see
-  `tests/e2e/baseline/settings.py` for the canonical pattern
-- In tests, never derive repository-anchored paths with per-file
-  `Path(__file__).parents[N]` arithmetic — import the anchors from
-  `tests/paths.py` (`REPO_ROOT`, `SRC_ROOT`, `EXAMPLES_ROOT`, `KIT_DIR`,
-  `ENV_TEST_FILE`). Only genuinely package-relative paths (a fixture file
-  next to its test) stay relative to their own `__file__`.
-- Prefer `match`/`case` over long `if`/`elif` chains that dispatch on one value
-- Never use `print()` — use `logging` with module-level `logger = logging.getLogger(__name__)`
-- Use `%s` placeholders in log messages for lazy evaluation
-- Use Pydantic v2 for data models; use `model_dump()` not `dict()`
-- Target Python 3.11+; use `list[str]` not `List[str]`, `str | None` not `Optional[str]`
-- Use async/await everywhere in async codebases; use `AsyncMock` for testing async methods
-- Catch `pydantic.ValidationError` separately from generic `Exception`
-- Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
-- Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
-- Test what really matters — behavior that can break. Don't write tests that
-  restate definitions (asserting dataclass defaults equal themselves, echoing a
-  constant) or otherwise cannot fail for a real reason; they add maintenance
-  cost without protection.
-- Write intent-oriented code: the reader should see *what* is meant, not decode
-  *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
-  early returns over nested branches), and hide bookkeeping behind a small helper
-  or property with an intent-revealing name. Branch on *what to do*, not *which
-  function to call*, and prefer computing the varying part once over
-  duplicating a call across both branches of an `if`/`else` — e.g. a log
-  statement that only varies by level: `level = logging.DEBUG if known else
-  logging.WARNING; logger.log(level, msg, ...)`, never `log = logger.debug if
-  known else logger.warning; log(msg, ...)` (a ternary-selected callable) and
-  never `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`
-  (the message and args retyped in both branches).
-- **Tests must be declarative and intent-revealing, not a transcript of the
-  implementation.** Assert on a readable projection of the observable outcome
-  — the thing the test is actually about — never on raw internals or on a
-  side effect that merely implies the real answer. Concretely:
-  - `assert reply.outline == ["tool_call (permission)", "message", ...]` over
-    a hand-rolled comprehension pulling `message_type` out of each event dict.
-  - `assert record.levelno == logging.DEBUG` over inferring a log level
-    indirectly from whether two separate capture windows came back empty.
-  If writing the assertion requires re-deriving *how* the code decided
-  something, the test is checking the wrong thing — assert the decision
-  itself.
-- **Tests run on Ubuntu and Windows CI — test across OSes, don't skip one.**
-  Build host paths with `tmp_path` or `tests.paths.host_absolute_path`, never a
-  hard-coded `"/opt/..."` (no drive, so relative on Windows); check absoluteness
-  with `band.workspaces.is_host_absolute`. Where behavior differs per OS, write
-  one parametrize table that runs everywhere, each row naming the `os.name`
-  values that accept it. `skipif(os.name ...)` is only for a boundary that
-  cannot run on that OS, never for a path or separator assumption.
-- Prefer a single source of truth for a value or closed vocabulary consumed in more
-  than one place: give it one definition — a constant, a `StrEnum`, or a small helper
-  — that every site references, rather than re-typing the same magic literal in a
-  producer and the consumer that reads it (a typo then fails silently). Keep genuinely
-  distinct vocabularies separate, though — don't merge two sets that only happen to
-  share some values today (e.g. the ACP `ChunkType` a chunk carries vs. the platform
-  `message_type` an event is posted under).
-
 ## Pre-Commit Checklist
 
-Before running the commands below, re-read your own diff once against the
-Coding Standards above — including code you just wrote this session, not only
-code you started from. The two rules that get skipped under time pressure:
+For Python changes, before selecting checks, re-read your own diff once against
+the `band-python-conventions` skill — including code you just wrote this session,
+not only code you started from. The two rules that get skipped under time pressure:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead
@@ -472,20 +444,29 @@ code you started from. The two rules that get skipped under time pressure:
 Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
 these, so this step is the only gate for them.
 
+Choose validation for the behavior the diff can affect. Explicit user limits
+take precedence; report checks not run instead of implying they passed.
+
+| Change | Local validation |
+|---|---|
+| Documentation or skill instructions only | Check links, frontmatter, references, and relevant workflow scenarios. Execute affected runnable Markdown snippets. Do not run the SDK unit suite or wait for CI solely for prose changes. |
+| Executable skill helpers, examples, or scripts | Run the relevant behavioral tests and script checks; use the affected environment. A script inside a skill is executable code, not a prose-only change. |
+| Localized Python source or tests | Run relevant lint, format, type checks, and the affected behavioral tests. Broaden when shared callers or regressions warrant it. |
+| Shared runtime/protocol behavior, dependencies, packaging, or broad refactors | Run the full gate below in the appropriate dependency environments, plus boundary-specific checks such as conformance, wheel smoke, or live E2E where needed. |
+| CI workflows | Run actionlint and affected workflow guards; validate server-side behavior when local checks cannot exercise it. Avoid publishing during a probe. |
+
+Mixed changes use the union of applicable checks. Existing required CI checks
+remain required for merging; selecting local checks does not bypass them.
+Do not repeat a passing gate without new relevant changes or evidence of a problem.
+
+Full Python gate (commands are a toolbox, not a requirement for prose changes):
+
 ```bash
-uv run ruff check .
-uv run ruff format .
-uv run pyrefly check
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run --all-packages ruff check .
+uv run --all-packages ruff format --check .
+uv run --all-packages pyrefly check
+uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -q
 ```
-
-## Error Handling
-
-Beyond the `ValidationError`/`ValueError` rules already in Coding Standards
-above, format tool validation errors with `format_tool_validation_error`
-(`src/band/runtime/tools/schema.py`) or `format_validation_error`
-(`src/band/runtime/custom_tools.py`) rather than hand-rolling the message. Who
-acts on each exception class is in `src/band/core/exceptions.py`.
 
 ## Git Workflow
 
@@ -555,9 +536,56 @@ history, or repeated addenda. Keep validation evidence and unresolved failures
 in the linked Linear issue or evidence attachments. The PR template follows
 this format.
 
-### Pre-Commit Checklist
+### PR Lifecycle and Readiness Review
 
-See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.
+Open new PRs as **drafts**. A draft is the place to share work in progress,
+seek early design feedback, and expose unfinished validation. Mark it ready
+for review only after the developer's readiness review passes. Ready means
+the author has completed the engineering work and considers it fit for peer
+review; it does not mean peers have approved it or that it is mergeable.
+
+The readiness review checks the actual diff and relevant existing tests:
+
+- **Problem understood:** a bug has a supported root-cause explanation and
+  failure scenario; a feature has a clear underlying need and design rationale.
+  Do not invent a root cause for documentation or mechanical changes.
+- **Solution planned:** the approach, owning layer, scope, compatibility, and
+  expected scenarios were considered before implementation. A small change
+  may need a short explanation; complex or cross-component work needs a
+  written plan. Reconcile the final implementation with that plan.
+- **Implementation complete:** the diff solves the cause or need at its
+  authoritative boundary, is focused and maintainable, and has no known
+  blocking defects or unfinished in-scope work hidden as follow-ups.
+- **Coverage meaningful:** apply the test-conventions skill's "Coverage and
+  realistic flows" guidance. Map important scenarios to assertions, include
+  relevant complex interactions and failure/recovery paths, and close material
+  in-scope gaps. Passing tests and coverage percentages alone are insufficient.
+- **Validation evidenced:** the applicable author checks from the Pre-Commit
+  Checklist passed for the implementation being reviewed. Record the reviewed
+  head, checks and outcomes, scenario coverage, and material limitations in
+  the linked Linear issue or evidence attachment. Reuse earlier results only
+  when subsequent changes do not affect what they prove. Keep the PR body in
+  the existing Why / What / Scope format.
+
+If a criterion fails or required author validation is blocked or unrun, keep
+the PR in draft and state what remains. Do not replace evidence with a
+checklist assertion. After substantive changes or a newly discovered blocking
+defect, reassess readiness and return the PR to draft when the criteria no
+longer hold; an ordinary reviewer suggestion alone does not invalidate it.
+
+This repo starts its main CI jobs on `ready_for_review`, so green CI is not a
+prerequisite for leaving draft. Applicable author validation must still pass;
+CI pending after promotion is not a claimed pass and all required checks and
+approvals remain merge gates. If an essential scenario can only be validated
+in CI, use an authorized draft-compatible run or keep the PR in draft.
+
+This review is an author responsibility, not a requirement to invoke the full
+publishing code-review skill. A cheap PR triage verdict cannot substitute for
+it. Agents should use `gh pr create --draft` when PR creation is authorized;
+promote with `gh pr ready <pr>` only after the review passes and the task
+authorizes that transition. Do not change unrelated PRs' stages or treat
+readiness as permission to merge. See the
+[GitHub stage documentation](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/changing-the-stage-of-a-pull-request).
 
 ### Code Review
 

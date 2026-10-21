@@ -21,8 +21,9 @@ from typing_extensions import Unpack
 
 from band.adapters.nooa import NooaAdapter, NooaAdapterConfig, NooaRoomAgent
 from band.adapters.nooa.adapter import TOOLS_BLOCK
+from band.adapters.nooa.tools import TurnBinding, room_tools_class
 from band.agent import Agent as BandAgent
-from band.client.rest import AsyncRestClient
+from band.client.rest import AsyncRestClient, EventCreatedResponse
 from band.core.types import FeatureKwargs, MessageType, PlatformMessage, ToolEventKey
 from band.platform.link import BandLink
 from band.runtime.custom_tools import CustomToolDef, declares_turn_effect
@@ -31,11 +32,13 @@ from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.tools import BandTool, ToolCallOutcome, TurnEffect
 from band.testing import FakeAgentTools, events_of_type
 from band.testing.nooa import (
+    RETURN_RESULT,
     code_turn,
     result_turn,
     room_agent_class,
     room_call,
     scripted_llm,
+    tool_call_turn,
 )
 
 ROOM_ID = "room-nooa"
@@ -167,6 +170,7 @@ class Gate:
         self.entered = asyncio.Event()
         self.committed = False
         self.cancelled = False
+        self.cancellation_started = asyncio.Event()
 
     async def handler(self) -> str:
         self.entered.set()
@@ -174,6 +178,7 @@ class Gate:
             await self.opened.wait()
         except asyncio.CancelledError:
             self.cancelled = True
+            self.cancellation_started.set()
             raise
         self.committed = True
         return "done"
@@ -186,6 +191,49 @@ class Gate:
             f"{room_call(BandTool.NO_REPLY)}"
         )
         return room_agent_class(llm, namespace=carrying("gate", self))
+
+
+class CleanupWork:
+    """A tool whose child agent completes while cancellation is cleaned up."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.completed = False
+        self.cancelled = False
+        self.pending: asyncio.Task[Any] | None = None
+
+    async def handler(self) -> None:
+        child_class = room_agent_class(
+            FakeLLMClient(
+                [
+                    code_turn(
+                        "self.cleanup.entered.set()\n"
+                        "await self.cleanup.cleanup_started.wait()"
+                    ),
+                    tool_call_turn(
+                        RETURN_RESULT,
+                        {"value": None},
+                        reasoning="Finished owned cleanup.",
+                        usage=CHILD_USAGE,
+                    ),
+                ]
+            ),
+            base=Agent,
+            name="Child",
+            namespace=carrying("cleanup", self) | {"work": child_work},
+        )
+        child = asyncio.create_task(child_class().work())
+        try:
+            try:
+                await asyncio.shield(child)
+            finally:
+                self.cleanup_started.set()
+                await child
+                self.completed = True
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
 
 
 class LeftoverReply:
@@ -232,17 +280,21 @@ class LeftoverReply:
 
 
 CHILD_USAGE = {"prompt_tokens": 100, "completion_tokens": 15}
+# NOOA runs each call of an agentic method as an asyncio task named after it.
+CHILD_TASK = "Child.child_work"
 
 
-def delegating_room_agent() -> type[NooaRoomAgent]:
+def delegating_room_agent(*child_turns: LLMResponse) -> type[NooaRoomAgent]:
     """A room agent whose ``respond`` delegates to a scripted child agent.
 
-    The parent makes no model call of its own, so every token the turn spends
-    is the child's.
+    The parent makes no model call of its own, so every token the turn spends,
+    and every thought it posts, is the child's. *child_turns* script the child;
+    by default it runs one cell and returns.
     """
     child_class = room_agent_class(
         FakeLLMClient(
-            [code_turn("print('working')", usage=CHILD_USAGE), result_turn()]
+            list(child_turns)
+            or [code_turn("print('working')", usage=CHILD_USAGE), result_turn()]
         ),
         base=Agent,
         name="Child",
@@ -262,6 +314,93 @@ def delegating_room_agent() -> type[NooaRoomAgent]:
 async def child_work(self: Agent) -> None:
     """Do the delegated work."""
     ...  # noqa: PIE790 -- NOOA hands an ellipsis-bodied method to the model
+
+
+def reasoned_result_turn(reasoning: str) -> LLMResponse:
+    """A model turn that ends the agentic method, with *reasoning*."""
+    return tool_call_turn(RETURN_RESULT, {"value": None}, reasoning=reasoning)
+
+
+class HeldThought:
+    """A thought whose post waits until ``release`` is set.
+
+    ``reached`` is set once the post starts; ``cancelled`` records that the post
+    was cancelled while it waited.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.reached = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = False
+
+    async def wait(self) -> None:
+        self.reached.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+class TimelineTools(FakeAgentTools):
+    """Fake tools that record every event and tool dispatch, in the order they
+    happen, and can hold one thought in flight."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.timeline: list[str] = []
+        self._held: HeldThought | None = None
+
+    def hold_thought(self, text: str) -> HeldThought:
+        self._held = HeldThought(text)
+        return self._held
+
+    async def send_event(
+        self,
+        content: str,
+        message_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> EventCreatedResponse | None:
+        held = self._held
+        if message_type == MessageType.THOUGHT and held and held.text == content:
+            await held.wait()
+        response = await super().send_event(content, message_type, metadata)
+        if response is not None:
+            self.timeline.append(timeline_entry(message_type, content))
+        return response
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        self.timeline.append(f"dispatch {tool_name}")
+        return await super().execute_tool_call_structured(tool_name, arguments)
+
+
+def timeline_entry(message_type: str, content: str) -> str:
+    """How one event reads in a ``TimelineTools`` timeline."""
+    match message_type:
+        case MessageType.THOUGHT:
+            return f"thought {content}"
+        case MessageType.TOOL_CALL | MessageType.TOOL_RESULT:
+            return f"{message_type} {json.loads(content)[ToolEventKey.NAME]}"
+        case _:
+            return message_type
+
+
+def bare_binding(tools: FakeAgentTools) -> TurnBinding:
+    """A turn binding for a room with no tools, outside any adapter turn."""
+    return TurnBinding(room_tools_class([])(emit_tool_calls=False), tools)
+
+
+def running_task(name: str) -> asyncio.Task[Any]:
+    """The running asyncio task called *name*."""
+    return next(task for task in asyncio.all_tasks() if task.get_name() == name)
+
+
+def thoughts(tools: FakeAgentTools) -> list[str]:
+    """The text of every thought event, in order."""
+    return [event["content"] for event in events_of_type(tools, MessageType.THOUGHT)]
 
 
 def declining_turns(count: int) -> FakeLLMClient:
@@ -378,6 +517,18 @@ def tool_results(tools: FakeAgentTools) -> list[dict[str, Any]]:
     return [
         json.loads(event["content"])
         for event in events_of_type(tools, MessageType.TOOL_RESULT)
+    ]
+
+
+def tool_outcomes(tools: FakeAgentTools) -> list[tuple[str, object, bool]]:
+    """Each reported tool's name, output and error decision."""
+    return [
+        (
+            result[ToolEventKey.NAME],
+            result[ToolEventKey.OUTPUT],
+            result[ToolEventKey.IS_ERROR],
+        )
+        for result in tool_results(tools)
     ]
 
 

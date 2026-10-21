@@ -17,12 +17,19 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 
+import pytest
+
 from band.client.streaming import ControlMode
 from band.core.simple_adapter import SimpleAdapter
+from band.core.turn_lifecycle import BackendTurns
 from tests.adapters.waiting import until
 
 #: A control probe fails rather than hanging if its task never becomes ready.
 STARTUP_TIMEOUT_SECONDS = 5.0
+
+#: The turn timeout of a probe that times a turn out. Advanced by looptime;
+#: provider cancellation retains its own shorter bound.
+TURN_TIMEOUT_SECONDS = 60.0
 
 #: The controls that end a running turn.
 ENDING_CONTROLS = [ControlMode.STOP, ControlMode.INTERRUPT]
@@ -42,18 +49,22 @@ class StopCase:
 
     run: Callable[[], Awaitable[list[str]]]
     expected: list[str]
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+STOP_WAITS = frozenset({BackendTurns.settled.__code__, BackendTurns.drain.__code__})
 
 
 def waiting_on_stop(task: asyncio.Task[None]) -> bool:
-    """The task is blocked in ``BackendTurns.settled``.
+    """The task is blocked waiting for a backend stop, in
+    ``BackendTurns.settled`` or ``BackendTurns.drain``.
 
-    ``Task.get_stack`` stops at the outermost coroutine, so ``settled`` is
+    ``Task.get_stack`` stops at the outermost coroutine, so the wait is
     reached through the chain of awaited coroutines.
     """
     coro = task.get_coro()
     while coro is not None:
-        code = getattr(coro, "cr_code", None)
-        if code is not None and code.co_name == "settled":
+        if getattr(coro, "cr_code", None) in STOP_WAITS:
             return True
         coro = getattr(coro, "cr_await", None)
     return False
