@@ -14,6 +14,7 @@ from band.integrations.ompwire import (
     OmpHostToolCall,
     OmpMessage,
     OmpPromptResult,
+    OmpState,
     OmpToolResult,
     OmpUIRequest,
     OmpUIResponse,
@@ -53,6 +54,11 @@ class PromptRun:
         self.callbacks: dict[tuple[OmpCallbackKind, str], asyncio.Task[None]] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
+        self.result_owed = True
+        self.terminal_seen = False
+        self.awaiting_async = False
+        self.events_pending = 0
+        self.snapshot: tuple[int, OmpState] | None = None
 
     def fail(self, error: BaseException) -> None:
         if not self.failure.done():
@@ -74,6 +80,8 @@ class PromptRun:
             ):
                 self.last_assistant = event.message
             case OmpEventType.AGENT_END:
+                self.terminal_seen = self.terminal_seen or event.isTerminal is True
+                self.awaiting_async = event.awaitingAsyncWork is True
                 self.last_assistant = next(
                     (
                         message
@@ -82,4 +90,41 @@ class PromptRun:
                     ),
                     self.last_assistant,
                 )
+        self.events_pending += 1
         self.changed.set()
+
+    def record_snapshot(self, sequence: int, state: OmpState) -> None:
+        self.snapshot = (sequence, state)
+
+    def settled_proven(self) -> bool:
+        if self.settled_sequence > self.last_activity_sequence:
+            return True
+        if self.snapshot is None:
+            return False
+        sequence, state = self.snapshot
+        return state.isSettled and sequence >= self.last_activity_sequence
+
+    def boundary_reached(self) -> bool:
+        return self.result.done() or self.terminal_seen or self.settled_proven()
+
+    def completion_evidence_complete(self) -> bool:
+        if self.result_owed and not self.result.done():
+            return False
+        if not self.settled_proven():
+            return False
+        return self.events_pending == 0 and all(
+            task.done() for task in self.callback_tasks
+        )
+
+    def busy_proven(self) -> bool:
+        if self.awaiting_async:
+            return True
+        if self.snapshot is None or self.snapshot[0] <= self.last_activity_sequence:
+            return False
+        _, state = self.snapshot
+        return bool(
+            state.isStreaming
+            or state.hasPendingAsyncWork
+            or state.queuedMessageCount > 0
+            or state.isCompacting
+        )
