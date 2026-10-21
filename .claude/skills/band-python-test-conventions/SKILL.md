@@ -3,6 +3,7 @@ name: band-python-test-conventions
 description: Band Python SDK test conventions and coverage assessment. Use when writing or reviewing tests, assessing whether changed behavior is adequately covered, or checking that tests validate meaningful outcomes and realistic complex flows.
 paths:
   - "tests/**/*.py"
+  - "src/**/*.py"
 ---
 
 # Test Conventions

@@ -1,5 +1,9 @@
 # Adapter plan template
 
+For adapter tickets, use this specialized structure instead of
+[the general plan template](../band-plan/plan-template.md); the `band-plan`
+review, scope, and publication requirements still apply when using that workflow.
+
 Before writing any code, produce a plan (a Linear attachment per
 `band-plan/publish.md`, or a file outside the tracked docs, which run as
 tests) by copying the skeleton below and filling every

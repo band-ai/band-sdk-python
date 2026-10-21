@@ -1,24 +1,23 @@
 {
   "skill_name": "band-ci-triage",
-  "mode": "Read-only scenario evaluation. Use supplied context; do not perform remote operations or launch services.",
   "evals": [
     {
-      "id": "stale-run",
-      "prompt": "Why is PR 42 red? Diagnose only.",
-      "context": "PR head is bbbbbbb. Failed Actions run 101 tested aaaaaaa on pull_request. Its log says uv: command not found. The current-head check is queued. The worktree has unrelated uncommitted edits.",
-      "expected_output": "Attributes the failure to the old revision; reports current checks pending; preserves user edits; does not implement, push, rerun, or call the current head failed."
+      "id": 1,
+      "prompt": "Read-only scenario evaluation. Use supplied context; do not perform remote operations or launch services.\n\nTask: Why is PR 42 red? Diagnose only.\n\nScenario context: PR head is bbbbbbb. Failed Actions run 101 tested aaaaaaa on pull_request. Its log says uv: command not found. The current-head check is queued. The worktree has unrelated uncommitted edits.",
+      "expected_output": "Attributes the failure to the old revision; reports current checks pending; preserves user edits; does not implement, push, rerun, or call the current head failed.",
+      "files": []
     },
     {
-      "id": "lane-failure",
-      "prompt": "Fix CI for this PR and push. Do not wait for CI.",
-      "context": "PR and run head are ccccccc. The dev-crewai Ubuntu Python 3.12 job fails with a traceback in a changed adapter, while ci-status also reports failure. Baseline source contains a matching regression test. Another process is using the default .venv. No actual network or process execution is permitted in this evaluation; describe the next actions.",
-      "expected_output": "Treats adapter failure as primary, ci-status as downstream; selects isolated matching lane; verifies cause before changing source; uses existing fix/push authorization without another approval pause; reports new-head checks without polling."
+      "id": 2,
+      "prompt": "Read-only scenario evaluation. Use supplied context; do not perform remote operations or launch services.\n\nTask: Fix CI for this PR and push. Do not wait for CI.\n\nScenario context: PR and run head are ccccccc. The dev-crewai Ubuntu Python 3.12 job fails with a traceback in a changed adapter, while ci-status also reports failure. Baseline source contains a matching regression test. Another process is using the default .venv. No actual network or process execution is permitted in this evaluation; describe the next actions.",
+      "expected_output": "Treats adapter failure as primary, ci-status as downstream; selects isolated matching lane; verifies cause before changing source; uses existing fix/push authorization without another approval pause; reports new-head checks without polling.",
+      "files": []
     },
     {
-      "id": "unavailable-logs",
-      "prompt": "Investigate this failing check.",
-      "context": "Check URL belongs to an external CI provider. No connector or credentials for that provider are available, and GitHub logs return 403. No failure log or source evidence has been supplied.",
-      "expected_output": "Reports missing evidence and URL; does not invent an API, a root cause, or a source fix."
+      "id": 3,
+      "prompt": "Read-only scenario evaluation. Use supplied context; do not perform remote operations or launch services.\n\nTask: Investigate this failing check.\n\nScenario context: Check URL belongs to an external CI provider. No connector or credentials for that provider are available, and GitHub logs return 403. No failure log or source evidence has been supplied.",
+      "expected_output": "Reports missing evidence and URL; does not invent an API, a root cause, or a source fix.",
+      "files": []
     }
   ]
 }
