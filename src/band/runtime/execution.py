@@ -19,6 +19,7 @@ import contextlib
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from functools import partial
@@ -30,6 +31,7 @@ from typing import (
     runtime_checkable,
 )
 
+from band_rest.types.agent_activity_detail import AgentActivityDetail
 from band_sdk_core import (
     AgentFailure,
     ClaimRegistry,
@@ -74,6 +76,7 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
+from band.runtime.activity import ActivityObserver
 from band.runtime.callbacks import ParticipantAddedCallback, ParticipantRemovedCallback
 from band.runtime.context import ConversationContext
 from band.runtime.context_serialization import context_item_to_dict
@@ -282,6 +285,18 @@ class Execution(Protocol):
 ExecutionHandler = Callable[["ExecutionContext", PlatformEvent], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class ScopeActivityObserver:
+    context: ExecutionContext
+    scope: TurnScope
+
+    async def update(self, activity: AgentActivityDetail) -> None:
+        await self.context.observe_activity(self.scope, activity=activity)
+
+    async def set_manual_wait(self, waiting: bool) -> None:
+        await self.context.observe_activity(self.scope, waiting=waiting)
+
+
 class ExecutionContext:
     """
     Default execution: context accumulation model.
@@ -350,7 +365,7 @@ class ExecutionContext:
         self._on_participant_removed = on_participant_removed
         self.hub_room_id = hub_room_id
 
-        # Per-room boolean working-state reporter. Disabled for the contact-hub
+        # Per-room working-state reporter. Disabled for the contact-hub
         # room: it's internal housekeeping, not a peer-facing conversation, so no
         # counterpart watches a "Reasoning…" indicator there.
         self._working_reporter = WorkingStateReporter(
@@ -431,11 +446,6 @@ class ExecutionContext:
         self._stopped: bool = False
         # The first stop's graceful result; a retry only settles retained work.
         self._stop_graceful = True
-
-        # Optional seam for clearing user-visible activity state ("reasoning…")
-        # when a cycle is interrupted/stopped. Filled by the activity-signal
-        # work; a no-op (None) here.
-        self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
 
     @property
     def thread_id(self) -> str:
@@ -869,17 +879,6 @@ class ExecutionContext:
             raise CleanupIncompleteError(
                 f"ExecutionContext {self.room_id}: {unfinished} cancelled "
                 "task(s) still running"
-            )
-
-    async def _clear_activity(self) -> None:
-        """Invoke the optional activity-clear seam after an aborted cycle."""
-        if self._on_activity_clear is None:
-            return
-        try:
-            await self._on_activity_clear()
-        except Exception:
-            logger.exception(
-                "ExecutionContext %s: activity-clear hook failed", self.room_id
             )
 
     # --- Participant management ---
@@ -1874,10 +1873,11 @@ class ExecutionContext:
                 await self._on_execute(self, event)
 
     async def _report_working_state(self, working: bool) -> bool:
-        """Report the room's boolean working state (wired into the reporter)."""
+        """Report working state and visible activity (wired into the reporter)."""
         return await self.link.report_activity(
             self.room_id,
             working,
+            activity=self._visible_activity,
             timeout_seconds=self.config.working_request_timeout_seconds,
             on_stopped=partial(
                 self._observe_activity_stop,
@@ -1943,6 +1943,31 @@ class ExecutionContext:
             self._activity_stop_scope = None
         self._activity_owner = scope
         await self._working_reporter.start()
+
+    def activity_observer(self, scope: TurnScope | None) -> ActivityObserver | None:
+        return ScopeActivityObserver(self, scope) if scope is not None else None
+
+    @property
+    def _visible_activity(self) -> AgentActivityDetail | None:
+        """The owner's detail, or none for an aborted owner so its stale work is
+        never sent (the platform shows a report without detail as reasoning)."""
+        owner = self._activity_owner
+        if owner is None or owner.aborted:
+            return None
+        return owner.activity.detail
+
+    async def observe_activity(
+        self,
+        scope: TurnScope,
+        *,
+        activity: AgentActivityDetail | None = None,
+        waiting: bool | None = None,
+    ) -> None:
+        """Record a turn's activity; never starts reporting or waits on it."""
+        before = self._visible_activity
+        scope.activity.apply(activity=activity, waiting=waiting)
+        if self._visible_activity != before:
+            self._working_reporter.refresh()
 
     def register_turn_task(self, scope: TurnScope, owner: TurnTask) -> None:
         """Bind completion to the same owner that delivers worker cancellation."""
@@ -2158,7 +2183,6 @@ class ExecutionContext:
         # poisoned into permanently_failed before it's ever actually attempted.
         if msg_id:
             self._retry_tracker.discard_attempt(msg_id)
-        await self._clear_activity()
         if kind is ControlMode.INTERRUPT and msg_id:
             # Consume the message so the idle /next resync does not re-return it
             # (excludes-only-processed) and re-fire the cycle the user just

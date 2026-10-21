@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from band.client.streaming import ControlMode
 from band.core.turn_lifecycle import TurnTask, terminal_deadline
+from band.runtime.activity import TurnActivity
 
 
 @dataclass(eq=False)
@@ -28,6 +29,7 @@ class TurnScope:
     shutdown: bool = False
     terminated: asyncio.Event = field(default_factory=asyncio.Event)
     workers: set[TurnTask] = field(default_factory=set)
+    activity: TurnActivity = field(default_factory=TurnActivity)
 
     @property
     def stop_observed(self) -> bool:

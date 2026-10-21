@@ -58,6 +58,7 @@ from band.core.turn_lifecycle import TurnTask
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
 from band.platform.posting import post_event, post_message
+from band.runtime.activity import ActivityObserver
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.cycle import TurnScope
@@ -344,6 +345,7 @@ class AgentTools(AgentToolsProtocol):
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
         self._scope: TurnScope | None = None
+        self._activity_observer: ActivityObserver | None = None
         self.turn = Turn()
 
     @property
@@ -384,6 +386,7 @@ class AgentTools(AgentToolsProtocol):
         )
         tools._ctx = ctx
         tools._scope = ctx.current_scope if bind_scope else None
+        tools._activity_observer = ctx.activity_observer(tools._scope)
         tools.turn = Turn(posts_missing_reply=ctx.config.report_turn_failures_to_room)
         return tools
 

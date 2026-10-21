@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,6 +10,7 @@ from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
+from band.runtime.tools.agent import AgentTools
 from tests.runtime.activityownership.kit import ActivityPlatform, IdleReportGate
 from tests.runtime.helpers import (
     AGENT_ID,
@@ -19,8 +20,12 @@ from tests.runtime.helpers import (
 
 
 @pytest.fixture
-async def activity_platform() -> AsyncIterator[ActivityPlatform]:
-    yield ActivityPlatform()
+def activity_platform() -> Iterator[ActivityPlatform]:
+    platform = ActivityPlatform()
+    yield platform
+    assert platform.late_changes == [], (
+        f"visible changes waited for a keep-alive (body, seconds): {platform.late_changes}"
+    )
 
 
 @pytest.fixture
@@ -37,6 +42,7 @@ async def execution(
 
         def create(
             handler: Callable[[ExecutionContext, PlatformEvent], Awaitable[None]],
+            hub_room_id: str | None = None,
             *,
             on_message_control: Callable[
                 [ExecutionContext, PlatformEvent], Awaitable[bool]
@@ -54,6 +60,7 @@ async def execution(
                 link,
                 handler,
                 agent_id=AGENT_ID,
+                hub_room_id=hub_room_id,
                 on_platform_stop=runtime._on_platform_stop,
                 on_message_control=on_message_control,
                 config=SessionConfig(enable_context_hydration=False, **settings),
@@ -63,4 +70,12 @@ async def execution(
 
         yield create
         for ctx in contexts:
+            idle_report_gate.peer.activity_release.set()
             await ctx.stop()
+
+
+@pytest.fixture
+async def bare_tools(activity_platform: ActivityPlatform) -> AsyncIterator[AgentTools]:
+    """Real tools built outside an execution, as adapters' unit tests build them."""
+    async with rest_client_over(activity_platform.respond) as rest:
+        yield AgentTools(ROOM_ID, rest)

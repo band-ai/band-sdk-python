@@ -426,3 +426,20 @@ once. It does not rewrite the original delivery's settled acknowledgement.
 Explicit interruption invalidates its activity; leave and shutdown clear the
 indicator while adapter residency retains responsibility for released workers.
 The authoritative idle report finishes before a replacement reports working.
+
+`SessionConfig.enable_working_state` controls both the indicator and activity
+detail, independently of chat narration and tool capabilities. Each turn keeps
+its own detail, starting at reasoning; the room shows the owner's detail. An
+aborted owner's stale detail is never sent: its reports while it unwinds carry
+no detail, which the platform shows as reasoning. Reporting what a turn is doing
+never starts reporting, changes ownership, or waits on the network: a visible
+change wakes the reporter's keep-alive, which sends the latest detail, so
+changes made while a report is in flight coalesce. The duration cap stops both kinds of refresh
+without cancelling provider work; actual completion still clears.
+
+Detail compatibility is learned from the `X-API-Version` header the platform
+puts on every activity response. Reports stay boolean until a response in the
+process advertises agent API 1.25.0 or later; a missing or older version keeps
+boolean reporting. A detail-bearing HTTP 422 permanently disables detail across
+all links in the process and retries that report once without detail, within
+its original deadline.

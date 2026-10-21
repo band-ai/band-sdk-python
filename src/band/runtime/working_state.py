@@ -1,4 +1,4 @@
-"""Boolean working-state keep-alive reporter.
+"""Working-state keep-alive reporter.
 
 Owns the per-room "is the agent working" signal for a single reasoning cycle:
 sends ``working: true`` when a cycle starts, refreshes it on a keep-alive
@@ -14,12 +14,16 @@ into the caller's reasoning loop.
 Contract: ``report`` MUST be time-bounded. The reporter awaits it (including the
 authoritative false-send during teardown), so an unbounded callback could wedge
 cycle teardown and cancellation propagation. ``BandLink.report_activity`` applies
-a per-POST timeout to satisfy this.
+one deadline per report, covering the POST and its compatibility resend.
 
-Cadence accuracy: the keep-alive sleeps ``keep_alive_seconds`` and *then* reports,
-so the effective interval between successful refreshes is
+The keep-alive task is the only sender of ``working: true`` after the first.
+``refresh()`` wakes it to report a changed activity now, so a caller never waits
+on the network and changes made while a report is in flight coalesce.
+
+Cadence accuracy: the keep-alive waits ``keep_alive_seconds`` (or a wake) and
+*then* reports, so the effective interval between successful refreshes is
 ``keep_alive_seconds + report-latency``. The platform-TTL headroom is preserved by
-the ``cadence < TTL/2`` guard on ``SessionConfig`` (with the per-POST timeout kept
+the ``cadence < TTL/2`` guard on ``SessionConfig`` (with the report deadline kept
 below the cadence), so even one missed/slow ping stays within the TTL window.
 """
 
@@ -28,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +45,7 @@ def _retrieve_task_error(task: asyncio.Task[None]) -> None:
 
 
 class WorkingStateReporter:
-    """Manages the boolean working signal for one execution (agent + room)."""
+    """Manages the working signal and its activity for one execution (agent + room)."""
 
     def __init__(
         self,
@@ -63,6 +68,7 @@ class WorkingStateReporter:
         self._started_at: float | None = None
         self._task: asyncio.Task[None] | None = None
         self._false_send: asyncio.Future[None] | None = None
+        self._wake = asyncio.Event()
         # Serializes every report() call (true / keep-alive / false) so they can
         # never overlap on the wire — guarantees the platform sees them in order
         # (boolean payload carries no sequence number to disambiguate).
@@ -76,11 +82,18 @@ class WorkingStateReporter:
             return
         await self._finish_false_send()
         self._active = True
+        self._wake.clear()
         self._started_at = asyncio.get_running_loop().time()
         await self._safe_report(True)
-        self._task = asyncio.create_task(
-            self._keep_alive(), name="working-state-keepalive"
-        )
+        # A false armed during the first report ends the cycle before it ran.
+        if self._active:
+            self._task = asyncio.create_task(
+                self._keep_alive(), name="working-state-keepalive"
+            )
+
+    def refresh(self) -> None:
+        """Report the current activity now instead of at the next keep-alive."""
+        self._wake.set()
 
     def defer_false_report(self) -> None:
         """Start ``working: false`` and return without waiting for it.
@@ -142,7 +155,7 @@ class WorkingStateReporter:
             # platform clears the indicator immediately rather than via TTL.
             # Accepted gap: a *second* cancel landing during this await can abandon
             # it, leaving `send` detached. `send` is time-bounded (the report
-            # callback has a per-POST deadline) so it still completes on the loop;
+            # callback has a per-report deadline) so it still completes on the loop;
             # and the platform TTL backstops the clear regardless. Not handled
             # explicitly — the double-cancel teardown window is vanishingly rare.
             await send
@@ -152,9 +165,12 @@ class WorkingStateReporter:
                 self._false_send = None
 
     async def _keep_alive(self) -> None:
-        """Re-send ``working: true`` on cadence until stopped or capped."""
+        """Re-send ``working: true`` on cadence or wake until stopped or capped."""
         while True:
-            await asyncio.sleep(self._keep_alive_seconds)
+            with suppress(TimeoutError):
+                async with asyncio.timeout(self._keep_alive_seconds):
+                    await self._wake.wait()
+            self._wake.clear()
             if not self._active:
                 return
             if self._cap_reached():

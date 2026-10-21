@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from band.runtime.working_state import WorkingStateReporter
-from tests.runtime.workingreporter.kit import Recorder
+from tests.runtime.workingreporter.kit import DetailRecorder, Recorder
 
 
 class TestStartStop:
@@ -50,3 +50,18 @@ class TestStartStop:
         await reporter.stop()
 
         assert rec.calls == []
+
+    @pytest.mark.looptime
+    async def test_stop_during_the_first_report_leaves_no_keep_alive(self) -> None:
+        recorder = DetailRecorder()
+        reporter = WorkingStateReporter(recorder, keep_alive_seconds=3.0)
+        recorder.hold()
+        starting = asyncio.create_task(reporter.start())
+        await recorder.entered.wait()
+        stopping = asyncio.create_task(reporter.stop())
+        recorder.release()
+        await asyncio.gather(starting, stopping)
+        await reporter.start()
+        await asyncio.sleep(3.1)
+        await reporter.stop()
+        assert recorder.reports == ["reasoning", None, "reasoning", "reasoning", None]
