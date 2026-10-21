@@ -291,7 +291,7 @@ def normalize_omp_mcp_device_call(
             return name, args
         try:
             parsed = json.loads(content)
-        except json.JSONDecodeError:
+        except ValueError:
             return canonical, args
         if not isinstance(parsed, dict):
             return canonical, args
