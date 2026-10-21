@@ -1948,7 +1948,8 @@ class ExecutionContext:
 
     @property
     def _visible_activity(self) -> AgentActivityDetail | None:
-        """The owner's detail; an aborted owner's stale work is never shown."""
+        """The owner's detail, or none for an aborted owner so its stale work is
+        never sent (the platform shows a report without detail as reasoning)."""
         owner = self._activity_owner
         if owner is None or owner.aborted:
             return None
