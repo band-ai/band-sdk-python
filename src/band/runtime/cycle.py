@@ -19,6 +19,9 @@ class TurnScope:
     observer_task: asyncio.Task[None] | None = None
     handler: TurnTask | None = None
     admitted: bool = False
+    # Only a message handler's turn shows the room's working state; housekeeping
+    # and control-probe turns, and the workers they bind, never report.
+    reports_activity: bool = False
     settled: bool = False
     kind: ControlMode | None = None
     deadline: float | None = None
