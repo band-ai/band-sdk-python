@@ -852,6 +852,7 @@ dev-crewai = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pytest-httpx" },
     { name = "pytest-mock" },
     { name = "pytest-randomly" },
     { name = "pytest-rerunfailures" },
@@ -874,6 +875,7 @@ dev-parlant = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pytest-httpx" },
     { name = "pytest-mock" },
     { name = "pytest-randomly" },
     { name = "pytest-rerunfailures" },
@@ -905,6 +907,7 @@ dev-strands-nooa = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pytest-httpx" },
     { name = "pytest-markdown-docs" },
     { name = "pytest-mock" },
     { name = "pytest-randomly" },
@@ -1097,7 +1100,7 @@ requires-dist = [
     { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.0" },
     { name = "parlant", marker = "extra == 'dev-parlant'", specifier = ">=3.3.2" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2" },
-    { name = "phoenix-channels-python-client", specifier = ">=0.3.1,<0.4" },
+    { name = "phoenix-channels-python-client", specifier = ">=0.4.1,<0.5" },
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -1126,6 +1129,9 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev-parlant'", specifier = ">=4.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev-strands-nooa'", specifier = ">=4.0.0" },
     { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.35.0" },
+    { name = "pytest-httpx", marker = "extra == 'dev-crewai'", specifier = ">=0.35.0" },
+    { name = "pytest-httpx", marker = "extra == 'dev-parlant'", specifier = ">=0.35.0" },
+    { name = "pytest-httpx", marker = "extra == 'dev-strands-nooa'", specifier = ">=0.35.0" },
     { name = "pytest-markdown-docs", marker = "extra == 'dev'", specifier = ">=0.9.2" },
     { name = "pytest-markdown-docs", marker = "extra == 'dev-strands-nooa'", specifier = ">=0.9.2" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },
@@ -6544,15 +6550,15 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.3.1"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/96/5b/bc55fb1ec0da1aec737844f40d75b70cc7f625b530caf6fd0248a6006f93/phoenix_channels_python_client-0.3.1.tar.gz", hash = "sha256:2b34a8a32b70bd75fdd5bb2f0b586bcb325c5095714b12c917cb7f42bf03e0d1", size = 63121, upload-time = "2026-10-19T11:07:34.327Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/b6/3dae18c6d51cee32a461ddcf060983468c6d502fc6246dd8593ce58471ad/phoenix_channels_python_client-0.4.1.tar.gz", hash = "sha256:bf7acdaec102584826d8e1b7ae01415eca7fc3ee14d5e7db0d389b1c955936aa", size = 70990, upload-time = "2026-10-21T07:56:59.007Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/e0/be3e15e23cd0a92da1e7e96ab72a064ae26b5ddde2f2341c056ce1b843c1/phoenix_channels_python_client-0.3.1-py3-none-any.whl", hash = "sha256:0f2a73a932d95ee6f0149b6d7c7e515a0065c1e4a0576c1aca00ac680b2f6b6b", size = 37880, upload-time = "2026-10-19T11:07:32.883Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/dc/4db8b9b15ac6110e8eb0df9737979fff48bb9e4996ed7504f991198dbbc0/phoenix_channels_python_client-0.4.1-py3-none-any.whl", hash = "sha256:173858e474e4c9e3a5b263c4e60685902d1620d1705604b306f38f16b1efda3c", size = 39600, upload-time = "2026-10-21T07:56:57.568Z" },
 ]
 
 [[package]]
@@ -7428,8 +7434,8 @@ name = "pytest-httpx"
 version = "0.36.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "httpx" },
-    { name = "pytest" },
+    { name = "httpx", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev' or extra == 'extra-8-band-sdk-dev-crewai' or extra == 'extra-8-band-sdk-dev-parlant' or extra == 'extra-8-band-sdk-dev-strands-nooa' or extra == 'extra-8-band-sdk-nooa' or extra == 'extra-8-band-sdk-parlant' or extra != 'extra-8-band-sdk-pydantic-ai' or (extra == 'extra-8-band-sdk-pydantic-ai' and extra == 'extra-8-band-sdk-strands')" },
+    { name = "pytest", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev' or extra == 'extra-8-band-sdk-dev-crewai' or extra == 'extra-8-band-sdk-dev-parlant' or extra == 'extra-8-band-sdk-dev-strands-nooa' or extra == 'extra-8-band-sdk-nooa' or extra == 'extra-8-band-sdk-parlant' or extra != 'extra-8-band-sdk-pydantic-ai' or (extra == 'extra-8-band-sdk-pydantic-ai' and extra == 'extra-8-band-sdk-strands')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4e/42/f53c58570e80d503ade9dd42ce57f2915d14bcbe25f6308138143950d1d6/pytest_httpx-0.36.2.tar.gz", hash = "sha256:05a56527484f7f4e8c856419ea379b8dc359c36801c4992fdb330f294c690356", size = 57683, upload-time = "2026-04-09T13:57:19.837Z" }
 wheels = [
