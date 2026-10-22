@@ -91,11 +91,12 @@ class ContractAuthorClient(ContractTransport):
             body=completion.encoded,
             limit=MAX_AUTHOR_BYTES,
         )
-        if (
-            result.get("id") != completion.job
-            or result.get("status")
-            not in ("ready", "needs_input", "queued", "failed", "held")
-            or ("attempt" in result and result["attempt"] != completion.attempt)
+        if result.get("id") != completion.job or result.get("status") not in (
+            "ready",
+            "needs_input",
+            "queued",
+            "failed",
+            "held",
         ):
             raise ContractProtocolError(
                 "Author response did not acknowledge the submitted completion"
