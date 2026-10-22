@@ -674,7 +674,11 @@ class OmpRpcClient:
                     )
                     turn.record_snapshot(
                         received.sequence,
-                        OmpState.model_validate(self._response_data(received.frame)),
+                        self._parse_response(
+                            received.frame,
+                            OmpState,
+                            "Invalid OMP completion protocol data",
+                        ),
                     )
                     continue
                 now = asyncio.get_running_loop().time()
