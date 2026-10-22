@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from typing import Any
 
 import pytest
@@ -22,6 +23,12 @@ from band.runtime.messages import PlatformMessage
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.runtime.helpers import AGENT_ID, ROOM_ID
+
+
+class ShutdownStep(StrEnum):
+    STOP = "stop"
+    JOIN_STOP = "concurrent stop"
+    SETTLE = "settle accepted work"
 
 
 async def assert_fresh_cycle_still_propagates_shutdown_cancel(

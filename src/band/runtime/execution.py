@@ -633,6 +633,8 @@ class ExecutionContext:
         return await asyncio.shield(self._shutdown_task)
 
     async def _stop(self, timeout: float | None) -> bool:
+        # Only work retained before this attempt may receive another cancellation.
+        retry_owners = tuple(self._detached_cycle_tasks.values())
         if self._process_loop_task is not None:
             self._stop_graceful = True
             if timeout is not None and self.is_processing:
@@ -647,7 +649,7 @@ class ExecutionContext:
             self._process_loop_task = None
         self._activity_owner = None
         await self._join_activity_completion()
-        await self._stop_retained_tasks(terminal_deadline())
+        await self._stop_retained_tasks(retry_owners)
         await self._working_reporter.stop()
         return self._stop_graceful
 
@@ -869,9 +871,10 @@ class ExecutionContext:
             case _:
                 return TurnOutcome.PAUSED
 
-    async def _stop_retained_tasks(self, deadline: float) -> None:
+    async def _stop_retained_tasks(self, retry_owners: tuple[TurnTask, ...]) -> None:
         owners = tuple(self._detached_cycle_tasks.values())
-        for owner in owners:
+        deadline = terminal_deadline()
+        for owner in retry_owners:
             owner.retry(deadline=deadline)
         for owner in owners:
             await owner.drain()

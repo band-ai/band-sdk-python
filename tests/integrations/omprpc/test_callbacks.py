@@ -8,6 +8,7 @@ import pytest
 
 from band.integrations.ompwire import (
     OmpContent,
+    OmpFrameType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -66,7 +67,7 @@ class TestHostToolAndUICallbacks:
         frames = await checkpoint_frames(client)
         result = next(frame for frame in frames if frame.get("id") == "host-2")
         assert result == {
-            "type": "host_tool_result",
+            "type": OmpFrameType.HOST_TOOL_RESULT,
             "id": "host-2",
             "result": {
                 "content": [
@@ -79,11 +80,35 @@ class TestHostToolAndUICallbacks:
         }
         ui_response = next(frame for frame in frames if frame.get("id") == "approval-1")
         assert ui_response == {
-            "type": "extension_ui_response",
+            "type": OmpFrameType.UI_RESPONSE,
             "id": "approval-1",
             "value": "Approve",
         }
         await second_prompt(client)
+
+    async def test_confirmed_ui_reply_reaches_the_peer(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory("callbacks")
+        observer = Observer()
+
+        async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:
+            return OmpUIResponse(confirmed=True)
+
+        async with asyncio.timeout(5):
+            await client.prompt(
+                "first",
+                on_event=observer.on_event,
+                on_tool=observer.on_tool,
+                on_ui=on_ui,
+            )
+        frames = await checkpoint_frames(client)
+        ui_response = next(frame for frame in frames if frame.get("id") == "approval-1")
+        assert ui_response == {
+            "type": OmpFrameType.UI_RESPONSE,
+            "id": "approval-1",
+            "confirmed": True,
+        }
 
     @pytest.mark.parametrize("kind", ["host", "ui"])
     async def test_native_cancel_targets_the_callback_and_keeps_the_next_turn_usable(

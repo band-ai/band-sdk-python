@@ -7,7 +7,12 @@ import asyncio
 import pytest
 from pydantic import JsonValue
 
-from band.integrations.ompwire import OmpUIRequest, OmpUIResponse
+from band.integrations.ompwire import (
+    OmpEventType,
+    OmpFrameType,
+    OmpUIRequest,
+    OmpUIResponse,
+)
 from tests.integrations.omprpc.kit import ClientFactory, Observer
 
 
@@ -45,11 +50,11 @@ class TestStructuredUIAnswers:
         )
         try:
             async with asyncio.timeout(8):
-                await observer.wait_for("agent_start")
+                await observer.wait_for(OmpEventType.AGENT_START)
                 receipt = await client.request("ask-ui")
                 assert receipt == {
                     "answer": {
-                        "type": "extension_ui_response",
+                        "type": OmpFrameType.UI_RESPONSE,
                         "id": "structured-question",
                         "answers": [answer],
                     }

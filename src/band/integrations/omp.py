@@ -24,6 +24,12 @@ OMP_ACP_SUBCOMMAND = "acp"
 # The acp subcommand's flag for the room workspace, passed as ``--cwd=<path>``.
 OMP_CWD_FLAG = "--cwd"
 
+
+def omp_cwd_argument(workspace: str) -> str:
+    """Format OMP's workspace flag without changing launch cwd."""
+    return f"{OMP_CWD_FLAG}={workspace}"
+
+
 DEFAULT_OMP_ACP_COMMAND: tuple[str, ...] = (
     "omp",
     OMP_ACP_SUBCOMMAND,
@@ -167,7 +173,7 @@ def omp_command_in_workspace(command: Sequence[str], workspace: str) -> list[str
             f"got {list(command)!r}"
         )
     split = list(command).index(OMP_ACP_SUBCOMMAND) + 1
-    return [*command[:split], f"{OMP_CWD_FLAG}={workspace}", *command[split:]]
+    return [*command[:split], omp_cwd_argument(workspace), *command[split:]]
 
 
 def omp_elicitation_call_id(session_id: str) -> str:

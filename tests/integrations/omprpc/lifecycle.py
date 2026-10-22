@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hypothesis import strategies as st
 
 from band.integrations.omprpc import OmpProcessError
+from band.integrations.ompwire import OmpEventType
 from tests.integrations.omprpc.kit import (
     GatedProcess,
     Observer,
@@ -101,7 +102,7 @@ class RpcLifecycle:
         self.observer = Observer()
         self.active = prompt_task(self.client, self.observer)
         self.tasks.append(self.active)
-        await self.observer.wait_for("agent_end")
+        await self.observer.wait_for(OmpEventType.AGENT_END)
         assert not self.active.done()
         assert (await self.client.request("get_state"))["isSettled"] is False
 

@@ -13,6 +13,7 @@ import functools
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import uuid
@@ -681,6 +682,44 @@ async def await_returncode(process: asyncio.subprocess.Process, timeout: float) 
             return False
         await asyncio.sleep(min(_JOB_POLL_S, remaining))
     return True
+
+
+def session_pid_reused(process: asyncio.subprocess.Process) -> bool:
+    """True when ``process.pid`` now names some other live process.
+
+    After the leader is reaped, its session id stays reserved only while a
+    member of that session still exists. Once the id is free it can be given
+    to a new session, and ``killpg`` would signal that session.
+    """
+    if process.returncode is None:
+        return False
+    try:
+        os.kill(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        logger.warning(
+            "Process %s pid is not signalable; leaving its session",
+            process.pid,
+        )
+        return True
+    logger.warning(
+        "Process %s pid was reused; not signaling that session",
+        process.pid,
+    )
+    return True
+
+
+async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Force-stop the owned Unix process group, including after root exit.
+
+    On Unix the launched child leads a session, so ``killpg`` still reaches
+    that group after the leader has exited.
+    """
+    if os.name == "nt" or session_pid_reused(process):
+        return
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
 
 
 async def close_stdin(process: asyncio.subprocess.Process) -> None:

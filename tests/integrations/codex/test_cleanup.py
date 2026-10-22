@@ -20,7 +20,6 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
-from band.integrations.codex.stdio_client import kill_process_tree
 from band.integrations.codex.winspawn import (
     HELPER_PATH,
     Job,
@@ -29,6 +28,7 @@ from band.integrations.codex.winspawn import (
     _read_status,
     _start_and_wait,
     command_in_job,
+    kill_process_tree,
 )
 from tests.integrations.codex.cleanup import cleanup_snapshot
 from tests.paths import ROOM_PEER

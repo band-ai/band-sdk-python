@@ -7,14 +7,26 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 
 from band.core.exceptions import CleanupIncompleteError
-from band.core.turn_lifecycle import TurnTask, bind_turn_task
+from band.core.turn_lifecycle import (
+    CYCLE_CANCEL_GRACE_SECONDS,
+    TurnTask,
+    bind_turn_task,
+)
 from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
+from tests.adaptercleanup import CleanupPlatform
+from tests.adapters.waiting import spin
 from tests.conftest import BlockingHandler, make_message_event
-from tests.runtime.helpers import resist_cancellation_until
+from tests.runtime.executioninterrupt.kit import ShutdownStep, auxiliary_context
+from tests.runtime.helpers import resist_cancellation_until, rest_client_over
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
+from tests.toolkit.timecontrol import controlled_clock
 
 
 class TestRoomShutdown:
@@ -83,33 +95,43 @@ class TestRoomShutdown:
         await ctx.stop()
         assert cancelled.is_set()
 
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
     async def test_retried_stop_cancels_an_observer_that_swallowed_the_first(
-        self, mock_link, monkeypatch
+        self, mock_link
     ) -> None:
-        monkeypatch.setattr("band.core.turn_lifecycle.CYCLE_CANCEL_GRACE_SECONDS", 0.01)
-        entered, cancels = asyncio.Event(), 0
+        entered, cancelled = asyncio.Event(), asyncio.Event()
 
         async def observer(ctx: ExecutionContext, scope: TurnScope) -> None:
-            nonlocal cancels
+            task = asyncio.current_task()
+            assert task is not None
             entered.set()
             while True:
                 try:
-                    await asyncio.Future()
+                    await asyncio.Future[None]()
                 except asyncio.CancelledError:
-                    cancels += 1
-                    if cancels == 2:
+                    cancelled.set()
+                    if task.cancelling() == 2:
                         raise
 
-        ctx = ExecutionContext(
-            "room-123", mock_link, AsyncMock(), on_platform_stop=observer
-        )
-        await ctx._begin_scope()
-        ctx.observe_platform_stop(ctx.current_scope)
-        await entered.wait()
-        with pytest.raises(CleanupIncompleteError):
-            await ctx.stop()
-        await ctx.stop()
-        assert cancels == 2
+        async with controlled_clock() as clock:
+            ctx = ExecutionContext(
+                "room-123", mock_link, AsyncMock(), on_platform_stop=observer
+            )
+            scope = await ctx._begin_scope()
+            assert scope is not None
+            ctx.observe_platform_stop(scope)
+            assert scope.observer_task is not None
+            async with background(scope.observer_task) as observing:
+                await entered.wait()
+                async with background(ctx.stop()) as stopping:
+                    await cancelled.wait()
+                    await clock.elapse(CYCLE_CANCEL_GRACE_SECONDS)
+                    with pytest.raises(CleanupIncompleteError):
+                        await stopping
+                assert observing.cancelling() == 1
+                await ctx.stop()
+                assert observing.cancelled()
+                assert observing.cancelling() == 2
 
     async def test_interrupted_drain_still_keeps_the_stubborn_task_for_stop(
         self, mock_link
@@ -213,3 +235,76 @@ class TestRoomShutdown:
         await started.wait()
         assert await ctx.stop() is True
         assert false_sent.is_set()
+
+    @pytest.mark.looptime(resolution=binary_clock_resolution())
+    @settings(max_examples=20, deadline=None)
+    @given(steps=st.lists(st.sampled_from(ShutdownStep), min_size=1, max_size=6))
+    @example(steps=[ShutdownStep.STOP, ShutdownStep.STOP, ShutdownStep.SETTLE])
+    @example(steps=[ShutdownStep.JOIN_STOP, ShutdownStep.SETTLE, ShutdownStep.STOP])
+    async def test_generated_shutdown_steps_preserve_cancellation_ownership(
+        self, steps: list[ShutdownStep]
+    ) -> None:
+        started, finalizing, finish, finished = (asyncio.Event() for _ in range(4))
+
+        async def handler(ctx: ExecutionContext, event: Any) -> None:
+            started.set()
+            try:
+                await finish.wait()
+            finally:
+                finalizing.set()
+                while not finish.is_set():
+                    try:
+                        await finish.wait()
+                    except asyncio.CancelledError:
+                        pass
+                finished.set()
+
+        platform = CleanupPlatform()
+        platform.add_message("work")
+        async with (
+            controlled_clock() as clock,
+            rest_client_over(platform.answer) as rest,
+        ):
+            ctx = auxiliary_context(rest, handler)
+            await ctx.start()
+            await ctx.on_event(make_message_event(msg_id="work"))
+            await started.wait()
+            scope = ctx.current_scope
+            assert scope is not None and scope.handler is not None
+            work = scope.handler.task
+            cancellations = 0
+            settled = False
+            stops: list[asyncio.Task[bool]] = []
+            try:
+                for step in steps:
+                    if step is ShutdownStep.SETTLE:
+                        finish.set()
+                        await asyncio.gather(work, return_exceptions=True)
+                        settled = True
+                        assert finished.is_set()
+                        continue
+                    attempt = [asyncio.create_task(ctx.stop())]
+                    if step is ShutdownStep.JOIN_STOP:
+                        attempt.append(asyncio.create_task(ctx.stop()))
+                    stops.extend(attempt)
+                    if settled:
+                        assert all(await asyncio.gather(*attempt))
+                        continue
+                    if cancellations == 0:
+                        await finalizing.wait()
+                    else:
+                        await spin()
+                    cancellations += 1
+                    await clock.elapse(CYCLE_CANCEL_GRACE_SECONDS)
+                    assert work.cancelling() == cancellations
+                    for stopping in attempt:
+                        with pytest.raises(CleanupIncompleteError):
+                            await stopping
+                    assert not work.done()
+                    assert not finished.is_set()
+                    assert not ctx.is_running
+            finally:
+                finish.set()
+                await asyncio.gather(work, *stops, return_exceptions=True)
+                await ctx.stop()
+            assert finished.is_set()

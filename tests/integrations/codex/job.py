@@ -160,3 +160,7 @@ class JobKernel:
             return False
         self.closed.append(value)
         return True
+
+    def assert_handles_released(self) -> None:
+        """Retirement releases every handle acquired across failed attempts."""
+        assert sorted(self.closed) == sorted([JOB_HANDLE, *self.opened])

@@ -47,6 +47,10 @@ SUPPORT: tuple[AdapterSupport, ...] = (
         reason="external OMP ACP process is outside isolated adapter execution",
     ),
     AdapterSupport(
+        Adapter.OMP,
+        reason="external OMP RPC process is outside isolated adapter execution",
+    ),
+    AdapterSupport(
         Adapter.LANGGRAPH, reason="requires a graph-model decision translator"
     ),
     AdapterSupport(

@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from band.integrations.ompprocess import (
+    OMP_MCP_SERVERS_CONFIG,
+    OMP_MCP_STARTUP_CONFIG,
+    OMP_MCP_STARTUP_JS,
     OmpMcpServer,
     omp_mcp_arguments,
     omp_mcp_plugin,
@@ -29,7 +32,13 @@ class TestMcpPluginProjection:
             assert plugin is not None
             root = Path(plugin)
             assert root.name == "band-sdk"
-            config = json.loads((root / ".mcp.json").read_text(encoding="utf-8"))
+            config = json.loads(
+                (root / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
+            )
+            startup_config = json.loads(
+                (root / OMP_MCP_STARTUP_CONFIG).read_text(encoding="utf-8")
+            )
+            assert startup_config == {"startup": {"quiet": False}}
             assert config["mcpServers"]["remote"] == {
                 "type": "sse",
                 "url": "https://mcp.example/sse",
@@ -38,7 +47,7 @@ class TestMcpPluginProjection:
             assert local["args"] == ["--port", "1"]
             assert Path(local["cwd"]) == tmp_path.resolve()
             assert Path(local["command"]) == (tmp_path / "server").resolve()
-            startup = (root / "startup.js").read_text(encoding="utf-8")
+            startup = (root / OMP_MCP_STARTUP_JS).read_text(encoding="utf-8")
             assert omp_mcp_ready_command(plugin) in startup
             assert '"band-sdk:local"' in startup
             assert '"band-sdk:remote"' in startup
@@ -57,13 +66,15 @@ class TestMcpPluginProjection:
                 "---\nalwaysApply: true\n---\nReply through Band."
             )
 
-    def test_arguments_load_the_plugin_and_its_startup_extension(self) -> None:
-        plugin = "/tmp/overlay/band-sdk"
+    def test_arguments_load_the_plugin_and_its_startup_extension(
+        self, tmp_path: Path
+    ) -> None:
+        plugin = str(tmp_path / "band-sdk")
         arguments = omp_mcp_arguments(plugin)
         assert arguments[:2] == ("--plugin-dir", plugin)
         assert "--mode=rpc-ui" in arguments
-        assert str(Path(plugin) / "startup.js") in arguments
-        assert str(Path(plugin) / "startup.json") in arguments
+        assert str(Path(plugin) / OMP_MCP_STARTUP_JS) in arguments
+        assert str(Path(plugin) / OMP_MCP_STARTUP_CONFIG) in arguments
 
     @pytest.mark.parametrize(
         "fields",

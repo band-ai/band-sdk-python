@@ -20,6 +20,7 @@ from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpContent,
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -61,7 +62,7 @@ class Observer:
     async def on_ui(self, request: OmpUIRequest) -> OmpUIResponse:
         return OmpUIResponse(cancelled=True)
 
-    async def wait_for(self, event_type: str) -> OmpEvent:
+    async def wait_for(self, event_type: OmpEventType) -> OmpEvent:
         async with asyncio.timeout(5):
             while True:
                 event = await self.queue.get()

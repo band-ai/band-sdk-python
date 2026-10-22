@@ -6,10 +6,12 @@ from band.integrations.omp import (
     OMP_APPROVAL_MODE_ALWAYS_ASK,
     OMP_APPROVAL_MODE_FLAG,
     finalize_omp_command,
+    omp_command_in_workspace,
+    omp_cwd_argument,
 )
 from band.integrations.ompprocess import (
     DEFAULT_OMP_COMMAND,
-    omp_command_in_workspace,
+    omp_rpc_command_in_workspace,
     omp_runtime_env,
 )
 
@@ -22,11 +24,20 @@ class TestNativeLaunchSettings:
         ]
 
     def test_workspace_is_selected_without_a_subprocess_cwd(self) -> None:
-        assert omp_command_in_workspace(("bunx", *DEFAULT_OMP_COMMAND, "-v"), "/w") == [
+        assert omp_command_in_workspace(("bunx", "omp", "acp", "-v"), "/w") == [
+            "bunx",
+            "omp",
+            "acp",
+            "--cwd=/w",
+            "-v",
+        ]
+        assert omp_rpc_command_in_workspace(
+            ("bunx", *DEFAULT_OMP_COMMAND, "-v"), "/w"
+        ) == [
             "bunx",
             *DEFAULT_OMP_COMMAND,
             "-v",
-            "--cwd=/w",
+            omp_cwd_argument("/w"),
         ]
 
     def test_runtime_env_routes_the_selected_provider_key(self) -> None:

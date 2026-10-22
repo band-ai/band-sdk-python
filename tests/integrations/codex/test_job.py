@@ -155,11 +155,7 @@ class TestJobHandleOwnership:
         job_kernel.signaled.add(PROCESS_HANDLES[SECOND_MEMBER_PID])
         await job.wait_until_idle(0)
         job.close()
-        assert sorted(job_kernel.closed) == [
-            JOB_HANDLE,
-            PROCESS_HANDLES[SECOND_MEMBER_PID],
-            UNRELATED_HANDLE,
-        ]
+        job_kernel.assert_handles_released()
 
     async def test_partial_capture_failure_retains_the_handles_already_opened(
         self, job_kernel: JobKernel
@@ -175,7 +171,7 @@ class TestJobHandleOwnership:
         job_kernel.signaled.update(PROCESS_HANDLES.values())
         await job.wait_until_idle(0)
         job.close()
-        assert sorted(job_kernel.closed) == [JOB_HANDLE, *PROCESS_HANDLES.values()]
+        job_kernel.assert_handles_released()
 
     async def test_cancelled_native_exit_wait_keeps_handles_for_explicit_retry(
         self, job_kernel: JobKernel, monkeypatch: pytest.MonkeyPatch

@@ -7,7 +7,12 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpPromptError, OmpRpcError
-from band.integrations.ompwire import OmpEvent, OmpState
+from band.integrations.ompwire import (
+    OMP_NATIVE_PROTOCOL_VERSION,
+    OmpEvent,
+    OmpEventType,
+    OmpState,
+)
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -27,11 +32,11 @@ class TestPromptNarrationAndResults:
         async with asyncio.timeout(5):
             await prompt_task(client, observer)
         assert [event.type for event in observer.events] == [
-            "agent_start",
-            "tool_execution_start",
-            "tool_execution_end",
-            "message_end",
-            "agent_end",
+            OmpEventType.AGENT_START,
+            OmpEventType.TOOL_START,
+            OmpEventType.TOOL_END,
+            OmpEventType.MESSAGE_END,
+            OmpEventType.AGENT_END,
         ]
         tool_start, tool_end, message_end = observer.events[1:4]
         assert (tool_start.toolCallId, tool_start.toolName, tool_start.args) == (
@@ -87,14 +92,24 @@ class TestPromptNarrationAndResults:
         assert (rejected.value.command, rejected.value.code) == ("prompt", "rejected")
         await second_prompt(client)
 
-    @pytest.mark.parametrize("scenario", ["initial-error", "initial-aborted"])
+    @pytest.mark.parametrize(
+        ("scenario", "match"),
+        [
+            ("initial-error", "Initial provider failed"),
+            ("initial-aborted", "OMP prompt aborted"),
+        ],
+    )
     async def test_failed_initial_result_is_reported(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: str, match: str
     ) -> None:
         client = await client_factory(scenario)
+        process = client._proc
+        assert process is not None
         async with asyncio.timeout(5):
-            with pytest.raises(OmpPromptError):
+            with pytest.raises(OmpPromptError, match=match):
                 await prompt_task(client, Observer())
+        assert process.returncode is None
+        await second_prompt(client)
 
     async def test_narration_failure_does_not_leave_the_turn_or_process_waiting(
         self,
@@ -127,7 +142,9 @@ class TestPromptNarrationAndResults:
         async with asyncio.timeout(5):
             await prompt_task(client, observer)
         message = next(
-            event.message for event in observer.events if event.type == "message_end"
+            event.message
+            for event in observer.events
+            if event.type == OmpEventType.MESSAGE_END
         )
         assert message is not None and isinstance(message.content, list)
         image = next(content for content in message.content if content.type == "image")
@@ -139,4 +156,4 @@ class TestPromptNarrationAndResults:
             if frame["type"] == "negotiate_protocol"
         ]
         assert len(negotiations) == 1
-        assert negotiations[0]["protocolVersion"] == 2
+        assert negotiations[0]["protocolVersion"] == OMP_NATIVE_PROTOCOL_VERSION

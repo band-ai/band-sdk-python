@@ -26,7 +26,6 @@ from tests.integrations.omprpc.kit import (
 
 
 class TestProcessTreeCleanup:
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX setsid ownership boundary")
     @pytest.mark.parametrize("root_exit", ["close", "crash"])
     async def test_close_reaps_detached_descendants_without_affecting_other_owners(
         self, process_gate: ProcessGate, root_exit: str
@@ -43,13 +42,15 @@ class TestProcessTreeCleanup:
                 ]
                 root = client._proc
                 assert root is not None
-                assert all(
-                    os.getsid(child.process.pid) == child.process.pid
-                    for child in descendants
-                )
-                assert all(
-                    os.getsid(child.process.pid) != root.pid for child in descendants
-                )
+                if os.name != "nt":
+                    assert all(
+                        os.getsid(child.process.pid) == child.process.pid
+                        for child in descendants
+                    )
+                    assert all(
+                        os.getsid(child.process.pid) != root.pid
+                        for child in descendants
+                    )
                 await other.start()
                 other_descendants = [
                     await process_gate.connection(),
@@ -81,7 +82,6 @@ class TestProcessTreeCleanup:
                 if crashing is not None:
                     await asyncio.gather(crashing, return_exceptions=True)
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX inherited-scope boundary")
     async def test_stale_matching_environment_cannot_adopt_a_reused_process_identity(
         self, process_gate: ProcessGate, monkeypatch: pytest.MonkeyPatch
     ) -> None:

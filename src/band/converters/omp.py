@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
+from band.core.types import MessageType
 
 # Task-event metadata keys the native adapter writes and this converter reads.
 OMP_ROOM_METADATA_KEY = "omp_room_id"
@@ -27,6 +28,8 @@ class OmpHistoryConverter(HistoryConverter[OmpSessionState]):
     def convert(self, raw: list[dict[str, Any]]) -> OmpSessionState:
         sessions: dict[str, str] = {}
         for message in raw:
+            if message.get("message_type") != MessageType.TASK:
+                continue
             metadata = message.get("metadata")
             if not isinstance(metadata, dict):
                 continue

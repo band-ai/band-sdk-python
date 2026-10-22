@@ -16,9 +16,14 @@ from typing import cast
 import psutil
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from band.integrations.ompwire import (
+    OMP_CHUNK_BYTES,
+    OMP_FRAME_BYTES,
+    OMP_NATIVE_PROTOCOL_VERSION,
+    OMP_REASSEMBLED_BYTES,
+)
+
 PROTOCOL_VERSION = 1
-FRAME_BYTES = 1024 * 1024
-CHUNK_BYTES = 256 * 1024
 
 
 class Frame(BaseModel):
@@ -107,8 +112,11 @@ def hold_process_gate(
 
 def send(frame: dict[str, JsonValue]) -> None:
     payload = json.dumps(frame, separators=(",", ":")).encode("utf-8")
-    if PROTOCOL_VERSION == 2 and len(payload) + 1 > FRAME_BYTES:
-        count = (len(payload) + CHUNK_BYTES - 1) // CHUNK_BYTES
+    if (
+        PROTOCOL_VERSION == OMP_NATIVE_PROTOCOL_VERSION
+        and len(payload) + 1 > OMP_FRAME_BYTES
+    ):
+        count = (len(payload) + OMP_CHUNK_BYTES - 1) // OMP_CHUNK_BYTES
         for index in range(count):
             chunk: dict[str, JsonValue] = {
                 "type": "rpc_chunk",
@@ -117,7 +125,7 @@ def send(frame: dict[str, JsonValue]) -> None:
                 "count": count,
                 "byteLength": len(payload),
                 "data": base64.b64encode(
-                    payload[index * CHUNK_BYTES : (index + 1) * CHUNK_BYTES]
+                    payload[index * OMP_CHUNK_BYTES : (index + 1) * OMP_CHUNK_BYTES]
                 ).decode("ascii"),
             }
             sys.stdout.write(json.dumps(chunk, separators=(",", ":")) + "\n")
@@ -168,6 +176,9 @@ class Peer:
         self.tool_results: set[str] = set()
         self.ui_answered = False
         self.held: Frame | None = None
+        self.async_hint: bool | None = None
+        self.state_request_count = 0
+        self.snapshot_responses = 0
 
     def respond(self, frame: Frame, data: dict[str, JsonValue] | None = None) -> None:
         result: dict[str, JsonValue] = {
@@ -229,12 +240,12 @@ class Peer:
             "chunkId": "invalid-frame",
             "index": 0,
             "count": 2,
-            "byteLength": 1024 * 1024,
+            "byteLength": OMP_FRAME_BYTES,
             "data": "e30=",
         }
         match self.scenario:
             case "chunk-overflow":
-                chunk["byteLength"] = 64 * 1024 * 1024 + 1
+                chunk["byteLength"] = OMP_REASSEMBLED_BYTES + 1
                 send(chunk)
             case "chunk-order":
                 chunk["index"] = 1
@@ -260,6 +271,16 @@ class Peer:
         if (
             self.prompt_count > 1 and self.scenario != "lifecycle"
         ) or frame.message == "second":
+            if self.scenario == "late-stale-result":
+                send(
+                    {
+                        "type": "prompt_result",
+                        "id": "old-prompt",
+                        "agentInvoked": True,
+                        "status": "completed",
+                        "sessionSettled": True,
+                    }
+                )
             self.finish(frame)
             return
         match self.scenario:
@@ -340,6 +361,130 @@ class Peer:
                         "sessionSettled": True,
                     }
                 )
+            case "stale-idle-result":
+                # A fully answered, fully settled turn whose prompt_result
+                # carries a stale id: completion evidence never arrives while
+                # the native state positively reports idle.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("complete")
+                send(
+                    {
+                        "type": "prompt_result",
+                        "id": "old-prompt",
+                        "agentInvoked": True,
+                        "status": "completed",
+                        "sessionSettled": True,
+                    }
+                )
+                self.settle()
+                return
+            case "lost-settlement":
+                # The correlated result arrives; the session_settled frame is
+                # lost and the snapshot reports every idle flag while
+                # isSettled stays false.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("complete")
+                self.async_hint = False
+                self.result(settled=False)
+                return
+            case "silent-settled-continuation":
+                # Settlement is observed, then a yielded continuation claims
+                # background ownership; its completion settles without ever
+                # emitting another session_settled frame (it goes idle on
+                # release).
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("first")
+                self.settle()
+                self.settled = False  # the continuation makes the session busy
+                send({"type": "agent_start"})
+                self.end("continuation", pending=True)
+                self.result(settled=False)
+                return
+            case "drain-stubborn":
+                # A healthy answered turn whose host tool callback ignores
+                # cancellation: settlement completes, the callback never does.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-stubborn",
+                        "toolCallId": "call-stubborn",
+                        "toolName": "band_chat",
+                        "arguments": {},
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+                return
+            case "settled-with-pending":
+                # The answer completes and the session reports settled while a
+                # background job keeps the pending flag set: settlement is
+                # contradicted by positive busy evidence in the very snapshot
+                # that would end the turn, and no frame claims completion until
+                # the job finishes.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("answer")
+                self.result(settled=True)
+                self.settled = True
+                self.async_hint = True
+                return
+            case "drain-stubborn-adapter":
+                # As drain-stubborn, but the blocked callback is a custom tool
+                # the adapter executes, exercising the retirement seam itself.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-hold",
+                        "toolCallId": "call-hold",
+                        "toolName": "hold",
+                        "arguments": {},
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+                return
+            case "drain-blocked-event":
+                # Result and settlement complete while one event callback stays
+                # undelivered, so the event drain never finishes.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+                send(
+                    {
+                        "type": "message_update",
+                        "messageId": "blocked",
+                        "message": assistant(""),
+                    }
+                )
+                return
+            case "refresh-state-silent":
+                # A fully healthy completion; the loss happens later, on the
+                # adapter-phase post-prompt refresh (state request #3).
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+                return
+            case "get-state-silent":
+                # The correlated result arrives and the settlement snapshot
+                # response is lost: no completion path can observe state.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end("complete")
+                self.result(settled=False)
+                return
             case _:
                 pass
         self.respond(frame)
@@ -349,6 +494,28 @@ class Peer:
                 self.invalid_chunk()
             case "event-backpressure":
                 return
+            case "ui-notify":
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "ui-notify",
+                        "method": "notify",
+                        "message": "status",
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+            case "reused-callback":
+                call = {
+                    "type": "host_tool_call",
+                    "id": "host-dup",
+                    "toolCallId": "call-dup",
+                    "toolName": "band_chat",
+                    "arguments": {},
+                }
+                send(call)
+                send(call)
             case "frame-overflow":
                 send(
                     {
@@ -357,6 +524,11 @@ class Peer:
                         "error": "RPC frame exceeded the transport limit",
                     }
                 )
+            case "late-stale-result":
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+                return
             case "large-image":
                 message = assistant("complete")
                 message["content"] = [
@@ -409,6 +581,19 @@ class Peer:
             case "no-result":
                 self.end("complete")
                 self.settle()
+            case "settled-during-callback":
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-held",
+                        "toolCallId": "call-held",
+                        "toolName": "band_chat",
+                        "arguments": {},
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
             case "host-cancel":
                 send(
                     {
@@ -460,12 +645,27 @@ class Peer:
                     return
                 self.respond(
                     frame,
-                    {"protocolVersion": 1 if self.scenario == "bad-negotiation" else 2},
+                    {
+                        "protocolVersion": 1
+                        if self.scenario == "bad-negotiation"
+                        else OMP_NATIVE_PROTOCOL_VERSION
+                    },
                 )
-                PROTOCOL_VERSION = 2
+                PROTOCOL_VERSION = OMP_NATIVE_PROTOCOL_VERSION
+            case "set_ask_dialog":
+                self.respond(frame, {"enabled": True})
             case "prompt":
                 self.prompt(frame)
             case "get_state":
+                self.state_request_count += 1
+                if self.scenario == "get-state-silent":
+                    return  # every snapshot response is lost
+                if (
+                    self.scenario == "refresh-state-silent"
+                    and self.state_request_count > 2
+                ):
+                    return  # the post-completion refresh response is lost
+                self.snapshot_responses += 1
                 self.respond(
                     frame,
                     {
@@ -482,7 +682,11 @@ class Peer:
                             else {}
                         ),
                         "isStreaming": False,
-                        "hasPendingAsyncWork": not self.settled,
+                        "hasPendingAsyncWork": (
+                            not self.settled
+                            if self.async_hint is None
+                            else self.async_hint
+                        ),
                         "queuedMessageCount": 0,
                     },
                 )
@@ -540,6 +744,18 @@ class Peer:
             case "release":
                 if self.scenario == "settlement-before-result":
                     self.result(settled=False)
+                elif self.scenario == "silent-settled-continuation":
+                    # The background work completes and the session goes idle,
+                    # but its session_settled frame is lost.
+                    send({"type": "agent_start"})
+                    self.end("background complete", pending=False)
+                    self.settled = True
+                elif self.scenario == "settled-with-pending":
+                    # The background job finishes: native state goes positively
+                    # idle. The later all-idle snapshot is the completion proof.
+                    self.async_hint = None
+                    send({"type": "agent_start"})
+                    self.end("background complete", pending=False)
                 else:
                     send({"type": "agent_start"})
                     stop = {
@@ -620,8 +836,36 @@ class Peer:
                     self.end("callbacks complete")
                     self.result(settled=True)
                     self.settle()
+            case "orphan-tool":
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-orphan",
+                        "toolCallId": "call-orphan",
+                        "toolName": "band_chat",
+                        "arguments": {},
+                    }
+                )
+            case "orphan-ui":
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "ui-orphan",
+                        "method": "select",
+                        "title": "Allow command?",
+                        "options": ["Approve", "Deny"],
+                    }
+                )
+                self.respond(frame)
             case "checkpoint":
-                self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
+                self.respond(
+                    frame,
+                    {
+                        "pid": os.getpid(),
+                        "frames": self.frames,
+                        "snapshots": self.snapshot_responses,
+                    },
+                )
             case "abort":
                 if self.scenario != "stubborn":
                     self.respond(frame)
@@ -665,7 +909,9 @@ def main() -> None:
     parser.add_argument(
         "--child-stdio", choices=("inherit", "discard"), default="inherit"
     )
-    args = parser.parse_args()
+    # Adapter launches append real-OMP flags (--cwd=..., --approval-mode); the
+    # fake peer only cares about the scenario and the process gate.
+    args, _unknown = parser.parse_known_args()
     if args.scenario in {"gated-parent", "gated-child"}:
         if args.gate_port is None:
             raise ValueError("A process gate port is required")
@@ -703,9 +949,9 @@ def main() -> None:
                 "protocolVersion": 1,
                 "supportedProtocolVersions": [1]
                 if args.scenario == "no-v2"
-                else [1, 2],
-                "maxFrameBytes": 1024 * 1024,
-                "maxReassembledFrameBytes": 64 * 1024 * 1024,
+                else [1, OMP_NATIVE_PROTOCOL_VERSION],
+                "maxFrameBytes": OMP_FRAME_BYTES,
+                "maxReassembledFrameBytes": OMP_REASSEMBLED_BYTES,
             }
         )
     for line in sys.stdin:

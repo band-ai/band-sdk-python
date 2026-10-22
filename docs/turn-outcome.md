@@ -389,13 +389,18 @@ originating turn, including a worker released for approval. Leave and shutdown
 clear reporting while released worker cleanup remains with adapter residency. Provider execution and recovery timeouts retain their adapter
 policy and coordinate with that same owner.
 
-Unfinished tasks remain owned after grace expires. They cannot post late replies,
-change a newer turn's activity, or overlap replacement provider work. Room cleanup
-reports `CleanupIncompleteError` while the worker still needs its resources;
-a later existing host cleanup retry completes retirement. Worker completion alone
-does not readmit the room. Successful approval release retains its original tools
-and judgment until the worker actually finishes; `Turn.detach()` is still only
-an outcome-ledger operation.
+Unfinished tasks remain owned after grace expires. The stop attempt that first
+retains a task does not cancel it again or renew its grace. Retained work cannot
+post late replies, change a newer turn's activity, or overlap replacement provider
+work. Room cleanup reports `CleanupIncompleteError` while work remains unfinished,
+and the host keeps dependent adapter resources open.
+
+A later explicit host cleanup retry may cancel previously retained work again
+within a fresh one-second grace, so a task that swallowed its first cancellation
+can still settle. Once work settles, a cleanup retry completes retirement. Worker
+completion alone does not readmit the room. Successful approval release retains
+its original tools and judgment until the worker actually finishes;
+`Turn.detach()` is still only an outcome-ledger operation.
 
 Stopping the work an external backend runs for the turn is the adapter's half,
 owned by one `BackendTurns` (`band.core.turn_lifecycle`) per adapter. The task
