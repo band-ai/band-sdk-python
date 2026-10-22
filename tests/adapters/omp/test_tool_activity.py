@@ -50,7 +50,22 @@ class TestOmpToolActivity:
         )
         assert recorder.events == [{"kind": "tool_call", "name": "Write"}]
 
-    async def test_latest_open_tool_wins(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("finished_id", "finished_name", "remaining_id", "remaining_name"),
+        [
+            ("call-a", "Read", "call-b", "Bash"),
+            ("call-b", "Bash", "call-a", "Read"),
+        ],
+        ids=["older-finishes-first", "newer-finishes-first"],
+    )
+    async def test_finishing_one_tool_keeps_the_remaining_tool_visible(
+        self,
+        tmp_path: Path,
+        finished_id: str,
+        finished_name: str,
+        remaining_id: str,
+        remaining_name: str,
+    ) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
         recorder = ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
@@ -58,10 +73,11 @@ class TestOmpToolActivity:
 
         await adapter._emit_event(tool_start("call-a", "Read"), turn)
         await adapter._emit_event(tool_start("call-b", "Bash"), turn)
-        assert recorder.events == [
-            {"kind": "tool_call", "name": "Read"},
-            {"kind": "tool_call", "name": "Bash"},
-        ]
+        await adapter._emit_event(tool_end(finished_id, finished_name), turn)
+        assert recorder.events[-1] == {"kind": "tool_call", "name": remaining_name}
+        await adapter._emit_event(tool_end(remaining_id, remaining_name), turn)
+
+        assert recorder.events[-1] == {"kind": "reasoning"}
 
     async def test_end_of_untracked_call_changes_nothing(self, tmp_path: Path) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
@@ -73,6 +89,8 @@ class TestOmpToolActivity:
         assert recorder.events == []
 
         await adapter._emit_event(tool_start("call-1", "Bash"), turn)
+        await adapter._emit_event(tool_end("unknown", "Ghost"), turn)
+        assert recorder.events == [{"kind": "tool_call", "name": "Bash"}]
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
         recorder.assert_completed_tool("Bash")

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.adapters.omp import OmpAdapter
+from band.adapters.omp import OmpAdapter, OmpTurn
 from band.integrations.ompwire import OmpUIRequest
 from band.testing import FakeAgentTools
 
@@ -24,7 +24,7 @@ class TestPermissions:
             ),
             "room",
             "session",
-            FakeAgentTools(),
+            OmpTurn(tools=FakeAgentTools()),
         )
         unrelated = await adapter._permission(
             OmpUIRequest(
@@ -35,7 +35,7 @@ class TestPermissions:
             ),
             "room",
             "session",
-            FakeAgentTools(),
+            OmpTurn(tools=FakeAgentTools()),
         )
         assert approved.value == "Approve"
         assert unrelated.cancelled
@@ -52,7 +52,7 @@ class TestPermissions:
             ),
             "room",
             "session",
-            FakeAgentTools(),
+            OmpTurn(tools=FakeAgentTools()),
         )
         assert response.cancelled
         assert response.value is None
