@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import JsonValue
 
+from band.integrations.omprpc.client import COMPLETION_TIMEOUT_S
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
     OmpCommandName,
@@ -31,6 +32,7 @@ class ScriptedOmpClient:
 
     def __init__(self, script: TurnScript) -> None:
         self.script = script
+        self.completion_timeout_s = COMPLETION_TIMEOUT_S
         self.stop_after_tool_id: str | None = None
 
     def stop_after_tool(self, call_id: str) -> None:
