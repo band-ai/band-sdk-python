@@ -21,6 +21,7 @@ from band.integrations.omp import (
     omp_provider_env,
 )
 from band.integrations.ompwire import (
+    OmpCommandName,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -78,12 +79,20 @@ def omp_rpc_command_in_workspace(command: Sequence[str], workspace: str) -> list
     return [*command, omp_cwd_argument(workspace)]
 
 
+class OmpMcpTransport(StrEnum):
+    """The transports OMP accepts for external MCP servers."""
+
+    STDIO = "stdio"
+    HTTP = "http"
+    SSE = "sse"
+
+
 class OmpMcpServer(BaseModel):
     """An external MCP server projected into the SDK-owned OMP plugin."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    type: Literal["stdio", "http", "sse"] | None = None
+    type: OmpMcpTransport | None = None
     command: str | None = None
     args: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict, repr=False)
@@ -95,10 +104,12 @@ class OmpMcpServer(BaseModel):
     def _require_one_transport(self) -> Self:
         if bool(self.command) == bool(self.url):
             raise ValueError("MCP server needs exactly one of command or url")
-        if self.command and self.type not in (None, "stdio"):
-            raise ValueError("a command requires stdio transport")
-        if self.url and self.type == "stdio":
-            raise ValueError("a URL requires http or sse transport")
+        if self.command and self.type not in (None, OmpMcpTransport.STDIO):
+            raise ValueError(f"a command requires {OmpMcpTransport.STDIO} transport")
+        if self.url and self.type == OmpMcpTransport.STDIO:
+            raise ValueError(
+                f"a URL requires {OmpMcpTransport.HTTP} or {OmpMcpTransport.SSE} transport"
+            )
         return self
 
 
@@ -195,7 +206,7 @@ async def omp_mcp_ready(
     """Require the connection extension and configured MCP servers before inference."""
     command = omp_mcp_ready_command(plugin)
     commands = McpCommands.model_validate(
-        await runtime.request("get_available_commands")
+        await runtime.request(OmpCommandName.GET_AVAILABLE_COMMANDS)
     )
     if not any(item.name == command for item in commands.commands):
         raise OmpStartupError("OMP did not load the required SDK startup extension")

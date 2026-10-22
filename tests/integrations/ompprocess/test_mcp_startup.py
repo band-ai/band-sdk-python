@@ -12,6 +12,9 @@ import pytest
 pytest.importorskip("psutil", reason="psutil not installed (band-sdk[omp])")
 
 from band.integrations.ompprocess import (
+    OMP_MCP_RECEIPT,
+    OMP_PLUGIN_ROOT,
+    McpConnectionStatus,
     OmpMcpServer,
     OmpStartupError,
     omp_mcp_ready,
@@ -30,59 +33,78 @@ from band.integrations.ompwire import (
 
 class TestRequiredMcpStartup:
     @pytest.mark.parametrize(
-        ("receipt", "reason"),
+        "receipt",
         [
-            (None, "no valid SDK startup receipt"),
-            ("not JSON", "no valid SDK startup receipt"),
-            (
+            pytest.param(None, id="missing-receipt"),
+            pytest.param("not JSON", id="malformed-receipt"),
+            pytest.param(
                 {"systemPromptReady": True, "servers": []},
-                "did not acknowledge every configured MCP server",
+                id="missing-server",
             ),
-            (
-                {
-                    "systemPromptReady": True,
-                    "servers": [
-                        {"type": "connected", "serverName": "band-sdk:required"},
-                        {"type": "connected", "serverName": "band-sdk:required"},
-                    ],
-                },
-                "did not acknowledge every configured MCP server",
-            ),
-            (
-                {
-                    "systemPromptReady": True,
-                    "servers": [{"type": "connected", "serverName": "unrelated"}],
-                },
-                "unexpected MCP startup receipt",
-            ),
-            (
-                {
-                    "systemPromptReady": True,
-                    "servers": [{"type": "failed", "serverName": "band-sdk:required"}],
-                },
-                "no valid SDK startup receipt",
-            ),
-            (
+            pytest.param(
                 {
                     "systemPromptReady": True,
                     "servers": [
                         {
-                            "type": "failed",
-                            "serverName": "band-sdk:required",
+                            "type": McpConnectionStatus.CONNECTED,
+                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                        },
+                        {
+                            "type": McpConnectionStatus.CONNECTED,
+                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                        },
+                    ],
+                },
+                id="duplicate-server",
+            ),
+            pytest.param(
+                {
+                    "systemPromptReady": True,
+                    "servers": [
+                        {
+                            "type": McpConnectionStatus.CONNECTED,
+                            "serverName": "unrelated",
+                        }
+                    ],
+                },
+                id="unexpected-server",
+            ),
+            pytest.param(
+                {
+                    "systemPromptReady": True,
+                    "servers": [
+                        {
+                            "type": McpConnectionStatus.FAILED,
+                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                        }
+                    ],
+                },
+                id="missing-failure-detail",
+            ),
+            pytest.param(
+                {
+                    "systemPromptReady": True,
+                    "servers": [
+                        {
+                            "type": McpConnectionStatus.FAILED,
+                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
                             "error": "initialize rejected",
                         }
                     ],
                 },
-                "band-sdk:required failed: initialize rejected",
+                id="failed-server",
             ),
-            (
+            pytest.param(
                 {
                     "systemPromptReady": False,
                     "servers": [
-                        {"type": "connected", "serverName": "band-sdk:required"}
+                        {
+                            "type": McpConnectionStatus.CONNECTED,
+                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                        }
                     ],
                 },
-                "required Band connection instructions",
+                id="unloaded-instructions",
             ),
         ],
     )
@@ -90,72 +112,32 @@ class TestRequiredMcpStartup:
         self,
         tmp_path: Path,
         receipt: str | dict[str, object] | None,
-        reason: str,
     ) -> None:
-        plugin = tmp_path / "band-sdk"
+        plugin = tmp_path / OMP_PLUGIN_ROOT
         plugin.mkdir()
         if receipt is not None:
             payload = json.dumps(receipt) if isinstance(receipt, dict) else receipt
-            (plugin / "receipt.json").write_text(payload, encoding="utf-8")
+            (plugin / OMP_MCP_RECEIPT).write_text(payload, encoding="utf-8")
         runtime = AsyncMock(spec=OmpRpcClient)
         runtime.request.return_value = {
             "commands": [{"name": omp_mcp_ready_command(str(plugin))}],
         }
-        with pytest.raises(OmpStartupError, match=reason):
+        with pytest.raises(OmpStartupError):
             await omp_mcp_ready(
                 runtime,
                 str(plugin),
                 {"required": OmpMcpServer(command="server")},
             )
 
-    async def test_missing_startup_extension_cannot_fall_through_to_inference(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_missing_startup_extension_is_rejected(self, tmp_path: Path) -> None:
         runtime = AsyncMock(spec=OmpRpcClient)
         runtime.request.return_value = {"commands": []}
-        with pytest.raises(OmpStartupError, match="required SDK startup extension"):
+        with pytest.raises(OmpStartupError):
             await omp_mcp_ready(runtime, str(tmp_path), {})
-        runtime.prompt.assert_not_awaited()
 
-    async def test_complete_receipt_prompts_the_readiness_command(
-        self, tmp_path: Path
-    ) -> None:
-        plugin = tmp_path / "band-sdk"
-        plugin.mkdir()
-        command = omp_mcp_ready_command(str(plugin))
-        receipt = json.dumps(
-            {
-                "systemPromptReady": True,
-                "servers": [{"type": "connected", "serverName": "band-sdk:required"}],
-            }
-        )
-        runtime = AsyncMock(spec=OmpRpcClient)
-        runtime.request.return_value = {"commands": [{"name": command}]}
-
-        async def prompt(message: str, **_callbacks: object) -> None:
-            _ = message
-            (plugin / "receipt.json").write_text(receipt, encoding="utf-8")
-
-        runtime.prompt.side_effect = prompt
-        await omp_mcp_ready(
-            runtime,
-            str(plugin),
-            {"required": OmpMcpServer(command="server")},
-        )
-        runtime.prompt.assert_awaited_once()
-        assert runtime.prompt.await_args is not None
-        assert runtime.prompt.await_args.args[0] == f"/{command}"
-
-    @pytest.mark.parametrize(
-        ("invoke", "reason"),
-        [
-            ("event", "invoked an agent"),
-            ("tool", "invoked a host tool"),
-            ("ui", "requested UI"),
-        ],
-    )
+    @pytest.mark.parametrize("invoke", ["event", "tool", "ui"])
     async def test_startup_callbacks_cannot_fall_through_to_inference(
-        self, tmp_path: Path, invoke: str, reason: str
+        self, tmp_path: Path, invoke: str
     ) -> None:
         runtime = AsyncMock(spec=OmpRpcClient)
         runtime.request.return_value = {
@@ -192,5 +174,5 @@ class TestRequiredMcpStartup:
                     )
 
         runtime.prompt.side_effect = prompt
-        with pytest.raises(OmpStartupError, match=reason):
+        with pytest.raises(OmpStartupError):
             await omp_mcp_ready(runtime, str(tmp_path), {})

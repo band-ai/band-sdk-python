@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from band.converters.omp import (
-    OMP_ROOM_METADATA_KEY,
-    OMP_SESSION_METADATA_KEY,
     OmpHistoryConverter,
+    OmpMetadataKey,
 )
 from band.core.types import MessageType
 
@@ -22,22 +21,22 @@ class TestOmpHistoryConverter:
                 {
                     "message_type": MessageType.TASK,
                     "metadata": {
-                        OMP_ROOM_METADATA_KEY: "room-1",
-                        OMP_SESSION_METADATA_KEY: "/sessions/old.jsonl",
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: "/sessions/old.jsonl",
                     },
                 },
                 {
                     "message_type": MessageType.TASK,
                     "metadata": {
-                        OMP_ROOM_METADATA_KEY: "room-2",
-                        OMP_SESSION_METADATA_KEY: "/sessions/other.jsonl",
+                        OmpMetadataKey.ROOM: "room-2",
+                        OmpMetadataKey.SESSION: "/sessions/other.jsonl",
                     },
                 },
                 {
                     "message_type": MessageType.TASK,
                     "metadata": {
-                        OMP_ROOM_METADATA_KEY: "room-1",
-                        OMP_SESSION_METADATA_KEY: "/sessions/new.jsonl",
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: "/sessions/new.jsonl",
                     },
                 },
             ]
@@ -53,20 +52,20 @@ class TestOmpHistoryConverter:
                 {"message_type": MessageType.TASK, "metadata": "not a mapping"},
                 {
                     "message_type": MessageType.TASK,
-                    "metadata": {OMP_ROOM_METADATA_KEY: "room-1"},
+                    "metadata": {OmpMetadataKey.ROOM: "room-1"},
                 },
                 {
                     "message_type": MessageType.TASK,
                     "metadata": {
-                        OMP_ROOM_METADATA_KEY: "room-1",
-                        OMP_SESSION_METADATA_KEY: "",
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: "",
                     },
                 },
                 {
                     "message_type": MessageType.TASK,
                     "metadata": {
-                        OMP_ROOM_METADATA_KEY: 7,
-                        OMP_SESSION_METADATA_KEY: "/sessions/x.jsonl",
+                        OmpMetadataKey.ROOM: 7,
+                        OmpMetadataKey.SESSION: "/sessions/x.jsonl",
                     },
                 },
             ]
@@ -79,8 +78,8 @@ class TestOmpHistoryConverter:
                 {
                     "message_type": MessageType.TEXT,
                     "metadata": {
-                        OMP_ROOM_METADATA_KEY: "room-1",
-                        OMP_SESSION_METADATA_KEY: "/sessions/injected.jsonl",
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: "/sessions/injected.jsonl",
                     },
                     "content": "hello",
                     "sender_name": "Alice",

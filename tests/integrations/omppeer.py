@@ -21,6 +21,7 @@ from band.integrations.ompwire import (
     OMP_FRAME_BYTES,
     OMP_NATIVE_PROTOCOL_VERSION,
     OMP_REASSEMBLED_BYTES,
+    OmpCommandName,
     OmpPromptStatus,
 )
 
@@ -38,6 +39,11 @@ HOST_CANCELLED_ID = "host-cancelled"
 UI_CANCELLED_ID = "ui-cancelled"
 OVERSIZE_AFTER_READY = "oversize-after-ready"
 READY_LIMIT_BYTES = 1024
+LATE_PROMPT_ERROR = "late-prompt-error"
+SETTLED_CALLBACK_SCENARIO = "settled-during-callback"
+SETTLED_CALLBACK_ID = "host-held"
+LATE_CALLBACK_ID = "host-late"
+STDIN_BACKPRESSURE = "stdin-backpressure"
 
 
 def burst_message_id(number: int) -> str:
@@ -51,6 +57,7 @@ class Frame(BaseModel):
     type: str
     id: str | None = None
     message: str | None = None
+    failed_command: str | None = None
     result: dict[str, JsonValue] | None = None
     isError: bool | None = None
     value: str | None = None
@@ -188,6 +195,7 @@ class Peer:
     def __init__(self, scenario: str) -> None:
         self.scenario = scenario
         self.settled = True
+        self.state_requested = False
         self.prompt_id: str | None = None
         self.prompt_count = 0
         self.frames: list[dict[str, JsonValue]] = []
@@ -205,6 +213,16 @@ class Peer:
         if data is not None:
             result["data"] = data
         send(result)
+
+    def checkpoint(self, frame: Frame) -> None:
+        if (
+            self.scenario == SETTLED_CALLBACK_SCENARIO
+            and self.prompt_id is not None
+            and not self.state_requested
+        ):
+            self.held = frame
+            return
+        self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
 
     def end(
         self,
@@ -283,6 +301,7 @@ class Peer:
         self.prompt_id = frame.id
         self.prompt_count += 1
         self.settled = False
+        self.state_requested = False
         if (
             self.prompt_count > 1 and self.scenario != "lifecycle"
         ) or frame.message == FOLLOW_UP_PROMPT:
@@ -457,11 +476,11 @@ class Peer:
             case "no-result":
                 self.end(COMPLETE)
                 self.settle()
-            case "settled-during-callback":
+            case scenario if scenario == SETTLED_CALLBACK_SCENARIO:
                 send(
                     {
                         "type": "host_tool_call",
-                        "id": "host-held",
+                        "id": SETTLED_CALLBACK_ID,
                         "toolCallId": "call-held",
                         "toolName": "band_chat",
                         "arguments": {},
@@ -535,6 +554,7 @@ class Peer:
             case "prompt":
                 self.prompt(frame)
             case "get_state":
+                self.state_requested = True
                 self.respond(
                     frame,
                     {
@@ -555,6 +575,13 @@ class Peer:
                         "queuedMessageCount": 0,
                     },
                 )
+                if (
+                    self.scenario == SETTLED_CALLBACK_SCENARIO
+                    and self.held is not None
+                    and self.held.type == "checkpoint"
+                ):
+                    self.checkpoint(self.held)
+                    self.held = None
                 if self.scenario == "settles-during-state" and not self.settled:
                     self.settle()
                 if (
@@ -607,6 +634,30 @@ class Peer:
                     }
                 )
             case "release":
+                if self.scenario == SETTLED_CALLBACK_SCENARIO:
+                    send(
+                        {
+                            "type": "host_tool_call",
+                            "id": LATE_CALLBACK_ID,
+                            "toolCallId": f"call-{LATE_CALLBACK_ID}",
+                            "toolName": "band_chat",
+                            "arguments": {},
+                        }
+                    )
+                    self.respond(frame)
+                    return
+                if self.scenario == LATE_PROMPT_ERROR:
+                    send(
+                        {
+                            "type": "response",
+                            "id": self.prompt_id,
+                            "command": frame.failed_command or OmpCommandName.PROMPT,
+                            "success": False,
+                            "error": "Prompt command failed after admission",
+                        }
+                    )
+                    self.respond(frame)
+                    return
                 if self.scenario == "settlement-before-result":
                     self.result(settled=False)
                 else:
@@ -719,7 +770,7 @@ class Peer:
                     }
                 )
             case "checkpoint":
-                self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
+                self.checkpoint(frame)
             case "abort":
                 if self.scenario != "stubborn":
                     self.respond(frame)
@@ -727,6 +778,10 @@ class Peer:
                         self.end(OmpPromptStatus.ABORTED, stop=OmpPromptStatus.ABORTED)
                         self.settle()
             case "first" | "hold":
+                if self.scenario == STDIN_BACKPRESSURE:
+                    self.respond(frame)
+                    threading.Event().wait()
+                    return
                 self.held = frame
             case "second":
                 self.respond(frame, {"value": "second"})
@@ -747,7 +802,10 @@ class Peer:
             case "crash":
                 raise SystemExit(CRASH_EXIT)
             case "stderr":
-                sys.stderr.write("x" * (2 * 1024 * 1024))
+                sys.stderr.write(
+                    FRAME_PAYLOAD_MARK
+                    * (2 * OMP_FRAME_BYTES // len(FRAME_PAYLOAD_MARK))
+                )
                 sys.stderr.flush()
                 self.respond(frame, {"drained": True})
             case _:

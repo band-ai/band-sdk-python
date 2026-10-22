@@ -22,6 +22,16 @@ OMP_NATIVE_PROTOCOL_VERSION: Final = 2
 OMP_ASSISTANT_ROLE = "assistant"
 
 
+class OmpCommandName(StrEnum):
+    """Name SDK-issued commands without restricting arbitrary native requests."""
+
+    NEGOTIATE_PROTOCOL = "negotiate_protocol"
+    PROMPT = "prompt"
+    GET_STATE = "get_state"
+    GET_AVAILABLE_COMMANDS = "get_available_commands"
+    ABORT = "abort"
+
+
 class OmpPromptStatus(StrEnum):
     COMPLETED = "completed"
     ERROR = "error"
@@ -253,6 +263,8 @@ class OmpUIRequest(OmpWireModel):
 
 
 class OmpUIResponse(OmpWireModel):
+    """Answer one dialog, or cancel it when no answer variant is supplied."""
+
     value: str | None = None
     confirmed: bool | None = None
     answers: list[OmpAskAnswer] | None = None

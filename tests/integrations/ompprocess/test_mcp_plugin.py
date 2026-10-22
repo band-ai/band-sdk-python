@@ -8,18 +8,16 @@ import stat
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from band.integrations.ompprocess import (
     OMP_MCP_SERVERS_CONFIG,
     OMP_MCP_STARTUP_CONFIG,
     OMP_MCP_STARTUP_JS,
-    OMP_MODE_FLAG,
-    OMP_RPC_UI_MODE,
     RELATIVE_MCP_COMMAND_PREFIXES,
     OmpMcpServer,
-    omp_mcp_arguments,
+    OmpMcpTransport,
     omp_mcp_plugin,
-    omp_mcp_ready_command,
 )
 from tests.ostable import skip_unless_os
 
@@ -38,12 +36,13 @@ class TestMcpPluginProjection:
     def test_servers_land_in_the_plugin_mcp_config(self, tmp_path: Path) -> None:
         servers = {
             "local": OmpMcpServer(command="./server", args=("--port", "1")),
-            "remote": OmpMcpServer(type="sse", url="https://mcp.example/sse"),
+            "remote": OmpMcpServer(
+                type=OmpMcpTransport.SSE, url="https://mcp.example/sse"
+            ),
         }
         with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
             assert plugin is not None
             root = Path(plugin)
-            assert root.name == "band-sdk"
             config = json.loads(
                 (root / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
             )
@@ -52,17 +51,13 @@ class TestMcpPluginProjection:
             )
             assert startup_config == {"startup": {"quiet": False}}
             assert config["mcpServers"]["remote"] == {
-                "type": "sse",
+                "type": OmpMcpTransport.SSE,
                 "url": "https://mcp.example/sse",
             }
             local = config["mcpServers"]["local"]
             assert local["args"] == ["--port", "1"]
             assert Path(local["cwd"]) == tmp_path.resolve()
             assert Path(local["command"]) == (tmp_path / "server").resolve()
-            startup = (root / OMP_MCP_STARTUP_JS).read_text(encoding="utf-8")
-            assert omp_mcp_ready_command(plugin) in startup
-            assert '"band-sdk:local"' in startup
-            assert '"band-sdk:remote"' in startup
         assert not Path(plugin).exists()
 
     def test_connection_instructions_become_an_always_applied_rule(
@@ -77,16 +72,6 @@ class TestMcpPluginProjection:
             assert rules[0].read_text(encoding="utf-8") == (
                 "---\nalwaysApply: true\n---\nReply through Band."
             )
-
-    def test_arguments_load_the_plugin_and_its_startup_extension(
-        self, tmp_path: Path
-    ) -> None:
-        plugin = str(tmp_path / "band-sdk")
-        arguments = omp_mcp_arguments(plugin)
-        assert arguments[:2] == ("--plugin-dir", plugin)
-        assert arguments[arguments.index(OMP_MODE_FLAG) + 1] == OMP_RPC_UI_MODE
-        assert str(Path(plugin) / OMP_MCP_STARTUP_JS) in arguments
-        assert str(Path(plugin) / OMP_MCP_STARTUP_CONFIG) in arguments
 
     @pytest.mark.parametrize("accepted_on", [("posix",)])
     def test_projected_plugin_files_are_owner_only(
@@ -134,15 +119,79 @@ class TestMcpPluginProjection:
             )
             assert Path(config["mcpServers"]["local"]["command"]).is_absolute()
 
+    @pytest.mark.parametrize("transport", [None, OmpMcpTransport.STDIO])
+    def test_command_transport_projects_a_launchable_server(
+        self, tmp_path: Path, transport: OmpMcpTransport | None
+    ) -> None:
+        servers = {
+            "local": OmpMcpServer(
+                type=transport, command="server", args=("--port", "1")
+            )
+        }
+        with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
+            assert plugin is not None
+            config = json.loads(
+                (Path(plugin) / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
+            )
+            local = config["mcpServers"]["local"]
+            assert local.get("type") == transport
+            assert local["command"] == "server"
+            assert local["args"] == ["--port", "1"]
+            assert Path(local["cwd"]) == tmp_path.resolve()
+
+    @pytest.mark.parametrize(
+        "transport", [None, OmpMcpTransport.HTTP, OmpMcpTransport.SSE]
+    )
+    def test_url_transport_preserves_the_remote_endpoint(
+        self, tmp_path: Path, transport: OmpMcpTransport | None
+    ) -> None:
+        servers = {
+            "remote": OmpMcpServer(
+                type=transport,
+                url="https://mcp.example/tools",
+                headers={"Authorization": "Bearer token"},
+            )
+        }
+        with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
+            assert plugin is not None
+            config = json.loads(
+                (Path(plugin) / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
+            )
+            remote = config["mcpServers"]["remote"]
+            assert remote.get("type") == transport
+            assert remote["url"] == "https://mcp.example/tools"
+            assert remote["headers"] == {"Authorization": "Bearer token"}
+            assert "command" not in remote
+            assert "cwd" not in remote
+
     @pytest.mark.parametrize(
         "fields",
         [
-            {},
-            {"command": "server", "url": "https://mcp.example"},
-            {"command": "server", "type": "http"},
-            {"url": "https://mcp.example", "type": "stdio"},
+            pytest.param({}, id="no-endpoint"),
+            pytest.param(
+                {"command": "server", "url": "https://mcp.example"},
+                id="two-endpoints",
+            ),
+            pytest.param(
+                {"command": "server", "type": OmpMcpTransport.HTTP},
+                id="command-http",
+            ),
+            pytest.param(
+                {"command": "server", "type": OmpMcpTransport.SSE},
+                id="command-sse",
+            ),
+            pytest.param(
+                {"url": "https://mcp.example", "type": OmpMcpTransport.STDIO},
+                id="url-stdio",
+            ),
+            pytest.param(
+                {"command": "server", "type": "websocket"},
+                id="unknown-transport",
+            ),
         ],
     )
-    def test_a_server_needs_exactly_one_transport(self, fields: dict[str, str]) -> None:
-        with pytest.raises(ValueError):
-            OmpMcpServer(**fields)
+    def test_conflicting_transport_settings_are_rejected(
+        self, fields: dict[str, str]
+    ) -> None:
+        with pytest.raises(ValidationError):
+            OmpMcpServer.model_validate(fields)

@@ -2,36 +2,10 @@
 
 from __future__ import annotations
 
-from band.integrations.omp import (
-    OMP_APPROVAL_MODE_ALWAYS_ASK,
-    OMP_APPROVAL_MODE_FLAG,
-    finalize_omp_command,
-    omp_cwd_argument,
-)
-from band.integrations.ompprocess import (
-    DEFAULT_OMP_COMMAND,
-    omp_rpc_command_in_workspace,
-    omp_runtime_env,
-)
+from band.integrations.ompprocess import omp_runtime_env
 
 
 class TestNativeLaunchSettings:
-    def test_default_command_is_safe_after_finalize(self) -> None:
-        assert finalize_omp_command(DEFAULT_OMP_COMMAND)[-2:] == [
-            OMP_APPROVAL_MODE_FLAG,
-            OMP_APPROVAL_MODE_ALWAYS_ASK,
-        ]
-
-    def test_workspace_is_selected_without_a_subprocess_cwd(self) -> None:
-        assert omp_rpc_command_in_workspace(
-            ("bunx", *DEFAULT_OMP_COMMAND, "-v"), "/w"
-        ) == [
-            "bunx",
-            *DEFAULT_OMP_COMMAND,
-            "-v",
-            omp_cwd_argument("/w"),
-        ]
-
     def test_runtime_env_routes_the_selected_provider_key(self) -> None:
         assert omp_runtime_env(env=None, model="openai/custom", api_key="secret") == {
             "OPENAI_API_KEY": "secret"

@@ -1,9 +1,10 @@
-"""Native OMP JSONL frame reassembly and host UI replies."""
+"""Native OMP JSONL frame reassembly and host replies."""
 
 from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from typing import cast
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -14,6 +15,7 @@ from band.integrations.ompwire import (
     OmpChunk,
     OmpFrame,
     OmpFrameType,
+    OmpToolResult,
     OmpUIResponse,
 )
 
@@ -104,19 +106,24 @@ def parse_payload_line(line: bytes) -> dict[str, JsonValue]:
     return _PAYLOAD_ADAPTER.validate_json(line, strict=True)
 
 
+def host_tool_result_frame(
+    request_id: str, result: OmpToolResult
+) -> dict[str, JsonValue]:
+    return {
+        "type": OmpFrameType.HOST_TOOL_RESULT,
+        "id": request_id,
+        "result": cast(
+            dict[str, JsonValue],
+            result.model_dump(mode="json", exclude={"is_error"}, exclude_none=True),
+        ),
+        "isError": result.is_error,
+    }
+
+
 def ui_response_frame(request_id: str, response: OmpUIResponse) -> dict[str, JsonValue]:
-    frame: dict[str, JsonValue] = {
+    answer = response.model_dump(mode="json", exclude={"cancelled"}, exclude_none=True)
+    return {
         "type": OmpFrameType.UI_RESPONSE,
         "id": request_id,
+        **(answer or {"cancelled": True}),
     }
-    if response.value is not None:
-        frame["value"] = response.value
-    elif response.confirmed is not None:
-        frame["confirmed"] = response.confirmed
-    elif response.answers is not None:
-        frame["answers"] = [
-            answer.model_dump(exclude_none=True) for answer in response.answers
-        ]
-    else:
-        frame["cancelled"] = True
-    return frame

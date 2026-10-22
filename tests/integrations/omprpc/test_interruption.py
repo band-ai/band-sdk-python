@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
+from pydantic import JsonValue
 
-from band.integrations.ompwire import OmpEventType, OmpHostToolCall, OmpToolResult
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient
+from band.integrations.ompwire import (
+    OMP_FRAME_BYTES,
+    OmpEventType,
+    OmpHostToolCall,
+    OmpToolResult,
+)
+from tests.integrations.omppeer import STDIN_BACKPRESSURE
+from tests.integrations.omprpc.backpressure import (
+    PRESSURE_WRITE_COUNT,
+    BackpressureSpawn,
+)
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
+    OMP_PEER_SCRIPT,
     ClientFactory,
     Observer,
     owned_rpc_process,
@@ -167,30 +181,30 @@ class TestInterruptionAndReaping:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
 
-    async def test_close_finishes_while_a_stdin_drain_is_held(
-        self, client_factory: ClientFactory
-    ) -> None:
-        client = await client_factory("basic")
-        process = owned_rpc_process(client)
-        stdin = process.stdin
-        assert stdin is not None
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        drain = stdin.drain
-
-        async def hold_drain() -> None:
-            entered.set()
-            await release.wait()
-            await drain()
-
-        stdin.drain = hold_drain
-        writing = asyncio.create_task(client.request("checkpoint"))
+    async def test_close_finishes_while_a_stdin_drain_is_held(self) -> None:
+        spawn = BackpressureSpawn()
+        client = OmpRpcClient(
+            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", STDIN_BACKPRESSURE),
+            create_process=spawn.create,
+        )
+        writes: list[asyncio.Task[dict[str, JsonValue]]] = []
         try:
+            await client.start()
+            process = owned_rpc_process(client)
+            await client.request("hold")
+            payload = "x" * (OMP_FRAME_BYTES // 2)
+            writes = [
+                asyncio.create_task(client.request("pressure", data=payload))
+                for _ in range(PRESSURE_WRITE_COUNT)
+            ]
             async with asyncio.timeout(5):
-                await entered.wait()
+                await spawn.paused.wait()
                 await client.close()
             assert process.returncode is not None
+            outcomes = await asyncio.gather(*writes, return_exceptions=True)
+            assert all(isinstance(outcome, OmpProcessError) for outcome in outcomes)
         finally:
-            release.set()
-            writing.cancel()
-            await asyncio.gather(writing, return_exceptions=True)
+            for writing in writes:
+                writing.cancel()
+            await asyncio.gather(*writes, return_exceptions=True)
+            await client.close()

@@ -6,14 +6,15 @@ import asyncio
 
 import pytest
 
-from band.integrations.omprpc import OmpPromptError, OmpRpcError
+from band.integrations.omprpc import OmpPromptError, OmpProtocolError, OmpRpcError
 from band.integrations.ompwire import (
     OMP_NATIVE_PROTOCOL_VERSION,
+    OmpCommandName,
     OmpEvent,
     OmpEventType,
     OmpState,
 )
-from tests.integrations.omppeer import COMPLETE
+from tests.integrations.omppeer import COMPLETE, LATE_PROMPT_ERROR
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -93,6 +94,44 @@ class TestPromptNarrationAndResults:
                 await prompt_task(client, Observer())
         assert (rejected.value.command, rejected.value.code) == ("prompt", "rejected")
         await second_prompt(client)
+
+    async def test_command_error_after_admission_keeps_the_process_usable(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory(LATE_PROMPT_ERROR)
+        process = owned_rpc_process(client)
+        observer = Observer()
+        running = prompt_task(client, observer)
+        try:
+            await observer.wait_for(OmpEventType.AGENT_END)
+            await client.request("release")
+            with pytest.raises(OmpRpcError) as failed:
+                await running
+            assert failed.value.command == OmpCommandName.PROMPT
+            assert process.returncode is None
+            await second_prompt(client)
+            assert owned_rpc_process(client) is process
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    async def test_a_late_response_for_the_wrong_command_retires_the_transport(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory(LATE_PROMPT_ERROR)
+        process = owned_rpc_process(client)
+        observer = Observer()
+        running = prompt_task(client, observer)
+        try:
+            await observer.wait_for(OmpEventType.AGENT_END)
+            with pytest.raises(OmpProtocolError):
+                await client.request("release", failed_command=OmpCommandName.GET_STATE)
+            with pytest.raises(OmpProtocolError):
+                await running
+            assert process.returncode is not None
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
 
     @pytest.mark.parametrize(
         ("scenario", "match"),

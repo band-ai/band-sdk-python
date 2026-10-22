@@ -6,14 +6,22 @@ import asyncio
 import logging
 
 import pytest
+from pydantic import JsonValue
 
+from band.integrations.codex.winspawn import await_returncode
 from band.integrations.omprpc import OmpProcessError, OmpProtocolError
+from band.integrations.ompwire import OmpEventType
 from tests.integrations.omppeer import FRAME_PAYLOAD_MARK
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
+    ProcessGate,
+    descendant_client,
+    descendant_liveness,
     owned_rpc_process,
     prompt_task,
+    unrelated_gate_child,
+    wait_for_descendants,
 )
 
 
@@ -68,13 +76,54 @@ class TestTransportAndProtocolFailures:
             await client.close()
         assert process.returncode is not None
 
+    async def test_observed_root_exit_retires_an_inflight_prompt_and_owned_children(
+        self, process_gate: ProcessGate
+    ) -> None:
+        client = descendant_client(process_gate, stdio="inherit", detached=True)
+        observer = Observer()
+        running: asyncio.Task[None] | None = None
+        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
+        async with unrelated_gate_child(process_gate) as unrelated:
+            try:
+                await client.start()
+                descendants = await wait_for_descendants(process_gate)
+                process = owned_rpc_process(client)
+                running = prompt_task(client, observer)
+                await observer.wait_for(OmpEventType.AGENT_END)
+                crashing = asyncio.create_task(client.request("crash"))
+                assert await await_returncode(process, float("inf"))
+                assert await descendant_liveness(descendants) == [True, True]
+
+                with pytest.raises(OmpProcessError):
+                    await client.request("get_state")
+                async with asyncio.timeout(5):
+                    with pytest.raises(OmpProcessError):
+                        await running
+                    with pytest.raises(OmpProcessError):
+                        await crashing
+                assert await descendant_liveness(descendants) == [False, False]
+                assert await descendant_liveness([unrelated]) == [True]
+            finally:
+                await client.close()
+                tasks = [task for task in (running, crashing) if task is not None]
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
     async def test_stderr_is_drained_without_newlines(
         self,
         client_factory: ClientFactory,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         client = await client_factory("basic")
-        async with asyncio.timeout(5):
-            assert await client.request("stderr") == {"drained": True}
+        with caplog.at_level(logging.DEBUG, logger="band.integrations.omprpc.client"):
+            async with asyncio.timeout(5):
+                assert await client.request("stderr") == {"drained": True}
+        leaked = any(
+            FRAME_PAYLOAD_MARK in record.getMessage() for record in caplog.records
+        )
+        caplog.clear()
+        assert not leaked
 
     @pytest.mark.parametrize(
         "scenario",

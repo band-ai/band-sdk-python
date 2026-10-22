@@ -18,6 +18,7 @@ from band.integrations.ompwire import (
 from tests.integrations.omppeer import (
     BACKGROUND_COMPLETE,
     RESUMED_PROVIDER_FAILED,
+    SETTLED_CALLBACK_SCENARIO,
     YIELDED,
 )
 from tests.integrations.omprpc.kit import (
@@ -110,7 +111,7 @@ class TestTurnSettlement:
     async def test_settlement_does_not_succeed_while_a_callback_is_still_running(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("settled-during-callback")
+        client = await client_factory(SETTLED_CALLBACK_SCENARIO)
         client.callback_exit_timeout_s = 0
         process = owned_rpc_process(client)
         held = asyncio.Event()
@@ -136,7 +137,7 @@ class TestTurnSettlement:
     async def test_settlement_succeeds_after_the_running_callback_finishes(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("settled-during-callback")
+        client = await client_factory(SETTLED_CALLBACK_SCENARIO)
         started = asyncio.Event()
         release = asyncio.Event()
 

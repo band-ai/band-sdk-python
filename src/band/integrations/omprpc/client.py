@@ -8,7 +8,7 @@ import os
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 from pydantic import JsonValue, ValidationError
 
@@ -30,6 +30,7 @@ from band.integrations.omprpc.errors import (
 )
 from band.integrations.omprpc.frames import (
     ChunkAssembler,
+    host_tool_result_frame,
     parse_payload_line,
     payload_json,
     ui_response_frame,
@@ -41,6 +42,7 @@ from band.integrations.ompwire import (
     OMP_NATIVE_PROTOCOL_VERSION,
     OMP_REASSEMBLED_BYTES,
     OmpCommand,
+    OmpCommandName,
     OmpEvent,
     OmpEventType,
     OmpFrame,
@@ -176,7 +178,7 @@ class OmpRpcClient:
                     raise error
                 self._apply_ready_limits(ready)
                 negotiated = await self._request_frame(
-                    "negotiate_protocol",
+                    OmpCommandName.NEGOTIATE_PROTOCOL,
                     {"protocolVersion": OMP_NATIVE_PROTOCOL_VERSION},
                 )
                 self._parse_response(
@@ -263,7 +265,9 @@ class OmpRpcClient:
         if self._closing or self._proc is None:
             raise OmpProcessError("OMP RPC process is not running")
         if self._proc.returncode is not None:
-            raise OmpProcessError("OMP RPC process exited")
+            error = OmpProcessError("OMP RPC process exited")
+            self._record_failure(error)
+            raise error
 
     def _next_id(self) -> str:
         self._request_id += 1
@@ -290,7 +294,7 @@ class OmpRpcClient:
         )
         self._pending[request_id] = PendingRequest(command, future)
         try:
-            await self._write_line(frame.model_dump_json())
+            await self._write_frame(frame.root)
             response = await future
             if isinstance(response, (OmpRpcError, OmpProcessError)):
                 raise response
@@ -357,7 +361,7 @@ class OmpRpcClient:
     async def _complete_prompt(self, turn: PromptRun, message: str) -> None:
         try:
             accepted = await self._request_frame(
-                "prompt", {"message": message}, request_id=turn.id
+                OmpCommandName.PROMPT, {"message": message}, request_id=turn.id
             )
         except OmpRpcError:
             turn.rejected = True
@@ -374,13 +378,14 @@ class OmpRpcClient:
         await self._wait_for_settlement(turn)
         await turn.events.join()
         if turn.callback_tasks:
-            _, pending = await asyncio.wait(
-                turn.callback_tasks, timeout=self.callback_exit_timeout_s
-            )
-            if pending:
+            try:
+                async with asyncio.timeout(self.callback_exit_timeout_s):
+                    while any(not task.done() for task in turn.callback_tasks):
+                        await asyncio.wait(turn.callback_tasks)
+            except TimeoutError:
                 error = OmpProcessError(CALLBACKS_UNFINISHED)
                 self._record_failure(error)
-                raise error
+                raise error from None
         if outcome is not None and outcome.status != OmpPromptStatus.COMPLETED:
             raise OmpPromptError(
                 outcome.status,
@@ -399,7 +404,7 @@ class OmpRpcClient:
             )
 
     async def _wait_for_settlement(self, turn: PromptRun) -> None:
-        snapshot = await self._request_frame("get_state", {})
+        snapshot = await self._request_frame(OmpCommandName.GET_STATE, {})
         state = self._parse_response(
             snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
         )
@@ -521,6 +526,10 @@ class OmpRpcClient:
                     self._cancel_callback(
                         turn, OmpCallbackKind.TOOL, cancellation.targetId
                     )
+                else:
+                    logger.debug(
+                        "OMP RPC ignored a host-tool cancellation without an active prompt"
+                    )
             case OmpFrameType.UI_REQUEST:
                 request = OmpUIRequest.model_validate(payload)
                 if request.method == "cancel":
@@ -555,23 +564,27 @@ class OmpRpcClient:
                         self._record_failure(overflow)
                 else:
                     logger.debug("OMP RPC ignored an event without an active prompt")
+            case _:
+                logger.debug("OMP RPC ignored a frame with an unknown type")
 
     def _dispatch_response(self, response: OmpResponse, sequence: int) -> None:
         if response.id is None:
             raise OmpProtocolError("OMP response is missing its command id")
         pending = self._pending.get(response.id)
+        turn = self._turn
+        active_prompt = turn if turn is not None and response.id == turn.id else None
+        expected_command = pending.command if pending is not None else None
+        if expected_command is None and active_prompt is not None:
+            expected_command = OmpCommandName.PROMPT
+        if expected_command is not None and response.command != expected_command:
+            raise OmpProtocolError("OMP response command does not match its request")
         if pending is None:
-            if (
-                not response.success
-                and self._turn is not None
-                and response.id == self._turn.id
-            ):
-                self._turn.fail(command_error(response))
+            if not response.success and active_prompt is not None:
+                active_prompt.rejected = True
+                active_prompt.fail(command_error(response))
                 return
             logger.debug("OMP RPC ignored an unmatched command response")
             return
-        if response.command != pending.command:
-            raise OmpProtocolError("OMP response command does not match its request")
         if pending.future.done():
             return
         if response.success:
@@ -628,19 +641,7 @@ class OmpRpcClient:
         result = await turn.on_tool(call)
         if not self._callback_still_active(turn, OmpCallbackKind.TOOL, call.id):
             return
-        await self._write_frame(
-            {
-                "type": OmpFrameType.HOST_TOOL_RESULT,
-                "id": call.id,
-                "result": cast(
-                    dict[str, JsonValue],
-                    result.model_dump(
-                        mode="json", exclude={"is_error"}, exclude_none=True
-                    ),
-                ),
-                "isError": result.is_error,
-            }
-        )
+        await self._write_frame(host_tool_result_frame(call.id, result))
 
     async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
         response = await turn.on_ui(request)
@@ -652,9 +653,7 @@ class OmpRpcClient:
         assert process.stderr is not None
         try:
             while data := await process.stderr.read(_DRAIN_BYTES):
-                logger.debug(
-                    "OMP stderr: %s", data.decode("utf-8", errors="replace").rstrip()
-                )
+                logger.debug("OMP stderr drained: %s bytes", len(data))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -783,7 +782,9 @@ class OmpRpcClient:
         ):
             try:
                 async with asyncio.timeout(_ABORT_TIMEOUT_S):
-                    await self._request_frame("abort", {}, allow_closing=True)
+                    await self._request_frame(
+                        OmpCommandName.ABORT, {}, allow_closing=True
+                    )
             except (TimeoutError, OmpRpcError, OmpProcessError) as error:
                 logger.warning("OMP graceful abort skipped: %s", error)
         reader = self._reader_task

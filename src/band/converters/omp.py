@@ -19,10 +19,6 @@ class OmpMetadataKey(StrEnum):
     SESSION = "omp_session_file"
 
 
-OMP_ROOM_METADATA_KEY = OmpMetadataKey.ROOM
-OMP_SESSION_METADATA_KEY = OmpMetadataKey.SESSION
-
-
 class OmpSessionState(BaseModel):
     """The native session file each room may resume, plus the room's transcript."""
 

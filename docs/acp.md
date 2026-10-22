@@ -294,6 +294,17 @@ silently dropping events and reporting success. The wire reader does not wait
 for callback capacity, so callbacks can still issue correlated commands and
 answer native UI requests while delivery is held.
 
+An observed root-process exit also retires the transport when descendants still
+hold stdout open. Command errors, including an error reported after prompt
+admission, raise `OmpRpcError` without retiring an otherwise usable process.
+Host-tool and UI callbacks admitted while a settled turn drains share its
+original callback-exit deadline; an unfinished callback fails the turn and starts
+cleanup. SDK debug logs report stderr byte counts, never the child's raw stderr.
+
+Explicit MCP transports use `band.integrations.ompprocess.OmpMcpTransport`.
+Native session metadata uses `band.converters.omp.OmpMetadataKey.ROOM` and
+`OmpMetadataKey.SESSION`.
+
 A `create_process` factory customizes creation without bypassing containment.
 On Windows it launches the existing helper; the client still owns the Job
 containing the native process and its descendants, including during cancelled
