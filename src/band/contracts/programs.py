@@ -36,7 +36,7 @@ class ProgramAssessment(WireRequest):
 class ProgramStart(WireRequest):
     id: Identifier
     assessment_id: Identifier
-    mode: Literal["program", "hybrid"]
+    mode: Literal["program", "hybrid", "llm"]
     journal: bool
     target_bytes: int = Field(ge=1_000_000, le=500_000_000)
     minimum_steps: int = Field(ge=1, le=1000)
