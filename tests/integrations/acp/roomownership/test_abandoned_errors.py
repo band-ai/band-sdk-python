@@ -17,6 +17,22 @@ from tests.integrations.acp.acp_toolkit.mcpresolver import (
 
 
 class TestAbandonedErrors:
+    async def test_live_caller_receives_original_failure_without_abandoned_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        failure = LookupError("resolution refused")
+
+        async def resolver(workspace: str) -> list[Any]:
+            raise failure
+
+        async with acp_adapter(
+            FakeACPAgent(http=True), resolve_mcp_servers=resolver
+        ) as acp:
+            with pytest.raises(LookupError) as caught:
+                await acp.send("live")
+            assert caught.value is failure
+        assert "Abandoned ACP session setup failed" not in caplog.text
+
     @pytest.mark.parametrize("successor", [False, True])
     async def test_late_failure_is_reported_once_and_does_not_fail_successor(
         self, successor: bool, caplog: pytest.LogCaptureFixture
