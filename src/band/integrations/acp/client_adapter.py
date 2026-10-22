@@ -235,6 +235,11 @@ class SessionCloseReason(StrEnum):
     STALE_BAND_MCP_URL = "stale Band MCP URL"
 
 
+def _setup_interrupted(room: ACPRoom) -> bool:
+    task = asyncio.current_task()
+    return task is not None and (task.cancelling() > 0 or task is room.abandoned_setup)
+
+
 def new_message_marker() -> str:
     """A nonce'd boundary marker, minted once per replay prompt."""
     return f"{NEW_MESSAGE_MARKER_PREFIX} {uuid4().hex[:8]}]"
@@ -1345,7 +1350,6 @@ class ACPClientAdapter(
     def _require_current_runtime(
         self, room: ACPRoom, runtime: ACPRuntime, *, finishing: bool = False
     ) -> None:
-        task = asyncio.current_task()
         if (
             self._rooms.get(room.room_id) is not room
             or room.runtime is not runtime
@@ -1355,9 +1359,7 @@ class ACPClientAdapter(
                 if finishing
                 else room.retained.has_authority(room.generation)
             )
-            or (
-                task is not None and (task.cancelling() or task is room.abandoned_setup)
-            )
+            or _setup_interrupted(room)
         ):
             raise asyncio.CancelledError
 
@@ -1572,13 +1574,10 @@ class ACPClientAdapter(
     def _require_setup_result(room: ACPRoom, *, finishing: bool = False) -> None:
         # MCP resolution cannot start a new scope after teardown. Configuration
         # already accepted on a resident scope may finish while its lease holds.
-        task = asyncio.current_task()
         refused = room.retained.closing and not (
             finishing and room.retained.may_finish(room.generation)
         )
-        if refused or (
-            task is not None and (task.cancelling() or task is room.abandoned_setup)
-        ):
+        if refused or _setup_interrupted(room):
             raise asyncio.CancelledError
 
     async def _with_resolved_mcp_servers(
