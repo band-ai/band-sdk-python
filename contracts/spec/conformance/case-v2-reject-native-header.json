@@ -1,0 +1,37 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-reject-native-header",
+  "requirements": [
+    "DSL-001"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "native",
+        "content": "+SKILL explicit-infinity\n+SUMMARY Removed native header.\n+ENGINE 0.2.0-lab.1\n+ROLES a, b\n+BODY\ncontract @infinity => expired\ntype ping\nstate new\n  a -> b: ping() => done\nend done\n",
+        "sha256": "cae1d39e9fc813cb51daa5b699f195a527eaba6490efd596c754033bcddfb394"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error",
+      "equals": "frontmatter_required"
+    }
+  ],
+  "source_schema_assertions": [
+    {
+      "request": 0,
+      "valid": false
+    }
+  ],
+  "expected": [
+    {
+      "error": "frontmatter_required"
+    }
+  ]
+}

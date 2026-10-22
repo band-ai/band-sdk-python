@@ -1,0 +1,3425 @@
+{
+  "base": "4b38eb23e4a18aa05fcf49efe1a269884c6c10f6",
+  "files": {
+    "case-band-session.json": "59e1e38c028d73c27e3407f2cf2f30d7cefad34fa67db795fbffb2df9c8be63c",
+    "case-canonical-0.json": "e2149fc1bdcde391b527cda07f559ebf424e3927796457c2a95047613be4c529",
+    "case-canonical-1.json": "56d7f9ff6c42f797cd5443318ddde7779b441f31ce05197be375bb1cf96f09c0",
+    "case-canonical-2.json": "6e3509b70aaa82a9fb9eba905cac47a45144407e99e9bad4acea82a69246dad1",
+    "case-canonical-3.json": "e1afde8e3ea0472b330a00d18f9b8511a90daca005e8ae513d8330ce87a149bb",
+    "case-canonical-4.json": "9c31072f2454d16d2ab84d9092c6cd3dc165bdf5d886fcc6670424e9b0897a4d",
+    "case-canonical-5.json": "9a3f4456bfa5fc5084d1a2a4e19449a7d54ea71f7f05d92aa03cf8572751d310",
+    "case-canonical-6.json": "68a1a5b15ce953e81a1ed4faf92207c16a07577b92e4a20350267b745647c305",
+    "case-canonical-7.json": "1444a5b929b22daa6e7e4878bbec3dec3995402b7cbc0af53f5f8a67483528ad",
+    "case-carrier-actor-in-body.json": "938b3a0856f62e148c0eb18a97caa8339c04e2cff24bbc6a7a2b70327867c2b1",
+    "case-carrier-body-defaults.json": "7d088161067efd4b550469b626374900a0d7e12e1106e89e2957d6ae7d4dc7c4",
+    "case-carrier-body-token-is-not-external.json": "9f1eafa2eb388f89e62be46b5d99eeda729b71b717705ff24e6155ac2cd4500a",
+    "case-carrier-conflict-expected_version.json": "8f523c201f1b26d555bb91a52fd7447f6c2ed2a32c71a7ac0277db6a363029a5",
+    "case-carrier-conflict-id.json": "0067f5c892abe35b159fca0193d4a8cfb67f03fdc7047a7e774de58a70a04beb",
+    "case-carrier-conflict-kind.json": "93443e26f67a00a3dbadebe19ccda7e12e6719a0c8b739991fa0944582fdf74e",
+    "case-carrier-conflict-session.json": "61dc2c1dbc0a8834f5a0af1d4b4ff43a324777f65c1fa99fbd9af191251f2f92",
+    "case-carrier-cross-carrier-retry.json": "5adce026db363993150efa193b04d17f520bd445b5d0f80c9a3e4be345d56297",
+    "case-carrier-duplicate-json.json": "dd3b6e38259afa9508c94ec1f4f02651325409204a1816b7a03ecb92b9fcf3ad",
+    "case-carrier-email-headers.json": "2fb3a2a945c206b13ebd40bc0948221ddf03a6fb4482bb182286030be22c7c72",
+    "case-carrier-encode-cannot-introduce-optional.json": "4a3e8d35fdc79a3cdeb55cde3d61654906b00c3767f49814fec6fdcd1ef60a01",
+    "case-carrier-encode-conflict-expected_version.json": "3b2b038e35362a5da97948d101b16c490e309501a205614f467cde2f3513d95c",
+    "case-carrier-encode-conflict-id.json": "0e51058dc55aecc13d95c7b9903840b4ead88acd58931926713eae586872b967",
+    "case-carrier-encode-conflict-kind.json": "505b7aa4f0b83b007dee2bab08f82343b2a8d7e839673aea5b32b3447edecb6a",
+    "case-carrier-encode-conflict-session.json": "490d11230fcbb84b80a760ad73f0c229b13bc5d6620cec7523f2fcdc827af419",
+    "case-carrier-encode-email-omit-supplied.json": "4a8a7ef0e23ef8da048542798c9350c8eee56a4383e79197b0c3e3a3b36b6af4",
+    "case-carrier-encode-fallback-keeps-body.json": "4dd75b2e0771f990726d43d03c42662a462490a0e9b020ee96a5d0b901202817",
+    "case-carrier-encode-forbidden-map-actor.json": "6a292ff0fb6bfc974c0d03e4dbee2a75a78ce4e567a4cd9d894734d24c46032e",
+    "case-carrier-encode-forbidden-map-clock.json": "7f6577a3879036d2e3ce173a6d73f3d6f9b49f8c42b301102a2dd71d7c484d6c",
+    "case-carrier-encode-forbidden-map-payload.json": "d78c99b7d9d7c94aca7dbcb68f2b7d108782a00db345a5320976929f89154adc",
+    "case-carrier-encode-forbidden-map-unknown.json": "fd22ab40bf90dc9601505a9723e250027cfec3b89d7c10afffaa460da70dfc4b",
+    "case-carrier-encode-http-omit-only-supplied.json": "0bf3ce20a9506500832cd099ec732f63c216bdb48ebefd27756d92ef26b1c580",
+    "case-carrier-encode-optional-absent.json": "d6bfe893fb62797873c696c7b24c691d459274d0b91ac81544abeea7b91b812e",
+    "case-carrier-equal-body-and-headers.json": "533e78c7e9592a40b5bd3e5f3f503e7c562a34eba6f3ee241f2db878cedf794a",
+    "case-carrier-external-type-id-.json": "e39b0d32c108758b220b33c0bf3b27f156310fb82e821e7cd14253e680b14183",
+    "case-carrier-external-type-id-1.json": "e1f59252c1932c2d2263318ed90629d3a3b46dd32d5bb8730583bf52bdf656a9",
+    "case-carrier-external-type-kind-.json": "b45bce4196a5af56c48f2f8dcafb0d5408545d33ce27a613c0d480a34c0c43f4",
+    "case-carrier-external-type-kind-True.json": "0f8859c07a84f326b927392f081a3501a2a9ef0b0746e978f10c0186785265fc",
+    "case-carrier-external-type-session-1.json": "de881fc3d0bde4ed611c3aabd42ec99f5773085f7be0c62b4bac4d5125ca5871",
+    "case-carrier-float-json.json": "50d1dccca7a61c38ad499f0ecf7ba5e0f75c20b42fc4f4729a54568ae06074f1",
+    "case-carrier-forbidden-map-actor.json": "1b731cc94084bbd2c0e5d576d48a1162dc00ae1d44e0ca580163fe8fd54a2066",
+    "case-carrier-forbidden-map-clock.json": "cca985c607b3f555d589664edef3f95a1700d4af344d65dd1c26ecca46ab2b95",
+    "case-carrier-forbidden-map-payload.json": "1381ef0b8ceec6314d8eb96f0a9c7641b994e5fb67d98ed6dad99d97ed3214da",
+    "case-carrier-forbidden-map-unknown.json": "17fe19d6725394f71b3b984985d31fcc658418f0fc5300cbdfd627fb685f6c33",
+    "case-carrier-http-path.json": "10b93f78d09fdf5f1b2eefc86c4958785a1545a63dec970542f8efc4c71b7c34",
+    "case-carrier-invalid-map-0.json": "57c063ee4360a082c84aa305e85894fed9a740a3bfaf56ac19905d57f93b1e16",
+    "case-carrier-invalid-map-1.json": "65b8869fc9a80f58385be3ed0edc7d473ee7337ad5a0f05423c940b8146eefc2",
+    "case-carrier-invalid-map-2.json": "719d8057c61df2eae8a7e119331cf2bb07ca6c28b07310f0e3cc0f238b3ada43",
+    "case-carrier-invalid-map-3.json": "6bab16cf0ffcf3b8e68b620248280e248748a89a74fcb3d09c6ccbcb994fea42",
+    "case-carrier-invalid-map-4.json": "8188fe7ed8a5f97e045d4c7259f7a3df16fd8db7477cef22400ec911311dda3a",
+    "case-carrier-legacy-id-session.json": "e3c582e12244b9c7c036dc081190a309a1e14710188f67b3b788b3b2f55e532a",
+    "case-carrier-mapped-source-absent-fallback.json": "cc69a664205bc6aa19793f032d4cdc9df1ca6476bba9dd4360eb4e58dd783c60",
+    "case-carrier-normalized-size.json": "1cca0fdb6c5880fb81106184d76827122ca18799405be50a3d399dda89b3cf2d",
+    "case-carrier-optional-absent.json": "75a325205006ce8694e0c43481910e0bf149fed015581cbeaa2a9dab5ee4afb4",
+    "case-carrier-raw-size.json": "66db85c2794045da5bb358b696333fb13342eb2b21b4b940b974f366ba6fa1eb",
+    "case-carrier-required-id.json": "fc1fca11f6b5d640c9d8d0e9392aab1c46d6a87dc4a507ff1c91e01c1120fb95",
+    "case-carrier-required-kind.json": "09520ec43577d6b9240688988185cad697ca3e23cbe77dcb547e36a5718ea787",
+    "case-carrier-required-payload.json": "cd20b1cabdbb503b221f51846d56bb1ec556eb7dfc42dc3a68ed7e4004dff508",
+    "case-carrier-shared-source-validates-each-field.json": "ed2fe5b4a1d0dc95bf5cddbbaec6f0c5c2b841235363e5ce43029f96fc766a15",
+    "case-carrier-trailing-json.json": "5cdc1fd21973ee8a12a288693a48c90383aa720e50a5a4b8d64fee4e05c67dd2",
+    "case-carrier-undeclared-supplied-source.json": "bac387446dff7cd75e6586b829308f7c78b80317283d05dcd644ddf066725479",
+    "case-carrier-unsafe-json.json": "f8975d81f3e7f3156dd1596fb3afe8df5355fa6e397add2db76b80c49e6ffb4f",
+    "case-carrier-version-0.json": "58d4970ed9fca0147c347ed7bab3e7cf3935cf245d2a026ead2baba66a833cc1",
+    "case-carrier-version-1.json": "1359ccc000c83d5874bf1efcf4ec3342791a7cdd639bc12cdea499a31b885a4c",
+    "case-carrier-version-2.json": "1d53891c372e29660ad732161b531092c8bf66d74f7deff659420f2103b3a2d7",
+    "case-carrier-version-3.json": "eb524d48322bd7fc6429dc9211d84f6cde0a799afc051eb56f95db71eb2c7ed6",
+    "case-carrier-version-4.json": "38eb24933537b987756de3cca28ce10a9addd911f9d6a8fd9bcca33e1ad44ea5",
+    "case-carrier-version-5.json": "ded3becc2f7f8118dc546ddf658f8c0b4a063191fd7357a490ef4d62411b992b",
+    "case-checkpoint-corruption.json": "22388f976943ae65b04daf0888c98f1221266cdaeed3273abe7de0be8cbb70d9",
+    "case-checkpoint-restore.json": "01c41d1acd91a881a48a51d8ef400a71c5c75608d8aa725dc6a9eba2130efa1f",
+    "case-clock-regression.json": "fd3f4e502d743940d1215a8772a2ce558a95fdf7739a3e8ae92a3a77265a25a1",
+    "case-compile-agent-control.json": "31d086c2738581b04ff358d32cd5334f772f6358cdbd6f924cab3573fb71e24b",
+    "case-compile-all-participants.json": "5abf864cdf20538d412d88ba2bcda1d0d846c3164b27ad96f03c066e3b158746",
+    "case-compile-assignment.json": "1ee61e1d9701a8ced7ba0ebcbf2a764d7e081aabc4eb3ed52e6f6529e63f520a",
+    "case-compile-bounded-review.json": "13d310a0f9331852bb890c08457c2a71bb6383e7fe0f512cdd2891c162023305",
+    "case-compile-explicit-infinity.json": "8bc40967e97ce6f58bd4e01b5e52b60e829cd9f42dd2c0fffcd695c64f54ed43",
+    "case-compile-first-responder.json": "bf072ab37fb030993abc7ee8f9b467c93d74c49c40f705fc0e132501267e899e",
+    "case-compile-history-review-v2.json": "16b6b6b41b983af6e447d5c903a5b4d98a063fbfff31abd1bc6c17d059a46f8c",
+    "case-compile-history-review.json": "8bee34750ae257daaa0aaf59a8d7019183b0f7df023d9d80e6e92a6d6a51d42b",
+    "case-compile-hybrid-assistant.json": "9b71b5bc8e95c8388d1badfba2bf5f379b719efe13c0655ce56fdf1a3de885de",
+    "case-compile-program-counter.json": "b44ff4e657a216bd24c0c6fac8bb2748d28b433e4cc08dddb3c2ad1577ee5823",
+    "case-compile-progress-events.json": "4fb2984878c540ff696d2180d30e2ff45a5a3dd03d79115f25c8293cca988090",
+    "case-compile-room-events.json": "3d11552118fbdaab4a3ce3d04e0e66d5786aaee0e014bb6c904d54d32fe9cc19",
+    "case-compile-selected-deadlines.json": "0b1641aea3b5bac8662a143b9c8f560c35e2755305039515c88a90519f324387",
+    "case-compile-team-review.json": "bd5a07328dabb1392de3851e69d91aa6e8eb4b0eab7f193a1d460fb1b034eaaf",
+    "case-documentation-basic.json": "b78c2eebd17214b793fe698719b924cef139a61be24862751a4f493a76334591",
+    "case-documentation-continuation.json": "69ad9a51b0a3eac36ad19ba9f5260a4691d8e40f0a337322b6f2ea23239c5b03",
+    "case-documentation-crlf.json": "50391564ce535d3c3443ad34416e0e25161bb7a2f992c59ed2776f60fd3769d9",
+    "case-documentation-escaped-interpolation.json": "ca5d7c3cf0fe726ff1cb3ec6c10b257d2a8f924eaec16f664e3a125c8ec6f40f",
+    "case-documentation-indent.json": "069e7237cd7f69173a95fcb69b0abbe2a89d6e4e7ba1149d80f573cc89bc4e6c",
+    "case-documentation-unicode.json": "c8b023d979d9aaf91d26857eab9cebe46ddfdff0131c1d55191d5f23175981c9",
+    "case-each-all-participants.json": "3e71327a01e833ead7b97a08a2cdd242eab7833bbd53594f8e61c0439cf08abc",
+    "case-each-deadline-boundary.json": "786ac229ec7417d3c786d8e9cfa13107f5ecd6eb8e54d3f771774e2e22846976",
+    "case-entry-cap.json": "0da6cc1073a92673f8b185aadac8b1e28444d839f2013badd8adfcea610f8262",
+    "case-first-responder.json": "c258180f448d163b123f890ef6455cda7bdd39b76b29258688d71f124ce8336f",
+    "case-identity-version-envelope.json": "f7e4e8bd9d0eba5ff40025d50a3580675487b963046e1e017fcd974249175d4b",
+    "case-inactivity-accepted.json": "3ad08079a9880d07550a3b1b3d2ce0d3731af2ff41a34b0d51f1d9ba39196957",
+    "case-inactivity-marked.json": "58e5b1dd1afc384f63fd1a49f93b98d8e98c204d5e5616bba29496c9ad1d2e7a",
+    "case-inactivity-transition.json": "6bf7e8583481c86ef45e0a092601b1f3e186df5fd4b57705074210f747070e26",
+    "case-independent-selected-duties.json": "18258ee55d7ed98986437bf7c030fb44bc5526e481176d0096854081296afea3",
+    "case-invalid-bad-doc-unicode.json": "203c703774897a4d6d74a70eba759d3818eab4573d6084e8c32818994fca868b",
+    "case-invalid-duplicate-ref-kind.json": "12eb5345a57a915e63729607f067f26def312eef60c8ffec8b9b3f1abe33ef27",
+    "case-invalid-duplicate-type.json": "fd83bdd537a4133e2198f7bdd820badabe9093cb663a647809d35c14bb72718c",
+    "case-invalid-interpolation.json": "981c3bccb8348d3e8c128a5dcfada5b9318376cda056241e2f6f7b0f54957de8",
+    "case-invalid-reference.json": "6272c6e6258309636b798688f808fd54f08be781834f0814dc573c43921e2df9",
+    "case-invalid-reversed-bounds.json": "63b53aa9a0b6b5ca34a82f1f8e7346e62bb704e2ff2baa24b36ea0240fb86e57",
+    "case-invalid-unknown-directive.json": "65ae7cc5c827c5a15d0fef5da749200efbf18e9d80a9af8e4f37069ffbcba118",
+    "case-invalid-unknown-ref-kind.json": "261b2354ec4085985a422f54f1be9bd83ca85eb8a3593fef5b6fc8f80dfb7542",
+    "case-invalid-unknown-role.json": "70b38172ef8e038cb2b3bc7040f35859341020c13c2a2e3ed8920e2ce65c7326",
+    "case-invalid-unsafe-bound.json": "828b3c5a75952ae1f6b2b9562ecde172d1a2d91b7a35336ce3c1beaa951a5676",
+    "case-message-budget.json": "a09cf63b1b68a88beaff4fbfcfec26cc5acc3f40ad2bb5a569d68c089d98adee",
+    "case-portable-local-preflight.json": "7a4ac29e7a9ac5a15e6c4c2b0411eb016ecfe7312aea3b741921d8eb95061e73",
+    "case-private-receipt-projection.json": "7eb5cc4f0a61c0adae106733f98b1c48ea481bcdced33d423490ce91dcc3bb77",
+    "case-query-selectors.json": "0d0f715f84ec66675d395e837d91c9220ad52d6cb045c15746ec980e937b9ae0",
+    "case-role-visibility.json": "af31b80405671ecb5d09a8578ce853673b41d6b32abdbc5990f7773efcb54ced",
+    "case-room-quota-retention.json": "74736a5b57a00c92a833d8f7fa8a15640000619083f090b93f23592ee5e52064",
+    "case-session-configuration.json": "df507d7f119e6608f1c4533daadf10360e66026204d22133f4008224b3cbedf6",
+    "case-timer-tie-duty-id.json": "9c409577e397c18c707fc027c89a2b23cb46fff5dd1f847f30c6ecce1e53a3cc",
+    "case-timer-tie-inactivity.json": "3e4d41226e9cbb2066559544f3a911aba25f4cc95af700bd55a2e456a80f3926",
+    "case-timer-tie-lifetime.json": "cd8168049bb7d83f2ff3f45eacfb9b3ff8bdc1ca2e917c3044a2763a39e91368",
+    "case-trace-history-review-cancel.json": "c4fdd1f82bb4b46872a7cde4a91d0b414f49d14de2f38e88c5da5d13bf11a2dc",
+    "case-trace-history-review-changes.json": "7185123e840a81e57dcc775c866650d9427761b2d32ce7579c28cd0e77e2a959",
+    "case-trace-history-review-idle.json": "7728d4e0e7582c44604616f110b01a877841ed347ec1a838d9f18071441aa265",
+    "case-trace-history-review-rejections.json": "c5786da996c92f7d3e9e3e663a4b74086bd66152e8150cf1a8be215a75193185",
+    "case-trace-history-review-success.json": "52f38a4169cfd3b2d3ce6852d1b5073166341dd976e2716179058b4f3d2184a2",
+    "case-trace-history-review-unclaimed.json": "bf46e3bc2119143820df696023758ddabd67c6672c5295d5193e222b14aafb01",
+    "case-trace-history-review-v2-deadline.json": "b58856ccd24c5ecde35cdd7fb41c09a60f7dcc98adb800867e29420a91013ecb",
+    "case-unicode16-graphemes.json": "f076af1c4e4e3eda734f3ce955e3ef64359045665bee7d382b2e88ef69bff839",
+    "case-wire-0.json": "0cd69eb0bfd43f8df224ed16b3bd1c41344c48b9ceb3549d7dd46a3f2c9080f1",
+    "case-wire-1.json": "37a41bf36e68bd3dd69fbd79a6ef6a6b4f19c33a957b3dc81d013e0178b3af37",
+    "case-wire-2.json": "ae0621d317448a88dc51fbbc5efa8b7bf63784dde0f5d8345183d05abe06bdfc",
+    "case-wire-3.json": "c27192b21478e359aa4e763552ce65deed4f1c27775da550fd0af83c36be78c5",
+    "case-wire-4.json": "94b628ca9f14f7ada214490a18a2500e216ae457488c9c578721334ed038256b",
+    "case-wire-5.json": "b6899740de1c2e701e56fd0d4aa484617249c464d0b463c92b4572f3ca06d76e",
+    "case-wire-6.json": "f135838f782aeba3b64e6969788bf94b7b238ab2c17a13eaa1c0eb50765fa6dc",
+    "case-wire-carrier-conflict.json": "c2eb2b213ea7547ec5b878b01587477a450b7fb5dab8a9480255e3f2270e4af0",
+    "case-worked-session.json": "9c365c17e8cf2da3ef8013ea1bef74c659b02e608f57f1917ce8639510168ee9",
+    "band-wire-examples.json": "a56ea7bf3d453e893a6d6ef052e2e23bb0cf8cd51cba5ee157efa8678ac9bb1e",
+    "invocation-replay.json": "2a6f7ead3e97da30b6525c9774c6384a39b027f8db64fa4da87d74577bb5c2a3",
+    "openai-request.json": "c09868cc3b34ffec491a55b2728148ba944bbbe6ad7a18bde02adc90181b141c",
+    "openai-result.json": "b63aa68013a14e2401981eded6f55dad1c7395bef3c806d9aa22ca57b1135159",
+    "openai-usage.json": "02de16f8a58adf79575ad2b3b920e635588363849cf64f692420e8ef36c5470a"
+  },
+  "cases": [
+    {
+      "id": "band-session",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 1,
+          "pointer": "/ok/state/bindings",
+          "equals": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          }
+        },
+        {
+          "response": 2,
+          "pointer": "/ok/actor",
+          "equals": "Agent:44444444-4444-4444-8444-444444444444"
+        },
+        {
+          "response": 2,
+          "pointer": "/ok/view/facts",
+          "equals": {}
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "illegal_message"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/actor",
+          "equals": "User:33333333-3333-4333-8333-333333333333"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/recipients",
+          "equals": [
+            "Agent:44444444-4444-4444-8444-444444444444"
+          ]
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 5,
+          "pointer": "/ok/view/facts/q/payload/text",
+          "equals": "ping"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/recipients",
+          "equals": [
+            "User:33333333-3333-4333-8333-333333333333"
+          ]
+        },
+        {
+          "response": 7,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 8,
+          "pointer": "/ok/view/facts/a/payload/request",
+          "equals": "q"
+        },
+        {
+          "response": 9,
+          "pointer": "/state/state/outcome",
+          "equals": "complete"
+        },
+        {
+          "response": 10,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 10,
+          "pointer": "/decision/original/version",
+          "equals": 1
+        },
+        {
+          "response": 10,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 11,
+          "pointer": "/decision/reason",
+          "equals": "id_conflict"
+        },
+        {
+          "response": 12,
+          "pointer": "/decision/reason",
+          "equals": "id_conflict"
+        },
+        {
+          "response": 13,
+          "pointer": "/ok/view/outcome",
+          "equals": "complete"
+        },
+        {
+          "response": 16,
+          "pointer": "/ok/view/outcome",
+          "equals": "expired"
+        },
+        {
+          "response": 16,
+          "pointer": "/ok/checkpoint/state/expired_at",
+          "equals": 300000
+        },
+        {
+          "response": 17,
+          "pointer": "/decision/reason",
+          "equals": "terminal"
+        },
+        {
+          "response": 18,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 18,
+          "pointer": "/state/state/outcome",
+          "equals": "expired"
+        },
+        {
+          "response": 19,
+          "pointer": "/error",
+          "equals": "unauthorized"
+        }
+      ]
+    },
+    {
+      "id": "canonical-0",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "bnVsbA=="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        }
+      ]
+    },
+    {
+      "id": "canonical-1",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "dHJ1ZQ=="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+        }
+      ]
+    },
+    {
+      "id": "canonical-2",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "ZmFsc2U="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+        }
+      ]
+    },
+    {
+      "id": "canonical-3",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "MA=="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+        }
+      ]
+    },
+    {
+      "id": "canonical-4",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "LTE="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "1bad6b8cf97131fceab8543e81f7757195fbb1d36b376ee994ad1cf17699c464"
+        }
+      ]
+    },
+    {
+      "id": "canonical-5",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "OTAwNzE5OTI1NDc0MDk5MQ=="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26"
+        }
+      ]
+    },
+    {
+      "id": "canonical-6",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "eyJhIjoiXFx1MDAxZlxcdTAwMGIiLCJ6IjoiXHUwMDFGXHUwMDBCXGJcblx0XGZcciIsIsOpIjoi8J+RqfCfj73igI3wn5K7In0="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "383a95b22691f98b7154295b424cc810bad016c19ff927116c9de3352b2b9f44"
+        }
+      ]
+    },
+    {
+      "id": "canonical-7",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/bytes",
+          "equals": "eyJhIjpbMSxmYWxzZSxudWxsXSwiw6kiOiJlzIEiLCLwnYSeIjoibXVzaWMifQ=="
+        },
+        {
+          "response": 0,
+          "pointer": "/sha256",
+          "equals": "dbc2de901646f1d709dc2fe12395e08124010b85ce3d8617b7d524c9641385e2"
+        }
+      ]
+    },
+    {
+      "id": "checkpoint-corruption",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 1,
+          "pointer": "/error",
+          "equals": "invalid_checkpoint"
+        }
+      ]
+    },
+    {
+      "id": "checkpoint-restore",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 1,
+          "pointer": "/ok/state/version",
+          "equals": 1
+        },
+        {
+          "response": 2,
+          "pointer": "/ok",
+          "equals": {
+            "data": {
+              "definition": "b4bd9360f9078ad83bafa8e24a4b28aae830d85aa2c2fabc2854ffda133bcd92",
+              "profile": "band-contract/state/1",
+              "source": "81f540f36e873f01af4dd0ddf810d8ca20288dae47eef5b37b7de84a3f68ed2f",
+              "state": {
+                "bindings": {
+                  "lead": "lead",
+                  "reviewer": "reviewer",
+                  "worker": "worker"
+                },
+                "contributions": {},
+                "created_at": 0,
+                "entered_at": 0,
+                "entries": {
+                  "new": 1,
+                  "offered": 1
+                },
+                "expired_at": null,
+                "expiry": null,
+                "facts": {
+                  "offer": {
+                    "actor": "lead",
+                    "at": 0,
+                    "id": "offer",
+                    "kind": "offer",
+                    "payload": {
+                      "task": "Portable task"
+                    },
+                    "recipients": [
+                      "worker",
+                      "reviewer"
+                    ],
+                    "role": "lead",
+                    "rule": "rule-0"
+                  }
+                },
+                "history": [
+                  {
+                    "at": 0,
+                    "id": "offer",
+                    "kind": "offer",
+                    "role": "lead",
+                    "type": "accepted"
+                  }
+                ],
+                "id": "s",
+                "idle_ms": 1800000,
+                "inactivity": "accepted",
+                "last_activity": 0,
+                "max_at": 14400000,
+                "max_bytes": 16384,
+                "max_messages": 100,
+                "mentions_used": 2,
+                "now": 0,
+                "obligations": [
+                  {
+                    "after_ms": 120000,
+                    "due_at": 120000,
+                    "id": "due-1",
+                    "kind": "accept",
+                    "meta": {
+                      "doc": "The worker must accept within two minutes or the task is unclaimed.\n",
+                      "line": 69
+                    },
+                    "outcome": "unclaimed",
+                    "participants": [
+                      "worker"
+                    ],
+                    "quantifier": "all",
+                    "remaining": [
+                      "worker"
+                    ]
+                  }
+                ],
+                "outcome": null,
+                "receipts": {
+                  "offer": {
+                    "decision": {
+                      "actor": "lead",
+                      "definition": "b4bd9360f9078ad83bafa8e24a4b28aae830d85aa2c2fabc2854ffda133bcd92",
+                      "id": "offer",
+                      "kind": "offer",
+                      "metadata": {
+                        "doc": "Both the worker and reviewer receive the original offer.\n",
+                        "line": 61
+                      },
+                      "outcome": null,
+                      "payload": {
+                        "task": "Portable task"
+                      },
+                      "recipients": [
+                        "worker",
+                        "reviewer"
+                      ],
+                      "role": "lead",
+                      "session": "s",
+                      "state": "offered",
+                      "status": "accepted",
+                      "version": 1
+                    },
+                    "fingerprint": "6d506b10fe272ac2b28339843156263a4a4dc32788922b650e4db0d4e7d8dbd0"
+                  }
+                },
+                "state": "offered",
+                "status": "active",
+                "variables": {
+                  "task": "offer"
+                },
+                "version": 1
+              }
+            },
+            "hash": "bd56fe1fcb9706db6cd073de9ab6bb7fea49766edef3c78d0a7f26470093ce45",
+            "profile": "band-contract/room-checkpoint/1"
+          }
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/status",
+          "equals": "terminal"
+        }
+      ]
+    },
+    {
+      "id": "clock-regression",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "clock_regression"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 0
+        }
+      ]
+    },
+    {
+      "id": "compile-agent-control",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "agent-control"
+        }
+      ]
+    },
+    {
+      "id": "compile-all-participants",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "all-participants"
+        }
+      ]
+    },
+    {
+      "id": "compile-assignment",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "assignment"
+        }
+      ]
+    },
+    {
+      "id": "compile-bounded-review",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "bounded-review"
+        }
+      ]
+    },
+    {
+      "id": "compile-explicit-infinity",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "explicit-infinity"
+        }
+      ]
+    },
+    {
+      "id": "compile-first-responder",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "first-responder"
+        }
+      ]
+    },
+    {
+      "id": "compile-history-review-v2",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "history-review-v2"
+        }
+      ]
+    },
+    {
+      "id": "compile-history-review",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "history-review"
+        }
+      ]
+    },
+    {
+      "id": "compile-hybrid-assistant",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "hybrid-assistant"
+        }
+      ]
+    },
+    {
+      "id": "compile-program-counter",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "program-counter"
+        }
+      ]
+    },
+    {
+      "id": "compile-progress-events",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "progress-events"
+        }
+      ]
+    },
+    {
+      "id": "compile-room-events",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "room-events"
+        }
+      ]
+    },
+    {
+      "id": "compile-selected-deadlines",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "selected-deadlines"
+        }
+      ]
+    },
+    {
+      "id": "compile-team-review",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/name",
+          "equals": "team-review"
+        }
+      ]
+    },
+    {
+      "id": "documentation-basic",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/meta/doc",
+          "equals": "A \"quote\" and \\ slash.\n"
+        }
+      ]
+    },
+    {
+      "id": "documentation-continuation",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/meta/doc",
+          "equals": "ab\n"
+        }
+      ]
+    },
+    {
+      "id": "documentation-crlf",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/meta/doc",
+          "equals": "X\r\n"
+        }
+      ]
+    },
+    {
+      "id": "documentation-escaped-interpolation",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/meta/doc",
+          "equals": "#{literal}\n"
+        }
+      ]
+    },
+    {
+      "id": "documentation-indent",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/meta/doc",
+          "equals": "first\n  second\n"
+        }
+      ]
+    },
+    {
+      "id": "documentation-unicode",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/meta/doc",
+          "equals": "\ud83d\ude00 A A \u0000\n"
+        }
+      ]
+    },
+    {
+      "id": "each-all-participants",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "new"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "already_contributed"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "complete"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/mentions_used",
+          "equals": 6
+        }
+      ]
+    },
+    {
+      "id": "each-deadline-boundary",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "terminal"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/expired_at",
+          "equals": 300000
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/expiry",
+          "equals": {
+            "at": 300000,
+            "id": "due-0",
+            "outcome": "stalled",
+            "reason": "deadline",
+            "missing": [
+              "bob",
+              "carol"
+            ]
+          }
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 2
+        }
+      ]
+    },
+    {
+      "id": "entry-cap",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/state",
+          "equals": "exhausted"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/entries",
+          "equals": {
+            "new": 3,
+            "reviewing": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "first-responder",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "complete"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/reason",
+          "equals": "terminal"
+        }
+      ]
+    },
+    {
+      "id": "identity-version-envelope",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "illegal_message"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/reason",
+          "equals": "stale_version"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 8,
+          "pointer": "/decision/reason",
+          "equals": "id_conflict"
+        },
+        {
+          "response": 8,
+          "pointer": "/state/state/version",
+          "equals": 2
+        }
+      ]
+    },
+    {
+      "id": "inactivity-accepted",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/state/state/last_activity",
+          "equals": 1000
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "stalled"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/expired_at",
+          "equals": 600000
+        }
+      ]
+    },
+    {
+      "id": "inactivity-marked",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/state/state/last_activity",
+          "equals": 1000
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "stalled"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/expired_at",
+          "equals": 600000
+        }
+      ]
+    },
+    {
+      "id": "inactivity-transition",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/state/state/last_activity",
+          "equals": 0
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "stalled"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/expired_at",
+          "equals": 600000
+        }
+      ]
+    },
+    {
+      "id": "independent-selected-duties",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "beta_late"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/expired_at",
+          "equals": 300000
+        }
+      ]
+    },
+    {
+      "id": "invalid-bad-doc-unicode",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "documentation"
+        }
+      ]
+    },
+    {
+      "id": "invalid-duplicate-ref-kind",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "type"
+        }
+      ]
+    },
+    {
+      "id": "invalid-duplicate-type",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "invalid-interpolation",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "documentation"
+        }
+      ]
+    },
+    {
+      "id": "invalid-reference",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "unmatched_reference"
+        }
+      ]
+    },
+    {
+      "id": "invalid-reversed-bounds",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "type"
+        }
+      ]
+    },
+    {
+      "id": "invalid-unknown-directive",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "syntax"
+        }
+      ]
+    },
+    {
+      "id": "invalid-unknown-ref-kind",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "unknown_type"
+        }
+      ]
+    },
+    {
+      "id": "invalid-unknown-role",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "unknown_role"
+        }
+      ]
+    },
+    {
+      "id": "invalid-unsafe-bound",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "type"
+        }
+      ]
+    },
+    {
+      "id": "message-budget",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "message_budget"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/mentions_used",
+          "equals": 1
+        }
+      ]
+    },
+    {
+      "id": "portable-local-preflight",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 1,
+          "pointer": "/status",
+          "equals": "accepted"
+        }
+      ]
+    },
+    {
+      "id": "private-receipt-projection",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 4,
+          "pointer": "/ok/checkpoint/state/receipts/answer/fingerprint",
+          "equals": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "response": 4,
+          "pointer": "/ok/view/facts",
+          "equals": {
+            "start": {
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "actor": "lead",
+              "role": "lead",
+              "recipients": [
+                "alpha",
+                "beta"
+              ],
+              "at": 0,
+              "rule": "rule-0"
+            }
+          }
+        },
+        {
+          "response": 5,
+          "pointer": "/ok/checkpoint/state/receipts/answer/fingerprint",
+          "equals": "472252116ba653a04f4a5ac0d6f8d03953f816f9f854011fb937e3a26708a963"
+        }
+      ]
+    },
+    {
+      "id": "query-selectors",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 1,
+          "pointer": "/ok/name",
+          "equals": "assignment"
+        },
+        {
+          "response": 2,
+          "pointer": "/ok/role/meta/doc",
+          "equals": "Accept or refuse the offer before performing work.\n"
+        },
+        {
+          "response": 3,
+          "pointer": "/ok/fields/task/meta/doc",
+          "equals": "A self-contained task including constraints and verification instructions.\n"
+        },
+        {
+          "response": 4,
+          "pointer": "/ok/deadlines/0/meta/doc",
+          "equals": "The worker must accept within two minutes or the task is unclaimed.\n"
+        },
+        {
+          "response": 5,
+          "pointer": "/ok/meta/doc",
+          "equals": "The lead accepted the exact reviewed submission.\n"
+        },
+        {
+          "response": 6,
+          "pointer": "/ok",
+          "equals": {
+            "rules": [],
+            "meta": {
+              "doc": null,
+              "line": 1
+            }
+          }
+        },
+        {
+          "response": 7,
+          "pointer": "/ok/rules/0/kind",
+          "equals": "cancel"
+        },
+        {
+          "response": 8,
+          "pointer": "/error",
+          "equals": "not_found"
+        },
+        {
+          "response": 9,
+          "pointer": "/error",
+          "equals": "not_found"
+        },
+        {
+          "response": 10,
+          "pointer": "/error",
+          "equals": "not_found"
+        },
+        {
+          "response": 12,
+          "pointer": "/error",
+          "equals": "not_found"
+        },
+        {
+          "response": 11,
+          "pointer": "/error",
+          "equals": "unknown_role"
+        },
+        {
+          "response": 14,
+          "pointer": "/ok/meta/doc",
+          "equals": "The host applies its own windowed room-event quota.\n"
+        },
+        {
+          "response": 14,
+          "pointer": "/ok/rules/0/kind",
+          "equals": "notice"
+        }
+      ]
+    },
+    {
+      "id": "role-visibility",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 4,
+          "pointer": "/ok/view/facts/o/payload/task",
+          "equals": "private task"
+        },
+        {
+          "response": 4,
+          "pointer": "/ok/checkpoint/state/facts/a",
+          "equals": {
+            "kind": "accept"
+          }
+        },
+        {
+          "response": 5,
+          "pointer": "/error",
+          "equals": "unauthorized"
+        }
+      ]
+    },
+    {
+      "id": "room-quota-retention",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "room_budget"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/reason",
+          "equals": "retention_limit"
+        }
+      ]
+    },
+    {
+      "id": "session-configuration",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 1,
+          "pointer": "/error",
+          "equals": "inactivity_policy_required"
+        },
+        {
+          "response": 2,
+          "pointer": "/error",
+          "equals": "invalid_bindings"
+        },
+        {
+          "response": 3,
+          "pointer": "/error",
+          "equals": "invalid_config"
+        },
+        {
+          "response": 4,
+          "pointer": "/error",
+          "equals": "invalid_config"
+        },
+        {
+          "response": 5,
+          "pointer": "/error",
+          "equals": "invalid_config"
+        },
+        {
+          "response": 6,
+          "pointer": "/error",
+          "equals": "invalid_time_range"
+        },
+        {
+          "response": 7,
+          "pointer": "/ok/state/max_bytes",
+          "equals": 16384
+        },
+        {
+          "response": 7,
+          "pointer": "/ok/state/version",
+          "equals": 0
+        }
+      ]
+    },
+    {
+      "id": "timer-tie-duty-id",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/state/state/expiry",
+          "equals": {
+            "at": 1000,
+            "id": "due-10",
+            "reason": "deadline",
+            "outcome": "late",
+            "missing": [
+              "assistant"
+            ]
+          }
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        }
+      ]
+    },
+    {
+      "id": "timer-tie-inactivity",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/state/state/expiry",
+          "equals": {
+            "at": 300000,
+            "id": "inactivity",
+            "reason": "inactivity",
+            "outcome": "expired"
+          }
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        }
+      ]
+    },
+    {
+      "id": "timer-tie-lifetime",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 3,
+          "pointer": "/state/state/expiry",
+          "equals": {
+            "at": 300000,
+            "id": "maximum",
+            "reason": "lifetime",
+            "outcome": "expired"
+          }
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-cancel",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "cancelled"
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-changes",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "needs_revision"
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-idle",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "expired"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/outcome",
+          "equals": "expired"
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-rejections",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/reason",
+          "equals": "illegal_message"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/reason",
+          "equals": "illegal_message"
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 7,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 8,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 8,
+          "pointer": "/state/state/state",
+          "equals": "acceptance"
+        },
+        {
+          "response": 9,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 9,
+          "pointer": "/state/state/state",
+          "equals": "acceptance"
+        },
+        {
+          "response": 10,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 10,
+          "pointer": "/state/state/state",
+          "equals": "complete"
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-success",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "reviewing"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "acceptance"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/state",
+          "equals": "complete"
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-unclaimed",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "unclaimed"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": "unclaimed"
+        }
+      ]
+    },
+    {
+      "id": "trace-history-review-v2-deadline",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "offered"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "writing"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/outcome",
+          "equals": null
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "stalled"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/outcome",
+          "equals": "stalled"
+        }
+      ]
+    },
+    {
+      "id": "unicode16-graphemes",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/reason",
+          "equals": "payload"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "payload"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        }
+      ]
+    },
+    {
+      "id": "wire-0",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/id",
+          "equals": "m"
+        }
+      ]
+    },
+    {
+      "id": "wire-1",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "duplicate_key"
+        }
+      ]
+    },
+    {
+      "id": "wire-2",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "duplicate_key"
+        }
+      ]
+    },
+    {
+      "id": "wire-3",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "unsupported_number"
+        }
+      ]
+    },
+    {
+      "id": "wire-4",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "unsupported_number"
+        }
+      ]
+    },
+    {
+      "id": "wire-5",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "envelope"
+        }
+      ]
+    },
+    {
+      "id": "wire-6",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "json"
+        }
+      ]
+    },
+    {
+      "id": "wire-carrier-conflict",
+      "legacy_source": false,
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error",
+          "equals": "transport_conflict"
+        }
+      ]
+    },
+    {
+      "id": "worked-session",
+      "legacy_source": true,
+      "assertions": [
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "answering"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/last_activity",
+          "equals": 0
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "new"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/outcome",
+          "equals": "complete"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "duplicate"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/original/version",
+          "equals": 1
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/original/state",
+          "equals": "answering"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/last_activity",
+          "equals": 3000
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/reason",
+          "equals": "id_conflict"
+        }
+      ]
+    }
+  ],
+  "manifest": {
+    "profile": "band-contract/conformance/1",
+    "revision": "1.0.0-rc.3",
+    "provenance": "Reference output checked against the explicit independent assertions in each case.",
+    "cases": [
+      {
+        "id": "band-session",
+        "path": "case-band-session.json",
+        "sha256": "59e1e38c028d73c27e3407f2cf2f30d7cefad34fa67db795fbffb2df9c8be63c",
+        "requests": 20,
+        "requirements": [
+          "ENG-001",
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009",
+          "ENG-012",
+          "ENG-014"
+        ]
+      },
+      {
+        "id": "compile-agent-control",
+        "path": "case-compile-agent-control.json",
+        "sha256": "31d086c2738581b04ff358d32cd5334f772f6358cdbd6f924cab3573fb71e24b",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-all-participants",
+        "path": "case-compile-all-participants.json",
+        "sha256": "5abf864cdf20538d412d88ba2bcda1d0d846c3164b27ad96f03c066e3b158746",
+        "requests": 4,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-assignment",
+        "path": "case-compile-assignment.json",
+        "sha256": "1ee61e1d9701a8ced7ba0ebcbf2a764d7e081aabc4eb3ed52e6f6529e63f520a",
+        "requests": 4,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-bounded-review",
+        "path": "case-compile-bounded-review.json",
+        "sha256": "13d310a0f9331852bb890c08457c2a71bb6383e7fe0f512cdd2891c162023305",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-explicit-infinity",
+        "path": "case-compile-explicit-infinity.json",
+        "sha256": "8bc40967e97ce6f58bd4e01b5e52b60e829cd9f42dd2c0fffcd695c64f54ed43",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-first-responder",
+        "path": "case-compile-first-responder.json",
+        "sha256": "bf072ab37fb030993abc7ee8f9b467c93d74c49c40f705fc0e132501267e899e",
+        "requests": 4,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-history-review-v2",
+        "path": "case-compile-history-review-v2.json",
+        "sha256": "16b6b6b41b983af6e447d5c903a5b4d98a063fbfff31abd1bc6c17d059a46f8c",
+        "requests": 4,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-history-review",
+        "path": "case-compile-history-review.json",
+        "sha256": "8bee34750ae257daaa0aaf59a8d7019183b0f7df023d9d80e6e92a6d6a51d42b",
+        "requests": 4,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-hybrid-assistant",
+        "path": "case-compile-hybrid-assistant.json",
+        "sha256": "9b71b5bc8e95c8388d1badfba2bf5f379b719efe13c0655ce56fdf1a3de885de",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-program-counter",
+        "path": "case-compile-program-counter.json",
+        "sha256": "b44ff4e657a216bd24c0c6fac8bb2748d28b433e4cc08dddb3c2ad1577ee5823",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-progress-events",
+        "path": "case-compile-progress-events.json",
+        "sha256": "4fb2984878c540ff696d2180d30e2ff45a5a3dd03d79115f25c8293cca988090",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-room-events",
+        "path": "case-compile-room-events.json",
+        "sha256": "3d11552118fbdaab4a3ce3d04e0e66d5786aaee0e014bb6c904d54d32fe9cc19",
+        "requests": 3,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-selected-deadlines",
+        "path": "case-compile-selected-deadlines.json",
+        "sha256": "0b1641aea3b5bac8662a143b9c8f560c35e2755305039515c88a90519f324387",
+        "requests": 4,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "compile-team-review",
+        "path": "case-compile-team-review.json",
+        "sha256": "bd5a07328dabb1392de3851e69d91aa6e8eb4b0eab7f193a1d460fb1b034eaaf",
+        "requests": 5,
+        "requirements": [
+          "DSL-004",
+          "DSL-005",
+          "DSL-008",
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "query-selectors",
+        "path": "case-query-selectors.json",
+        "sha256": "0d0f715f84ec66675d395e837d91c9220ad52d6cb045c15746ec980e937b9ae0",
+        "requests": 15,
+        "requirements": [
+          "DSL-009"
+        ]
+      },
+      {
+        "id": "session-configuration",
+        "path": "case-session-configuration.json",
+        "sha256": "df507d7f119e6608f1c4533daadf10360e66026204d22133f4008224b3cbedf6",
+        "requests": 8,
+        "requirements": [
+          "ENG-001"
+        ]
+      },
+      {
+        "id": "trace-history-review-cancel",
+        "path": "case-trace-history-review-cancel.json",
+        "sha256": "c4fdd1f82bb4b46872a7cde4a91d0b414f49d14de2f38e88c5da5d13bf11a2dc",
+        "requests": 5,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "trace-history-review-changes",
+        "path": "case-trace-history-review-changes.json",
+        "sha256": "7185123e840a81e57dcc775c866650d9427761b2d32ce7579c28cd0e77e2a959",
+        "requests": 6,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "trace-history-review-idle",
+        "path": "case-trace-history-review-idle.json",
+        "sha256": "7728d4e0e7582c44604616f110b01a877841ed347ec1a838d9f18071441aa265",
+        "requests": 5,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "trace-history-review-rejections",
+        "path": "case-trace-history-review-rejections.json",
+        "sha256": "c5786da996c92f7d3e9e3e663a4b74086bd66152e8150cf1a8be215a75193185",
+        "requests": 11,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "trace-history-review-success",
+        "path": "case-trace-history-review-success.json",
+        "sha256": "52f38a4169cfd3b2d3ce6852d1b5073166341dd976e2716179058b4f3d2184a2",
+        "requests": 7,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "trace-history-review-unclaimed",
+        "path": "case-trace-history-review-unclaimed.json",
+        "sha256": "bf46e3bc2119143820df696023758ddabd67c6672c5295d5193e222b14aafb01",
+        "requests": 4,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "trace-history-review-v2-deadline",
+        "path": "case-trace-history-review-v2-deadline.json",
+        "sha256": "b58856ccd24c5ecde35cdd7fb41c09a60f7dcc98adb800867e29420a91013ecb",
+        "requests": 6,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "each-all-participants",
+        "path": "case-each-all-participants.json",
+        "sha256": "3e71327a01e833ead7b97a08a2cdd242eab7833bbd53594f8e61c0439cf08abc",
+        "requests": 6,
+        "requirements": [
+          "ENG-008",
+          "ENG-013"
+        ]
+      },
+      {
+        "id": "each-deadline-boundary",
+        "path": "case-each-deadline-boundary.json",
+        "sha256": "786ac229ec7417d3c786d8e9cfa13107f5ecd6eb8e54d3f771774e2e22846976",
+        "requests": 5,
+        "requirements": [
+          "ENG-008",
+          "ENG-009",
+          "ENG-012"
+        ]
+      },
+      {
+        "id": "first-responder",
+        "path": "case-first-responder.json",
+        "sha256": "c258180f448d163b123f890ef6455cda7bdd39b76b29258688d71f124ce8336f",
+        "requests": 5,
+        "requirements": [
+          "ENG-008"
+        ]
+      },
+      {
+        "id": "independent-selected-duties",
+        "path": "case-independent-selected-duties.json",
+        "sha256": "18258ee55d7ed98986437bf7c030fb44bc5526e481176d0096854081296afea3",
+        "requests": 6,
+        "requirements": [
+          "ENG-008",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "entry-cap",
+        "path": "case-entry-cap.json",
+        "sha256": "0da6cc1073a92673f8b185aadac8b1e28444d839f2013badd8adfcea610f8262",
+        "requests": 7,
+        "requirements": [
+          "ENG-011"
+        ]
+      },
+      {
+        "id": "inactivity-accepted",
+        "path": "case-inactivity-accepted.json",
+        "sha256": "3ad08079a9880d07550a3b1b3d2ce0d3731af2ff41a34b0d51f1d9ba39196957",
+        "requests": 5,
+        "requirements": [
+          "ENG-010",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "inactivity-transition",
+        "path": "case-inactivity-transition.json",
+        "sha256": "6bf7e8583481c86ef45e0a092601b1f3e186df5fd4b57705074210f747070e26",
+        "requests": 5,
+        "requirements": [
+          "ENG-010",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "inactivity-marked",
+        "path": "case-inactivity-marked.json",
+        "sha256": "58e5b1dd1afc384f63fd1a49f93b98d8e98c204d5e5616bba29496c9ad1d2e7a",
+        "requests": 5,
+        "requirements": [
+          "ENG-010",
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "worked-session",
+        "path": "case-worked-session.json",
+        "sha256": "9c365c17e8cf2da3ef8013ea1bef74c659b02e608f57f1917ce8639510168ee9",
+        "requests": 8,
+        "requirements": [
+          "ENG-005",
+          "ENG-006",
+          "ENG-007",
+          "ENG-010",
+          "ENG-012"
+        ]
+      },
+      {
+        "id": "timer-tie-inactivity",
+        "path": "case-timer-tie-inactivity.json",
+        "sha256": "3e4d41226e9cbb2066559544f3a911aba25f4cc95af700bd55a2e456a80f3926",
+        "requests": 4,
+        "requirements": [
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "timer-tie-lifetime",
+        "path": "case-timer-tie-lifetime.json",
+        "sha256": "cd8168049bb7d83f2ff3f45eacfb9b3ff8bdc1ca2e917c3044a2763a39e91368",
+        "requests": 4,
+        "requirements": [
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "timer-tie-duty-id",
+        "path": "case-timer-tie-duty-id.json",
+        "sha256": "9c409577e397c18c707fc027c89a2b23cb46fff5dd1f847f30c6ecce1e53a3cc",
+        "requests": 3,
+        "requirements": [
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "identity-version-envelope",
+        "path": "case-identity-version-envelope.json",
+        "sha256": "f7e4e8bd9d0eba5ff40025d50a3580675487b963046e1e017fcd974249175d4b",
+        "requests": 9,
+        "requirements": [
+          "ENG-005",
+          "ENG-007",
+          "ENG-012"
+        ]
+      },
+      {
+        "id": "message-budget",
+        "path": "case-message-budget.json",
+        "sha256": "a09cf63b1b68a88beaff4fbfcfec26cc5acc3f40ad2bb5a569d68c089d98adee",
+        "requests": 5,
+        "requirements": [
+          "ENG-013"
+        ]
+      },
+      {
+        "id": "clock-regression",
+        "path": "case-clock-regression.json",
+        "sha256": "fd3f4e502d743940d1215a8772a2ce558a95fdf7739a3e8ae92a3a77265a25a1",
+        "requests": 4,
+        "requirements": [
+          "ENG-009"
+        ]
+      },
+      {
+        "id": "unicode16-graphemes",
+        "path": "case-unicode16-graphemes.json",
+        "sha256": "f076af1c4e4e3eda734f3ce955e3ef64359045665bee7d382b2e88ef69bff839",
+        "requests": 5,
+        "requirements": [
+          "ENG-004"
+        ]
+      },
+      {
+        "id": "checkpoint-restore",
+        "path": "case-checkpoint-restore.json",
+        "sha256": "01c41d1acd91a881a48a51d8ef400a71c5c75608d8aa725dc6a9eba2130efa1f",
+        "requests": 5,
+        "requirements": [
+          "ENG-015"
+        ]
+      },
+      {
+        "id": "checkpoint-corruption",
+        "path": "case-checkpoint-corruption.json",
+        "sha256": "22388f976943ae65b04daf0888c98f1221266cdaeed3273abe7de0be8cbb70d9",
+        "requests": 2,
+        "requirements": [
+          "ENG-015"
+        ]
+      },
+      {
+        "id": "portable-local-preflight",
+        "path": "case-portable-local-preflight.json",
+        "sha256": "7a4ac29e7a9ac5a15e6c4c2b0411eb016ecfe7312aea3b741921d8eb95061e73",
+        "requests": 2,
+        "requirements": [
+          "ENG-016"
+        ]
+      },
+      {
+        "id": "role-visibility",
+        "path": "case-role-visibility.json",
+        "sha256": "af31b80405671ecb5d09a8578ce853673b41d6b32abdbc5990f7773efcb54ced",
+        "requests": 6,
+        "requirements": [
+          "ENG-014",
+          "ENG-015"
+        ]
+      },
+      {
+        "id": "private-receipt-projection",
+        "path": "case-private-receipt-projection.json",
+        "sha256": "7eb5cc4f0a61c0adae106733f98b1c48ea481bcdced33d423490ce91dcc3bb77",
+        "requests": 6,
+        "requirements": [
+          "ENG-014",
+          "ENG-015",
+          "ENG-016"
+        ]
+      },
+      {
+        "id": "room-quota-retention",
+        "path": "case-room-quota-retention.json",
+        "sha256": "74736a5b57a00c92a833d8f7fa8a15640000619083f090b93f23592ee5e52064",
+        "requests": 7,
+        "requirements": [
+          "ROOM-001",
+          "ROOM-002",
+          "ROOM-003"
+        ]
+      },
+      {
+        "id": "wire-0",
+        "path": "case-wire-0.json",
+        "sha256": "0cd69eb0bfd43f8df224ed16b3bd1c41344c48b9ceb3549d7dd46a3f2c9080f1",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-1",
+        "path": "case-wire-1.json",
+        "sha256": "37a41bf36e68bd3dd69fbd79a6ef6a6b4f19c33a957b3dc81d013e0178b3af37",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-2",
+        "path": "case-wire-2.json",
+        "sha256": "ae0621d317448a88dc51fbbc5efa8b7bf63784dde0f5d8345183d05abe06bdfc",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-3",
+        "path": "case-wire-3.json",
+        "sha256": "c27192b21478e359aa4e763552ce65deed4f1c27775da550fd0af83c36be78c5",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-4",
+        "path": "case-wire-4.json",
+        "sha256": "94b628ca9f14f7ada214490a18a2500e216ae457488c9c578721334ed038256b",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-5",
+        "path": "case-wire-5.json",
+        "sha256": "b6899740de1c2e701e56fd0d4aa484617249c464d0b463c92b4572f3ca06d76e",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-6",
+        "path": "case-wire-6.json",
+        "sha256": "f135838f782aeba3b64e6969788bf94b7b238ab2c17a13eaa1c0eb50765fa6dc",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "wire-carrier-conflict",
+        "path": "case-wire-carrier-conflict.json",
+        "sha256": "c2eb2b213ea7547ec5b878b01587477a450b7fb5dab8a9480255e3f2270e4af0",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "canonical-0",
+        "path": "case-canonical-0.json",
+        "sha256": "e2149fc1bdcde391b527cda07f559ebf424e3927796457c2a95047613be4c529",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-1",
+        "path": "case-canonical-1.json",
+        "sha256": "56d7f9ff6c42f797cd5443318ddde7779b441f31ce05197be375bb1cf96f09c0",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-2",
+        "path": "case-canonical-2.json",
+        "sha256": "6e3509b70aaa82a9fb9eba905cac47a45144407e99e9bad4acea82a69246dad1",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-3",
+        "path": "case-canonical-3.json",
+        "sha256": "e1afde8e3ea0472b330a00d18f9b8511a90daca005e8ae513d8330ce87a149bb",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-4",
+        "path": "case-canonical-4.json",
+        "sha256": "9c31072f2454d16d2ab84d9092c6cd3dc165bdf5d886fcc6670424e9b0897a4d",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-5",
+        "path": "case-canonical-5.json",
+        "sha256": "9a3f4456bfa5fc5084d1a2a4e19449a7d54ea71f7f05d92aa03cf8572751d310",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-6",
+        "path": "case-canonical-6.json",
+        "sha256": "68a1a5b15ce953e81a1ed4faf92207c16a07577b92e4a20350267b745647c305",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "canonical-7",
+        "path": "case-canonical-7.json",
+        "sha256": "1444a5b929b22daa6e7e4878bbec3dec3995402b7cbc0af53f5f8a67483528ad",
+        "requests": 1,
+        "requirements": [
+          "ENG-003"
+        ]
+      },
+      {
+        "id": "documentation-basic",
+        "path": "case-documentation-basic.json",
+        "sha256": "b78c2eebd17214b793fe698719b924cef139a61be24862751a4f493a76334591",
+        "requests": 1,
+        "requirements": [
+          "DSL-005"
+        ]
+      },
+      {
+        "id": "documentation-indent",
+        "path": "case-documentation-indent.json",
+        "sha256": "069e7237cd7f69173a95fcb69b0abbe2a89d6e4e7ba1149d80f573cc89bc4e6c",
+        "requests": 1,
+        "requirements": [
+          "DSL-005"
+        ]
+      },
+      {
+        "id": "documentation-escaped-interpolation",
+        "path": "case-documentation-escaped-interpolation.json",
+        "sha256": "ca5d7c3cf0fe726ff1cb3ec6c10b257d2a8f924eaec16f664e3a125c8ec6f40f",
+        "requests": 1,
+        "requirements": [
+          "DSL-005"
+        ]
+      },
+      {
+        "id": "documentation-continuation",
+        "path": "case-documentation-continuation.json",
+        "sha256": "69ad9a51b0a3eac36ad19ba9f5260a4691d8e40f0a337322b6f2ea23239c5b03",
+        "requests": 1,
+        "requirements": [
+          "DSL-005"
+        ]
+      },
+      {
+        "id": "documentation-crlf",
+        "path": "case-documentation-crlf.json",
+        "sha256": "50391564ce535d3c3443ad34416e0e25161bb7a2f992c59ed2776f60fd3769d9",
+        "requests": 1,
+        "requirements": [
+          "DSL-005"
+        ]
+      },
+      {
+        "id": "documentation-unicode",
+        "path": "case-documentation-unicode.json",
+        "sha256": "c8b023d979d9aaf91d26857eab9cebe46ddfdff0131c1d55191d5f23175981c9",
+        "requests": 1,
+        "requirements": [
+          "DSL-005"
+        ]
+      },
+      {
+        "id": "invalid-unknown-directive",
+        "path": "case-invalid-unknown-directive.json",
+        "sha256": "65ae7cc5c827c5a15d0fef5da749200efbf18e9d80a9af8e4f37069ffbcba118",
+        "requests": 1,
+        "requirements": [
+          "DSL-007",
+          "DSL-010"
+        ]
+      },
+      {
+        "id": "invalid-duplicate-type",
+        "path": "case-invalid-duplicate-type.json",
+        "sha256": "fd83bdd537a4133e2198f7bdd820badabe9093cb663a647809d35c14bb72718c",
+        "requests": 1,
+        "requirements": [
+          "DSL-007",
+          "DSL-010"
+        ]
+      },
+      {
+        "id": "invalid-unknown-role",
+        "path": "case-invalid-unknown-role.json",
+        "sha256": "70b38172ef8e038cb2b3bc7040f35859341020c13c2a2e3ed8920e2ce65c7326",
+        "requests": 1,
+        "requirements": [
+          "DSL-007",
+          "DSL-010"
+        ]
+      },
+      {
+        "id": "invalid-reference",
+        "path": "case-invalid-reference.json",
+        "sha256": "6272c6e6258309636b798688f808fd54f08be781834f0814dc573c43921e2df9",
+        "requests": 1,
+        "requirements": [
+          "DSL-007",
+          "DSL-010"
+        ]
+      },
+      {
+        "id": "invalid-interpolation",
+        "path": "case-invalid-interpolation.json",
+        "sha256": "981c3bccb8348d3e8c128a5dcfada5b9318376cda056241e2f6f7b0f54957de8",
+        "requests": 1,
+        "requirements": [
+          "DSL-007",
+          "DSL-010"
+        ]
+      },
+      {
+        "id": "invalid-bad-doc-unicode",
+        "path": "case-invalid-bad-doc-unicode.json",
+        "sha256": "203c703774897a4d6d74a70eba759d3818eab4573d6084e8c32818994fca868b",
+        "requests": 1,
+        "requirements": [
+          "DSL-007",
+          "DSL-010"
+        ]
+      },
+      {
+        "id": "invalid-reversed-bounds",
+        "path": "case-invalid-reversed-bounds.json",
+        "sha256": "63b53aa9a0b6b5ca34a82f1f8e7346e62bb704e2ff2baa24b36ea0240fb86e57",
+        "requests": 1,
+        "requirements": [
+          "DSL-006"
+        ]
+      },
+      {
+        "id": "invalid-unsafe-bound",
+        "path": "case-invalid-unsafe-bound.json",
+        "sha256": "828b3c5a75952ae1f6b2b9562ecde172d1a2d91b7a35336ce3c1beaa951a5676",
+        "requests": 1,
+        "requirements": [
+          "DSL-006"
+        ]
+      },
+      {
+        "id": "invalid-duplicate-ref-kind",
+        "path": "case-invalid-duplicate-ref-kind.json",
+        "sha256": "12eb5345a57a915e63729607f067f26def312eef60c8ffec8b9b3f1abe33ef27",
+        "requests": 1,
+        "requirements": [
+          "DSL-006"
+        ]
+      },
+      {
+        "id": "invalid-unknown-ref-kind",
+        "path": "case-invalid-unknown-ref-kind.json",
+        "sha256": "261b2354ec4085985a422f54f1be9bd83ca85eb8a3593fef5b6fc8f80dfb7542",
+        "requests": 1,
+        "requirements": [
+          "DSL-006"
+        ]
+      },
+      {
+        "id": "carrier-http-path",
+        "path": "case-carrier-http-path.json",
+        "sha256": "10b93f78d09fdf5f1b2eefc86c4958785a1545a63dec970542f8efc4c71b7c34",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-email-headers",
+        "path": "case-carrier-email-headers.json",
+        "sha256": "2fb3a2a945c206b13ebd40bc0948221ddf03a6fb4482bb182286030be22c7c72",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-equal-body-and-headers",
+        "path": "case-carrier-equal-body-and-headers.json",
+        "sha256": "533e78c7e9592a40b5bd3e5f3f503e7c562a34eba6f3ee241f2db878cedf794a",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-body-defaults",
+        "path": "case-carrier-body-defaults.json",
+        "sha256": "7d088161067efd4b550469b626374900a0d7e12e1106e89e2957d6ae7d4dc7c4",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-mapped-source-absent-fallback",
+        "path": "case-carrier-mapped-source-absent-fallback.json",
+        "sha256": "cc69a664205bc6aa19793f032d4cdc9df1ca6476bba9dd4360eb4e58dd783c60",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-optional-absent",
+        "path": "case-carrier-optional-absent.json",
+        "sha256": "75a325205006ce8694e0c43481910e0bf149fed015581cbeaa2a9dab5ee4afb4",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-required-id",
+        "path": "case-carrier-required-id.json",
+        "sha256": "fc1fca11f6b5d640c9d8d0e9392aab1c46d6a87dc4a507ff1c91e01c1120fb95",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-required-kind",
+        "path": "case-carrier-required-kind.json",
+        "sha256": "09520ec43577d6b9240688988185cad697ca3e23cbe77dcb547e36a5718ea787",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-required-payload",
+        "path": "case-carrier-required-payload.json",
+        "sha256": "cd20b1cabdbb503b221f51846d56bb1ec556eb7dfc42dc3a68ed7e4004dff508",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-conflict-id",
+        "path": "case-carrier-conflict-id.json",
+        "sha256": "0067f5c892abe35b159fca0193d4a8cfb67f03fdc7047a7e774de58a70a04beb",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-conflict-id",
+        "path": "case-carrier-encode-conflict-id.json",
+        "sha256": "0e51058dc55aecc13d95c7b9903840b4ead88acd58931926713eae586872b967",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-conflict-session",
+        "path": "case-carrier-conflict-session.json",
+        "sha256": "61dc2c1dbc0a8834f5a0af1d4b4ff43a324777f65c1fa99fbd9af191251f2f92",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-conflict-session",
+        "path": "case-carrier-encode-conflict-session.json",
+        "sha256": "490d11230fcbb84b80a760ad73f0c229b13bc5d6620cec7523f2fcdc827af419",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-conflict-kind",
+        "path": "case-carrier-conflict-kind.json",
+        "sha256": "93443e26f67a00a3dbadebe19ccda7e12e6719a0c8b739991fa0944582fdf74e",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-conflict-kind",
+        "path": "case-carrier-encode-conflict-kind.json",
+        "sha256": "505b7aa4f0b83b007dee2bab08f82343b2a8d7e839673aea5b32b3447edecb6a",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-conflict-expected_version",
+        "path": "case-carrier-conflict-expected_version.json",
+        "sha256": "8f523c201f1b26d555bb91a52fd7447f6c2ed2a32c71a7ac0277db6a363029a5",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-conflict-expected_version",
+        "path": "case-carrier-encode-conflict-expected_version.json",
+        "sha256": "3b2b038e35362a5da97948d101b16c490e309501a205614f467cde2f3513d95c",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-http-omit-only-supplied",
+        "path": "case-carrier-encode-http-omit-only-supplied.json",
+        "sha256": "0bf3ce20a9506500832cd099ec732f63c216bdb48ebefd27756d92ef26b1c580",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-email-omit-supplied",
+        "path": "case-carrier-encode-email-omit-supplied.json",
+        "sha256": "4a8a7ef0e23ef8da048542798c9350c8eee56a4383e79197b0c3e3a3b36b6af4",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-fallback-keeps-body",
+        "path": "case-carrier-encode-fallback-keeps-body.json",
+        "sha256": "4dd75b2e0771f990726d43d03c42662a462490a0e9b020ee96a5d0b901202817",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-optional-absent",
+        "path": "case-carrier-encode-optional-absent.json",
+        "sha256": "d6bfe893fb62797873c696c7b24c691d459274d0b91ac81544abeea7b91b812e",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-cannot-introduce-optional",
+        "path": "case-carrier-encode-cannot-introduce-optional.json",
+        "sha256": "4a3e8d35fdc79a3cdeb55cde3d61654906b00c3767f49814fec6fdcd1ef60a01",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-forbidden-map-actor",
+        "path": "case-carrier-forbidden-map-actor.json",
+        "sha256": "1b731cc94084bbd2c0e5d576d48a1162dc00ae1d44e0ca580163fe8fd54a2066",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-forbidden-map-actor",
+        "path": "case-carrier-encode-forbidden-map-actor.json",
+        "sha256": "6a292ff0fb6bfc974c0d03e4dbee2a75a78ce4e567a4cd9d894734d24c46032e",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-forbidden-map-clock",
+        "path": "case-carrier-forbidden-map-clock.json",
+        "sha256": "cca985c607b3f555d589664edef3f95a1700d4af344d65dd1c26ecca46ab2b95",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-forbidden-map-clock",
+        "path": "case-carrier-encode-forbidden-map-clock.json",
+        "sha256": "7f6577a3879036d2e3ce173a6d73f3d6f9b49f8c42b301102a2dd71d7c484d6c",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-forbidden-map-payload",
+        "path": "case-carrier-forbidden-map-payload.json",
+        "sha256": "1381ef0b8ceec6314d8eb96f0a9c7641b994e5fb67d98ed6dad99d97ed3214da",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-forbidden-map-payload",
+        "path": "case-carrier-encode-forbidden-map-payload.json",
+        "sha256": "d78c99b7d9d7c94aca7dbcb68f2b7d108782a00db345a5320976929f89154adc",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-forbidden-map-unknown",
+        "path": "case-carrier-forbidden-map-unknown.json",
+        "sha256": "17fe19d6725394f71b3b984985d31fcc658418f0fc5300cbdfd627fb685f6c33",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-encode-forbidden-map-unknown",
+        "path": "case-carrier-encode-forbidden-map-unknown.json",
+        "sha256": "fd22ab40bf90dc9601505a9723e250027cfec3b89d7c10afffaa460da70dfc4b",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-invalid-map-0",
+        "path": "case-carrier-invalid-map-0.json",
+        "sha256": "57c063ee4360a082c84aa305e85894fed9a740a3bfaf56ac19905d57f93b1e16",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-invalid-map-1",
+        "path": "case-carrier-invalid-map-1.json",
+        "sha256": "65b8869fc9a80f58385be3ed0edc7d473ee7337ad5a0f05423c940b8146eefc2",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-invalid-map-2",
+        "path": "case-carrier-invalid-map-2.json",
+        "sha256": "719d8057c61df2eae8a7e119331cf2bb07ca6c28b07310f0e3cc0f238b3ada43",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-invalid-map-3",
+        "path": "case-carrier-invalid-map-3.json",
+        "sha256": "6bab16cf0ffcf3b8e68b620248280e248748a89a74fcb3d09c6ccbcb994fea42",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-invalid-map-4",
+        "path": "case-carrier-invalid-map-4.json",
+        "sha256": "8188fe7ed8a5f97e045d4c7259f7a3df16fd8db7477cef22400ec911311dda3a",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-undeclared-supplied-source",
+        "path": "case-carrier-undeclared-supplied-source.json",
+        "sha256": "bac387446dff7cd75e6586b829308f7c78b80317283d05dcd644ddf066725479",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-shared-source-validates-each-field",
+        "path": "case-carrier-shared-source-validates-each-field.json",
+        "sha256": "ed2fe5b4a1d0dc95bf5cddbbaec6f0c5c2b841235363e5ce43029f96fc766a15",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-body-token-is-not-external",
+        "path": "case-carrier-body-token-is-not-external.json",
+        "sha256": "9f1eafa2eb388f89e62be46b5d99eeda729b71b717705ff24e6155ac2cd4500a",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-external-type-id-",
+        "path": "case-carrier-external-type-id-.json",
+        "sha256": "e39b0d32c108758b220b33c0bf3b27f156310fb82e821e7cd14253e680b14183",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-external-type-id-1",
+        "path": "case-carrier-external-type-id-1.json",
+        "sha256": "e1f59252c1932c2d2263318ed90629d3a3b46dd32d5bb8730583bf52bdf656a9",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-external-type-kind-",
+        "path": "case-carrier-external-type-kind-.json",
+        "sha256": "b45bce4196a5af56c48f2f8dcafb0d5408545d33ce27a613c0d480a34c0c43f4",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-external-type-kind-True",
+        "path": "case-carrier-external-type-kind-True.json",
+        "sha256": "0f8859c07a84f326b927392f081a3501a2a9ef0b0746e978f10c0186785265fc",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-external-type-session-1",
+        "path": "case-carrier-external-type-session-1.json",
+        "sha256": "de881fc3d0bde4ed611c3aabd42ec99f5773085f7be0c62b4bac4d5125ca5871",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-version-0",
+        "path": "case-carrier-version-0.json",
+        "sha256": "58d4970ed9fca0147c347ed7bab3e7cf3935cf245d2a026ead2baba66a833cc1",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-version-1",
+        "path": "case-carrier-version-1.json",
+        "sha256": "1359ccc000c83d5874bf1efcf4ec3342791a7cdd639bc12cdea499a31b885a4c",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-version-2",
+        "path": "case-carrier-version-2.json",
+        "sha256": "1d53891c372e29660ad732161b531092c8bf66d74f7deff659420f2103b3a2d7",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-version-3",
+        "path": "case-carrier-version-3.json",
+        "sha256": "eb524d48322bd7fc6429dc9211d84f6cde0a799afc051eb56f95db71eb2c7ed6",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-version-4",
+        "path": "case-carrier-version-4.json",
+        "sha256": "38eb24933537b987756de3cca28ce10a9addd911f9d6a8fd9bcca33e1ad44ea5",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-version-5",
+        "path": "case-carrier-version-5.json",
+        "sha256": "ded3becc2f7f8118dc546ddf658f8c0b4a063191fd7357a490ef4d62411b992b",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-duplicate-json",
+        "path": "case-carrier-duplicate-json.json",
+        "sha256": "dd3b6e38259afa9508c94ec1f4f02651325409204a1816b7a03ecb92b9fcf3ad",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-float-json",
+        "path": "case-carrier-float-json.json",
+        "sha256": "50d1dccca7a61c38ad499f0ecf7ba5e0f75c20b42fc4f4729a54568ae06074f1",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-unsafe-json",
+        "path": "case-carrier-unsafe-json.json",
+        "sha256": "f8975d81f3e7f3156dd1596fb3afe8df5355fa6e397add2db76b80c49e6ffb4f",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-trailing-json",
+        "path": "case-carrier-trailing-json.json",
+        "sha256": "5cdc1fd21973ee8a12a288693a48c90383aa720e50a5a4b8d64fee4e05c67dd2",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-actor-in-body",
+        "path": "case-carrier-actor-in-body.json",
+        "sha256": "938b3a0856f62e148c0eb18a97caa8339c04e2cff24bbc6a7a2b70327867c2b1",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-raw-size",
+        "path": "case-carrier-raw-size.json",
+        "sha256": "66db85c2794045da5bb358b696333fb13342eb2b21b4b940b974f366ba6fa1eb",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-normalized-size",
+        "path": "case-carrier-normalized-size.json",
+        "sha256": "1cca0fdb6c5880fb81106184d76827122ca18799405be50a3d399dda89b3cf2d",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-legacy-id-session",
+        "path": "case-carrier-legacy-id-session.json",
+        "sha256": "e3c582e12244b9c7c036dc081190a309a1e14710188f67b3b788b3b2f55e532a",
+        "requests": 1,
+        "requirements": [
+          "ENG-002"
+        ]
+      },
+      {
+        "id": "carrier-cross-carrier-retry",
+        "path": "case-carrier-cross-carrier-retry.json",
+        "sha256": "5adce026db363993150efa193b04d17f520bd445b5d0f80c9a3e4be345d56297",
+        "requests": 6,
+        "requirements": [
+          "ENG-002",
+          "ENG-005"
+        ]
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "band-wire-examples.json",
+        "schema": "band_wire_examples",
+        "requirements": [
+          "BAND-001",
+          "NET-003"
+        ],
+        "sha256": "a56ea7bf3d453e893a6d6ef052e2e23bb0cf8cd51cba5ee157efa8678ac9bb1e"
+      },
+      {
+        "path": "invocation-replay.json",
+        "schema": "invocation_fixture",
+        "requirements": [
+          "IO-003",
+          "IO-004",
+          "IO-005",
+          "IO-007"
+        ],
+        "sha256": "2a6f7ead3e97da30b6525c9774c6384a39b027f8db64fa4da87d74577bb5c2a3"
+      },
+      {
+        "path": "openai-request.json",
+        "schema": "openai_request",
+        "requirements": [
+          "LLM-007"
+        ],
+        "sha256": "c09868cc3b34ffec491a55b2728148ba944bbbe6ad7a18bde02adc90181b141c"
+      },
+      {
+        "path": "openai-result.json",
+        "schema": "openai_result",
+        "requirements": [
+          "LLM-007"
+        ],
+        "sha256": "b63aa68013a14e2401981eded6f55dad1c7395bef3c806d9aa22ca57b1135159"
+      },
+      {
+        "path": "openai-usage.json",
+        "schema": "provider_usage",
+        "requirements": [
+          "LLM-006"
+        ],
+        "sha256": "02de16f8a58adf79575ad2b3b920e635588363849cf64f692420e8ef36c5470a"
+      }
+    ]
+  }
+}

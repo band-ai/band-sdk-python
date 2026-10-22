@@ -1,0 +1,11 @@
+---
+name: fmt-frontmatter
+description:   Frontmatter spacing is YAML and stays as written.
+engine: 0.2.0-lab.1
+roles: [lead,  worker]
+---
+contract @1h => expired   
+type offer
+state new
+  lead -> worker: offer() => done   
+end done

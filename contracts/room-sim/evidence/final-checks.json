@@ -1,0 +1,40 @@
+[
+  {
+    "check": "compile",
+    "command": [
+      "mix",
+      "compile",
+      "--force",
+      "--warnings-as-errors"
+    ],
+    "env": {
+      "MIX_ENV": "test"
+    },
+    "exit_code": 0,
+    "wall_seconds": 1.512
+  },
+  {
+    "check": "format-check",
+    "command": [
+      "mix",
+      "format",
+      "--check-formatted"
+    ],
+    "env": {},
+    "exit_code": 0,
+    "wall_seconds": 1.312
+  },
+  {
+    "check": "final-green",
+    "command": [
+      "mix",
+      "test",
+      "--seed",
+      "0",
+      "--warnings-as-errors"
+    ],
+    "env": {},
+    "exit_code": 0,
+    "wall_seconds": 2.241
+  }
+]

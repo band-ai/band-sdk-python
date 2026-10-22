@@ -1,0 +1,1585 @@
+{
+  "profile": "band-contract/conformance-case/2",
+  "id": "unchecked-markers",
+  "requirements": [
+    "V2-POLICY"
+  ],
+  "requests": {
+    "unchecked": [
+      {
+        "op": "compile",
+        "handle": "c",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: unchecked-markers\ndescription: Every local unchecked result identifies its policy mode.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\nextensions: [host.presence/1]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event lead -> worker: notice()\n  on worker offline for 1m => expired\nend expired\n",
+          "sha256": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da"
+        }
+      },
+      {
+        "op": "new",
+        "handle": "s",
+        "contract": "c",
+        "config": {
+          "session": "s",
+          "bindings": {
+            "lead": "L",
+            "worker": "W"
+          },
+          "now": 0,
+          "max_messages": 10,
+          "capabilities": [
+            "host.presence/1"
+          ],
+          "max_controls": 10,
+          "room_policy": {
+            "mode": "unchecked"
+          }
+        }
+      },
+      {
+        "op": "step",
+        "handle": "s",
+        "actor": "intruder",
+        "now": 0,
+        "message": {
+          "id": "m1",
+          "session": "s",
+          "kind": "notice",
+          "payload": {}
+        }
+      },
+      {
+        "op": "step",
+        "handle": "s",
+        "actor": "L",
+        "now": -1,
+        "message": {
+          "id": "m1",
+          "session": "s",
+          "kind": "notice",
+          "payload": {}
+        }
+      },
+      {
+        "op": "host_signal",
+        "handle": "s",
+        "event": {
+          "id": "h1",
+          "sequence": 1,
+          "subject": "worker",
+          "principal": "W",
+          "kind": "presence",
+          "value": "offline",
+          "at": 0
+        },
+        "now": 0
+      },
+      {
+        "op": "host_signal",
+        "handle": "s",
+        "event": {
+          "id": "h1",
+          "sequence": 1,
+          "subject": "worker",
+          "principal": "W",
+          "kind": "presence",
+          "value": "offline",
+          "at": 0
+        },
+        "now": 0
+      },
+      {
+        "op": "host_signal",
+        "handle": "s",
+        "event": {},
+        "now": 0
+      },
+      {
+        "op": "tick",
+        "handle": "s",
+        "now": 0
+      },
+      {
+        "op": "tick",
+        "handle": "s",
+        "now": -1
+      }
+    ],
+    "checked": [
+      {
+        "op": "compile",
+        "handle": "c",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: unchecked-markers\ndescription: Every local unchecked result identifies its policy mode.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\nextensions: [host.presence/1]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event lead -> worker: notice()\n  on worker offline for 1m => expired\nend expired\n",
+          "sha256": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da"
+        }
+      },
+      {
+        "op": "new",
+        "handle": "s",
+        "contract": "c",
+        "config": {
+          "session": "s",
+          "bindings": {
+            "lead": "L",
+            "worker": "W"
+          },
+          "now": 0,
+          "max_messages": 10,
+          "capabilities": [
+            "host.presence/1"
+          ],
+          "max_controls": 10,
+          "room_policy": {
+            "revision": "conformance-1",
+            "fixed_roles": {},
+            "principals": {
+              "L": {
+                "kind": "agent",
+                "active": true,
+                "permission": "owner"
+              },
+              "W": {
+                "kind": "agent",
+                "active": true,
+                "permission": "owner"
+              }
+            }
+          }
+        }
+      },
+      {
+        "op": "step",
+        "handle": "s",
+        "actor": "intruder",
+        "now": 0,
+        "message": {
+          "id": "m1",
+          "session": "s",
+          "kind": "notice",
+          "payload": {}
+        },
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "L": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "W": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      },
+      {
+        "op": "step",
+        "handle": "s",
+        "actor": "L",
+        "now": -1,
+        "message": {
+          "id": "m1",
+          "session": "s",
+          "kind": "notice",
+          "payload": {}
+        },
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "L": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "W": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      },
+      {
+        "op": "host_signal",
+        "handle": "s",
+        "event": {
+          "id": "h1",
+          "sequence": 1,
+          "subject": "worker",
+          "principal": "W",
+          "kind": "presence",
+          "value": "offline",
+          "at": 0
+        },
+        "now": 0
+      },
+      {
+        "op": "host_signal",
+        "handle": "s",
+        "event": {
+          "id": "h1",
+          "sequence": 1,
+          "subject": "worker",
+          "principal": "W",
+          "kind": "presence",
+          "value": "offline",
+          "at": 0
+        },
+        "now": 0
+      },
+      {
+        "op": "host_signal",
+        "handle": "s",
+        "event": {},
+        "now": 0
+      },
+      {
+        "op": "tick",
+        "handle": "s",
+        "now": 0
+      },
+      {
+        "op": "tick",
+        "handle": "s",
+        "now": -1
+      }
+    ]
+  },
+  "expected": {
+    "unchecked": [
+      {
+        "ok": {
+          "any_meta": {
+            "doc": null,
+            "line": 1
+          },
+          "any_rules": [],
+          "card": {
+            "description": "Every local unchecked result identifies its policy mode.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [
+              "host.presence/1"
+            ],
+            "inactivity_timeout": "infinite",
+            "lifetime": "infinite",
+            "name": "unchecked-markers",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "version": null
+          },
+          "digest": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [
+              {
+                "after_ms": 60000,
+                "id": "host-1",
+                "kind": "presence",
+                "meta": {
+                  "doc": null,
+                  "line": 5
+                },
+                "state": "new",
+                "subject": "worker",
+                "target": "expired",
+                "value": "offline"
+              }
+            ],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "unchecked-markers",
+          "role_metadata": {
+            "lead": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "lead"
+            },
+            "worker": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "worker"
+            }
+          },
+          "roles": [
+            "lead",
+            "worker"
+          ],
+          "room_meta": {
+            "doc": null,
+            "line": 1
+          },
+          "room_rules": [],
+          "source_digest": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "states": {
+            "new": {
+              "deadlines": [],
+              "max_entries": null,
+              "meta": {
+                "doc": null,
+                "line": 3
+              },
+              "name": "new",
+              "rules": [
+                {
+                  "activity": false,
+                  "bind": null,
+                  "each": false,
+                  "event": true,
+                  "from": [
+                    "lead"
+                  ],
+                  "id": "rule-0",
+                  "kind": "notice",
+                  "matches": {},
+                  "meta": {
+                    "doc": null,
+                    "line": 4
+                  },
+                  "target": null,
+                  "to": [
+                    "worker"
+                  ]
+                }
+              ]
+            }
+          },
+          "terminals": {
+            "completion_capacity": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "completion_capacity"
+            },
+            "control_capacity_exhausted": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "control_capacity_exhausted"
+            },
+            "expired": {
+              "meta": {
+                "doc": null,
+                "line": 6
+              },
+              "name": "expired"
+            },
+            "insufficient_time": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "insufficient_time"
+            },
+            "participant_removed": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "participant_removed"
+            },
+            "unserviceable_obligation": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "unserviceable_obligation"
+            }
+          },
+          "types": {
+            "notice": {
+              "fields": {},
+              "meta": {
+                "doc": null,
+                "line": 2
+              },
+              "name": "notice"
+            }
+          }
+        }
+      },
+      {
+        "ok": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 0,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "reason": "unauthorized",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 0,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "reason": "invalid_time",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 0,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "status": "host_accepted"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "status": "duplicate_host_event"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "reason": "invalid_host_event",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "status": "ticked"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "policy": "unchecked",
+          "reason": "invalid_time",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "policy_mode": "unchecked",
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      }
+    ],
+    "checked": [
+      {
+        "ok": {
+          "any_meta": {
+            "doc": null,
+            "line": 1
+          },
+          "any_rules": [],
+          "card": {
+            "description": "Every local unchecked result identifies its policy mode.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [
+              "host.presence/1"
+            ],
+            "inactivity_timeout": "infinite",
+            "lifetime": "infinite",
+            "name": "unchecked-markers",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "version": null
+          },
+          "digest": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [
+              {
+                "after_ms": 60000,
+                "id": "host-1",
+                "kind": "presence",
+                "meta": {
+                  "doc": null,
+                  "line": 5
+                },
+                "state": "new",
+                "subject": "worker",
+                "target": "expired",
+                "value": "offline"
+              }
+            ],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "unchecked-markers",
+          "role_metadata": {
+            "lead": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "lead"
+            },
+            "worker": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "worker"
+            }
+          },
+          "roles": [
+            "lead",
+            "worker"
+          ],
+          "room_meta": {
+            "doc": null,
+            "line": 1
+          },
+          "room_rules": [],
+          "source_digest": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "states": {
+            "new": {
+              "deadlines": [],
+              "max_entries": null,
+              "meta": {
+                "doc": null,
+                "line": 3
+              },
+              "name": "new",
+              "rules": [
+                {
+                  "activity": false,
+                  "bind": null,
+                  "each": false,
+                  "event": true,
+                  "from": [
+                    "lead"
+                  ],
+                  "id": "rule-0",
+                  "kind": "notice",
+                  "matches": {},
+                  "meta": {
+                    "doc": null,
+                    "line": 4
+                  },
+                  "target": null,
+                  "to": [
+                    "worker"
+                  ]
+                }
+              ]
+            }
+          },
+          "terminals": {
+            "completion_capacity": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "completion_capacity"
+            },
+            "control_capacity_exhausted": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "control_capacity_exhausted"
+            },
+            "expired": {
+              "meta": {
+                "doc": null,
+                "line": 6
+              },
+              "name": "expired"
+            },
+            "insufficient_time": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "insufficient_time"
+            },
+            "participant_removed": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "participant_removed"
+            },
+            "unserviceable_obligation": {
+              "meta": {
+                "doc": null,
+                "line": 1
+              },
+              "name": "unserviceable_obligation"
+            }
+          },
+          "types": {
+            "notice": {
+              "fields": {},
+              "meta": {
+                "doc": null,
+                "line": 2
+              },
+              "name": "notice"
+            }
+          }
+        }
+      },
+      {
+        "ok": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 0,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "reason": "unauthorized",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 0,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "reason": "invalid_time",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 0,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "status": "host_accepted"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "status": "duplicate_host_event"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "reason": "invalid_host_event",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "status": "ticked"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      },
+      {
+        "decision": {
+          "reason": "invalid_time",
+          "status": "rejected"
+        },
+        "state": {
+          "definition": "3fd102e3f76d5654e57ddc0b6b99a9f91fcb9c9addc29d4b5b901d5d87143e47",
+          "profile": "band-contract/state/2",
+          "source": "44751e61108b099ca145c1eae709c7fc9d96b95c85a29d8e6831e38218fa22da",
+          "state": {
+            "bindings": {
+              "lead": "L",
+              "worker": "W"
+            },
+            "contributions": {},
+            "control_limit": 10,
+            "control_log": [
+              {
+                "at": 0,
+                "cause": "presence",
+                "id": "h1",
+                "subject": "worker",
+                "value": "offline"
+              }
+            ],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {},
+            "fired_signals": {},
+            "history": [],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": null,
+            "max_bytes": 16384,
+            "max_messages": 10,
+            "mentions_used": 0,
+            "now": 0,
+            "obligations": [],
+            "outcome": null,
+            "receipts": {},
+            "signal_receipts": {
+              "h1": {
+                "fingerprint": "86a7e9ee9b8bd6677e54c42cc95d5d713726302b821f856647808ee1d89c1116"
+              }
+            },
+            "signal_revision": 1,
+            "signals": {
+              "worker/presence": {
+                "epoch": "h1",
+                "sequence": 1,
+                "since": 0,
+                "value": "offline"
+              }
+            },
+            "state": "new",
+            "status": "active",
+            "variables": {},
+            "version": 1,
+            "watch_bindings": {}
+          }
+        }
+      }
+    ]
+  }
+}

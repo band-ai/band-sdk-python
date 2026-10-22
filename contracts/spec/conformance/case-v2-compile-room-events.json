@@ -1,0 +1,675 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-compile-room-events",
+  "requirements": [
+    "DSL-004",
+    "DSL-005",
+    "DSL-008",
+    "DSL-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: room-events\ndescription: Test room events with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [sender, receiver]\n---\n\"\"\"\nSessionless notices share schema and routing rules without creating a session.\n\"\"\"\ncontract @4h mentions 1 => expired\n\n\"\"\"\nYou are the sender. Post a notice to the room when a build or review needs attention, mark it\nurgent only when it is, and close the session when you are done.\n\"\"\"\nrole sender\n\n\"\"\"\nYou are the receiver. Read each notice and act on the urgent ones first.\n\"\"\"\nrole receiver\n\n\"\"\"\nTell the room about a build or a review. Set urgent only when it needs attention now.\n\"\"\"\ntype notice\n  topic: enum(build|review)\n  urgent: boolean\n\n\"\"\"\nClose the session. No more session messages follow.\n\"\"\"\ntype close\n\n\"\"\"\nThe session is open. Notices go to the room outside it; the sender closes the session.\n\"\"\"\nstate new\n  sender -> receiver: close() => complete\n\n\"\"\"\nThe host applies its own windowed room-event quota.\n\"\"\"\nroom\n  event sender -> receiver: notice()\n\n\"\"\"\nThe sender closed the session. Room notices may continue outside it.\n\"\"\"\nend complete\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more in this session.\n\"\"\"\nend expired\n",
+        "sha256": "93a115459d4611fd2efdebd7d040d2f845c87fca5321f89bb0eaf68657683a11"
+      }
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "sender"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "receiver"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "room-events"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test room events with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "room-events",
+          "roles": [
+            "sender",
+            "receiver"
+          ],
+          "version": null
+        },
+        "digest": "73d11196df1ea3af0493977ab1487aa1fe275b2eb6df75ab2dee9c3facc97ac6",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "Sessionless notices share schema and routing rules without creating a session.",
+          "line": 1
+        },
+        "name": "room-events",
+        "role_metadata": {
+          "receiver": {
+            "meta": {
+              "doc": "You are the receiver. Read each notice and act on the urgent ones first.",
+              "line": 12
+            },
+            "name": "receiver"
+          },
+          "sender": {
+            "meta": {
+              "doc": "You are the sender. Post a notice to the room when a build or review needs attention, mark it\nurgent only when it is, and close the session when you are done.",
+              "line": 6
+            },
+            "name": "sender"
+          }
+        },
+        "roles": [
+          "sender",
+          "receiver"
+        ],
+        "room_meta": {
+          "doc": "The host applies its own windowed room-event quota.",
+          "line": 35
+        },
+        "room_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "sender"
+            ],
+            "id": "rule-1",
+            "kind": "notice",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 39
+            },
+            "target": null,
+            "to": [
+              "receiver"
+            ]
+          }
+        ],
+        "source_digest": "93a115459d4611fd2efdebd7d040d2f845c87fca5321f89bb0eaf68657683a11",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The session is open. Notices go to the room outside it; the sender closes the session.",
+              "line": 29
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "sender"
+                ],
+                "id": "rule-0",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 33
+                },
+                "target": "complete",
+                "to": [
+                  "receiver"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The sender closed the session. Room notices may continue outside it.",
+              "line": 41
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more in this session.",
+              "line": 46
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "Sessionless notices share schema and routing rules without creating a session.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": "Close the session. No more session messages follow.",
+              "line": 24
+            },
+            "name": "close"
+          },
+          "notice": {
+            "fields": {
+              "topic": {
+                "kind": "enum",
+                "meta": {
+                  "doc": null,
+                  "line": 21
+                },
+                "values": [
+                  "build",
+                  "review"
+                ]
+              },
+              "urgent": {
+                "kind": "boolean",
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                }
+              }
+            },
+            "meta": {
+              "doc": "Tell the room about a build or a review. Set urgent only when it needs attention now.",
+              "line": 17
+            },
+            "name": "notice"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test room events with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              14400
+            ],
+            "name": "room-events",
+            "roles": [
+              "sender",
+              "receiver"
+            ],
+            "version": null
+          },
+          "digest": "73d11196df1ea3af0493977ab1487aa1fe275b2eb6df75ab2dee9c3facc97ac6",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "Sessionless notices share schema and routing rules without creating a session.",
+            "line": 1
+          },
+          "name": "room-events",
+          "source_digest": "93a115459d4611fd2efdebd7d040d2f845c87fca5321f89bb0eaf68657683a11",
+          "timeout": {
+            "after_ms": 14400000,
+            "meta": {
+              "doc": "Sessionless notices share schema and routing rules without creating a session.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are the sender. Post a notice to the room when a build or review needs attention, mark it\nurgent only when it is, and close the session when you are done.",
+            "line": 6
+          },
+          "name": "sender"
+        },
+        "room_meta": {
+          "doc": "The host applies its own windowed room-event quota.",
+          "line": 35
+        },
+        "room_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "sender"
+            ],
+            "id": "rule-1",
+            "kind": "notice",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 39
+            },
+            "target": null,
+            "to": [
+              "receiver"
+            ]
+          }
+        ],
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The session is open. Notices go to the room outside it; the sender closes the session.",
+              "line": 29
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "sender"
+                ],
+                "id": "rule-0",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 33
+                },
+                "target": "complete",
+                "to": [
+                  "receiver"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The sender closed the session. Room notices may continue outside it.",
+              "line": 41
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more in this session.",
+              "line": 46
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": "Close the session. No more session messages follow.",
+              "line": 24
+            },
+            "name": "close"
+          },
+          "notice": {
+            "fields": {
+              "topic": {
+                "kind": "enum",
+                "meta": {
+                  "doc": null,
+                  "line": 21
+                },
+                "values": [
+                  "build",
+                  "review"
+                ]
+              },
+              "urgent": {
+                "kind": "boolean",
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                }
+              }
+            },
+            "meta": {
+              "doc": "Tell the room about a build or a review. Set urgent only when it needs attention now.",
+              "line": 17
+            },
+            "name": "notice"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test room events with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              14400
+            ],
+            "name": "room-events",
+            "roles": [
+              "sender",
+              "receiver"
+            ],
+            "version": null
+          },
+          "digest": "73d11196df1ea3af0493977ab1487aa1fe275b2eb6df75ab2dee9c3facc97ac6",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "Sessionless notices share schema and routing rules without creating a session.",
+            "line": 1
+          },
+          "name": "room-events",
+          "source_digest": "93a115459d4611fd2efdebd7d040d2f845c87fca5321f89bb0eaf68657683a11",
+          "timeout": {
+            "after_ms": 14400000,
+            "meta": {
+              "doc": "Sessionless notices share schema and routing rules without creating a session.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are the receiver. Read each notice and act on the urgent ones first.",
+            "line": 12
+          },
+          "name": "receiver"
+        },
+        "room_meta": {
+          "doc": "The host applies its own windowed room-event quota.",
+          "line": 35
+        },
+        "room_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "sender"
+            ],
+            "id": "rule-1",
+            "kind": "notice",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 39
+            },
+            "target": null,
+            "to": [
+              "receiver"
+            ]
+          }
+        ],
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The session is open. Notices go to the room outside it; the sender closes the session.",
+              "line": 29
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "sender"
+                ],
+                "id": "rule-0",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 33
+                },
+                "target": "complete",
+                "to": [
+                  "receiver"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The sender closed the session. Room notices may continue outside it.",
+              "line": 41
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more in this session.",
+              "line": 46
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": "Close the session. No more session messages follow.",
+              "line": 24
+            },
+            "name": "close"
+          },
+          "notice": {
+            "fields": {
+              "topic": {
+                "kind": "enum",
+                "meta": {
+                  "doc": null,
+                  "line": 21
+                },
+                "values": [
+                  "build",
+                  "review"
+                ]
+              },
+              "urgent": {
+                "kind": "boolean",
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                }
+              }
+            },
+            "meta": {
+              "doc": "Tell the room about a build or a review. Set urgent only when it needs attention now.",
+              "line": 17
+            },
+            "name": "notice"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+---
+name: one-review
+description: One agent asks another to review a change and report evidence.
+engine: 0.2.0-lab.1
+roles: [lead, reviewer]
+---
+"""
+Coordinate one independent review. Collected means a report arrived, not that
+its conclusions are correct or the change is approved.
+"""
+contract @1h => expired
+
+"""
+Give the reviewer a specific change, its context and the question to answer.
+"""
+role lead
+
+"""
+Inspect the supplied change. Explain actionable findings with evidence,
+state uncertainty and distinguish untested behavior from verified behavior.
+"""
+role reviewer
+
+"""
+The task and enough context to review it.
+"""
+type request
+  text: text(1..2000)
+
+"""
+Findings, evidence, scope checked and any remaining uncertainty, naming the
+request they answer.
+"""
+type review
+  request: ref(request)
+  text: text(1..4000)
+
+"""
+The lead starts this job by giving the reviewer its task.
+"""
+state new
+  """
+  Send the change, its context and the question. The reviewer then owes one
+  report, and that report decides the outcome.
+  """
+  lead -> reviewer: request() awaits reviewing
+    """
+    Submit the report within the response window.
+    """
+    => review() & collected
+     """
+     No report arrived within five minutes of the request.
+     """
+     | @5m & stalled
+
+"""
+The reviewer prepares its report; the request's reply window bounds the wait.
+"""
+state reviewing
+
+"""
+The lead has a report to evaluate, not an automatic approval.
+"""
+end collected
+
+"""
+No valid report arrived in time; the lead must decide how to recover.
+"""
+end stalled

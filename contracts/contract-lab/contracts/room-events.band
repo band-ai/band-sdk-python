@@ -1,0 +1,55 @@
+---
+name: room-events
+description: Test room events with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [sender, receiver]
+---
+"""
+Sessionless notices share schema and routing rules without creating a session.
+"""
+contract @4h mentions 1 => expired
+
+"""
+You are the sender. Post a notice to the room when a build or review needs attention, mark it
+urgent only when it is, and close the session when you are done.
+"""
+role sender
+
+"""
+You are the receiver. Read each notice and act on the urgent ones first.
+"""
+role receiver
+
+"""
+Tell the room about a build or a review. Set urgent only when it needs attention now.
+"""
+type notice
+  topic: enum(build|review)
+  urgent: boolean
+
+"""
+Close the session. No more session messages follow.
+"""
+type close
+
+"""
+The session is open. Notices go to the room outside it; the sender closes the session.
+"""
+state new
+  sender -> receiver: close() => complete
+
+"""
+The host applies its own windowed room-event quota.
+"""
+room
+  event sender -> receiver: notice()
+
+"""
+The sender closed the session. Room notices may continue outside it.
+"""
+end complete
+
+"""
+The four-hour contract clock ran out. Send nothing more in this session.
+"""
+end expired

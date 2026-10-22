@@ -1,0 +1,6 @@
+{
+  "input_tokens": 120,
+  "cached_input_tokens": 20,
+  "output_tokens": 10,
+  "estimated_cost_micro_usd": 58
+}

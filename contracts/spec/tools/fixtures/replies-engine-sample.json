@@ -1,0 +1,2266 @@
+{
+ "checkpoint_expired": {
+  "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+  "profile": "band-contract/state/6",
+  "source": "85bd7a1ec811e4380639a172c97a5e42f0102e0cda1db047e26158afd2ead240",
+  "state": {
+   "version": 2,
+   "signal_receipts": {},
+   "signal_revision": 0,
+   "created_at": 0,
+   "contributions": {},
+   "mentions_used": 1,
+   "now": 600010,
+   "control_limit": 0,
+   "state": "stalled",
+   "obligations": [],
+   "inactivity": "accepted",
+   "policy_mode": "unchecked",
+   "wait": null,
+   "expiry": {
+    "at": 600010,
+    "id": "due-4",
+    "missing": [
+     "deployer"
+    ],
+    "outcome": "stalled",
+    "reason": "deadline"
+   },
+   "signals": {},
+   "expired_at": 600010,
+   "watch_bindings": {},
+   "bindings": {
+    "deployer": "d",
+    "lead": "l"
+   },
+   "outcome": "stalled",
+   "max_bytes": 16384,
+   "last_activity": 10,
+   "clocks": {
+    "hard_at": null,
+    "phase_at": null
+   },
+   "id": "s",
+   "status": "terminal",
+   "entries": {
+    "deploying": 1,
+    "new": 1
+   },
+   "history": [
+    {
+     "at": 10,
+     "id": "d1",
+     "kind": "deploy",
+     "role": "lead",
+     "type": "accepted"
+    },
+    {
+     "at": 600010,
+     "outcome": "stalled",
+     "reason": "deadline",
+     "type": "expiry"
+    }
+   ],
+   "max_messages": 40,
+   "max_at": 3600000,
+   "receipts": {
+    "d1": {
+     "decision": {
+      "actor": "l",
+      "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+      "id": "d1",
+      "kind": "deploy",
+      "metadata": {
+       "doc": null,
+       "line": 17
+      },
+      "outcome": null,
+      "payload": {},
+      "recipients": [
+       "d"
+      ],
+      "role": "lead",
+      "session": "s",
+      "state": "deploying",
+      "status": "accepted",
+      "version": 1
+     },
+     "fingerprint": "de2d3c34eea5c7e2b2d7cbbe2fc26155e9a75a8216ecae67295693591a0c090e"
+    }
+   },
+   "fired_signals": {},
+   "variables": {
+    "job": "d1"
+   },
+   "idle_ms": null,
+   "facts": {
+    "d1": {
+     "actor": "l",
+     "at": 10,
+     "id": "d1",
+     "kind": "deploy",
+     "payload": {},
+     "recipients": [
+      "d"
+     ],
+     "role": "lead",
+     "rule": "rule-0"
+    }
+   },
+   "control_log": [],
+   "entered_at": 10
+  }
+ },
+ "checkpoint_replied": {
+  "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+  "profile": "band-contract/state/6",
+  "source": "85bd7a1ec811e4380639a172c97a5e42f0102e0cda1db047e26158afd2ead240",
+  "state": {
+   "version": 2,
+   "signal_receipts": {},
+   "signal_revision": 0,
+   "created_at": 0,
+   "contributions": {},
+   "mentions_used": 2,
+   "now": 20,
+   "control_limit": 0,
+   "state": "postmortem",
+   "obligations": [
+    {
+     "after_ms": 300000,
+     "due_at": 300020,
+     "id": "due-9",
+     "kind": "ack",
+     "meta": {
+      "doc": null,
+      "line": 28
+     },
+     "outcome": "stalled",
+     "participants": [
+      "lead"
+     ],
+     "quantifier": "all",
+     "remaining": [
+      "lead"
+     ]
+    }
+   ],
+   "inactivity": "accepted",
+   "policy_mode": "unchecked",
+   "wait": null,
+   "expiry": null,
+   "signals": {},
+   "expired_at": null,
+   "watch_bindings": {},
+   "bindings": {
+    "deployer": "d",
+    "lead": "l"
+   },
+   "outcome": null,
+   "max_bytes": 16384,
+   "last_activity": 20,
+   "clocks": {
+    "hard_at": null,
+    "phase_at": null
+   },
+   "id": "s",
+   "status": "active",
+   "entries": {
+    "deploying": 1,
+    "new": 1,
+    "postmortem": 1
+   },
+   "history": [
+    {
+     "at": 10,
+     "id": "d1",
+     "kind": "deploy",
+     "role": "lead",
+     "type": "accepted"
+    },
+    {
+     "at": 20,
+     "id": "r1",
+     "kind": "error",
+     "role": "deployer",
+     "type": "accepted"
+    }
+   ],
+   "max_messages": 40,
+   "max_at": 3600000,
+   "receipts": {
+    "d1": {
+     "decision": {
+      "actor": "l",
+      "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+      "id": "d1",
+      "kind": "deploy",
+      "metadata": {
+       "doc": null,
+       "line": 17
+      },
+      "outcome": null,
+      "payload": {},
+      "recipients": [
+       "d"
+      ],
+      "role": "lead",
+      "session": "s",
+      "state": "deploying",
+      "status": "accepted",
+      "version": 1
+     },
+     "fingerprint": "de2d3c34eea5c7e2b2d7cbbe2fc26155e9a75a8216ecae67295693591a0c090e"
+    },
+    "r1": {
+     "decision": {
+      "actor": "d",
+      "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+      "id": "r1",
+      "kind": "error",
+      "metadata": {
+       "doc": null,
+       "line": 21
+      },
+      "outcome": null,
+      "payload": {
+       "request": "d1",
+       "retryable": false
+      },
+      "recipients": [
+       "l"
+      ],
+      "role": "deployer",
+      "session": "s",
+      "state": "postmortem",
+      "status": "accepted",
+      "version": 2
+     },
+     "fingerprint": "ba7b009a49b3642ae846313a2363b95544300caaf3e1a1878354f12195bda302"
+    }
+   },
+   "fired_signals": {},
+   "variables": {
+    "job": "d1"
+   },
+   "idle_ms": null,
+   "facts": {
+    "d1": {
+     "actor": "l",
+     "at": 10,
+     "id": "d1",
+     "kind": "deploy",
+     "payload": {},
+     "recipients": [
+      "d"
+     ],
+     "role": "lead",
+     "rule": "rule-0"
+    },
+    "r1": {
+     "actor": "d",
+     "at": 20,
+     "id": "r1",
+     "kind": "error",
+     "payload": {
+      "request": "d1",
+      "retryable": false
+     },
+     "recipients": [
+      "l"
+     ],
+     "role": "deployer",
+     "rule": "rule-3"
+    }
+   },
+   "control_log": [],
+   "entered_at": 20
+  }
+ },
+ "checkpoint_waiting": {
+  "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+  "profile": "band-contract/state/6",
+  "source": "85bd7a1ec811e4380639a172c97a5e42f0102e0cda1db047e26158afd2ead240",
+  "state": {
+   "version": 1,
+   "signal_receipts": {},
+   "signal_revision": 0,
+   "created_at": 0,
+   "contributions": {},
+   "mentions_used": 1,
+   "now": 10,
+   "control_limit": 0,
+   "state": "deploying",
+   "obligations": [],
+   "inactivity": "accepted",
+   "policy_mode": "unchecked",
+   "wait": {
+    "due_at": 600010,
+    "head": "d1",
+    "id": "due-4",
+    "remaining": [
+     "deployer"
+    ]
+   },
+   "expiry": null,
+   "signals": {},
+   "expired_at": null,
+   "watch_bindings": {},
+   "bindings": {
+    "deployer": "d",
+    "lead": "l"
+   },
+   "outcome": null,
+   "max_bytes": 16384,
+   "last_activity": 10,
+   "clocks": {
+    "hard_at": null,
+    "phase_at": null
+   },
+   "id": "s",
+   "status": "active",
+   "entries": {
+    "deploying": 1,
+    "new": 1
+   },
+   "history": [
+    {
+     "at": 10,
+     "id": "d1",
+     "kind": "deploy",
+     "role": "lead",
+     "type": "accepted"
+    }
+   ],
+   "max_messages": 40,
+   "max_at": 3600000,
+   "receipts": {
+    "d1": {
+     "decision": {
+      "actor": "l",
+      "definition": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+      "id": "d1",
+      "kind": "deploy",
+      "metadata": {
+       "doc": null,
+       "line": 17
+      },
+      "outcome": null,
+      "payload": {},
+      "recipients": [
+       "d"
+      ],
+      "role": "lead",
+      "session": "s",
+      "state": "deploying",
+      "status": "accepted",
+      "version": 1
+     },
+     "fingerprint": "de2d3c34eea5c7e2b2d7cbbe2fc26155e9a75a8216ecae67295693591a0c090e"
+    }
+   },
+   "fired_signals": {},
+   "variables": {
+    "job": "d1"
+   },
+   "idle_ms": null,
+   "facts": {
+    "d1": {
+     "actor": "l",
+     "at": 10,
+     "id": "d1",
+     "kind": "deploy",
+     "payload": {},
+     "recipients": [
+      "d"
+     ],
+     "role": "lead",
+     "rule": "rule-0"
+    }
+   },
+   "control_log": [],
+   "entered_at": 10
+  }
+ },
+ "compiled": {
+  "any_meta": {
+   "doc": null,
+   "line": 29
+  },
+  "any_rules": [
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "lead"
+    ],
+    "id": "rule-10",
+    "kind": "cancel",
+    "matches": {},
+    "meta": {
+     "doc": null,
+     "line": 30
+    },
+    "target": "failed",
+    "to": [
+     "deployer"
+    ]
+   },
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-11",
+    "kind": "quit",
+    "matches": {},
+    "meta": {
+     "doc": null,
+     "line": 31
+    },
+    "target": "failed",
+    "to": [
+     "lead"
+    ]
+   }
+  ],
+  "card": {
+   "description": "Ok and error replies with retry.",
+   "encoding": "utf-8",
+   "engine": "0.2.0-lab.1",
+   "extensions": [
+    "contract.replies/1"
+   ],
+   "inactivity_timeout": "infinite",
+   "lifetime": [
+    "seconds",
+    3600
+   ],
+   "name": "deploy",
+   "roles": [
+    "lead",
+    "deployer"
+   ],
+   "version": null
+  },
+  "digest": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+  "engine": "0.2.0-lab.1",
+  "extensions": {
+   "permission_meta": {},
+   "permissions": {},
+   "triggers": [],
+   "watch_meta": {},
+   "watches": []
+  },
+  "meta": {
+   "doc": null,
+   "line": 1
+  },
+  "name": "deploy",
+  "renewal_profile": "band-contract/renewal/1",
+  "role_metadata": {
+   "deployer": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "deployer"
+   },
+   "lead": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "lead"
+   }
+  },
+  "roles": [
+   "lead",
+   "deployer"
+  ],
+  "room_meta": {
+   "doc": null,
+   "line": 1
+  },
+  "room_rules": [],
+  "source_digest": "85bd7a1ec811e4380639a172c97a5e42f0102e0cda1db047e26158afd2ead240",
+  "states": {
+   "deploying": {
+    "deadlines": [],
+    "max_entries": {
+     "limit": 3,
+     "outcome": "exhausted"
+    },
+    "meta": {
+     "doc": null,
+     "line": 18
+    },
+    "name": "deploying",
+    "rules": [
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-1",
+      "kind": "ok",
+      "literals": {},
+      "matches": {
+       "request": "job"
+      },
+      "meta": {
+       "doc": null,
+       "line": 19
+      },
+      "target": "deployed",
+      "to": [
+       "lead"
+      ],
+      "wait": "due-4"
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-2",
+      "kind": "error",
+      "literals": {
+       "retryable": true
+      },
+      "matches": {
+       "request": "job"
+      },
+      "meta": {
+       "doc": null,
+       "line": 20
+      },
+      "target": "retrying",
+      "to": [
+       "lead"
+      ],
+      "wait": "due-4"
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-3",
+      "kind": "error",
+      "literals": {
+       "retryable": false
+      },
+      "matches": {
+       "request": "job"
+      },
+      "meta": {
+       "doc": null,
+       "line": 21
+      },
+      "target": "postmortem",
+      "to": [
+       "lead"
+      ],
+      "wait": "due-4"
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": true,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-5",
+      "kind": "progress",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 23
+      },
+      "reset": {
+       "duty": "due-4",
+       "profile": "band-contract/renewal/1",
+       "scope": "wait"
+      },
+      "target": null,
+      "to": [
+       "lead"
+      ]
+     }
+    ],
+    "wait": {
+     "after_ms": 600000,
+     "alternatives": [
+      "rule-1",
+      "rule-2",
+      "rule-3"
+     ],
+     "from": [
+      "deployer"
+     ],
+     "heads": [
+      "rule-0",
+      "rule-6"
+     ],
+     "id": "due-4",
+     "kinds": [
+      "ok",
+      "error"
+     ],
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "outcome": "stalled",
+     "to": [
+      "lead"
+     ]
+    }
+   },
+   "new": {
+    "deadlines": [],
+    "max_entries": null,
+    "meta": {
+     "doc": null,
+     "line": 16
+    },
+    "name": "new",
+    "rules": [
+     {
+      "activity": false,
+      "bind": "job",
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-0",
+      "kind": "deploy",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 17
+      },
+      "target": "deploying",
+      "to": [
+       "deployer"
+      ]
+     }
+    ]
+   },
+   "postmortem": {
+    "deadlines": [
+     {
+      "after_ms": 300000,
+      "id": "due-9",
+      "kind": "ack",
+      "meta": {
+       "doc": null,
+       "line": 28
+      },
+      "outcome": "stalled",
+      "participants": [
+       "lead"
+      ],
+      "quantifier": "all"
+     }
+    ],
+    "max_entries": null,
+    "meta": {
+     "doc": null,
+     "line": 27
+    },
+    "name": "postmortem",
+    "rules": [
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-8",
+      "kind": "ack",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 28
+      },
+      "target": "failed",
+      "to": [
+       "deployer"
+      ]
+     }
+    ]
+   },
+   "retrying": {
+    "deadlines": [],
+    "max_entries": null,
+    "meta": {
+     "doc": null,
+     "line": 24
+    },
+    "name": "retrying",
+    "rules": [
+     {
+      "activity": false,
+      "bind": "job",
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-6",
+      "kind": "deploy",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 25
+      },
+      "target": "deploying",
+      "to": [
+       "deployer"
+      ]
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-7",
+      "kind": "abandon",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 26
+      },
+      "target": "failed",
+      "to": [
+       "deployer"
+      ]
+     }
+    ],
+    "timeout": {
+     "after_ms": 1800000,
+     "meta": {
+      "doc": null,
+      "line": 24
+     },
+     "outcome": "stalled",
+     "profile": "band-contract/timeout/1"
+    }
+   }
+  },
+  "terminals": {
+   "completion_capacity": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "completion_capacity"
+   },
+   "control_capacity_exhausted": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "control_capacity_exhausted"
+   },
+   "deployed": {
+    "meta": {
+     "doc": null,
+     "line": 32
+    },
+    "name": "deployed"
+   },
+   "exhausted": {
+    "meta": {
+     "doc": null,
+     "line": 35
+    },
+    "name": "exhausted"
+   },
+   "expired": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "expired"
+   },
+   "failed": {
+    "meta": {
+     "doc": null,
+     "line": 33
+    },
+    "name": "failed"
+   },
+   "insufficient_time": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "insufficient_time"
+   },
+   "participant_removed": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "participant_removed"
+   },
+   "stalled": {
+    "meta": {
+     "doc": null,
+     "line": 34
+    },
+    "name": "stalled"
+   },
+   "unserviceable_obligation": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "unserviceable_obligation"
+   }
+  },
+  "timeout": {
+   "after_ms": 3600000,
+   "meta": {
+    "doc": null,
+    "line": 1
+   },
+   "outcome": "expired",
+   "profile": "band-contract/timeout/1"
+  },
+  "types": {
+   "abandon": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 12
+    },
+    "name": "abandon"
+   },
+   "ack": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 15
+    },
+    "name": "ack"
+   },
+   "cancel": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 13
+    },
+    "name": "cancel"
+   },
+   "deploy": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 2
+    },
+    "name": "deploy"
+   },
+   "error": {
+    "fields": {
+     "request": {
+      "kind": "ref",
+      "meta": {
+       "doc": null,
+       "line": 6
+      },
+      "values": [
+       "deploy"
+      ]
+     },
+     "retryable": {
+      "kind": "boolean",
+      "meta": {
+       "doc": null,
+       "line": 7
+      }
+     }
+    },
+    "meta": {
+     "doc": null,
+     "line": 5
+    },
+    "name": "error"
+   },
+   "ok": {
+    "fields": {
+     "request": {
+      "kind": "ref",
+      "meta": {
+       "doc": null,
+       "line": 4
+      },
+      "values": [
+       "deploy"
+      ]
+     }
+    },
+    "meta": {
+     "doc": null,
+     "line": 3
+    },
+    "name": "ok"
+   },
+   "progress": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 11
+    },
+    "name": "progress"
+   },
+   "quit": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 14
+    },
+    "name": "quit"
+   }
+  }
+ },
+ "role_definition": {
+  "any_meta": {
+   "doc": null,
+   "line": 29
+  },
+  "any_rules": [
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "lead"
+    ],
+    "id": "rule-10",
+    "kind": "cancel",
+    "matches": {},
+    "meta": {
+     "doc": null,
+     "line": 30
+    },
+    "target": "failed",
+    "to": [
+     "deployer"
+    ]
+   },
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-11",
+    "kind": "quit",
+    "matches": {},
+    "meta": {
+     "doc": null,
+     "line": 31
+    },
+    "target": "failed",
+    "to": [
+     "lead"
+    ]
+   }
+  ],
+  "contract": {
+   "card": {
+    "description": "Ok and error replies with retry.",
+    "encoding": "utf-8",
+    "engine": "0.2.0-lab.1",
+    "extensions": [
+     "contract.replies/1"
+    ],
+    "inactivity_timeout": "infinite",
+    "lifetime": [
+     "seconds",
+     3600
+    ],
+    "name": "deploy",
+    "roles": [
+     "lead",
+     "deployer"
+    ],
+    "version": null
+   },
+   "digest": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+   "engine": "0.2.0-lab.1",
+   "extensions": {
+    "permission_meta": {},
+    "permissions": {},
+    "triggers": [],
+    "watch_meta": {},
+    "watches": []
+   },
+   "meta": {
+    "doc": null,
+    "line": 1
+   },
+   "name": "deploy",
+   "renewal_profile": "band-contract/renewal/1",
+   "source_digest": "85bd7a1ec811e4380639a172c97a5e42f0102e0cda1db047e26158afd2ead240",
+   "timeout": {
+    "after_ms": 3600000,
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "outcome": "expired",
+    "profile": "band-contract/timeout/1"
+   }
+  },
+  "role": {
+   "meta": {
+    "doc": null,
+    "line": 1
+   },
+   "name": "deployer"
+  },
+  "room_meta": {
+   "doc": null,
+   "line": 1
+  },
+  "room_rules": [],
+  "states": {
+   "deploying": {
+    "deadlines": [],
+    "max_entries": {
+     "limit": 3,
+     "outcome": "exhausted"
+    },
+    "meta": {
+     "doc": null,
+     "line": 18
+    },
+    "name": "deploying",
+    "rules": [
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-1",
+      "kind": "ok",
+      "literals": {},
+      "matches": {
+       "request": "job"
+      },
+      "meta": {
+       "doc": null,
+       "line": 19
+      },
+      "target": "deployed",
+      "to": [
+       "lead"
+      ],
+      "wait": "due-4"
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-2",
+      "kind": "error",
+      "literals": {
+       "retryable": true
+      },
+      "matches": {
+       "request": "job"
+      },
+      "meta": {
+       "doc": null,
+       "line": 20
+      },
+      "target": "retrying",
+      "to": [
+       "lead"
+      ],
+      "wait": "due-4"
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-3",
+      "kind": "error",
+      "literals": {
+       "retryable": false
+      },
+      "matches": {
+       "request": "job"
+      },
+      "meta": {
+       "doc": null,
+       "line": 21
+      },
+      "target": "postmortem",
+      "to": [
+       "lead"
+      ],
+      "wait": "due-4"
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": true,
+      "from": [
+       "deployer"
+      ],
+      "id": "rule-5",
+      "kind": "progress",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 23
+      },
+      "reset": {
+       "duty": "due-4",
+       "profile": "band-contract/renewal/1",
+       "scope": "wait"
+      },
+      "target": null,
+      "to": [
+       "lead"
+      ]
+     }
+    ],
+    "wait": {
+     "after_ms": 600000,
+     "alternatives": [
+      "rule-1",
+      "rule-2",
+      "rule-3"
+     ],
+     "exits": [
+      {
+       "from": [
+        "lead"
+       ],
+       "kind": "cancel",
+       "rule": "rule-10",
+       "target": "failed"
+      },
+      {
+       "from": [
+        "deployer"
+       ],
+       "kind": "quit",
+       "rule": "rule-11",
+       "target": "failed"
+      }
+     ],
+     "from": [
+      "deployer"
+     ],
+     "heads": [
+      "rule-0",
+      "rule-6"
+     ],
+     "id": "due-4",
+     "kinds": [
+      "ok",
+      "error"
+     ],
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "outcome": "stalled",
+     "to": [
+      "lead"
+     ]
+    }
+   },
+   "new": {
+    "deadlines": [],
+    "max_entries": null,
+    "meta": {
+     "doc": null,
+     "line": 16
+    },
+    "name": "new",
+    "rules": [
+     {
+      "activity": false,
+      "bind": "job",
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-0",
+      "kind": "deploy",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 17
+      },
+      "target": "deploying",
+      "to": [
+       "deployer"
+      ]
+     }
+    ]
+   },
+   "postmortem": {
+    "deadlines": [],
+    "max_entries": null,
+    "meta": {
+     "doc": null,
+     "line": 27
+    },
+    "name": "postmortem",
+    "rules": [
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-8",
+      "kind": "ack",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 28
+      },
+      "target": "failed",
+      "to": [
+       "deployer"
+      ]
+     }
+    ]
+   },
+   "retrying": {
+    "deadlines": [],
+    "max_entries": null,
+    "meta": {
+     "doc": null,
+     "line": 24
+    },
+    "name": "retrying",
+    "rules": [
+     {
+      "activity": false,
+      "bind": "job",
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-6",
+      "kind": "deploy",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 25
+      },
+      "target": "deploying",
+      "to": [
+       "deployer"
+      ]
+     },
+     {
+      "activity": false,
+      "bind": null,
+      "each": false,
+      "event": false,
+      "from": [
+       "lead"
+      ],
+      "id": "rule-7",
+      "kind": "abandon",
+      "matches": {},
+      "meta": {
+       "doc": null,
+       "line": 26
+      },
+      "target": "failed",
+      "to": [
+       "deployer"
+      ]
+     }
+    ],
+    "timeout": {
+     "after_ms": 1800000,
+     "meta": {
+      "doc": null,
+      "line": 24
+     },
+     "outcome": "stalled",
+     "profile": "band-contract/timeout/1"
+    }
+   }
+  },
+  "terminals": {
+   "completion_capacity": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "completion_capacity"
+   },
+   "control_capacity_exhausted": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "control_capacity_exhausted"
+   },
+   "deployed": {
+    "meta": {
+     "doc": null,
+     "line": 32
+    },
+    "name": "deployed"
+   },
+   "exhausted": {
+    "meta": {
+     "doc": null,
+     "line": 35
+    },
+    "name": "exhausted"
+   },
+   "expired": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "expired"
+   },
+   "failed": {
+    "meta": {
+     "doc": null,
+     "line": 33
+    },
+    "name": "failed"
+   },
+   "insufficient_time": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "insufficient_time"
+   },
+   "participant_removed": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "participant_removed"
+   },
+   "stalled": {
+    "meta": {
+     "doc": null,
+     "line": 34
+    },
+    "name": "stalled"
+   },
+   "unserviceable_obligation": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "unserviceable_obligation"
+   }
+  },
+  "types": {
+   "abandon": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 12
+    },
+    "name": "abandon"
+   },
+   "ack": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 15
+    },
+    "name": "ack"
+   },
+   "cancel": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 13
+    },
+    "name": "cancel"
+   },
+   "deploy": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 2
+    },
+    "name": "deploy"
+   },
+   "error": {
+    "fields": {
+     "request": {
+      "kind": "ref",
+      "meta": {
+       "doc": null,
+       "line": 6
+      },
+      "values": [
+       "deploy"
+      ]
+     },
+     "retryable": {
+      "kind": "boolean",
+      "meta": {
+       "doc": null,
+       "line": 7
+      }
+     }
+    },
+    "meta": {
+     "doc": null,
+     "line": 5
+    },
+    "name": "error"
+   },
+   "ok": {
+    "fields": {
+     "request": {
+      "kind": "ref",
+      "meta": {
+       "doc": null,
+       "line": 4
+      },
+      "values": [
+       "deploy"
+      ]
+     }
+    },
+    "meta": {
+     "doc": null,
+     "line": 3
+    },
+    "name": "ok"
+   },
+   "progress": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 11
+    },
+    "name": "progress"
+   },
+   "quit": {
+    "fields": {},
+    "meta": {
+     "doc": null,
+     "line": 14
+    },
+    "name": "quit"
+   }
+  }
+ },
+ "view": {
+  "definition": {
+   "any_meta": {
+    "doc": null,
+    "line": 29
+   },
+   "any_rules": [
+    {
+     "activity": false,
+     "bind": null,
+     "each": false,
+     "event": false,
+     "from": [
+      "lead"
+     ],
+     "id": "rule-10",
+     "kind": "cancel",
+     "matches": {},
+     "meta": {
+      "doc": null,
+      "line": 30
+     },
+     "target": "failed",
+     "to": [
+      "deployer"
+     ]
+    },
+    {
+     "activity": false,
+     "bind": null,
+     "each": false,
+     "event": false,
+     "from": [
+      "deployer"
+     ],
+     "id": "rule-11",
+     "kind": "quit",
+     "matches": {},
+     "meta": {
+      "doc": null,
+      "line": 31
+     },
+     "target": "failed",
+     "to": [
+      "lead"
+     ]
+    }
+   ],
+   "contract": {
+    "card": {
+     "description": "Ok and error replies with retry.",
+     "encoding": "utf-8",
+     "engine": "0.2.0-lab.1",
+     "extensions": [
+      "contract.replies/1"
+     ],
+     "inactivity_timeout": "infinite",
+     "lifetime": [
+      "seconds",
+      3600
+     ],
+     "name": "deploy",
+     "roles": [
+      "lead",
+      "deployer"
+     ],
+     "version": null
+    },
+    "digest": "7f9962a0a5a4058c94b78ff4fc3ac54f50f144d5d0bc10263c3a7901d2cf5402",
+    "engine": "0.2.0-lab.1",
+    "extensions": {
+     "permission_meta": {},
+     "permissions": {},
+     "triggers": [],
+     "watch_meta": {},
+     "watches": []
+    },
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "deploy",
+    "renewal_profile": "band-contract/renewal/1",
+    "source_digest": "85bd7a1ec811e4380639a172c97a5e42f0102e0cda1db047e26158afd2ead240",
+    "timeout": {
+     "after_ms": 3600000,
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "outcome": "expired",
+     "profile": "band-contract/timeout/1"
+    }
+   },
+   "role": {
+    "meta": {
+     "doc": null,
+     "line": 1
+    },
+    "name": "deployer"
+   },
+   "room_meta": {
+    "doc": null,
+    "line": 1
+   },
+   "room_rules": [],
+   "states": {
+    "deploying": {
+     "deadlines": [],
+     "max_entries": {
+      "limit": 3,
+      "outcome": "exhausted"
+     },
+     "meta": {
+      "doc": null,
+      "line": 18
+     },
+     "name": "deploying",
+     "rules": [
+      {
+       "activity": false,
+       "bind": null,
+       "each": false,
+       "event": false,
+       "from": [
+        "deployer"
+       ],
+       "id": "rule-1",
+       "kind": "ok",
+       "literals": {},
+       "matches": {
+        "request": "job"
+       },
+       "meta": {
+        "doc": null,
+        "line": 19
+       },
+       "target": "deployed",
+       "to": [
+        "lead"
+       ],
+       "wait": "due-4"
+      },
+      {
+       "activity": false,
+       "bind": null,
+       "each": false,
+       "event": false,
+       "from": [
+        "deployer"
+       ],
+       "id": "rule-2",
+       "kind": "error",
+       "literals": {
+        "retryable": true
+       },
+       "matches": {
+        "request": "job"
+       },
+       "meta": {
+        "doc": null,
+        "line": 20
+       },
+       "target": "retrying",
+       "to": [
+        "lead"
+       ],
+       "wait": "due-4"
+      },
+      {
+       "activity": false,
+       "bind": null,
+       "each": false,
+       "event": false,
+       "from": [
+        "deployer"
+       ],
+       "id": "rule-3",
+       "kind": "error",
+       "literals": {
+        "retryable": false
+       },
+       "matches": {
+        "request": "job"
+       },
+       "meta": {
+        "doc": null,
+        "line": 21
+       },
+       "target": "postmortem",
+       "to": [
+        "lead"
+       ],
+       "wait": "due-4"
+      },
+      {
+       "activity": false,
+       "bind": null,
+       "each": false,
+       "event": true,
+       "from": [
+        "deployer"
+       ],
+       "id": "rule-5",
+       "kind": "progress",
+       "matches": {},
+       "meta": {
+        "doc": null,
+        "line": 23
+       },
+       "reset": {
+        "duty": "due-4",
+        "profile": "band-contract/renewal/1",
+        "scope": "wait"
+       },
+       "target": null,
+       "to": [
+        "lead"
+       ]
+      }
+     ],
+     "wait": {
+      "after_ms": 600000,
+      "alternatives": [
+       "rule-1",
+       "rule-2",
+       "rule-3"
+      ],
+      "exits": [
+       {
+        "from": [
+         "lead"
+        ],
+        "kind": "cancel",
+        "rule": "rule-10",
+        "target": "failed"
+       },
+       {
+        "from": [
+         "deployer"
+        ],
+        "kind": "quit",
+        "rule": "rule-11",
+        "target": "failed"
+       }
+      ],
+      "from": [
+       "deployer"
+      ],
+      "heads": [
+       "rule-0",
+       "rule-6"
+      ],
+      "id": "due-4",
+      "kinds": [
+       "ok",
+       "error"
+      ],
+      "meta": {
+       "doc": null,
+       "line": 1
+      },
+      "outcome": "stalled",
+      "to": [
+       "lead"
+      ]
+     }
+    },
+    "new": {
+     "deadlines": [],
+     "max_entries": null,
+     "meta": {
+      "doc": null,
+      "line": 16
+     },
+     "name": "new",
+     "rules": [
+      {
+       "activity": false,
+       "bind": "job",
+       "each": false,
+       "event": false,
+       "from": [
+        "lead"
+       ],
+       "id": "rule-0",
+       "kind": "deploy",
+       "matches": {},
+       "meta": {
+        "doc": null,
+        "line": 17
+       },
+       "target": "deploying",
+       "to": [
+        "deployer"
+       ]
+      }
+     ]
+    },
+    "postmortem": {
+     "deadlines": [],
+     "max_entries": null,
+     "meta": {
+      "doc": null,
+      "line": 27
+     },
+     "name": "postmortem",
+     "rules": [
+      {
+       "activity": false,
+       "bind": null,
+       "each": false,
+       "event": false,
+       "from": [
+        "lead"
+       ],
+       "id": "rule-8",
+       "kind": "ack",
+       "matches": {},
+       "meta": {
+        "doc": null,
+        "line": 28
+       },
+       "target": "failed",
+       "to": [
+        "deployer"
+       ]
+      }
+     ]
+    },
+    "retrying": {
+     "deadlines": [],
+     "max_entries": null,
+     "meta": {
+      "doc": null,
+      "line": 24
+     },
+     "name": "retrying",
+     "rules": [
+      {
+       "activity": false,
+       "bind": "job",
+       "each": false,
+       "event": false,
+       "from": [
+        "lead"
+       ],
+       "id": "rule-6",
+       "kind": "deploy",
+       "matches": {},
+       "meta": {
+        "doc": null,
+        "line": 25
+       },
+       "target": "deploying",
+       "to": [
+        "deployer"
+       ]
+      },
+      {
+       "activity": false,
+       "bind": null,
+       "each": false,
+       "event": false,
+       "from": [
+        "lead"
+       ],
+       "id": "rule-7",
+       "kind": "abandon",
+       "matches": {},
+       "meta": {
+        "doc": null,
+        "line": 26
+       },
+       "target": "failed",
+       "to": [
+        "deployer"
+       ]
+      }
+     ],
+     "timeout": {
+      "after_ms": 1800000,
+      "meta": {
+       "doc": null,
+       "line": 24
+      },
+      "outcome": "stalled",
+      "profile": "band-contract/timeout/1"
+     }
+    }
+   },
+   "terminals": {
+    "completion_capacity": {
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "name": "completion_capacity"
+    },
+    "control_capacity_exhausted": {
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "name": "control_capacity_exhausted"
+    },
+    "deployed": {
+     "meta": {
+      "doc": null,
+      "line": 32
+     },
+     "name": "deployed"
+    },
+    "exhausted": {
+     "meta": {
+      "doc": null,
+      "line": 35
+     },
+     "name": "exhausted"
+    },
+    "expired": {
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "name": "expired"
+    },
+    "failed": {
+     "meta": {
+      "doc": null,
+      "line": 33
+     },
+     "name": "failed"
+    },
+    "insufficient_time": {
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "name": "insufficient_time"
+    },
+    "participant_removed": {
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "name": "participant_removed"
+    },
+    "stalled": {
+     "meta": {
+      "doc": null,
+      "line": 34
+     },
+     "name": "stalled"
+    },
+    "unserviceable_obligation": {
+     "meta": {
+      "doc": null,
+      "line": 1
+     },
+     "name": "unserviceable_obligation"
+    }
+   },
+   "types": {
+    "abandon": {
+     "fields": {},
+     "meta": {
+      "doc": null,
+      "line": 12
+     },
+     "name": "abandon"
+    },
+    "ack": {
+     "fields": {},
+     "meta": {
+      "doc": null,
+      "line": 15
+     },
+     "name": "ack"
+    },
+    "cancel": {
+     "fields": {},
+     "meta": {
+      "doc": null,
+      "line": 13
+     },
+     "name": "cancel"
+    },
+    "deploy": {
+     "fields": {},
+     "meta": {
+      "doc": null,
+      "line": 2
+     },
+     "name": "deploy"
+    },
+    "error": {
+     "fields": {
+      "request": {
+       "kind": "ref",
+       "meta": {
+        "doc": null,
+        "line": 6
+       },
+       "values": [
+        "deploy"
+       ]
+      },
+      "retryable": {
+       "kind": "boolean",
+       "meta": {
+        "doc": null,
+        "line": 7
+       }
+      }
+     },
+     "meta": {
+      "doc": null,
+      "line": 5
+     },
+     "name": "error"
+    },
+    "ok": {
+     "fields": {
+      "request": {
+       "kind": "ref",
+       "meta": {
+        "doc": null,
+        "line": 4
+       },
+       "values": [
+        "deploy"
+       ]
+      }
+     },
+     "meta": {
+      "doc": null,
+      "line": 3
+     },
+     "name": "ok"
+    },
+    "progress": {
+     "fields": {},
+     "meta": {
+      "doc": null,
+      "line": 11
+     },
+     "name": "progress"
+    },
+    "quit": {
+     "fields": {},
+     "meta": {
+      "doc": null,
+      "line": 14
+     },
+     "name": "quit"
+    }
+   }
+  },
+  "facts": {
+   "d1": {
+    "actor": "l",
+    "at": 10,
+    "id": "d1",
+    "kind": "deploy",
+    "payload": {},
+    "recipients": [
+     "d"
+    ],
+    "role": "lead",
+    "rule": "rule-0"
+   }
+  },
+  "id": "s",
+  "idle_at": null,
+  "legal": [
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-1",
+    "kind": "ok",
+    "literals": {},
+    "matches": {
+     "request": "job"
+    },
+    "meta": {
+     "doc": null,
+     "line": 19
+    },
+    "target": "deployed",
+    "to": [
+     "lead"
+    ],
+    "wait": "due-4"
+   },
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-2",
+    "kind": "error",
+    "literals": {
+     "retryable": true
+    },
+    "matches": {
+     "request": "job"
+    },
+    "meta": {
+     "doc": null,
+     "line": 20
+    },
+    "target": "retrying",
+    "to": [
+     "lead"
+    ],
+    "wait": "due-4"
+   },
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-3",
+    "kind": "error",
+    "literals": {
+     "retryable": false
+    },
+    "matches": {
+     "request": "job"
+    },
+    "meta": {
+     "doc": null,
+     "line": 21
+    },
+    "target": "postmortem",
+    "to": [
+     "lead"
+    ],
+    "wait": "due-4"
+   },
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": true,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-5",
+    "kind": "progress",
+    "matches": {},
+    "meta": {
+     "doc": null,
+     "line": 23
+    },
+    "reset": {
+     "duty": "due-4",
+     "profile": "band-contract/renewal/1",
+     "scope": "wait"
+    },
+    "target": null,
+    "to": [
+     "lead"
+    ]
+   },
+   {
+    "activity": false,
+    "bind": null,
+    "each": false,
+    "event": false,
+    "from": [
+     "deployer"
+    ],
+    "id": "rule-11",
+    "kind": "quit",
+    "matches": {},
+    "meta": {
+     "doc": null,
+     "line": 31
+    },
+    "target": "failed",
+    "to": [
+     "lead"
+    ]
+   }
+  ],
+  "max_at": 3600000,
+  "mentions_used": 1,
+  "obligations": [],
+  "outcome": null,
+  "policy": "unchecked",
+  "state": "deploying",
+  "status": "active",
+  "version": 1,
+  "wait": {
+   "alternatives": [
+    {
+     "kind": "ok",
+     "literals": {},
+     "rule": "rule-1",
+     "target": "deployed"
+    },
+    {
+     "kind": "error",
+     "literals": {
+      "retryable": true
+     },
+     "rule": "rule-2",
+     "target": "retrying"
+    },
+    {
+     "kind": "error",
+     "literals": {
+      "retryable": false
+     },
+     "rule": "rule-3",
+     "target": "postmortem"
+    }
+   ],
+   "due_at": 600010,
+   "exits": [
+    {
+     "from": [
+      "lead"
+     ],
+     "kind": "cancel",
+     "rule": "rule-10",
+     "target": "failed"
+    },
+    {
+     "from": [
+      "deployer"
+     ],
+     "kind": "quit",
+     "rule": "rule-11",
+     "target": "failed"
+    }
+   ],
+   "head": "d1",
+   "id": "due-4",
+   "remaining": [
+    "deployer"
+   ]
+  }
+ }
+}

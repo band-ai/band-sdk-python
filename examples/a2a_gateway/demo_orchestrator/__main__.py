@@ -39,8 +39,9 @@ from agent import OrchestratorAgent
 from agent_executor import OrchestratorAgentExecutor
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from remote_agent import GatewayClient
 from starlette.applications import Starlette
+
+from remote_agent import GatewayClient
 
 load_dotenv()
 

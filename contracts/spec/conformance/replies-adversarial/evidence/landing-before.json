@@ -1,0 +1,1978 @@
+{
+  "candidate_head": "9a7ed99acc915b034cca98728ff99b149a56d5f2",
+  "old_head": "95c9b25a3ead70d94fb3977a81dd7cd13d22097c",
+  "old_reader_checked": true,
+  "cases": [
+    {
+      "evidence": {
+        "green": {
+          "ok": {
+            "mentions_used": 1,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "9f5e408e49fa64d85da29bfe50741a83735bfc8028aebec15302b8e3b3cefb3a",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 4
+                  },
+                  "outcome": "done",
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              }
+            ],
+            "version": 1
+          }
+        },
+        "mutant": {
+          "error": {
+            "actual": {
+              "decision": {
+                "actor": "l",
+                "definition": "9f5e408e49fa64d85da29bfe50741a83735bfc8028aebec15302b8e3b3cefb3a",
+                "id": "req",
+                "kind": "request",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": "done",
+                "payload": {},
+                "policy": "unchecked",
+                "recipients": [
+                  "w"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              },
+              "mentions_used": 1,
+              "outcome": "done",
+              "reason": null,
+              "state": "done",
+              "status": "accepted",
+              "version": 1
+            },
+            "error": "expectation_mismatch",
+            "expected": {
+              "outcome": "wrong",
+              "status": "accepted",
+              "version": 1
+            },
+            "step": 1
+          }
+        }
+      },
+      "id": "runner-real-replay-mutation-control",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_overlap",
+          "detail": "Some answer payload matches both this row and line 9",
+          "line": 10
+        },
+        "elapsed_ms": 2
+      },
+      "id": "overlap-useful-exhaustive",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_overlap",
+          "detail": "Some answer payload matches both this row and line 9",
+          "line": 10
+        },
+        "elapsed_ms": 2
+      },
+      "id": "overlap-bare-fallback",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_not_exhaustive",
+          "detail": "The answer rows cover 3 of 4 combinations of x, y",
+          "line": 8
+        },
+        "elapsed_ms": 2
+      },
+      "id": "coverage-false-false-gap",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 7,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 2,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "9172eaca0623187d4a3b93f5bfbb6af64cc8c58abdf79c6ac1ded3ca2fb3ea51",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 8
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "9172eaca0623187d4a3b93f5bfbb6af64cc8c58abdf79c6ac1ded3ca2fb3ea51",
+                  "id": "ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 10
+                  },
+                  "outcome": "done",
+                  "payload": {
+                    "request": "req",
+                    "x": false,
+                    "y": false
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 2
+              }
+            ],
+            "version": 2
+          }
+        }
+      },
+      "id": "disjoint-total-control",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_overlap",
+          "detail": "Some answer payload matches both this row and line 71",
+          "line": 72
+        },
+        "elapsed_ms": 6
+      },
+      "id": "s4-16x4-staggered-booleans",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_not_exhaustive",
+          "detail": "The answer rows cover 562949953421312 of 4503599627370496 combinations of tag, b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15, b16, b17, b18, b19, b20, b21, b22, b23, b24, b25, b26, b27, b28, b29, b30, b31, b32, b33, b34, b35, b36, b37, b38, b39, b40, b41, b42, b43, b44, b45, b46, b47",
+          "line": 55
+        },
+        "elapsed_ms": 5
+      },
+      "id": "s4-disjoint-large-domain",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_not_exhaustive",
+          "detail": "The answer rows cover 24519928653854221733733552434404946937899825954937634816 of 100433627766186892221372630771322662657637687111424552206336 combinations of tag, e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18, e19, e20, e21, e22, e23, e24, e25, e26, e27, e28, e29, e30, e31, e32, e33, e34, e35, e36, e37, e38, e39, e40, e41, e42, e43, e44, e45, e46, e47",
+          "line": 55
+        },
+        "elapsed_ms": 8
+      },
+      "id": "s4-disjoint-bigint-domain",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 3
+      },
+      "id": "s4-16x4-total-boundary",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_limit",
+          "detail": "At most 16 alternatives a block",
+          "line": 27
+        },
+        "elapsed_ms": 3
+      },
+      "id": "limit-17-rows",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_limit",
+          "detail": "At most 4 literals in one alternative",
+          "line": 12
+        },
+        "elapsed_ms": 1
+      },
+      "id": "limit-5-literals",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_limit",
+          "detail": "At most 256 alternatives in a contract",
+          "line": 315
+        },
+        "elapsed_ms": 15
+      },
+      "id": "limit-contract-272-rows",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_match",
+          "detail": "felix_unknown_literal_6b7f5f is not a value of answer.value",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "unknown-enum-literal",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_match",
+          "detail": "felix_unknown_boolean_6b7f5f is not a value of answer.x",
+          "line": 9
+        },
+        "elapsed_ms": 1
+      },
+      "id": "unknown-boolean-literal",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 4,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "b0313fbc63ec6a4b14216a719fd11b4bc97c5d3747c2ba19c393fb4c74e3ad5c",
+                  "id": "req1",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 7
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "b0313fbc63ec6a4b14216a719fd11b4bc97c5d3747c2ba19c393fb4c74e3ad5c",
+                  "id": "revise1",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "choice": "revise",
+                    "request": "req1"
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "revising",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "revising",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "illegal_message",
+                  "status": "rejected"
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": "illegal_message",
+                "state": "revising",
+                "status": "rejected",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "b0313fbc63ec6a4b14216a719fd11b4bc97c5d3747c2ba19c393fb4c74e3ad5c",
+                  "id": "req2",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 13
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 3
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "reference",
+                  "status": "rejected"
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": "reference",
+                "state": "waiting",
+                "status": "rejected",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "b0313fbc63ec6a4b14216a719fd11b4bc97c5d3747c2ba19c393fb4c74e3ad5c",
+                  "id": "current-reply",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 8
+                  },
+                  "outcome": "done",
+                  "payload": {
+                    "choice": "approve",
+                    "request": "req2"
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 4
+                },
+                "mentions_used": 4,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 4
+              }
+            ],
+            "version": 4
+          }
+        }
+      },
+      "id": "c1-late-reply-reentered-wait",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "Match a ref(request) field of answer to $waiting",
+          "line": 8
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-cycle-no-eligible-ref",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_cycle",
+          "detail": "waiting lies on a cycle: declare state waiting max_entries N => outcome",
+          "line": 7
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-cycle-without-max-entries",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "req cannot be rebound while waiting waits",
+          "line": 12
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-rebind-state-event",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "req cannot be rebound while waiting waits",
+          "line": 18
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-rebind-anystate-event",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 3,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 4,
+            "outcome": "second_done",
+            "state": "second_done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "18dc92a0d1410b78a1b7430c922a4d56388ce3ce9f678cc70a92aa17ac7d9939",
+                  "id": "q1",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 7
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "w1",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "w1",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "18dc92a0d1410b78a1b7430c922a4d56388ce3ce9f678cc70a92aa17ac7d9939",
+                  "id": "cancel1",
+                  "kind": "cancel",
+                  "metadata": {
+                    "doc": null,
+                    "line": 11
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "between",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "between",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "18dc92a0d1410b78a1b7430c922a4d56388ce3ce9f678cc70a92aa17ac7d9939",
+                  "id": "q2",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 13
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "w2",
+                  "status": "accepted",
+                  "version": 3
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": null,
+                "state": "w2",
+                "status": "accepted",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "reference",
+                  "status": "rejected"
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": "reference",
+                "state": "w2",
+                "status": "rejected",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "18dc92a0d1410b78a1b7430c922a4d56388ce3ce9f678cc70a92aa17ac7d9939",
+                  "id": "r2",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 14
+                  },
+                  "outcome": "second_done",
+                  "payload": {
+                    "request": "q2"
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "second_done",
+                  "status": "accepted",
+                  "version": 4
+                },
+                "mentions_used": 4,
+                "outcome": "second_done",
+                "reason": null,
+                "state": "second_done",
+                "status": "accepted",
+                "version": 4
+              }
+            ],
+            "version": 4
+          }
+        }
+      },
+      "id": "c1-acyclic-cross-wait",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 4,
+            "outcome": "second_done",
+            "state": "second_done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "6061595d321f2c6df90638fa26983f814842febef2d689b2f95fee3e496b001e",
+                  "id": "q1",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 7
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "w1",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "w1",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "6061595d321f2c6df90638fa26983f814842febef2d689b2f95fee3e496b001e",
+                  "id": "cancel1",
+                  "kind": "cancel",
+                  "metadata": {
+                    "doc": null,
+                    "line": 11
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "between",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "between",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "6061595d321f2c6df90638fa26983f814842febef2d689b2f95fee3e496b001e",
+                  "id": "q2",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 13
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "w2",
+                  "status": "accepted",
+                  "version": 3
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": null,
+                "state": "w2",
+                "status": "accepted",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "reference",
+                  "status": "rejected"
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": "reference",
+                "state": "w2",
+                "status": "rejected",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "6061595d321f2c6df90638fa26983f814842febef2d689b2f95fee3e496b001e",
+                  "id": "r2",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 14
+                  },
+                  "outcome": "second_done",
+                  "payload": {
+                    "request": "q2"
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "second_done",
+                  "status": "accepted",
+                  "version": 4
+                },
+                "mentions_used": 4,
+                "outcome": "second_done",
+                "reason": null,
+                "state": "second_done",
+                "status": "accepted",
+                "version": 4
+              }
+            ],
+            "version": 4
+          }
+        }
+      },
+      "id": "sugar-stale-implicit-binding",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "req cannot be rebound while w2 waits",
+          "line": 17
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-acyclic-rebind",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2
+      },
+      "id": "c1-acyclic-implicit-binding",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2
+      },
+      "id": "c1-acyclic-implicit-reference",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "Match a ref(request) field of answer to $req",
+          "line": 8
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-acyclic-wrong-reference",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "answer from worker is a reply of line 7; only reply blocks accept it",
+          "line": 13
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-reply-kind-ordinary-rule",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "answer from worker is a reply of line 7; only reply blocks accept it",
+          "line": 20
+        },
+        "elapsed_ms": 2
+      },
+      "id": "c1-reply-kind-anystate-event",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "Match a ref(request) field of answer to $waiting",
+          "line": 10
+        },
+        "elapsed_ms": 1
+      },
+      "id": "sugar-no-eligible-ref-kind",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "Match a ref(request) field of answer to $waiting",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "sugar-ambiguous-ref-fields",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "unmatched_reference",
+            "detail": "previous",
+            "line": 8
+          }
+        },
+        "elapsed_ms": 1
+      },
+      "id": "sugar-ambiguous-refs-explicit-control",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "unmatched_reference",
+            "detail": "previous",
+            "line": 9
+          }
+        },
+        "elapsed_ms": 2
+      },
+      "id": "sugar-one-eligible-of-several-refs",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "Match a ref(request) field of answer to $waiting",
+          "line": 9
+        },
+        "elapsed_ms": 1
+      },
+      "id": "sugar-implicit-wrong-reference",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "waiting cannot be rebound while waiting waits",
+          "line": 14
+        },
+        "elapsed_ms": 2
+      },
+      "id": "sugar-rebind-wait-name-state",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_correlation",
+          "detail": "waiting cannot be rebound while waiting waits",
+          "line": 14
+        },
+        "elapsed_ms": 1
+      },
+      "id": "sugar-rebind-wait-name-anystate",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 1,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 2,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "4d4d09e3bc6e65b6671ce5b645335528c22afe7120c2b6656cb23a93fc2fe6de",
+                  "id": "auto-req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 8
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "request_wait",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "request_wait",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "4d4d09e3bc6e65b6671ce5b645335528c22afe7120c2b6656cb23a93fc2fe6de",
+                  "id": "auto-ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": "done",
+                  "payload": {
+                    "request": "auto-req",
+                    "x": true,
+                    "y": false
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 2
+              }
+            ],
+            "version": 2
+          }
+        }
+      },
+      "id": "sugar-auto-wait-positive-control",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "duplicate",
+          "detail": "request_wait",
+          "line": 13
+        },
+        "elapsed_ms": 2
+      },
+      "id": "sugar-auto-wait-name-clash",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_route",
+          "detail": "request_wait already has a reply block; a re-send is a -> b: k() => request_wait, with no alternatives",
+          "line": 12
+        },
+        "elapsed_ms": 1
+      },
+      "id": "sugar-auto-wait-two-heads-clash",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_timeout",
+          "detail": "The first alternative starts with =>",
+          "line": 9
+        },
+        "elapsed_ms": 2
+      },
+      "id": "u-pipe-no-opener",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "reply_timeout",
+          "detail": "Every alternative after the first starts with |",
+          "line": 10
+        },
+        "elapsed_ms": 1
+      },
+      "id": "u-double-opener",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "Write | type(field=value, field=$binding) as name & state",
+          "line": 9
+        },
+        "elapsed_ms": 2
+      },
+      "id": "u-two-alternatives-one-line",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 3,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "379c29e4fec0603f364deca54b207e5d19d2ee76aebe24e90629ef11d0659a51",
+                  "id": "pipe-req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "379c29e4fec0603f364deca54b207e5d19d2ee76aebe24e90629ef11d0659a51",
+                  "id": "pipe-ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 10
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "request": "pipe-req",
+                    "x": true,
+                    "y": false
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "reporting",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "reporting",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "379c29e4fec0603f364deca54b207e5d19d2ee76aebe24e90629ef11d0659a51",
+                  "id": "pipe-follow",
+                  "kind": "follow",
+                  "metadata": {
+                    "doc": null,
+                    "line": 16
+                  },
+                  "outcome": "done",
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 3
+                },
+                "mentions_used": 3,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 3
+              }
+            ],
+            "version": 3
+          }
+        }
+      },
+      "id": "u-pipe-reply-vs-timed-rule",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 2,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "c6f04b76e97336c722c208c51337224bf0ceb15eb6ee86b78c7dca9b44d7d15d",
+                  "id": "pipe-req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "c6f04b76e97336c722c208c51337224bf0ceb15eb6ee86b78c7dca9b44d7d15d",
+                  "id": "pipe-ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 11
+                  },
+                  "outcome": "done",
+                  "payload": {
+                    "request": "pipe-req",
+                    "x": false,
+                    "y": false
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 2
+              }
+            ],
+            "version": 2
+          }
+        }
+      },
+      "id": "u-pipe-reply-vs-timed-rule-second-alternative",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 2,
+            "outcome": "stalled",
+            "state": "stalled",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "98bc2dcfbd81dc6ce736184501e3df2a02bae0dc81bf8347ba6c5ccc3fc35405",
+                  "id": "pipe-req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "98bc2dcfbd81dc6ce736184501e3df2a02bae0dc81bf8347ba6c5ccc3fc35405",
+                  "id": "pipe-ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 10
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "request": "pipe-req",
+                    "x": true,
+                    "y": false
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "reporting",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "reporting",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "status": "ticked"
+                },
+                "mentions_used": 2,
+                "outcome": "stalled",
+                "reason": null,
+                "state": "stalled",
+                "status": "ticked",
+                "version": 3
+              }
+            ],
+            "version": 3
+          }
+        }
+      },
+      "id": "u-pipe-timed-rule-timeout",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 1,
+            "outcome": "stalled",
+            "state": "stalled",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "7ce39a9f8ac04322bf0081ac81905d2fa63248836d2283467046842ad620fd16",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "insufficient_time",
+                  "status": "rejected"
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": "insufficient_time",
+                "state": "waiting",
+                "status": "rejected",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "status": "ticked"
+                },
+                "mentions_used": 1,
+                "outcome": "stalled",
+                "reason": null,
+                "state": "stalled",
+                "status": "ticked",
+                "version": 2
+              }
+            ],
+            "version": 2
+          }
+        }
+      },
+      "id": "v4-renew-all-targets-terminal-first",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 3,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 1,
+            "outcome": "stalled",
+            "state": "stalled",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "b5c4b8a7ecd29fa09d730ea2e20d283efdabf8fa637c174efbb0216f4ff5e639",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "insufficient_time",
+                  "status": "rejected"
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": "insufficient_time",
+                "state": "waiting",
+                "status": "rejected",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "status": "ticked"
+                },
+                "mentions_used": 1,
+                "outcome": "stalled",
+                "reason": null,
+                "state": "stalled",
+                "status": "ticked",
+                "version": 2
+              }
+            ],
+            "version": 2
+          }
+        }
+      },
+      "id": "v4-renew-all-targets-long-first",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 3,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 2,
+            "outcome": "stalled",
+            "state": "stalled",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "c41fb17c92b937f5ccaa5e4d2d06fdbe2cdd9f4d7914fe46aeede78228182dca",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "c41fb17c92b937f5ccaa5e4d2d06fdbe2cdd9f4d7914fe46aeede78228182dca",
+                  "id": "hb-fit",
+                  "kind": "heartbeat",
+                  "metadata": {
+                    "doc": null,
+                    "line": 14
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "insufficient_time",
+                  "status": "rejected"
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": "insufficient_time",
+                "state": "waiting",
+                "status": "rejected",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "status": "ticked"
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "ticked",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "status": "ticked"
+                },
+                "mentions_used": 2,
+                "outcome": "stalled",
+                "reason": null,
+                "state": "stalled",
+                "status": "ticked",
+                "version": 3
+              }
+            ],
+            "version": 3
+          }
+        }
+      },
+      "id": "v4-renew-exact-boundary",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 0,
+            "outcome": null,
+            "state": "new",
+            "steps": [
+              {
+                "decision": {
+                  "policy": "unchecked",
+                  "reason": "completion_capacity",
+                  "status": "rejected"
+                },
+                "mentions_used": 0,
+                "outcome": null,
+                "reason": "completion_capacity",
+                "state": "new",
+                "status": "rejected",
+                "version": 0
+              }
+            ],
+            "version": 0
+          }
+        }
+      },
+      "id": "reserve-0-or-3-underflow",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 2,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "1895824a5bbfc4c674bd3f5a7c88e10e6e6226699be31fb4a234630f9e2b5219",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 8
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "1895824a5bbfc4c674bd3f5a7c88e10e6e6226699be31fb4a234630f9e2b5219",
+                  "id": "ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 9
+                  },
+                  "outcome": "done",
+                  "payload": {
+                    "long": false,
+                    "request": "req"
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 2
+              }
+            ],
+            "version": 2
+          }
+        }
+      },
+      "id": "reserve-0-or-3-short",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "auto_extension": true,
+        "elapsed_ms": 2,
+        "rejection_invariants": true,
+        "replay": {
+          "ok": {
+            "mentions_used": 5,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "f3dff8c7b53bf8a54315fefd81f5bb1252fa90f9530a0c166a5f6067b99d049f",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 8
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "waiting",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": null,
+                "reason": null,
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "f3dff8c7b53bf8a54315fefd81f5bb1252fa90f9530a0c166a5f6067b99d049f",
+                  "id": "ans",
+                  "kind": "answer",
+                  "metadata": {
+                    "doc": null,
+                    "line": 10
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "long": true,
+                    "request": "req"
+                  },
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "f1",
+                  "status": "accepted",
+                  "version": 2
+                },
+                "mentions_used": 2,
+                "outcome": null,
+                "reason": null,
+                "state": "f1",
+                "status": "accepted",
+                "version": 2
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "f3dff8c7b53bf8a54315fefd81f5bb1252fa90f9530a0c166a5f6067b99d049f",
+                  "id": "follow0",
+                  "kind": "follow",
+                  "metadata": {
+                    "doc": null,
+                    "line": 13
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "f2",
+                  "status": "accepted",
+                  "version": 3
+                },
+                "mentions_used": 3,
+                "outcome": null,
+                "reason": null,
+                "state": "f2",
+                "status": "accepted",
+                "version": 3
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "f3dff8c7b53bf8a54315fefd81f5bb1252fa90f9530a0c166a5f6067b99d049f",
+                  "id": "follow1",
+                  "kind": "follow",
+                  "metadata": {
+                    "doc": null,
+                    "line": 15
+                  },
+                  "outcome": null,
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "f3",
+                  "status": "accepted",
+                  "version": 4
+                },
+                "mentions_used": 4,
+                "outcome": null,
+                "reason": null,
+                "state": "f3",
+                "status": "accepted",
+                "version": 4
+              },
+              {
+                "decision": {
+                  "actor": "w",
+                  "definition": "f3dff8c7b53bf8a54315fefd81f5bb1252fa90f9530a0c166a5f6067b99d049f",
+                  "id": "follow2",
+                  "kind": "follow",
+                  "metadata": {
+                    "doc": null,
+                    "line": 17
+                  },
+                  "outcome": "done",
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "l"
+                  ],
+                  "role": "worker",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 5
+                },
+                "mentions_used": 5,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 5
+              }
+            ],
+            "version": 5
+          }
+        }
+      },
+      "id": "reserve-0-or-3-long",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "codes": [
+          "reply_match"
+        ],
+        "existed_before": 0,
+        "interned_after": 0,
+        "names": 128
+      },
+      "id": "unknown-literals-never-interned",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "error": {
+          "code": "syntax",
+          "detail": null,
+          "line": 8
+        }
+      },
+      "id": "old-compiler-rejects-reply-syntax",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "error": "unsupported_extension"
+      },
+      "id": "old-engine-rejects-compiled-extension",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "error": "invalid_checkpoint"
+      },
+      "id": "old-codec-rejects-unknown-wait",
+      "pass": true
+    }
+  ],
+  "passed": 51,
+  "failed": 2
+}

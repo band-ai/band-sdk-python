@@ -1,0 +1,2637 @@
+{
+ "note": "Old send-then-answer requests still to convert (RULE.md section 1) or waiting for the group design (section 3). Owners per ubf-replies/old-form/COVERAGE.md. Shrink only: python3 spec/tools/oldformguard.py --shrink.",
+ "rows": [
+  {
+   "path": "tests/contracts/runtime/formatter.py",
+   "line": 222,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> workers: offer"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/assignment.band",
+   "line": 126,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/assignment.band",
+   "line": 143,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/assignment.band",
+   "line": 158,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/assignment.band",
+   "line": 159,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/assignment.band",
+   "line": 165,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/first-responder.band",
+   "line": 45,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/history-review-v2.band",
+   "line": 100,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/history-review-v2.band",
+   "line": 116,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/history-review-v2.band",
+   "line": 123,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/history-review.band",
+   "line": 99,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/history-review.band",
+   "line": 115,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/history-review.band",
+   "line": 122,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/team-review.band",
+   "line": 55,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta,reviewer}: start"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/team-review.band",
+   "line": 61,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "collecting",
+   "request": "{alpha,beta} -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/contract-lab/contracts/v2/two-reviewers.band",
+   "line": 54,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: start_review"
+  },
+  {
+   "path": "contracts/contract-lab/test/closing_reserve_test.exs",
+   "line": 18,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: request"
+  },
+  {
+   "path": "contracts/contract-lab/test/entry_state_test.exs",
+   "line": 37,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "{requester,assistant} -> requester: question"
+  },
+  {
+   "path": "contracts/contract-lab/test/lowercase_keywords_test.exs",
+   "line": 79,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: request"
+  },
+  {
+   "path": "contracts/contract-lab/test/old_forms_test.exs",
+   "line": 103,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: request"
+  },
+  {
+   "path": "contracts/contract-lab/test/old_forms_test.exs",
+   "line": 283,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: request"
+  },
+  {
+   "path": "contracts/contract-lab/test/participant_type_test.exs",
+   "line": 18,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> reviewers: request"
+  },
+  {
+   "path": "contracts/contract-lab/test/rejection_detail_test.exs",
+   "line": 28,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: request"
+  },
+  {
+   "path": "contracts/contract-lab/test/roster_test.exs",
+   "line": 19,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> reviewers: request"
+  },
+  {
+   "path": "contracts/examples/kg-track/kg-evidence.band",
+   "line": 133,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "new",
+   "request": "coordinator -> {retriever,verifier}: request"
+  },
+  {
+   "path": "contracts/examples/kg-track/kg-evidence.band",
+   "line": 141,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "retrieving",
+   "request": "retriever -> {coordinator,verifier}: packet"
+  },
+  {
+   "path": "contracts/examples/kg-track/kg-evidence.band",
+   "line": 148,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "checking",
+   "request": "verifier -> {coordinator,retriever}: checked"
+  },
+  {
+   "path": "contracts/examples/kg-track/kg-evidence.band",
+   "line": 149,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "checking",
+   "request": "verifier -> {coordinator,retriever}: correction"
+  },
+  {
+   "path": "contracts/examples/kg-track/kg-evidence.band",
+   "line": 156,
+   "owner": "Maya",
+   "verdict": "group",
+   "state": "revising",
+   "request": "coordinator -> {retriever,verifier}: revise"
+  },
+  {
+   "path": "contracts/skills/multi-agent-contracts/references/authoring.md",
+   "line": 80,
+   "owner": "Ivy",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-corruption.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-corruption.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-corruption.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-corruption.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-corruption.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-restore.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-restore.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-restore.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-restore.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-checkpoint-restore.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-assignment.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-assignment.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-assignment.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-assignment.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-assignment.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-first-responder.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-history-review-v2.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-history-review-v2.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-history-review-v2.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-history-review.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-history-review.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-history-review.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-team-review.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta,reviewer}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-compile-team-review.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "collecting",
+   "request": "{alpha,beta} -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-first-responder.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-bad-doc-unicode.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-bad-doc-unicode.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-bad-doc-unicode.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-bad-doc-unicode.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-bad-doc-unicode.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-type.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-type.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-type.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-type.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-duplicate-type.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-interpolation.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-interpolation.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-interpolation.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-interpolation.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-interpolation.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reference.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reference.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reference.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reference.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reference.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reversed-bounds.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reversed-bounds.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reversed-bounds.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reversed-bounds.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-reversed-bounds.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-directive.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-directive.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-directive.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-directive.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-directive.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-ref-kind.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-role.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-role.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-role.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unknown-role.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unsafe-bound.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unsafe-bound.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unsafe-bound.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unsafe-bound.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-invalid-unsafe-bound.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-checkpoint-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-checkpoint-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-checkpoint-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-checkpoint-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-checkpoint-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-cross-profile-state.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-cross-profile-state.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-cross-profile-state.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-cross-profile-state.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-cross-profile-state.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 26,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 26,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 26,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 26,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 26,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 37,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 37,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 37,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 37,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-file-integrity.json",
+   "line": 37,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-source-pin.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-source-pin.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-source-pin.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-source-pin.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-source-pin.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-state-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-state-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-state-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-state-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-state-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-unknown-engine.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-unknown-engine.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-unknown-engine.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-unknown-engine.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-unknown-engine.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-view-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-view-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-view-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-view-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m21-view-profile.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m22-attributes-bytes.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> reviewers: request"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-m22-entry-each.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "{requester,assistant} -> requester: question"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-portable-local-preflight.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-portable-local-preflight.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-portable-local-preflight.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-portable-local-preflight.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-portable-local-preflight.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-private-receipt-projection.json",
+   "line": 16,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-query-selectors.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-query-selectors.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-query-selectors.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-query-selectors.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-query-selectors.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-role-visibility.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-role-visibility.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-role-visibility.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-role-visibility.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-role-visibility.json",
+   "line": 15,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-cancel.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-cancel.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-cancel.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-changes.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-changes.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-changes.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-idle.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-idle.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-idle.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-rejections.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-rejections.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-rejections.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-success.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-success.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-success.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-unclaimed.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-unclaimed.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-unclaimed.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-v2-deadline.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-v2-deadline.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-trace-history-review-v2-deadline.json",
+   "line": 17,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-unicode16-graphemes.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-unicode16-graphemes.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-unicode16-graphemes.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-unicode16-graphemes.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/case-v2-unicode16-graphemes.json",
+   "line": 14,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/replies-adversarial/semantic-inputs.json",
+   "line": 1242,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "error",
+   "state": "w1",
+   "request": "lead -> worker: cancel"
+  },
+  {
+   "path": "contracts/spec/conformance/replies-adversarial/suite.json",
+   "line": 682,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "error",
+   "state": "w1",
+   "request": "lead -> worker: cancel"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 637,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 637,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 637,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 637,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 637,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 672,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 672,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 672,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 672,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 672,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 958,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 958,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 958,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 958,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 958,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1087,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1134,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1134,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1134,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1181,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1181,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1181,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1439,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta,reviewer}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 1439,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "collecting",
+   "request": "{alpha,beta} -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 2278,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3319,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3319,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3319,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3319,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3319,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3345,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3345,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3345,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3345,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3345,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3372,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3372,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3372,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3372,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3372,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3399,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3399,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3399,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3399,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3399,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3426,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3426,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3426,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3426,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3426,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3452,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3452,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3452,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3452,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3452,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3479,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3479,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3479,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3479,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3479,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3505,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3505,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3505,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3505,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3505,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3532,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3532,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3532,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3532,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3558,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3558,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3558,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3558,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3558,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3747,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3747,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3747,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3747,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3747,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 3793,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4005,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4005,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4005,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4005,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4005,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4186,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4186,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4186,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4186,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 4186,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5152,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5152,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5152,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5348,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5348,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5348,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5592,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5592,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5592,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5758,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5758,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 5758,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6246,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6246,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6246,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6535,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6535,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6535,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6656,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6656,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6656,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6834,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6834,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6834,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6834,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/semantic-inputs-v2.json",
+   "line": 6834,
+   "owner": "Rafael (generated JSON)",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/assignment.band",
+   "line": 126,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {worker,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/assignment.band",
+   "line": 143,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "working",
+   "request": "worker -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/assignment.band",
+   "line": 158,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/assignment.band",
+   "line": 159,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,worker}: changes"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/assignment.band",
+   "line": 165,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "revising",
+   "request": "lead -> {worker,reviewer}: revise"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/first-responder.band",
+   "line": 45,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/history-review-v2.band",
+   "line": 100,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/history-review-v2.band",
+   "line": 116,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/history-review-v2.band",
+   "line": 123,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/history-review.band",
+   "line": 99,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {writer,reviewer}: offer"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/history-review.band",
+   "line": 115,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "writing",
+   "request": "writer -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/history-review.band",
+   "line": 122,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "reviewing",
+   "request": "reviewer -> {lead,writer}: approve"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/team-review.band",
+   "line": 55,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {alpha,beta,reviewer}: start"
+  },
+  {
+   "path": "contracts/spec/conformance/sources-v2/team-review.band",
+   "line": 61,
+   "owner": "Rafael",
+   "verdict": "group",
+   "state": "collecting",
+   "request": "{alpha,beta} -> {lead,reviewer}: submit"
+  },
+  {
+   "path": "contracts/spec/defaults-v2.md",
+   "line": 104,
+   "owner": "Ivy",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> reviewers: request"
+  },
+  {
+   "path": "contracts/spec/lowercase-v2.md",
+   "line": 50,
+   "owner": "Ivy",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> {a,b}: request"
+  },
+  {
+   "path": "contracts/spec/tools/negativevectorsm22.py",
+   "line": 20,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "{requester,assistant} -> requester: question"
+  },
+  {
+   "path": "contracts/spec/tools/negativevectorsm22.py",
+   "line": 46,
+   "owner": "Priya",
+   "verdict": "group",
+   "state": "new",
+   "request": "lead -> reviewers: request"
+  }
+ ]
+}

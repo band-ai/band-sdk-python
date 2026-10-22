@@ -1,0 +1,69 @@
+---
+name: band-keywords-probe
+description: Uses every contract keyword in its grammar position, for the highlighter drift check.
+engine: 0.2.0-lab.1
+roles: [lead, reviewer, lanes]
+extensions: [host.presence/1, host.membership/1, band.permissions/1, room.contributions/1]
+---
+contract @2h max @8h mentions 4 => expired
+
+require lead band.permission admin
+
+watch supervisor
+
+"""
+The lead runs the review.
+"""
+role lead
+
+type lane: agent
+  required: boolean
+
+lanes: list(lane)
+
+type request
+  text: text(1..200)
+
+type report
+
+type note
+
+type question
+
+type answer
+  about: ref(question)
+
+state new
+  lead -> reviewer: request() as task mention 2 => reviewing
+
+state reviewing @30m => stalled total @1h => stalled max_entries 3 => stalled
+  collect reports from lanes -> lead @10m => checking
+    reply report()
+    offline @2m
+    quorum all => short
+  event lead -> reviewer: note()
+  on lead offline for 5m => paused
+  on watch.supervisor offline for 5m => paused
+
+state checking
+  {lead,reviewer} -> lead: report() each @5m => done | stalled
+  lead -> reviewer: question() as q awaits answering
+    => answer(about=$q) & done
+     | @5m & stalled
+
+state paused
+  on lead online => reviewing
+
+anystate
+  on reviewer removed => left
+
+room
+  event reviewer -> lead: note()
+
+end done
+
+end stalled
+
+end short
+
+end left

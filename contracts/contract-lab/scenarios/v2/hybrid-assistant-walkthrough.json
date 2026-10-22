@@ -1,0 +1,124 @@
+{
+  "bindings": {
+    "requester": "requester",
+    "assistant": "assistant"
+  },
+  "session": "s",
+  "now": 0,
+  "inactivity": "accepted",
+  "max_messages": 100,
+  "max_bytes": 16384,
+  "steps": [
+    {
+      "actor": "requester",
+      "now": 0,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "answering",
+        "version": 1
+      }
+    },
+    {
+      "actor": "assistant",
+      "now": 1000,
+      "message": {
+        "id": "bad",
+        "session": "s",
+        "kind": "answer",
+        "payload": {
+          "request": "other",
+          "text": "pong"
+        },
+        "expected_version": 1
+      },
+      "expect": {
+        "status": "rejected",
+        "reason": "reference",
+        "state": "answering",
+        "version": 1
+      }
+    },
+    {
+      "actor": "assistant",
+      "now": 2000,
+      "message": {
+        "id": "a",
+        "session": "s",
+        "kind": "answer",
+        "payload": {
+          "request": "q",
+          "text": "pong"
+        },
+        "expected_version": 1
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "answered",
+        "version": 2
+      }
+    },
+    {
+      "actor": "requester",
+      "now": 3000,
+      "message": {
+        "id": "stop",
+        "session": "s",
+        "kind": "stop",
+        "payload": {},
+        "expected_version": 2
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "complete",
+        "outcome": "complete",
+        "version": 3
+      }
+    },
+    {
+      "actor": "requester",
+      "now": 4000,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      },
+      "expect": {
+        "status": "duplicate",
+        "state": "complete",
+        "version": 3
+      }
+    },
+    {
+      "actor": "requester",
+      "now": 5000,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 3
+      },
+      "expect": {
+        "status": "rejected",
+        "reason": "id_conflict",
+        "state": "complete",
+        "version": 3
+      }
+    }
+  ]
+}

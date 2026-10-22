@@ -1,0 +1,40 @@
+[
+  {
+    "name": "compile",
+    "command": [
+      "mix",
+      "compile",
+      "--warnings-as-errors"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "format",
+    "command": [
+      "mix",
+      "format"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "green",
+    "command": [
+      "mix",
+      "test",
+      "--seed",
+      "0",
+      "--warnings-as-errors"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "demo",
+    "command": [
+      "mix",
+      "run",
+      "examples/room_recovery.exs",
+      "tmp/room-recovery-evidence"
+    ],
+    "exit_code": 0
+  }
+]

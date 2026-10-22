@@ -1,0 +1,75 @@
+{
+ "source": "kenji-replies/compiler (syntax U, Eric decision 4); Malik mirrors these bytes",
+ "vectors": [
+  {
+   "name": "correlated-alternative-timeout",
+   "input": "state new\nlead->reviewer:request() as req awaits waiting\n=>review(request=$req)&done\n|@5m&stalled",
+   "expected": "state new\n  lead -> reviewer: request() as req awaits waiting\n    => review(request=$req) & done\n     | @5m & stalled\n"
+  },
+  {
+   "name": "sugar-kept-as-written",
+   "input": "state new\nlead -> reviewer: request()\n  => review() & collected\n  | @5m & stalled\nstate other\nlead -> reviewer: request() as req awaits waiting\n=> review(request=$req) & done\n| @5m & stalled\n",
+   "expected": "state new\n  lead -> reviewer: request()\n    => review() & collected\n     | @5m & stalled\n\nstate other\n  lead -> reviewer: request() as req awaits waiting\n    => review(request=$req) & done\n     | @5m & stalled\n"
+  },
+  {
+   "name": "literals-as-and-resend",
+   "input": "state new\nlead -> deployer: deploy() as job awaits deploying\n=> ok(request=$job) as response & deployed\n| error(request=$job, retryable=true) as response&retrying\n|error(request=$job, retryable=false) as response &failed\n|@10m&stalled\nstate retrying\nlead->deployer:deploy() as job=>deploying\n",
+   "expected": "state new\n  lead -> deployer: deploy() as job awaits deploying\n    => ok(request=$job) as response & deployed\n     | error(request=$job, retryable=true) as response & retrying\n     | error(request=$job, retryable=false) as response & failed\n     | @10m & stalled\n\nstate retrying\n  lead -> deployer: deploy() as job => deploying\n"
+  },
+  {
+   "name": "one-line-prompts",
+   "input": "state new\nlead -> reviewer: request() as req awaits waiting\n\"Accept or revise.\"\n=> review(request=$req, decision=approve)&done\n\"Revise.\"\n| review(request=$req, decision=revise)&revising\n\"The window expired.\"\n| @5m&stalled\n",
+   "expected": "state new\n  lead -> reviewer: request() as req awaits waiting\n    \"\"\"\n    Accept or revise.\n    \"\"\"\n    => review(request=$req, decision=approve) & done\n     \"\"\"\n     Revise.\n     \"\"\"\n     | review(request=$req, decision=revise) & revising\n     \"\"\"\n     The window expired.\n     \"\"\"\n     | @5m & stalled\n"
+  },
+  {
+   "name": "block-prompts-and-blank-runs",
+   "input": "state new\nlead -> reviewer: request() as req awaits waiting\n      \"\"\"\n      Reply details.  \n        Keep this indent.\n      \"\"\"\n\n\n=> review(request=$req)&done\n      ~s\"\"\"\n      C:\\reply #{kept}\n      \"\"\"\n\n| @5m&stalled\n",
+   "expected": "state new\n  lead -> reviewer: request() as req awaits waiting\n    \"\"\"\n    Reply details.  \n      Keep this indent.\n    \"\"\"\n    => review(request=$req) & done\n     ~s\"\"\"\n     C:\\reply #{kept}\n     \"\"\"\n     | @5m & stalled\n"
+  },
+  {
+   "name": "comments-notes-and-blanks",
+   "input": "state new\nlead -> reviewer: request() as req awaits waiting\n%% choose a result\n/* explanation\n   preserved */\n\"Reply.\"\n=> review(request=$req)&done\n\n\n%% wait limit\n\"Timeout.\"\n| @5m&stalled\n",
+   "expected": "state new\n  lead -> reviewer: request() as req awaits waiting\n    %% choose a result\n    /* explanation\n       preserved */\n    \"\"\"\n    Reply.\n    \"\"\"\n    => review(request=$req) & done\n\n     %% wait limit\n     \"\"\"\n     Timeout.\n     \"\"\"\n     | @5m & stalled\n"
+  },
+  {
+   "name": "consecutive-send-blocks",
+   "input": "state new\na->b:one() as req awaits w\n=>answer(request=$req)&done\n|@1m&late\na->c:two() as req awaits v\n=>other(request=$req)&done\n|@2m&late\nend done\nend late\n",
+   "expected": "state new\n  a -> b: one() as req awaits w\n    => answer(request=$req) & done\n     | @1m & late\n  a -> c: two() as req awaits v\n    => other(request=$req) & done\n     | @2m & late\n\nend done\n\nend late\n"
+  },
+  {
+   "name": "collect-then-send",
+   "input": "state new\ncollect reports from reviewers -> lead @5m => done\nreply report()\nquorum 2\noffline grace @1m\nfailure => failed\nlead->reviewer:request() as req awaits waiting\n=>review(request=$req)&done\n|@5m&stalled\n",
+   "expected": "state new\n  collect reports from reviewers -> lead @5m => done\n    reply report()\n    quorum 2\n    offline grace @1m\n    failure => failed\n  lead -> reviewer: request() as req awaits waiting\n    => review(request=$req) & done\n     | @5m & stalled\n"
+  },
+  {
+   "name": "old-reply-and-timeout-lines-are-ordinary",
+   "input": "state new\na -> b: request() as req => waiting\nreply answer(request=$req)=>done\ntimeout @1m=>late\nreply -> a: notice()=>done\ntimeout -> a: ping()=>done\n",
+   "expected": "state new\n  a -> b: request() as req => waiting\n  reply answer(request=$req) => done\n  timeout @1m => late\n  reply -> a: notice() => done\n  timeout -> a: ping() => done\n"
+  },
+  {
+   "name": "type-and-state-reset-scope",
+   "input": "state new\na->b:request() as req awaits waiting\n=>answer(request=$req)&done\n|@1m&late\ntype answer\nvalue: enum(ok|error)\nstate waiting\nevent b -> a: progress()\n",
+   "expected": "state new\n  a -> b: request() as req awaits waiting\n    => answer(request=$req) & done\n     | @1m & late\n\ntype answer\n  value: enum(ok|error)\n\nstate waiting\n  event b -> a: progress()\n"
+  },
+  {
+   "name": "sigil-contents-untouched",
+   "input": "state new\na->b:request(pattern=~s[ -> : => | & ]) as req awaits waiting\n=>answer(mode=ok, request=$req)&done\n|@1m&late\n",
+   "expected": "state new\n  a -> b: request(pattern=~s[ -> : => | & ]) as req awaits waiting\n    => answer(mode=ok, request=$req) & done\n     | @1m & late\n"
+  },
+  {
+   "name": "pipe-position-decides",
+   "input": "state new\na->b:k() @1h=>s|t\n|@5m&late\n",
+   "expected": "state new\n  a -> b: k() @1h => s | t\n     | @5m & late\n"
+  },
+  {
+   "name": "alternative-lines-anywhere-are-level-2",
+   "input": "=> a() & b\ntype x\n| @1m & c\n",
+   "expected": "    => a() & b\n\ntype x\n     | @1m & c\n"
+  },
+  {
+   "name": "conformance-10-reply-alternatives",
+   "input": "---\nname: fmt-reply-alternatives\ndescription: Formatter vector fmt-reply-alternatives.\nengine: 0.2.0-lab.1\nroles: [lead, deployer]\n---\ncontract @1h => expired\nrole lead\nrole deployer\ntype deploy\ntype ok\n  request: ref(deploy)\ntype error\n  request: ref(deploy)\n  retryable: boolean\ntype progress\ntype abandon\nstate new\n  lead -> deployer: deploy() awaits deploying\n  \"A success.\"\n        =>ok()&deployed\n  %% Two errors, by retryable.\n  |error(retryable=true)   &   retrying\n\"\"\"\nNot retryable.\n\"\"\"\n  | error(retryable=false) &failed\n     |   @10m&stalled\nstate deploying max_entries 3 => exhausted\n  event deployer -> lead: progress() => @self\nstate retrying\n  \"Resend; a reply to the earlier deploy can no longer match.\"\n  lead -> deployer: deploy() =>deploying\n  lead -> deployer: abandon() => failed\nend deployed\nend failed\nend stalled\nend exhausted\n",
+   "expected": "---\nname: fmt-reply-alternatives\ndescription: Formatter vector fmt-reply-alternatives.\nengine: 0.2.0-lab.1\nroles: [lead, deployer]\n---\ncontract @1h => expired\n\nrole lead\n\nrole deployer\n\ntype deploy\n\ntype ok\n  request: ref(deploy)\n\ntype error\n  request: ref(deploy)\n  retryable: boolean\n\ntype progress\n\ntype abandon\n\nstate new\n  lead -> deployer: deploy() awaits deploying\n    \"\"\"\n    A success.\n    \"\"\"\n    => ok() & deployed\n     %% Two errors, by retryable.\n     | error(retryable=true) & retrying\n     \"\"\"\n     Not retryable.\n     \"\"\"\n     | error(retryable=false) & failed\n     | @10m & stalled\n\nstate deploying max_entries 3 => exhausted\n  event deployer -> lead: progress() => @self\n\nstate retrying\n  \"\"\"\n  Resend; a reply to the earlier deploy can no longer match.\n  \"\"\"\n  lead -> deployer: deploy() => deploying\n  lead -> deployer: abandon() => failed\n\nend deployed\n\nend failed\n\nend stalled\n\nend exhausted\n"
+  }
+ ]
+}

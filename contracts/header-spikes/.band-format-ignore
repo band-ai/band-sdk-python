@@ -1,0 +1,2 @@
+# Test leftovers (gitignored): ExUnit tmp_dir output, including a 2 MiB contract body (DF-65).
+tmp

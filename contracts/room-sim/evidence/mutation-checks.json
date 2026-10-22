@@ -1,0 +1,30 @@
+{
+  "original_source_sha256": "b5f51150da813b54db0284e10590caecc0fb118bc206eff334c57abcccd1f7ae",
+  "source_restored": true,
+  "checks": [
+    {
+      "mutation": "reference-leak",
+      "command": [
+        "mix",
+        "test",
+        "test/room_sim_test.exs:68",
+        "--seed",
+        "0"
+      ],
+      "exit_code": 2,
+      "test": "direct mentions fan out to agents; references do not; users see both"
+    },
+    {
+      "mutation": "early-delivery",
+      "command": [
+        "mix",
+        "test",
+        "test/room_sim_test.exs:176",
+        "--seed",
+        "0"
+      ],
+      "exit_code": 2,
+      "test": "delayed notifications become deliverable at exact virtual time without sleeping"
+    }
+  ]
+}

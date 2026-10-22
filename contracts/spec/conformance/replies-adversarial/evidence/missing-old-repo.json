@@ -1,0 +1,1 @@
+{"passed": 0, "failed": 1, "cases": [{"id": "harness", "pass": false, "evidence": "--old-repo is required: S6 fail-closed probes may not be skipped"}]}

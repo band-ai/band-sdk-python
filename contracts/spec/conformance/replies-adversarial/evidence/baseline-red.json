@@ -1,0 +1,523 @@
+{
+  "candidate_head": "95c9b25a3ead70d94fb3977a81dd7cd13d22097c",
+  "old_head": "95c9b25a3ead70d94fb3977a81dd7cd13d22097c",
+  "old_reader_checked": true,
+  "cases": [
+    {
+      "evidence": {
+        "green": {
+          "ok": {
+            "mentions_used": 1,
+            "outcome": "done",
+            "state": "done",
+            "steps": [
+              {
+                "decision": {
+                  "actor": "l",
+                  "definition": "9f5e408e49fa64d85da29bfe50741a83735bfc8028aebec15302b8e3b3cefb3a",
+                  "id": "req",
+                  "kind": "request",
+                  "metadata": {
+                    "doc": null,
+                    "line": 4
+                  },
+                  "outcome": "done",
+                  "payload": {},
+                  "policy": "unchecked",
+                  "recipients": [
+                    "w"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "done",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "mentions_used": 1,
+                "outcome": "done",
+                "reason": null,
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              }
+            ],
+            "version": 1
+          }
+        },
+        "mutant": {
+          "error": {
+            "actual": {
+              "decision": {
+                "actor": "l",
+                "definition": "9f5e408e49fa64d85da29bfe50741a83735bfc8028aebec15302b8e3b3cefb3a",
+                "id": "req",
+                "kind": "request",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": "done",
+                "payload": {},
+                "policy": "unchecked",
+                "recipients": [
+                  "w"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              },
+              "mentions_used": 1,
+              "outcome": "done",
+              "reason": null,
+              "state": "done",
+              "status": "accepted",
+              "version": 1
+            },
+            "error": "expectation_mismatch",
+            "expected": {
+              "outcome": "wrong",
+              "status": "accepted",
+              "version": 1
+            },
+            "step": 1
+          }
+        }
+      },
+      "id": "runner-real-replay-mutation-control",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, x=true) => done",
+          "line": 9
+        },
+        "elapsed_ms": 1
+      },
+      "id": "overlap-useful-exhaustive",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, x=true) => done",
+          "line": 9
+        },
+        "elapsed_ms": 1
+      },
+      "id": "overlap-bare-fallback",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, x=true) => done",
+          "line": 9
+        },
+        "elapsed_ms": 0
+      },
+      "id": "coverage-false-false-gap",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, x=true) => done",
+            "line": 9
+          }
+        },
+        "elapsed_ms": 1
+      },
+      "id": "disjoint-total-control",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, b0=true, b1=true, b2=true, b3=true) => done",
+          "line": 71
+        },
+        "elapsed_ms": 2
+      },
+      "id": "s4-16x4-staggered-booleans",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, tag=v0, b0=true, b1=true, b2=true) => done",
+          "line": 56
+        },
+        "elapsed_ms": 1
+      },
+      "id": "s4-disjoint-large-domain",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, tag=v0, e0=v0, e1=v0, e2=v0) => done",
+          "line": 56
+        },
+        "elapsed_ms": 2
+      },
+      "id": "s4-disjoint-bigint-domain",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, b0=false, b1=false, b2=false, b3=false) => done",
+            "line": 11
+          }
+        },
+        "elapsed_ms": 0
+      },
+      "id": "s4-16x4-total-boundary",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, b0=false, b1=false, b2=false, b3=false) => done",
+          "line": 11
+        },
+        "elapsed_ms": 1
+      },
+      "id": "limit-17-rows",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, b0=true, b1=true, b2=true, b3=true, b4=true) => done",
+          "line": 12
+        },
+        "elapsed_ms": 0
+      },
+      "id": "limit-5-literals",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, b0=false, b1=false, b2=false, b3=false) => done",
+          "line": 27
+        },
+        "elapsed_ms": 1
+      },
+      "id": "limit-contract-272-rows",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, value=felix_unknown_literal_6b7f5f) => done",
+          "line": 8
+        },
+        "elapsed_ms": 0
+      },
+      "id": "unknown-enum-literal",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, x=felix_unknown_boolean_6b7f5f) => done",
+          "line": 9
+        },
+        "elapsed_ms": 1
+      },
+      "id": "unknown-boolean-literal",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, choice=approve) => done",
+            "line": 8
+          }
+        },
+        "elapsed_ms": 1
+      },
+      "id": "c1-late-reply-reentered-wait",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(choice=approve) => done",
+          "line": 8
+        },
+        "elapsed_ms": 0
+      },
+      "id": "c1-cycle-without-binding",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, choice=approve) => done",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "c1-cycle-without-max-entries",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, choice=approve) => done",
+          "line": 8
+        },
+        "elapsed_ms": 0
+      },
+      "id": "c1-rebind-state-event",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, choice=approve) => done",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "c1-rebind-anystate-event",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req) => first_done",
+            "line": 8
+          }
+        },
+        "elapsed_ms": 0
+      },
+      "id": "c1-acyclic-cross-wait",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req) => first_done",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "c1-acyclic-rebind",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer() => first_done",
+          "line": 8
+        },
+        "elapsed_ms": 0
+      },
+      "id": "c1-acyclic-missing-binding",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer() => first_done",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "c1-acyclic-missing-reference",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$other) => first_done",
+          "line": 8
+        },
+        "elapsed_ms": 0
+      },
+      "id": "c1-acyclic-wrong-reference",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req) => first_done",
+          "line": 8
+        },
+        "elapsed_ms": 1
+      },
+      "id": "c1-reply-kind-ordinary-rule",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile_error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req) => first_done",
+          "line": 8
+        },
+        "elapsed_ms": 0
+      },
+      "id": "c1-reply-kind-anystate-event",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, long=false) => done",
+            "line": 10
+          }
+        },
+        "elapsed_ms": 1
+      },
+      "id": "v4-renew-all-targets-terminal-first",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, long=true) => reporting",
+            "line": 10
+          }
+        },
+        "elapsed_ms": 0
+      },
+      "id": "v4-renew-all-targets-long-first",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, long=false) => done",
+            "line": 10
+          }
+        },
+        "elapsed_ms": 1
+      },
+      "id": "v4-renew-exact-boundary",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, long=false) => done",
+            "line": 9
+          }
+        },
+        "elapsed_ms": 0
+      },
+      "id": "reserve-0-or-3-underflow",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, long=false) => done",
+            "line": 9
+          }
+        },
+        "elapsed_ms": 1
+      },
+      "id": "reserve-0-or-3-short",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "compile": {
+          "error": {
+            "code": "syntax",
+            "detail": "reply answer(request=$req, long=false) => done",
+            "line": 9
+          }
+        },
+        "elapsed_ms": 0
+      },
+      "id": "reserve-0-or-3-long",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "codes": [
+          "syntax"
+        ],
+        "existed_before": 0,
+        "interned_after": 0,
+        "names": 128
+      },
+      "id": "unknown-literals-never-interned",
+      "pass": false
+    },
+    {
+      "evidence": {
+        "error": {
+          "code": "syntax",
+          "detail": "reply answer(request=$req, x=true) => done",
+          "line": 9
+        }
+      },
+      "id": "old-compiler-rejects-reply-syntax",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "error": "unsupported_extension"
+      },
+      "id": "old-engine-rejects-compiled-extension",
+      "pass": true
+    },
+    {
+      "evidence": {
+        "error": "invalid_checkpoint"
+      },
+      "id": "old-codec-rejects-unknown-wait",
+      "pass": true
+    }
+  ],
+  "passed": 4,
+  "failed": 32
+}

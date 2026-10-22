@@ -1,0 +1,451 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-frontmatter-and-standard-discovery",
+  "requirements": [
+    "DSL-001",
+    "DSL-003",
+    "DSL-008"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: explicit-infinity\ndescription: Test explicit infinity with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [a, b]\n---\n\"\"\"\nA keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou are A. Ping B while the connection is in use, and close it when you are done.\n\"\"\"\nrole a\n\n\"\"\"\nYou are B. Receive A's pings and close; you send nothing in this session.\n\"\"\"\nrole b\n\n\"\"\"\nSignal that the connection is still in use. The message carries no content.\n\"\"\"\ntype ping\n\n\"\"\"\nClose the connection. No pings follow.\n\"\"\"\ntype close\n\n\"\"\"\nThe connection is open. A may ping any number of times and closes it when done.\n\"\"\"\nstate new\n  event a -> b: ping()\n  a -> b: close() => complete\n\n\"\"\"\nA closed the connection. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe session expired. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "28116c763a4ace0e5ef6e24550df944d3a1e92422c650dc297b508c626b577b4"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "std",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "standard",
+        "content": "---\nname: explicit-infinity\ndescription: Current standard package.\nmetadata:\n  band-engine: \"0.2.0-lab.1\"\n  band-roles: \"a,b\"\n  band-contract: \"protocol.band\"\n  band-contract-sha256: \"05317c3dea4b05a0107a6fb485d595b664f0a4bf78fbc39bfbad0f9f0743429f\"\n---\nPackage guidance.\n",
+        "sha256": "0df37f8bc2b8b8d0ac05775fe1b71198eaffe13af3b1b138351e3a87d381760e",
+        "body": "\"\"\"\nA keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou are A. Ping B while the connection is in use, and close it when you are done.\n\"\"\"\nrole a\n\n\"\"\"\nYou are B. Receive A's pings and close; you send nothing in this session.\n\"\"\"\nrole b\n\n\"\"\"\nSignal that the connection is still in use. The message carries no content.\n\"\"\"\ntype ping\n\n\"\"\"\nClose the connection. No pings follow.\n\"\"\"\ntype close\n\n\"\"\"\nThe connection is open. A may ping any number of times and closes it when done.\n\"\"\"\nstate new\n  event a -> b: ping()\n  a -> b: close() => complete\n\n\"\"\"\nA closed the connection. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe session expired. Send nothing more.\n\"\"\"\nend expired\n",
+        "package_name": "explicit-infinity"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "bad",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "standard",
+        "content": "---\nname: explicit-infinity\ndescription: Current standard package.\nmetadata:\n  band-engine: \"0.2.0-lab.1\"\n  band-roles: \"a,b\"\n  band-contract: \"protocol.band\"\n  band-contract-sha256: \"05317c3dea4b05a0107a6fb485d595b664f0a4bf78fbc39bfbad0f9f0743429f\"\n---\nPackage guidance.\n",
+        "sha256": "0df37f8bc2b8b8d0ac05775fe1b71198eaffe13af3b1b138351e3a87d381760e",
+        "body": "\"\"\"\nA keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou are A. Ping B while the connection is in use, and close it when you are done.\n\"\"\"\nrole a\n\n\"\"\"\nYou are B. Receive A's pings and close; you send nothing in this session.\n\"\"\"\nrole b\n\n\"\"\"\nSignal that the connection is still in use. The message carries no content.\n\"\"\"\ntype ping\n\n\"\"\"\nClose the connection. No pings follow.\n\"\"\"\ntype close\n\n\"\"\"\nThe connection is open. A may ping any number of times and closes it when done.\n\"\"\"\nstate new\n  event a -> b: ping()\n  a -> b: close() => complete\n\n\"\"\"\nA closed the connection. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe session expired. Send nothing more.\n\"\"\"\nend expired\n\n",
+        "package_name": "explicit-infinity"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/engine",
+      "equals": "0.2.0-lab.1"
+    },
+    {
+      "response": 1,
+      "pointer": "/ok/engine",
+      "equals": "0.2.0-lab.1"
+    },
+    {
+      "response": 1,
+      "pointer": "/ok/roles",
+      "equals": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "response": 2,
+      "pointer": "/error",
+      "equals": "digest_mismatch"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test explicit infinity with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "explicit-infinity",
+          "roles": [
+            "a",
+            "b"
+          ],
+          "version": null
+        },
+        "digest": "464eac28786c5e455b65e1f3153709c864f37541601d2712da4bd1ab93336f46",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "A keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.",
+          "line": 1
+        },
+        "name": "explicit-infinity",
+        "role_metadata": {
+          "a": {
+            "meta": {
+              "doc": "You are A. Ping B while the connection is in use, and close it when you are done.",
+              "line": 7
+            },
+            "name": "a"
+          },
+          "b": {
+            "meta": {
+              "doc": "You are B. Receive A's pings and close; you send nothing in this session.",
+              "line": 12
+            },
+            "name": "b"
+          }
+        },
+        "roles": [
+          "a",
+          "b"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "28116c763a4ace0e5ef6e24550df944d3a1e92422c650dc297b508c626b577b4",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The connection is open. A may ping any number of times and closes it when done.",
+              "line": 27
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-0",
+                "kind": "ping",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 31
+                },
+                "target": null,
+                "to": [
+                  "b"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-1",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                },
+                "target": "complete",
+                "to": [
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "A closed the connection. Send nothing more.",
+              "line": 34
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session expired. Send nothing more.",
+              "line": 39
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": "Close the connection. No pings follow.",
+              "line": 22
+            },
+            "name": "close"
+          },
+          "ping": {
+            "fields": {},
+            "meta": {
+              "doc": "Signal that the connection is still in use. The message carries no content.",
+              "line": 17
+            },
+            "name": "ping"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Current standard package.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "explicit-infinity",
+          "roles": [
+            "a",
+            "b"
+          ],
+          "version": null
+        },
+        "digest": "464eac28786c5e455b65e1f3153709c864f37541601d2712da4bd1ab93336f46",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "A keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.",
+          "line": 1
+        },
+        "name": "explicit-infinity",
+        "role_metadata": {
+          "a": {
+            "meta": {
+              "doc": "You are A. Ping B while the connection is in use, and close it when you are done.",
+              "line": 7
+            },
+            "name": "a"
+          },
+          "b": {
+            "meta": {
+              "doc": "You are B. Receive A's pings and close; you send nothing in this session.",
+              "line": 12
+            },
+            "name": "b"
+          }
+        },
+        "roles": [
+          "a",
+          "b"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "0df37f8bc2b8b8d0ac05775fe1b71198eaffe13af3b1b138351e3a87d381760e",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The connection is open. A may ping any number of times and closes it when done.",
+              "line": 27
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-0",
+                "kind": "ping",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 31
+                },
+                "target": null,
+                "to": [
+                  "b"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-1",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                },
+                "target": "complete",
+                "to": [
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "A closed the connection. Send nothing more.",
+              "line": 34
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session expired. Send nothing more.",
+              "line": 39
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": "Close the connection. No pings follow.",
+              "line": 22
+            },
+            "name": "close"
+          },
+          "ping": {
+            "fields": {},
+            "meta": {
+              "doc": "Signal that the connection is still in use. The message carries no content.",
+              "line": 17
+            },
+            "name": "ping"
+          }
+        }
+      }
+    },
+    {
+      "error": "digest_mismatch"
+    }
+  ]
+}

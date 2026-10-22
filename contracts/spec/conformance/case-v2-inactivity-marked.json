@@ -1,0 +1,933 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-inactivity-marked",
+  "requirements": [
+    "ENG-010",
+    "ENG-009"
+  ],
+  "schema_profile": 6,
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: progress-events\ndescription: Test progress events with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\n\"\"\"\nThe lead starts one piece of work. The worker may report progress, and must finish within ten\nminutes of starting.\n\"\"\"\ncontract @4h mentions 1 => expired\n\n\"\"\"\nYou are the lead. Start the work, read the progress reports, and wait for the finish.\n\"\"\"\nrole lead\n\n\"\"\"\nYou are the worker. Report progress as a percentage while you work, and send finish within ten\nminutes. Progress does not give you more time.\n\"\"\"\nrole worker\n\n\"\"\"\nStart the work.\n\"\"\"\ntype start\n\n\"\"\"\nReport how far along the work is, as a whole percentage.\n\"\"\"\ntype progress\n  percent: integer(0..100)\n\n\"\"\"\nThe work is finished. Set start to the start this finishes.\n\"\"\"\ntype finish\n  start: ref(start)\n\n\"\"\"\nThe lead has not started the work yet. Send start.\n\"\"\"\nstate new\n  \"\"\"\n  Start the work. The worker then owes one finish.\n  \"\"\"\n  lead -> worker: start() awaits working\n    \"\"\"\n    The worker finishes within ten minutes of the start.\n    \"\"\"\n    => finish() & complete\n     \"\"\"\n     No finish arrived within ten minutes of the start.\n     \"\"\"\n     | @10m & stalled\n\n\"\"\"\nThe worker is working and owes finish within ten minutes; progress reports are optional.\n\"\"\"\nstate working\n\n\"\"\"\nProgress can be reported in any active state; it never extends a state deadline.\n\"\"\"\nanystate\n  event worker -> lead: progress()\n\n\"\"\"\nThe worker finished. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe worker did not finish within ten minutes. Stop, and report where the work stands.\n\"\"\"\nend stalled\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "c193a0d6ce2edb50cb37b487c098061f0f015ebf70b5397c956ef3517232ddd5"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "lead": "lead",
+          "worker": "worker"
+        },
+        "now": 0,
+        "inactivity": "marked",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "lead": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "worker": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "lead",
+      "now": 0,
+      "message": {
+        "id": "start",
+        "session": "s",
+        "kind": "start",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "lead": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "worker": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "worker",
+      "now": 1000,
+      "message": {
+        "id": "p",
+        "session": "s",
+        "kind": "progress",
+        "payload": {
+          "percent": 50
+        }
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "lead": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "worker": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "tick",
+      "handle": "s",
+      "now": 600000
+    }
+  ],
+  "assertions": [
+    {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": "Progress can be reported in any active state; it never extends a state deadline.",
+          "line": 57
+        },
+        "any_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "worker"
+            ],
+            "id": "rule-3",
+            "kind": "progress",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 61
+            },
+            "target": null,
+            "to": [
+              "lead"
+            ]
+          }
+        ],
+        "card": {
+          "description": "Test progress events with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [
+            "contract.replies/1"
+          ],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "progress-events",
+          "roles": [
+            "lead",
+            "worker"
+          ],
+          "version": null
+        },
+        "digest": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "The lead starts one piece of work. The worker may report progress, and must finish within ten\nminutes of starting.",
+          "line": 1
+        },
+        "name": "progress-events",
+        "role_metadata": {
+          "lead": {
+            "meta": {
+              "doc": "You are the lead. Start the work, read the progress reports, and wait for the finish.",
+              "line": 7
+            },
+            "name": "lead"
+          },
+          "worker": {
+            "meta": {
+              "doc": "You are the worker. Report progress as a percentage while you work, and send finish within ten\nminutes. Progress does not give you more time.",
+              "line": 12
+            },
+            "name": "worker"
+          }
+        },
+        "roles": [
+          "lead",
+          "worker"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "c193a0d6ce2edb50cb37b487c098061f0f015ebf70b5397c956ef3517232ddd5",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not started the work yet. Send start.",
+              "line": 35
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "working",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": "Start the work. The worker then owes one finish.",
+                  "line": 39
+                },
+                "target": "working",
+                "to": [
+                  "worker"
+                ]
+              }
+            ]
+          },
+          "working": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The worker is working and owes finish within ten minutes; progress reports are optional.",
+              "line": 52
+            },
+            "name": "working",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-1",
+                "kind": "finish",
+                "literals": {},
+                "matches": {
+                  "start": "working"
+                },
+                "meta": {
+                  "doc": "The worker finishes within ten minutes of the start.",
+                  "line": 43
+                },
+                "target": "complete",
+                "to": [
+                  "lead"
+                ],
+                "wait": "due-2"
+              }
+            ],
+            "wait": {
+              "after_ms": 600000,
+              "alternatives": [
+                "rule-1"
+              ],
+              "from": [
+                "worker"
+              ],
+              "heads": [
+                "rule-0"
+              ],
+              "id": "due-2",
+              "kinds": [
+                "finish"
+              ],
+              "meta": {
+                "doc": "No finish arrived within ten minutes of the start.",
+                "line": 47
+              },
+              "outcome": "stalled",
+              "to": [
+                "lead"
+              ]
+            }
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The worker finished. Send nothing more.",
+              "line": 63
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 73
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "The worker did not finish within ten minutes. Stop, and report where the work stands.",
+              "line": 68
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "The lead starts one piece of work. The worker may report progress, and must finish within ten\nminutes of starting.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "finish": {
+            "fields": {
+              "start": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 33
+                },
+                "values": [
+                  "start"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "The work is finished. Set start to the start this finishes.",
+              "line": 29
+            },
+            "name": "finish"
+          },
+          "progress": {
+            "fields": {
+              "percent": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 27
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report how far along the work is, as a whole percentage.",
+              "line": 23
+            },
+            "name": "progress"
+          },
+          "start": {
+            "fields": {},
+            "meta": {
+              "doc": "Start the work.",
+              "line": 18
+            },
+            "name": "start"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "profile": "band-contract/state/6",
+        "source": "c193a0d6ce2edb50cb37b487c098061f0f015ebf70b5397c956ef3517232ddd5",
+        "state": {
+          "bindings": {
+            "lead": "lead",
+            "worker": "worker"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "marked",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "lead",
+        "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "id": "start",
+        "kind": "start",
+        "metadata": {
+          "doc": "Start the work. The worker then owes one finish.",
+          "line": 39
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "worker"
+        ],
+        "role": "lead",
+        "session": "s",
+        "state": "working",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "profile": "band-contract/state/6",
+        "source": "c193a0d6ce2edb50cb37b487c098061f0f015ebf70b5397c956ef3517232ddd5",
+        "state": {
+          "bindings": {
+            "lead": "lead",
+            "worker": "worker"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "working": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "worker"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "marked",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": "Start the work. The worker then owes one finish.",
+                  "line": 39
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "worker"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "working",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "working",
+          "status": "active",
+          "variables": {
+            "working": "start"
+          },
+          "version": 1,
+          "wait": {
+            "due_at": 600000,
+            "head": "start",
+            "id": "due-2",
+            "remaining": [
+              "worker"
+            ]
+          },
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "worker",
+        "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "id": "p",
+        "kind": "progress",
+        "metadata": {
+          "doc": null,
+          "line": 61
+        },
+        "outcome": null,
+        "payload": {
+          "percent": 50
+        },
+        "recipients": [
+          "lead"
+        ],
+        "role": "worker",
+        "session": "s",
+        "state": "working",
+        "status": "accepted",
+        "version": 2
+      },
+      "state": {
+        "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "profile": "band-contract/state/6",
+        "source": "c193a0d6ce2edb50cb37b487c098061f0f015ebf70b5397c956ef3517232ddd5",
+        "state": {
+          "bindings": {
+            "lead": "lead",
+            "worker": "worker"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "working": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "p": {
+              "actor": "worker",
+              "at": 1000,
+              "id": "p",
+              "kind": "progress",
+              "payload": {
+                "percent": 50
+              },
+              "recipients": [
+                "lead"
+              ],
+              "role": "worker",
+              "rule": "rule-3"
+            },
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "worker"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            },
+            {
+              "at": 1000,
+              "id": "p",
+              "kind": "progress",
+              "role": "worker",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "marked",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 1000,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "p": {
+              "decision": {
+                "actor": "worker",
+                "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+                "id": "p",
+                "kind": "progress",
+                "metadata": {
+                  "doc": null,
+                  "line": 61
+                },
+                "outcome": null,
+                "payload": {
+                  "percent": 50
+                },
+                "recipients": [
+                  "lead"
+                ],
+                "role": "worker",
+                "session": "s",
+                "state": "working",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "e606bb91ddd73d1a40bfff8dfd617eceb4e575fafd9525949276c7659d3cdd34"
+            },
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": "Start the work. The worker then owes one finish.",
+                  "line": 39
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "worker"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "working",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "working",
+          "status": "active",
+          "variables": {
+            "working": "start"
+          },
+          "version": 2,
+          "wait": {
+            "due_at": 600000,
+            "head": "start",
+            "id": "due-2",
+            "remaining": [
+              "worker"
+            ]
+          },
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "status": "ticked"
+      },
+      "state": {
+        "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+        "profile": "band-contract/state/6",
+        "source": "c193a0d6ce2edb50cb37b487c098061f0f015ebf70b5397c956ef3517232ddd5",
+        "state": {
+          "bindings": {
+            "lead": "lead",
+            "worker": "worker"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "working": 1
+          },
+          "expired_at": 600000,
+          "expiry": {
+            "at": 600000,
+            "id": "due-2",
+            "missing": [
+              "worker"
+            ],
+            "outcome": "stalled",
+            "reason": "deadline"
+          },
+          "facts": {
+            "p": {
+              "actor": "worker",
+              "at": 1000,
+              "id": "p",
+              "kind": "progress",
+              "payload": {
+                "percent": 50
+              },
+              "recipients": [
+                "lead"
+              ],
+              "role": "worker",
+              "rule": "rule-3"
+            },
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "worker"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            },
+            {
+              "at": 1000,
+              "id": "p",
+              "kind": "progress",
+              "role": "worker",
+              "type": "accepted"
+            },
+            {
+              "at": 600000,
+              "outcome": "stalled",
+              "reason": "deadline",
+              "type": "expiry"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "marked",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 600000,
+          "obligations": [],
+          "outcome": "stalled",
+          "receipts": {
+            "p": {
+              "decision": {
+                "actor": "worker",
+                "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+                "id": "p",
+                "kind": "progress",
+                "metadata": {
+                  "doc": null,
+                  "line": 61
+                },
+                "outcome": null,
+                "payload": {
+                  "percent": 50
+                },
+                "recipients": [
+                  "lead"
+                ],
+                "role": "worker",
+                "session": "s",
+                "state": "working",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "e606bb91ddd73d1a40bfff8dfd617eceb4e575fafd9525949276c7659d3cdd34"
+            },
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "f054a26500c71facdfde265c5d8b76ca9c5dd1dbb916c6e1ed9c2be9f400a525",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": "Start the work. The worker then owes one finish.",
+                  "line": 39
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "worker"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "working",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "stalled",
+          "status": "terminal",
+          "variables": {
+            "working": "start"
+          },
+          "version": 3,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

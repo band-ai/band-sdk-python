@@ -1,0 +1,34 @@
+{
+  "profile": "band-contract/service/1",
+  "kind": "agent",
+  "store": {"path": "/var/lib/contract-agent/session.sqlite3"},
+  "engine": {
+    "command": ["/opt/contract/current/engine/bin/contract-engine"],
+    "contract": "/etc/contract-agent/session.band",
+    "format": "frontmatter"
+  },
+  "http": {
+    "host": "127.0.0.1",
+    "port": 8088,
+    "tokens_file": "/etc/contract-agent/tokens.json"
+  },
+  "poll_interval_ms": 1000,
+  "agent": {
+    "actor": "agent-1",
+    "program_source": "/etc/contract-agent/initial-program.py",
+    "artifact_directory": "/var/lib/contract-agent/artifacts",
+    "room": {
+      "url": "https://room.example.invalid",
+      "token_file": "/etc/contract-agent/room.token"
+    },
+    "provider": {
+      "command": ["/opt/contract-provider/respond"],
+      "timeout_ms": 30000
+    },
+    "control_actors": {"operator-1": ["wake", "takeover", "retry"]},
+    "max_pending": 16,
+    "max_model_calls": 100,
+    "max_repairs": 0,
+    "max_attempts": 3
+  }
+}

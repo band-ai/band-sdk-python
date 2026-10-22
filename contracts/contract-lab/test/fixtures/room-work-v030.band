@@ -1,0 +1,372 @@
+---
+name: room-work
+description: One assignment between the room lead and one teammate, from assign to accepted, dropped or cancelled. Replaces band.assignment/0.4 in this room.
+engine: 0.2.0-lab.1
+version: 0.3.0
+roles: [lead, member]
+---
+"""
+One operation: the lead assigns one piece of work to one teammate. The teammate
+acknowledges, works, may ask the lead a question or relay a question for a
+human, and delivers. The lead accepts, drops or revises. A revision needs a new
+acknowledgement, so the lead knows the teammate saw it. The lead may cancel at
+any time; the teammate then reports what exists. Humans are not contract
+parties: questions for Eric go through the lead in ordinary chat. Long content
+lives in files; messages carry short text and file references.
+Every teammate message names the task version it answers, so a stale one is
+rejected. "Accepted" means the lead accepted the delivery; it does not mean
+tested, merged or deployed. A timeout or a cancel never counts as acceptance.
+"""
+contract @12h => expired
+
+"""
+You are the room lead (Ada). Assign one concrete piece with its deliverable.
+Answer questions within an hour. Relay human questions in plain language and
+answer with the human's words and name; silence is never consent. Review each
+delivery within two hours: accept, drop or revise. Check the evidence (files,
+SHAs, gate results) before accepting. Don't assume a revision took effect until
+its acknowledgement arrives; read its `running` field.
+"""
+role lead
+
+"""
+You are a teammate. Acknowledge within 15 minutes. On a revision, list in
+`running` anything still running under the previous version, and start nothing
+new under it after you acknowledge. Send a short status at least hourly while
+working, but not more than every 15 minutes; each one renews your delivery
+window. Deliver once, with a summary of 900 characters or fewer and the paths of
+what you created. While a question is open, work that depends on it waits.
+"""
+role member
+
+"""
+The work order.
+"""
+type assign
+  """
+  Operation id, for example op-abc12345.
+  """
+  op: text(bytes: 4..64, regex: ~r/op-[a-z0-9]+/)
+  """
+  Attempt number for this operation; at most three per operation.
+  """
+  attempt: integer(1..3)
+  """
+  What to do.
+  """
+  task: text(bytes: 1..2400, graphemes: 1..600)
+  """
+  What comes back and what done means.
+  """
+  deliverable: text(bytes: 1..1200, graphemes: 1..300)
+  """
+  Inputs: paths, SHAs, constraints. May be empty.
+  """
+  input: text(bytes: 0..2400, graphemes: 0..600)
+
+"""
+A replacement task. It replaces the previous task completely.
+"""
+type revise
+  task: text(bytes: 1..2400, graphemes: 1..600)
+  input: text(bytes: 0..2400, graphemes: 0..600)
+
+"""
+The teammate has read the current task.
+"""
+type ack
+  request: ref(assign|revise)
+  """
+  Effects still running under the previous task version; empty if none.
+  """
+  running: text(bytes: 0..2400, graphemes: 0..600)
+
+"""
+A short progress note on the current task. It renews the delivery window.
+"""
+type status
+  request: ref(assign|revise)
+  note: text(bytes: 1..800, graphemes: 1..200)
+
+"""
+A question the lead can answer, about the current task.
+"""
+type question
+  request: ref(assign|revise)
+  text: text(bytes: 1..2400, graphemes: 1..600)
+
+"""
+The lead's answer.
+"""
+type answer
+  question: ref(question)
+  text: text(bytes: 1..2400, graphemes: 1..600)
+
+"""
+A question only a human can answer, about the current task; the lead relays it.
+"""
+type human_question
+  request: ref(assign|revise)
+  text: text(bytes: 1..2400, graphemes: 1..600)
+
+"""
+The human's answer, relayed by the lead.
+"""
+type human_answer
+  question: ref(human_question)
+  """
+  Who answered, for example eric.
+  """
+  who: text(bytes: 1..64, regex: ~r/[a-z][a-z0-9._-]*/)
+  text: text(bytes: 1..2400, graphemes: 1..600)
+
+"""
+The delivery.
+"""
+type deliverable
+  request: ref(assign|revise)
+  summary: text(bytes: 1..3600, graphemes: 1..900)
+  """
+  Created files, commits or links; one per line, at most ten.
+  """
+  effects: text(bytes: 0..4000)
+
+"""
+The lead accepts the delivery.
+"""
+type accept
+  deliverable: ref(deliverable)
+
+"""
+The lead drops the delivery.
+"""
+type drop
+  deliverable: ref(deliverable)
+  reason: text(bytes: 1..800, graphemes: 1..200)
+
+"""
+The lead stops the work.
+"""
+type cancel
+  reason: enum(timeout|withdrawn|reassigned)
+
+"""
+What exists after the cancel it names.
+"""
+type cancel_ack
+  cancel: ref(cancel)
+  done: enum(none|partial|complete)
+  effects: text(bytes: 0..4000)
+
+"""
+Emergency stop with no follow-up duty, for when the room is near its message limit and a normal cancel is refused.
+"""
+type abandon
+  reason: text(bytes: 1..800, graphemes: 1..200)
+
+"""
+The lead opens the operation.
+"""
+state new
+  """
+  Your task. Acknowledge within 15 minutes.
+  """
+  lead -> member: assign() as req awaits assigned
+    """
+    Acknowledge the current task within 15 minutes.
+    """
+    => ack(request=$req) & working
+     | @15m & unacknowledged
+
+"""
+The teammate has not yet acknowledged the task.
+"""
+state assigned
+  """
+  The task changed before you acknowledged it; acknowledge the new one.
+  """
+  lead -> member: revise() as req => revised
+  """
+  The lead stops the work; report what exists.
+  """
+  lead -> member: cancel() as cx awaits cancelling
+    """
+    Report what exists within 15 minutes: what is done and every effect, including a delivery already sent. Start nothing new.
+    """
+    => cancel_ack(cancel=$cx) & cancelled
+     | @15m & cleanup_unconfirmed
+
+"""
+The teammate works. Delivery is due within an hour of entering or of the last status, never past four hours in this entry. Returning from a question starts a fresh four-hour entry; the 12-hour operation clock never resets.
+"""
+state working @4h => stalled
+  """
+  Status renews your delivery window to one hour from now.
+  """
+  event member -> lead: status(request=$req) => @self
+  """
+  Deliver the current task.
+  """
+  member -> lead: deliverable(request=$req) as dlv @1h => delivered | stalled
+  """
+  Ask the lead. When the answer arrives your delivery window and the four-hour entry cap start fresh.
+  """
+  member -> lead: question(request=$req) as q awaits asking
+    """
+    The lead answers within an hour.
+    """
+    => answer(question=$q) & working
+     | @1h & unanswered
+  """
+  Ask a human through the lead.
+  """
+  member -> lead: human_question(request=$req) as hq awaits asking_human
+    """
+    The lead relays the human answer within four hours; silence is not consent.
+    """
+    => human_answer(question=$hq) & working
+     | @4h & human_unanswered
+  """
+  The lead changed the task mid-flight; acknowledge it.
+  """
+  lead -> member: revise() as req awaits revised
+    """
+    Acknowledge the revised task within 15 minutes.
+    """
+    => ack(request=$req) & working
+     | @15m & unacknowledged
+  """
+  The lead stops the work; report what exists.
+  """
+  lead -> member: cancel() as cx => cancelling
+
+"""
+The teammate has not yet acknowledged the revised task. At most five revisions, so six task
+versions in all.
+"""
+state revised max_entries 5 => revision_limit
+  """
+  The task changed again before you acknowledged it; acknowledge the new one.
+  """
+  lead -> member: revise() as req => revised
+  """
+  The lead stops the work; report what exists.
+  """
+  lead -> member: cancel() as cx => cancelling
+
+"""
+The lead owes an answer within an hour. At most four questions to the lead per operation.
+"""
+state asking max_entries 4 => question_limit
+  """
+  The lead changed the task instead; the open question lapses. Acknowledge the new task.
+  """
+  lead -> member: revise() as req => revised
+  """
+  The lead stops the work; report what exists.
+  """
+  lead -> member: cancel() as cx => cancelling
+
+"""
+Waiting for a human. The lead owes the relayed answer within four hours; silence is not consent. At most four human questions per operation, counted separately from questions to the lead.
+"""
+state asking_human max_entries 4 => question_limit
+  """
+  The lead changed the task instead; the open question lapses. Acknowledge the new task.
+  """
+  lead -> member: revise() as req => revised
+  """
+  The lead stops the work; report what exists.
+  """
+  lead -> member: cancel() as cx => cancelling
+
+"""
+The lead reviews the delivery within two hours: accept, drop or revise.
+"""
+state delivered @2h => unreviewed
+  lead -> member: accept(deliverable=$dlv) => accepted
+  lead -> member: drop(deliverable=$dlv) => dropped
+  """
+  Another pass on the same operation; acknowledge it.
+  """
+  lead -> member: revise() as req => revised
+  """
+  The lead stops the work; report what exists. A delivery not yet accepted can no longer be accepted.
+  """
+  lead -> member: cancel() as cx => cancelling
+
+anystate
+  """
+  Emergency stop: no cleanup report is owed, so it fits even when the room is at its message limit. Effects stay unconfirmed; the lead owns the recovery.
+  """
+  lead -> member: abandon() => abandoned
+
+"""
+Report what exists within 15 minutes: what is done and every effect, including a delivery already sent. Start nothing new. A second cancel is not possible here, so the deadline never moves.
+"""
+state cancelling
+
+"""
+The lead accepted the delivery. Not by itself proof it was tested, merged or deployed.
+"""
+end accepted
+
+"""
+The lead dropped the delivery.
+"""
+end dropped
+
+"""
+The lead cancelled and the teammate confirmed what exists.
+"""
+end cancelled
+
+"""
+The teammate never acknowledged; reassign as the next attempt.
+"""
+end unacknowledged
+
+"""
+Delivery or the round cap ran out.
+"""
+end stalled
+
+"""
+The lead did not answer a question in time.
+"""
+end unanswered
+
+"""
+The teammate never confirmed cleanup after a cancel; effects may still exist. The lead owns the recovery.
+"""
+end cleanup_unconfirmed
+
+"""
+The lead did not review the delivery in time. Not an acceptance; the lead owns the recovery.
+"""
+end unreviewed
+
+"""
+No human answer in time. Nothing that depended on it is approved.
+"""
+end human_unanswered
+
+"""
+Too many questions of one kind; the task needs rescoping.
+"""
+end question_limit
+
+"""
+The lead stopped the work without a cleanup report, for example at the room's message limit. Effects are unconfirmed; the lead owns the recovery.
+"""
+end abandoned
+
+"""
+Too many task versions; split the work.
+"""
+end revision_limit
+
+"""
+The 12-hour whole-run clock ran out.
+"""
+end expired

@@ -1,0 +1,73 @@
+---
+name: assistant-answer
+description: One agent answers another agent, then the session ends.
+engine: 0.2.0-lab.1
+version: 0.4.1
+roles:
+  - requester
+  - assistant
+---
+"""
+A session contains one question and its answer. Start another session for another
+question. The session identity provides correlation for this simple exchange.
+"""
+contract @infinity => expired
+
+"""
+Ask one self-contained question per session and include the context the
+assistant needs. Judge the answer on its merits: the room checks its shape,
+not whether it is right.
+"""
+role requester
+
+"""
+Answer the question you were asked, within the deadline. Say what you are
+unsure of or could not check instead of guessing.
+"""
+role assistant
+
+"""
+One question, with the context needed to answer it.
+"""
+type question
+  text: text(1..2000)
+
+"""
+A direct answer to the question, with any caveats or remaining uncertainty.
+Set question to the question this answers.
+"""
+type answer
+  question: ref(question)
+  text: text(1..4000)
+
+"""
+The requester opens the session by asking its one question.
+"""
+state new
+  """
+  Ask the question. The assistant then owes one answer to it.
+  """
+  requester -> assistant: question() awaits answering
+    """
+    The assistant answers within five minutes of the question.
+    """
+    => answer() & complete
+     """
+     No answer arrived within five minutes of the question.
+     """
+     | @5m & stalled
+
+"""
+The assistant is preparing the answer; the question's reply window bounds the wait.
+"""
+state answering
+
+"""
+The answer arrived. Whether it is correct still needs the requester's judgment.
+"""
+end complete
+
+"""
+No answer arrived in time. Ask again in a new session, or get the answer another way.
+"""
+end stalled

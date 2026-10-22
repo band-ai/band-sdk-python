@@ -1,0 +1,96 @@
+{
+  "bindings": {
+    "lead": "l",
+    "writer": "w",
+    "reviewer": "r"
+  },
+  "session": "review",
+  "now": 0,
+  "inactivity": "transition",
+  "max_messages": 20,
+  "steps": [
+    {
+      "actor": "l",
+      "now": 0,
+      "message": {
+        "id": "offer-1",
+        "session": "review",
+        "kind": "offer",
+        "payload": {
+          "task": "Draft the release note"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "offered"
+      }
+    },
+    {
+      "actor": "w",
+      "now": 0,
+      "message": {
+        "id": "accept-1",
+        "session": "review",
+        "kind": "accept",
+        "payload": {
+          "task": "offer-1"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "writing"
+      }
+    },
+    {
+      "actor": "w",
+      "now": 0,
+      "message": {
+        "id": "draft-1",
+        "session": "review",
+        "kind": "submit",
+        "payload": {
+          "task": "offer-1",
+          "artifact": "artifact:draft-1"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "reviewing"
+      }
+    },
+    {
+      "actor": "r",
+      "now": 0,
+      "message": {
+        "id": "review-1",
+        "session": "review",
+        "kind": "approve",
+        "payload": {
+          "task": "offer-1",
+          "submission": "draft-1"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "acceptance"
+      }
+    },
+    {
+      "actor": "l",
+      "now": 0,
+      "message": {
+        "id": "accepted-1",
+        "session": "review",
+        "kind": "accept_result",
+        "payload": {
+          "task": "offer-1",
+          "submission": "draft-1"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "complete"
+      }
+    }
+  ]
+}

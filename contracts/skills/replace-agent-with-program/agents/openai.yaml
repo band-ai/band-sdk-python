@@ -1,0 +1,3 @@
+interface:
+  display_name: "Replace an Agent"
+  short_description: "Optional experiment: run remote Python programs with selective LLM takeover"

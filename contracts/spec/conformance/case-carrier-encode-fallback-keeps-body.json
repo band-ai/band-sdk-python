@@ -1,0 +1,44 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-encode-fallback-keeps-body",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire_encode",
+      "message": {
+        "id": "m",
+        "session": "s",
+        "kind": "ping",
+        "payload": {},
+        "expected_version": 0
+      },
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "email/1",
+        "fields": {
+          "id": "header:Message-ID",
+          "session": "header:X-Band-Session",
+          "kind": "header:X-Band-Kind",
+          "expected_version": "header:X-Band-Version"
+        }
+      },
+      "transport": {}
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "ok": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}"
+    }
+  ]
+}

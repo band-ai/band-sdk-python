@@ -1,0 +1,4 @@
+# mix contract.format skips these in directory walks (spec/format.md, Checking).
+# Deliberately unformatted formatter inputs (format/README.md).
+format/*/input.band
+format/*/input.md

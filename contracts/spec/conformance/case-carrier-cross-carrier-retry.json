@@ -1,0 +1,856 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-cross-carrier-retry",
+  "requirements": [
+    "ENG-002",
+    "ENG-005"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: carrier-retry\ndescription: Retry the same normalized proposal across transport bindings.\nengine: 0.2.0-lab.1\nroles: [sender, receiver]\n---\ncontract @infinity => expired\ntype ping\nstate new\n  sender -> receiver: ping() => done\nend done\n",
+        "sha256": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "sender": "alice",
+          "receiver": "bob"
+        },
+        "now": 0,
+        "max_messages": 4,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "alice": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "bob": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "wire_step",
+      "handle": "s",
+      "actor": "alice",
+      "now": 0,
+      "bytes": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{}}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "http/1",
+        "fields": {
+          "session": "path:id"
+        }
+      },
+      "transport": {
+        "path:id": "s"
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "wire_step",
+      "handle": "s",
+      "actor": "alice",
+      "now": 1,
+      "bytes": "{\"payload\":{}}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "email/1",
+        "fields": {
+          "id": "header:Message-ID",
+          "session": "header:X-Band-Session",
+          "kind": "header:X-Band-Kind",
+          "expected_version": "header:X-Band-Version"
+        }
+      },
+      "transport": {
+        "header:Message-ID": "m",
+        "header:X-Band-Session": "s",
+        "header:X-Band-Kind": "ping",
+        "header:X-Band-Version": 0
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "wire_step",
+      "handle": "s",
+      "actor": "bob",
+      "now": 2,
+      "bytes": "{\"payload\":{}}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "email/1",
+        "fields": {
+          "id": "header:Message-ID",
+          "session": "header:X-Band-Session",
+          "kind": "header:X-Band-Kind",
+          "expected_version": "header:X-Band-Version"
+        }
+      },
+      "transport": {
+        "header:Message-ID": "m",
+        "header:X-Band-Session": "s",
+        "header:X-Band-Kind": "ping",
+        "header:X-Band-Version": 0
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "wire_step",
+      "handle": "s",
+      "actor": "alice",
+      "now": 3,
+      "bytes": "{\"payload\":{}}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "email/1",
+        "fields": {
+          "id": "header:Message-ID",
+          "session": "header:X-Band-Session",
+          "kind": "header:X-Band-Kind",
+          "expected_version": "header:X-Band-Version"
+        }
+      },
+      "transport": {
+        "header:Message-ID": "m",
+        "header:X-Band-Session": "s",
+        "header:X-Band-Kind": "ping",
+        "header:X-Band-Version": 1
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    {
+      "response": 3,
+      "pointer": "/decision/original/version",
+      "equals": 1
+    },
+    {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    {
+      "response": 4,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    {
+      "response": 5,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Retry the same normalized proposal across transport bindings.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "carrier-retry",
+          "roles": [
+            "sender",
+            "receiver"
+          ],
+          "version": null
+        },
+        "digest": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "meta": {
+          "doc": null,
+          "line": 1
+        },
+        "name": "carrier-retry",
+        "role_metadata": {
+          "receiver": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "receiver"
+          },
+          "sender": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "sender"
+          }
+        },
+        "roles": [
+          "sender",
+          "receiver"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": null,
+              "line": 3
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "sender"
+                ],
+                "id": "rule-0",
+                "kind": "ping",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 4
+                },
+                "target": "done",
+                "to": [
+                  "receiver"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "done": {
+            "meta": {
+              "doc": null,
+              "line": 5
+            },
+            "name": "done"
+          },
+          "expired": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "ping": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 2
+            },
+            "name": "ping"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "profile": "band-contract/state/2",
+        "source": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25",
+        "state": {
+          "bindings": {
+            "receiver": "bob",
+            "sender": "alice"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 4,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "alice",
+        "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "id": "m",
+        "kind": "ping",
+        "metadata": {
+          "doc": null,
+          "line": 4
+        },
+        "outcome": "done",
+        "payload": {},
+        "recipients": [
+          "bob"
+        ],
+        "role": "sender",
+        "session": "s",
+        "state": "done",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "profile": "band-contract/state/2",
+        "source": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25",
+        "state": {
+          "bindings": {
+            "receiver": "bob",
+            "sender": "alice"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "done": 1,
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "m": {
+              "actor": "alice",
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "payload": {},
+              "recipients": [
+                "bob"
+              ],
+              "role": "sender",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "role": "sender",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 4,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": "done",
+          "receipts": {
+            "m": {
+              "decision": {
+                "actor": "alice",
+                "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+                "id": "m",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": "done",
+                "payload": {},
+                "recipients": [
+                  "bob"
+                ],
+                "role": "sender",
+                "session": "s",
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "72ef9383ccff848209eccc8bdad04db76993376fea4646e8d45149a5811ecb73"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "done",
+          "status": "terminal",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "original": {
+          "actor": "alice",
+          "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+          "id": "m",
+          "kind": "ping",
+          "metadata": {
+            "doc": null,
+            "line": 4
+          },
+          "outcome": "done",
+          "payload": {},
+          "recipients": [
+            "bob"
+          ],
+          "role": "sender",
+          "session": "s",
+          "state": "done",
+          "status": "accepted",
+          "version": 1
+        },
+        "status": "duplicate"
+      },
+      "state": {
+        "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "profile": "band-contract/state/2",
+        "source": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25",
+        "state": {
+          "bindings": {
+            "receiver": "bob",
+            "sender": "alice"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "done": 1,
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "m": {
+              "actor": "alice",
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "payload": {},
+              "recipients": [
+                "bob"
+              ],
+              "role": "sender",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "role": "sender",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 4,
+          "mentions_used": 1,
+          "now": 1,
+          "obligations": [],
+          "outcome": "done",
+          "receipts": {
+            "m": {
+              "decision": {
+                "actor": "alice",
+                "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+                "id": "m",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": "done",
+                "payload": {},
+                "recipients": [
+                  "bob"
+                ],
+                "role": "sender",
+                "session": "s",
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "72ef9383ccff848209eccc8bdad04db76993376fea4646e8d45149a5811ecb73"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "done",
+          "status": "terminal",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "id_conflict",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "profile": "band-contract/state/2",
+        "source": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25",
+        "state": {
+          "bindings": {
+            "receiver": "bob",
+            "sender": "alice"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "done": 1,
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "m": {
+              "actor": "alice",
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "payload": {},
+              "recipients": [
+                "bob"
+              ],
+              "role": "sender",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "role": "sender",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 4,
+          "mentions_used": 1,
+          "now": 2,
+          "obligations": [],
+          "outcome": "done",
+          "receipts": {
+            "m": {
+              "decision": {
+                "actor": "alice",
+                "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+                "id": "m",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": "done",
+                "payload": {},
+                "recipients": [
+                  "bob"
+                ],
+                "role": "sender",
+                "session": "s",
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "72ef9383ccff848209eccc8bdad04db76993376fea4646e8d45149a5811ecb73"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "done",
+          "status": "terminal",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "id_conflict",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+        "profile": "band-contract/state/2",
+        "source": "30567f907cbfe6eb5afab4cd788ecfd78d0fe8c0b9e5d6aef3b2d3a98e7aea25",
+        "state": {
+          "bindings": {
+            "receiver": "bob",
+            "sender": "alice"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "done": 1,
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "m": {
+              "actor": "alice",
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "payload": {},
+              "recipients": [
+                "bob"
+              ],
+              "role": "sender",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "m",
+              "kind": "ping",
+              "role": "sender",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 4,
+          "mentions_used": 1,
+          "now": 3,
+          "obligations": [],
+          "outcome": "done",
+          "receipts": {
+            "m": {
+              "decision": {
+                "actor": "alice",
+                "definition": "569b72e914f8d4f9d6f97a83b3adcfd6ff58eed1886859ec2fe30a0f95ab0dbd",
+                "id": "m",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": "done",
+                "payload": {},
+                "recipients": [
+                  "bob"
+                ],
+                "role": "sender",
+                "session": "s",
+                "state": "done",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "72ef9383ccff848209eccc8bdad04db76993376fea4646e8d45149a5811ecb73"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "done",
+          "status": "terminal",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

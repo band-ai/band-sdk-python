@@ -1,0 +1,1255 @@
+{
+  "profile": "band-contract/requirements/1",
+  "revision": "1.0.0-rc.3",
+  "production_ledger": "../PRODUCTION.md",
+  "requirements": [
+    {
+      "id": "DSL-001",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "The loader MUST support explicitly selected frontmatter and standard discovery and reject the removed native directive header.",
+      "acceptance": [
+        "Compile equivalent current packages in both supported forms; reject the native header without executing a body."
+      ]
+    },
+    {
+      "id": "DSL-002",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Discovery MUST enforce a 4096-byte maximum including delimiters without reading contract bodies.",
+      "acceptance": [
+        "Probe exact boundary, oversized, unterminated, CRLF and invalid UTF-8 prefixes."
+      ]
+    },
+    {
+      "id": "DSL-003",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Source loading MUST use bounded immutable bytes and verify package paths, unchanged headers and referenced digests.",
+      "acceptance": [
+        "Reject traversal, symlinks, changed prefixes, changed bodies and oversized source."
+      ]
+    },
+    {
+      "id": "DSL-004",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "The compiler MUST implement the complete line grammar and reject unsupported directives or expressions.",
+      "acceptance": [
+        "Run positive and negative grammar vectors for every declaration and option."
+      ]
+    },
+    {
+      "id": "DSL-005",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Preceding triple-quoted documentation MUST attach to the next node and remain nonexecutable metadata.",
+      "acceptance": [
+        "Check indentation, escapes, newline, field/rule/duty attachment, interpolation rejection and orphan literals."
+      ]
+    },
+    {
+      "id": "DSL-006",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Types MUST preserve exact fields, bounds, enum values and accepted-fact reference kinds.",
+      "acceptance": [
+        "Reject invalid bounds, duplicate values and unknown reference types."
+      ]
+    },
+    {
+      "id": "DSL-007",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Static validation MUST reject ambiguous rules, unknown names, unmatched references and structurally unsatisfiable duties.",
+      "acceptance": [
+        "Assert each documented error code with a bounded line/detail result."
+      ]
+    },
+    {
+      "id": "DSL-008",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Compilation MUST produce deterministic normalized IR, rule/duty IDs and behavior/source digests.",
+      "acceptance": [
+        "Compare full IR in independent adapters; documentation-only changes preserve only the behavior digest."
+      ]
+    },
+    {
+      "id": "DSL-009",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Query APIs MUST retain attached documentation in full and role-specific definitions.",
+      "acceptance": [
+        "Query every node category and check filtering plus metadata preservation."
+      ]
+    },
+    {
+      "id": "DSL-010",
+      "level": "MUST",
+      "ledger": "P13",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "statement": "Untrusted malformed source MUST return bounded errors without executing code or crashing the service.",
+      "acceptance": [
+        "Fuzz bounded source, escapes, invalid Unicode, huge digits and unsupported YAML constructs."
+      ]
+    },
+    {
+      "id": "ENG-001",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Session configuration MUST bind every role to one distinct trusted principal and validate all limits and time arithmetic.",
+      "acceptance": [
+        "Reject missing/extra/duplicate bindings, invalid IDs, absent policy and overflow."
+      ]
+    },
+    {
+      "id": "ENG-002",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Wire normalization MUST reject duplicate keys, unsupported numbers, unknown fields and transport conflicts.",
+      "acceptance": [
+        "Run raw JSON and transport-carrier vectors including literal escapes and nested duplicate keys."
+      ]
+    },
+    {
+      "id": "ENG-003",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Canonical bytes and SHA-256 identities MUST match the specified integer-only UTF-8 profile.",
+      "acceptance": [
+        "Compare byte vectors in at least two languages including controls and astral Unicode."
+      ]
+    },
+    {
+      "id": "ENG-004",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Text fields MUST enforce a finite UTF-8 byte bound and any declared Unicode 16.0 extended grapheme bound independently of runtime defaults.",
+      "acceptance": [
+        "Pass the pinned Unicode GraphemeBreakTest corpus and cross-runtime drift regressions; test exact multibyte byte bounds, grapheme bounds and rejected grapheme-only declarations."
+      ]
+    },
+    {
+      "id": "ENG-005",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Admission MUST follow the specified clock, identity, envelope, duplicate, version, rule, payload, reference and quota precedence.",
+      "acceptance": [
+        "Use inputs violating multiple conditions to assert the selected reason and any persisted expiry."
+      ]
+    },
+    {
+      "id": "ENG-006",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Accepted messages MUST update facts, receipts, variables, counters, contributions, duties and state atomically in the reducer.",
+      "acceptance": [
+        "Compare exact state and decision after every trace step."
+      ]
+    },
+    {
+      "id": "ENG-007",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Exact references MUST equal the currently bound accepted ID and a permitted fact kind.",
+      "acceptance": [
+        "Reject a nonexistent ID, another fact of the same kind and an obsolete rebound ID."
+      ]
+    },
+    {
+      "id": "ENG-008",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Timed rules and events with each MUST preserve all-participant duties; grouped rules without each MUST preserve first-responder duties and independent selected obligations.",
+      "acceptance": [
+        "Test all roles, selected sets, duplicate contributions, multiple timed events and first-responder behavior; reject removed due all/any grammar."
+      ]
+    },
+    {
+      "id": "ENG-009",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Timers MUST expire at the inclusive boundary with deterministic earliest-time and priority/ID ties.",
+      "acceptance": [
+        "Test just-before/equal/after, ties, late observation, clock regression and terminal idempotence."
+      ]
+    },
+    {
+      "id": "ENG-010",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "The current profile MUST have no idle timer and MUST reject inactivity-timeout and activity declarations; owed work and explicit contract/state clocks still expire, while optional accepted/transition/marked configuration remains valid but inert.",
+      "acceptance": [
+        "Exercise accepted events, transitions, duplicate/rejected/read attempts without idle expiry; reject removed source forms and check timed owed-work expiry."
+      ]
+    },
+    {
+      "id": "ENG-011",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "max_entries MUST count initial/reentries and select its terminal overflow outcome deterministically.",
+      "acceptance": [
+        "Exercise exact limit, overflow, self-loop and preservation of attempted-entry count."
+      ]
+    },
+    {
+      "id": "ENG-012",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Duplicate receipt handling MUST precede terminal/version checks and preserve the original decision without another effect.",
+      "acceptance": [
+        "Resend before/after completion/expiry and reject conflicting actor/payload/version under the same ID."
+      ]
+    },
+    {
+      "id": "ENG-013",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Recipient routing and message budgets MUST be exact and unaffected by duplicate attempts; mentions is a per-message default or rule override, never a cumulative session cap.",
+      "acceptance": [
+        "Check sender exclusion, deduplicated delivery, message-cap recovery, more than 200 accepted mentions, and rejected mention_budget syntax."
+      ]
+    },
+    {
+      "id": "ENG-014",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Role views MUST expose only authored/addressed facts and relevant legal moves/duties while retaining documentation.",
+      "acceptance": [
+        "Compare views of every participant and reject outsiders."
+      ]
+    },
+    {
+      "id": "ENG-015",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Portable state/checkpoints MUST have explicit profiles, strict schemas, pinned identities and validated invariants.",
+      "acceptance": [
+        "Round-trip full/redacted state and reject malformed recomputed-checksum packets."
+      ]
+    },
+    {
+      "id": "ENG-016",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Local preflight MUST use the same semantics and a fresh authority time/version while retaining final room authority.",
+      "acceptance": [
+        "Compare remote/local decisions, stale views, deadline races and fresh-process restoration."
+      ]
+    },
+    {
+      "id": "ROOM-001",
+      "level": "MUST",
+      "ledger": "P1",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Sessionless events MUST remain separate from session state and use explicit room bindings/policy.",
+      "acceptance": [
+        "Verify no session transition/counter changes and reject unauthorized/session-bearing traffic."
+      ]
+    },
+    {
+      "id": "ROOM-002",
+      "level": "MUST",
+      "ledger": "P1",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Room event/mention windows MUST reset on aligned boundaries independently of session quotas.",
+      "acceptance": [
+        "Test multi-window gaps, exact boundaries and budget exhaustion."
+      ]
+    },
+    {
+      "id": "ROOM-003",
+      "level": "MUST",
+      "ledger": "P1",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Room receipts MUST survive quota resets and cannot be silently evicted to permit repeated effects.",
+      "acceptance": [
+        "Test duplicates across windows and explicit retention-limit rejection."
+      ]
+    },
+    {
+      "id": "ROOM-004",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "room-events/1",
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "statement": "An authority offering durable sessionless room events MUST preserve their state and receipts across service restart and concurrent admission.",
+      "acceptance": [
+        "Restart and race independent owners against the durable event authority."
+      ]
+    },
+    {
+      "id": "DUR-001",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "statement": "An authority MUST serialize decisions per scope through exclusive ownership or transactional database locking.",
+      "acceptance": [
+        "Race simultaneous proposals through separate processes and assert one version order."
+      ]
+    },
+    {
+      "id": "DUR-002",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Acceptance MUST become durable before an acknowledgement or visible resulting message is exposed.",
+      "acceptance": [
+        "Crash after commit before reply and prove exactly one accepted effect/receipt."
+      ]
+    },
+    {
+      "id": "DUR-003",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "statement": "A failed commit MUST invalidate speculative state and recover only from verified durable history.",
+      "acceptance": [
+        "Inject commit/snapshot failure and compare restored state and decisions."
+      ]
+    },
+    {
+      "id": "DUR-004",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Idle and offline deadlines MUST advance without a participant request and remain absolute across restart.",
+      "acceptance": [
+        "Stop before a deadline, restart after it and observe the original expired_at and durable outcome."
+      ]
+    },
+    {
+      "id": "DUR-005",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Journal/snapshot replay MUST verify identities, history integrity and recorded decision/state agreement.",
+      "acceptance": [
+        "Reject corrupted records, every corrupted snapshot and mismatched configuration/source."
+      ]
+    },
+    {
+      "id": "DUR-006",
+      "level": "MUST",
+      "ledger": "P4",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Storage growth MUST be bounded without dropping active work or deduplication receipts.",
+      "acceptance": [
+        "Exhaust record, record-byte, database and disk capacities and verify prior commits remain recoverable."
+      ]
+    },
+    {
+      "id": "DUR-007",
+      "level": "MUST",
+      "ledger": "P4",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Backups/restores MUST be private, verified, consistent, atomically published and no-overwrite.",
+      "acceptance": [
+        "Restore a backup containing accepted receipts and pending work; reject corrupt/aliased targets."
+      ]
+    },
+    {
+      "id": "AG-001",
+      "level": "MUST",
+      "ledger": "P7",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Programs MUST declare full, partial or LLM-only coverage and qualify the claimed semantic domain.",
+      "acceptance": [
+        "Exercise representative handled, delegated, ambiguous and unsuitable cases with expected semantics."
+      ]
+    },
+    {
+      "id": "AG-002",
+      "level": "MUST",
+      "ledger": "P7",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "The callback ABI MUST use copied JSON inputs/state and only Handled or Delegate outputs.",
+      "acceptance": [
+        "Check schema, checkpoint equality, illegal result shapes and no mutation of committed host state."
+      ]
+    },
+    {
+      "id": "AG-003",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Incoming events MUST be confirmed against authenticated room facts and deduplicated before execution.",
+      "acceptance": [
+        "Reject forged/conflicting events and repeat a completed event without code/model/effect repetition."
+      ]
+    },
+    {
+      "id": "AG-004",
+      "level": "MUST",
+      "ledger": "P7",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Per-turn and ongoing delegation MUST persist the intended routing across turns and restart.",
+      "acceptance": [
+        "Alternate qualified and free-form tasks and restart during ongoing takeover."
+      ]
+    },
+    {
+      "id": "AG-005",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Local rejection MUST prevent program publication and final room rejection MUST not commit candidate state.",
+      "acceptance": [
+        "Propose wrong-turn, wrong-schema, stale-reference and stale-version outputs and inspect actual room effects."
+      ]
+    },
+    {
+      "id": "AG-006",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Accepted state, input completion, receipt, outbox clearing and optional snapshot MUST commit atomically.",
+      "acceptance": [
+        "Fail the transaction after room acceptance, recover, and assert one reply and one state transition."
+      ]
+    },
+    {
+      "id": "AG-007",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Unknown effects MUST retain exact intents and use destination reconciliation before any replacement output.",
+      "acceptance": [
+        "Lose acknowledgements for idempotent and non-idempotent destinations and assert the permitted retry count."
+      ]
+    },
+    {
+      "id": "AG-008",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Queues, retries, calls and repair counts MUST be bounded and persist across restart.",
+      "acceptance": [
+        "Exhaust each budget, retry/restart and verify no reset or hot loop."
+      ]
+    },
+    {
+      "id": "IO-001",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Every Python callback input MUST be durably recorded before executing code.",
+      "acceptance": [
+        "Observe the committed exact request at the actual execution boundary for initialization, turns and validation."
+      ]
+    },
+    {
+      "id": "IO-002",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Every complete bounded callback output/error MUST be recorded before staging or publishing effects.",
+      "acceptance": [
+        "Inspect raw stdout/stderr/result and failure records before the first room send."
+      ]
+    },
+    {
+      "id": "IO-003",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Invocation identity MUST bind its program, operation, exact inputs, execution policy and purpose.",
+      "acceptance": [
+        "Reject conflicting reuse of an invocation ID and isolate validation identities from live work."
+      ]
+    },
+    {
+      "id": "IO-004",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Recovery MUST reuse recorded results without executing code or rerunning initialization.",
+      "acceptance": [
+        "Crash after output commit before staging and block all execution functions during recovery."
+      ]
+    },
+    {
+      "id": "IO-005",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "An input without durable output MUST remain explicit unresolved work and cannot silently resample.",
+      "acceptance": [
+        "Exit after input commit and fail output persistence; verify no rerun or publication on ordinary recovery."
+      ]
+    },
+    {
+      "id": "IO-006",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Output overflow/timeout MUST retain bounded evidence and cannot masquerade as a complete successful result.",
+      "acceptance": [
+        "Emit excessive/partial output, terminate, and assert explicit incomplete failure and preserved prior state."
+      ]
+    },
+    {
+      "id": "IO-007",
+      "level": "MUST",
+      "ledger": "P17",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Offline journal replay/export MUST use recorded data without code, provider, clock advancement or external effects.",
+      "acceptance": [
+        "Disable execution/network interfaces while reconstructing and exporting a recorded invocation/history."
+      ]
+    },
+    {
+      "id": "LLM-001",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Provider operations MUST use trusted host configuration and bounded durable call/result records.",
+      "acceptance": [
+        "Crash and timeout before/after provider result recording; verify uncertainty and completed-result reuse."
+      ]
+    },
+    {
+      "id": "LLM-002",
+      "level": "MUST",
+      "ledger": "P7",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Model output MUST pass the same state, local-contract and room-admission checks as program output.",
+      "acceptance": [
+        "Return malformed, illegal and semantically wrong model replies and assert the relevant hold/rejection."
+      ]
+    },
+    {
+      "id": "LLM-003",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Late provider results MUST not mutate state or publish and duplicate concurrent operations MUST be prevented.",
+      "acceptance": [
+        "Stall a provider beyond its deadline and release it after another control/turn boundary."
+      ]
+    },
+    {
+      "id": "LLM-004",
+      "level": "MUST",
+      "ledger": "P7",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Live provider quality and actual usage MUST be measured separately from scripted mechanism tests and saved calls.",
+      "acceptance": [
+        "Run the declared semantic quality set with the pinned provider/model and record usage without secrets."
+      ]
+    },
+    {
+      "id": "LLM-005",
+      "level": "MUST",
+      "ledger": "P10",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Provider/model context MUST be bounded and contain only authorized public context, never credentials/private checkpoints.",
+      "acceptance": [
+        "Inspect captured prompts for private markers and stress long history/output capacity."
+      ]
+    },
+    {
+      "id": "LLM-006",
+      "level": "MUST",
+      "ledger": "P10",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "openai-provider.md",
+      "statement": "Reported provider usage MUST be counted once per durable result, and missing usage or prices MUST remain explicitly unknown.",
+      "acceptance": [
+        "Recover completed calls, race response and repair results, and compare reported/unreported calls and exact integer token/cost aggregates."
+      ]
+    },
+    {
+      "id": "LLM-007",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "openai-provider.md",
+      "statement": "A declared native OpenAI binding MUST journal its prepared body, fix its authenticated TLS destination, bound requests/results and preserve uncertain outcomes without automatic resampling.",
+      "acceptance": [
+        "Capture the real prepared request before dispatch; simulate refusal, incomplete output, body overflow, rate limit and uncertain HTTP failure; verify no effect or repeated call."
+      ]
+    },
+    {
+      "id": "REP-001",
+      "level": "MUST",
+      "ledger": "P8",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Background repair MUST allow subsequent LLM turns while generation/validation is pending.",
+      "acceptance": [
+        "Hold repair execution and complete another live turn before releasing it."
+      ]
+    },
+    {
+      "id": "REP-002",
+      "level": "MUST",
+      "ledger": "P8",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Candidates MUST preserve state schema, initial state and accepted history and pass independent semantic checks.",
+      "acceptance": [
+        "Reject changed schema, rewritten answers, bad pending-fault handling and insufficient validator evidence."
+      ]
+    },
+    {
+      "id": "REP-003",
+      "level": "MUST",
+      "ledger": "P8",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Candidate validation MUST be isolated, journaled and incapable of dispatching effects.",
+      "acceptance": [
+        "Inspect validation invocation records and deny network/filesystem/process effects during probes."
+      ]
+    },
+    {
+      "id": "REP-004",
+      "level": "MUST",
+      "ledger": "P8",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Installation MUST catch up concurrent history and commit at a safe boundary with routing-epoch protection.",
+      "acceptance": [
+        "Advance conversation/control during validation and prove bounded catch-up and no stale automatic resume."
+      ]
+    },
+    {
+      "id": "REP-005",
+      "level": "MUST",
+      "ledger": "P8",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Interrupted repair and rollback MUST preserve accepted state, pending effects and explicit generation uncertainty.",
+      "acceptance": [
+        "Restart during generation/install and roll back a compatible artifact without replaying old effects."
+      ]
+    },
+    {
+      "id": "SEC-001",
+      "level": "MUST",
+      "ledger": "P2",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Generated code MUST not access host secrets/journal, network, unrestricted processes or writable artifacts.",
+      "acceptance": [
+        "Run real namespace/seccomp probes on the qualified release host and prove required denials."
+      ]
+    },
+    {
+      "id": "SEC-002",
+      "level": "MUST",
+      "ledger": "P2",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Missing isolation or exhausted callback resources MUST fail closed with bounded cleanup.",
+      "acceptance": [
+        "Remove isolation capability and exercise memory, CPU, descriptors, output and wall-clock exhaustion."
+      ]
+    },
+    {
+      "id": "SEC-003",
+      "level": "MUST",
+      "ledger": "P4",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "State/artifact/backup files MUST enforce private ownership and resist symlink/hard-link aliasing.",
+      "acceptance": [
+        "Use permissive umask, wrong ownership/writable directories and aliased paths in filesystem probes."
+      ]
+    },
+    {
+      "id": "SEC-004",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Authenticated principals and explicit permissions MUST determine actor and operation authorization.",
+      "acceptance": [
+        "Test spoofed body actors, insufficient grants, wrong rooms and revoked membership."
+      ]
+    },
+    {
+      "id": "SEC-005",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "statement": "Controls MUST be action-scoped, journaled, deduplicated and unable to escalate a wake caller's grants.",
+      "acceptance": [
+        "Replay/conflict controls and request unauthorized takeover, repair or resume."
+      ]
+    },
+    {
+      "id": "SEC-006",
+      "level": "MUST",
+      "ledger": "P12",
+      "profiles": [
+        "compiler/2",
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Release security/dependency review MUST cover the actual trusted runtime and isolated execution boundary.",
+      "acceptance": [
+        "Audit pinned dependencies, input boundaries, storage/effects and documented residual trust with findings dispositions."
+      ]
+    },
+    {
+      "id": "NET-001",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Remote requests MUST use verified TLS with no credential-bearing redirect or remote cleartext fallback.",
+      "acceptance": [
+        "Use valid/untrusted/expired/wrong-host certificates, redirects and nonloopback HTTP."
+      ]
+    },
+    {
+      "id": "NET-002",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Framing, request/response bytes, headers, connection count and absolute deadlines MUST be bounded.",
+      "acceptance": [
+        "Test duplicate Content-Length, transfer encoding, slow TLS/headers/body, response overflow and saturation."
+      ]
+    },
+    {
+      "id": "NET-003",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Capability negotiation MUST pin actor, session, contract identities and durable idempotence.",
+      "acceptance": [
+        "Reject mismatched/unsupported capabilities before processing agent turns."
+      ]
+    },
+    {
+      "id": "NET-004",
+      "level": "MUST",
+      "ledger": "P10",
+      "profiles": [
+        "standalone-http/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Health and observer metrics MUST distinguish readiness from liveness without exposing payloads or credentials.",
+      "acceptance": [
+        "Fail recovery/storage and inspect unauthenticated/authenticated metrics/log output."
+      ]
+    },
+    {
+      "id": "NET-005",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "standalone-http/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Shutdown MUST drain admitted handlers before their backend resources close.",
+      "acceptance": [
+        "Stop during active bounded requests and restart with pending work intact."
+      ]
+    },
+    {
+      "id": "NET-006",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "statement": "Reconnect MUST recover durable facts/receipts rather than rely solely on notifications.",
+      "acceptance": [
+        "Drop notifications/connection, replay history and prove no lost or duplicate replies."
+      ]
+    },
+    {
+      "id": "BAND-001",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "statement": "Band requests MUST preserve acting agent/user, tenant and room membership authorization.",
+      "acceptance": [
+        "Exercise both HTTP surfaces, agent-owned keys, human acting contexts, malformed typed IDs, removed/blocked/unbound participants and cross-tenant access; verify exact role coverage, distinct active bindings, immutable create retries and competing rooms claiming one session ID."
+      ]
+    },
+    {
+      "id": "BAND-002",
+      "level": "MUST",
+      "ledger": "P3",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "statement": "State, receipt and required accepted chat message MUST commit atomically under a database session lock.",
+      "acceptance": [
+        "Race separate request owners and inject each transaction failure boundary, quota refusal and commit-before-reply loss; confirm one accepted state/receipt/chat record, original duplicate decisions and after-commit-only notification."
+      ]
+    },
+    {
+      "id": "BAND-003",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "statement": "Ordinary caller-supplied chat metadata MUST not fabricate an authoritative contract fact.",
+      "acceptance": [
+        "Forge contract-looking metadata and verify adapter/authority rejection; submit a private canary in the proposal ID and prove it is absent from shared chat records and notifications while the expected receipt_handle is present; inspect the same records for private payload/documentation canaries and prove that only authenticated role data supplies the actual facts."
+      ]
+    },
+    {
+      "id": "BAND-004",
+      "level": "MUST",
+      "ledger": "P6",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "statement": "Remote programs and models MUST remain outside Band and use authenticated public role data.",
+      "acceptance": [
+        "Run a remote host against a real Band room; pin actor/session/source identities, inspect credentials/data/authority boundaries, drop notifications and reconcile an exact pending outbox without repeating execution."
+      ]
+    },
+    {
+      "id": "BAND-005",
+      "level": "MUST",
+      "ledger": "P12",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "statement": "Band integration MUST preserve existing durable history, notifications and ordinary room behavior.",
+      "acceptance": [
+        "Run affected native regression gates and authenticated end-to-end room delivery/reconnect checks; verify hidden advancing inbox pages, deadlines on identity/view/proposal/inbox and offline sweep, inactive/deleted rooms, terminal receipts and individual chat deletion."
+      ]
+    },
+    {
+      "id": "OPS-001",
+      "level": "MUST",
+      "ledger": "P5",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Releases MUST include reproducible packages, locks, entrypoints, schemas, configuration and service lifecycle files.",
+      "acceptance": [
+        "Build/install in a clean environment and serve a real request through installed entrypoints."
+      ]
+    },
+    {
+      "id": "OPS-002",
+      "level": "MUST",
+      "ledger": "P5",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Upgrades and rollback MUST preserve receipts, pending work and compatibility with declared durable versions.",
+      "acceptance": [
+        "Migrate/rollback a nonempty store with an unresolved effect and inspect exact identities afterward."
+      ]
+    },
+    {
+      "id": "OPS-003",
+      "level": "MUST",
+      "ledger": "P4",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Retention/archive policy MUST be explicit and cannot silently delete active work or advertised receipts.",
+      "acceptance": [
+        "Exercise policy boundaries and verify archived recovery and deduplication guarantees."
+      ]
+    },
+    {
+      "id": "OPS-004",
+      "level": "MUST",
+      "ledger": "P10",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Operators MUST see queue/storage pressure, faults, repairs, provider use and unknown effects without secret payload logging.",
+      "acceptance": [
+        "Inspect metrics/logs with synthetic secret markers and induced faults/capacity pressure."
+      ]
+    },
+    {
+      "id": "OPS-005",
+      "level": "MUST",
+      "ledger": "P5",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Startup MUST complete ownership, integrity, capability, artifact, expiry and isolation checks before readiness.",
+      "acceptance": [
+        "Start with each prerequisite broken and observe fail-closed readiness."
+      ]
+    },
+    {
+      "id": "OPS-006",
+      "level": "MUST",
+      "ledger": "P9",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Lifecycle MUST terminate owned children and prevent detached workers from mutating closed/reacquired stores.",
+      "acceptance": [
+        "Exercise callback/provider/repair shutdown and subsequent ownership acquisition."
+      ]
+    },
+    {
+      "id": "OPS-007",
+      "level": "MUST",
+      "ledger": "P4",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Backup recovery drills MUST include source/artifacts and pending as well as accepted work.",
+      "acceptance": [
+        "Restore an independently verified release backup and measure recovery with no repeated effects."
+      ]
+    },
+    {
+      "id": "OPS-008",
+      "level": "MUST",
+      "ledger": "P11",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Production qualification MUST name and meet a bounded workload, resource envelope and recovery/latency objectives.",
+      "acceptance": [
+        "Run declared concurrency/load/soak/crash tests and publish measured distributions and limits."
+      ]
+    },
+    {
+      "id": "QUAL-001",
+      "level": "MUST",
+      "ledger": "P16",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2",
+        "remote-agent/1"
+      ],
+      "specification": "implementation-guide.md",
+      "statement": "Requirements, schemas and conformance fixtures MUST be complete, versioned, linked and validated.",
+      "acceptance": [
+        "Validate IDs, links, schema instances, fixture manifests and profile coverage."
+      ]
+    },
+    {
+      "id": "QUAL-002",
+      "level": "MUST",
+      "ledger": "P14",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "implementation-guide.md",
+      "statement": "Interoperability claims MUST include independent semantic assertions or a second implementation in addition to reference output.",
+      "acceptance": [
+        "Run a second-language reducer/oracle and mutation-sensitive expected trace checks."
+      ]
+    },
+    {
+      "id": "QUAL-003",
+      "level": "MUST",
+      "ledger": "P12",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Evidence MUST identify exact tested artifacts, commands, real exit codes and failed/skipped/incomplete checks.",
+      "acceptance": [
+        "Verify a machine-readable release audit against produced artifacts and requirement dispositions."
+      ]
+    },
+    {
+      "id": "QUAL-004",
+      "level": "MUST",
+      "ledger": "P15",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "implementation-guide.md",
+      "statement": "Generation guidance MUST preserve authority boundaries, unknown-effect handling and independent semantic quality checks.",
+      "acceptance": [
+        "Generate/inspect an adapter from the specification and reject a deliberately weakened boundary."
+      ]
+    },
+    {
+      "id": "QUAL-005",
+      "level": "MUST",
+      "ledger": "P12",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "statement": "Implemented, reviewed, packaged, published, merged and deployed states MUST be reported separately.",
+      "acceptance": [
+        "Audit final delivery against both selected deployment profiles without relabeling pending work."
+      ]
+    }
+  ]
+}

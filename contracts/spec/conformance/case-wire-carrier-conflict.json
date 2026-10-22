@@ -1,0 +1,28 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "wire-carrier-conflict",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"id\":\"m\",\"session\":\"s\",\"kind\":\"k\",\"payload\":{}}",
+      "transport": {
+        "id": "different"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error",
+      "equals": "transport_conflict"
+    }
+  ],
+  "expected": [
+    {
+      "error": "transport_conflict"
+    }
+  ]
+}

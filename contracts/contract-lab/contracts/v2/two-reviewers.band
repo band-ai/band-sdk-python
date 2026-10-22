@@ -1,0 +1,71 @@
+---
+name: two-reviewers
+description: Collect one report from each of two reviewer agents within five minutes.
+engine: 0.2.0-lab.1
+roles: [lead, a, b]
+---
+"""
+One lead agent asks two reviewer agents to review one proposal. Both reports
+must be accepted before the session finishes. Collected means reports received,
+not that the proposal has been approved. Progress updates do not replace reports.
+"""
+contract @1h => expired
+
+"""
+Give both reviewers the same proposal and context. Wait for both reports and
+keep their findings separate when you summarize them.
+"""
+role lead
+
+"""
+Review the proposal independently. Report findings with evidence and
+uncertainty; send progress notes only when they help the lead.
+"""
+role a
+
+"""
+Review the proposal independently. Report findings with evidence and
+uncertainty; send progress notes only when they help the lead.
+"""
+role b
+
+"""
+The proposal to review and the question to answer.
+"""
+type start_review
+  text: text(1..2000)
+
+"""
+Findings, evidence, scope checked and remaining uncertainty.
+"""
+type review
+  text: text(1..2000)
+
+"""
+A short note on progress. It does not count as a review.
+"""
+type progress
+  text: text(1..200)
+
+"""
+The lead sends the proposal to both reviewers.
+"""
+state new
+  lead -> {a,b}: start_review() => reviewing
+
+"""
+Each reviewer reports within five minutes; progress notes may arrive meanwhile.
+"""
+state reviewing
+  {a,b} -> lead: review() each @5m => collected | stalled
+  event {a,b} -> lead: progress()
+
+"""
+Both reports arrived. The proposal is not approved until the lead says so.
+"""
+end collected
+
+"""
+A report is missing. The lead decides how to recover.
+"""
+end stalled

@@ -1,0 +1,274 @@
+{
+  "created_at": "2026-10-15T07:36:02.975256+00:00",
+  "assignment": {
+    "op": "op-cgb7ffgk",
+    "sid": "5ecoid32wkr2p",
+    "base": "26aaf85"
+  },
+  "migration_red_before_edit": {
+    "every_reply_source_is_U": false,
+    "new_sugar_cases_present": false,
+    "actual_exit_code": 1
+  },
+  "migration_green": {
+    "actual_exit_code": 0,
+    "all_45_sources_U": true,
+    "source_hashes_verified": true,
+    "native_portable_sources_identical": true,
+    "immutable_old_sources_checked": 28,
+    "retained_source_body_compile_and_runtime_expectations_exact": [
+      "overlap-useful-exhaustive",
+      "overlap-bare-fallback",
+      "coverage-false-false-gap",
+      "disjoint-total-control",
+      "s4-16x4-staggered-booleans",
+      "s4-disjoint-large-domain",
+      "s4-disjoint-bigint-domain",
+      "s4-16x4-total-boundary",
+      "limit-17-rows",
+      "limit-5-literals",
+      "limit-contract-272-rows",
+      "unknown-enum-literal",
+      "unknown-boolean-literal",
+      "c1-late-reply-reentered-wait",
+      "c1-cycle-without-max-entries",
+      "c1-rebind-state-event",
+      "c1-rebind-anystate-event",
+      "c1-acyclic-cross-wait",
+      "c1-acyclic-rebind",
+      "c1-acyclic-wrong-reference",
+      "c1-reply-kind-ordinary-rule",
+      "c1-reply-kind-anystate-event",
+      "v4-renew-all-targets-terminal-first",
+      "v4-renew-all-targets-long-first",
+      "v4-renew-exact-boundary",
+      "reserve-0-or-3-underflow",
+      "reserve-0-or-3-short",
+      "reserve-0-or-3-long"
+    ],
+    "decision_4_replacements": {
+      "c1-cycle-without-binding": "c1-cycle-no-eligible-ref",
+      "c1-acyclic-missing-binding": "c1-acyclic-implicit-binding",
+      "c1-acyclic-missing-reference": "c1-acyclic-implicit-reference"
+    },
+    "implicit_stale_reply_asserts_w2_binding_and_current_version": true,
+    "all_requested_new_cases_present": true,
+    "correlation_negatives_pin_offending_line": true
+  },
+  "generator_deterministic": true,
+  "source_hashes": {
+    "suite.json": "2ea0e6d3791cbd475c1d12cfacd9cc80f2843b375f149dba430eb7f4ded0bed8",
+    "semantic-inputs.json": "b50ff3af9c600d2be3b220c953e15a238c7df78b1388cc90d6988a1e520f1813",
+    "EXPECTED.md": "7bba598960849d19ab38f430cf50146199b1b873daad478bb936d1bc00e8cfb4"
+  },
+  "commands": [
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--write"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--write"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--repo",
+        "~/band-codex-engineers-workspace/felix-replies-u-kenji-baseline-5c00d5e",
+        "--old-repo",
+        "~/band-codex-engineers-workspace/felix-replies-baseline-95c9b25",
+        "--report",
+        "spec/conformance/replies-adversarial/evidence/u-baseline-red.json"
+      ],
+      "exit_code": 1,
+      "elapsed_ms": 1003,
+      "passed": 4,
+      "failed": 46,
+      "candidate_head": "5c00d5e4059e549d707a5d6e2e49faa14e2c0b0c"
+    },
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--repo",
+        "~/band-codex-engineers-workspace/felix-replies-u-kenji-baseline-3252030",
+        "--old-repo",
+        "~/band-codex-engineers-workspace/felix-replies-baseline-95c9b25",
+        "--report",
+        "spec/conformance/replies-adversarial/evidence/u-baseline-red.json"
+      ],
+      "exit_code": 1,
+      "candidate_head": "325203095dbf255fbed03b778861c068a58a033c",
+      "elapsed_ms": 1061,
+      "passed": 4,
+      "failed": 46
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--repo",
+        "~/band-codex-engineers-workspace/felix-replies-u-kenji-baseline",
+        "--old-repo",
+        "~/band-codex-engineers-workspace/felix-replies-baseline-95c9b25",
+        "--report",
+        "spec/conformance/replies-adversarial/evidence/u-baseline-red.json"
+      ],
+      "exit_code": 1,
+      "candidate_head": "4eb674ca2f10fe53f7df206e5fea78b779d0555d",
+      "elapsed_ms": 911,
+      "passed": 4,
+      "failed": 46
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "baseline": {
+    "candidate_head": "4eb674ca2f10fe53f7df206e5fea78b779d0555d",
+    "source_tracked_clean": true,
+    "old_head": "95c9b25a3ead70d94fb3977a81dd7cd13d22097c",
+    "old_source_tracked_clean": true,
+    "candidate_feature_green": false,
+    "expected_feature_red": "U unsupported; all 45 vectors plus atom/code compound probe RED at syntax; harness and old-reader probes PASS",
+    "force_compile": {
+      "argv": [
+        "mix",
+        "compile",
+        "--force"
+      ],
+      "exit_code": 0,
+      "elixir": "1.18.4-otp-27",
+      "erlang": "27.3.4.17"
+    },
+    "beam_sha256": {
+      "contract_lab/ebin/Elixir.Collectable.ContractLab.CommandCapture.beam": "6241fdb0e74f70435aebf7e514665336a43cb0987e45ab35feed3f74746ecd0d",
+      "contract_lab/ebin/Elixir.ContractLab.AdmissionLimits.beam": "6b67679af4be5c7aa4eb1eb16e6fd9b0c0bc64752ec68d8db6a186de441b2c41",
+      "contract_lab/ebin/Elixir.ContractLab.AgentGate.beam": "d3be115eca9fc13b1655270c1bd0b34c76443c6867dfb961b49d3f087a3d75a2",
+      "contract_lab/ebin/Elixir.ContractLab.CLI.beam": "b4f1796f7f597c0c309ece0d38c3592b850cd0492b029b04856d33b9945c4628",
+      "contract_lab/ebin/Elixir.ContractLab.Canonical.beam": "14a6e6d176adea11b44bf4e79c7ef7e025a70e0be57873fc0dc60d8b7cb2e0fe",
+      "contract_lab/ebin/Elixir.ContractLab.Checkpoint.beam": "52425d508fa6041d84175c04e3c7e82986870ccb1cf738f2e50d0e03a0d6be6c",
+      "contract_lab/ebin/Elixir.ContractLab.Closing.beam": "ee7c8e0fe4b2f5c93e61a3b081bab39f00e9be68ab50f9aeeab4271e12ec6009",
+      "contract_lab/ebin/Elixir.ContractLab.Collections.beam": "b9f15b2dac90e0482104053fc8f2be3723e9d92dde94e8c8ec240d22eb9de661",
+      "contract_lab/ebin/Elixir.ContractLab.CommandCapture.beam": "cda9aaec6d82cad541fa0985bf0f039b6bf3ff89355e9d5bd1d202b7b5ca0110",
+      "contract_lab/ebin/Elixir.ContractLab.CommandSidecar.beam": "4deb660c2273ae21485b85a2020a23938026b18ea628b60fa2512a5e7f0c40a9",
+      "contract_lab/ebin/Elixir.ContractLab.Compiler.beam": "e37f571d2fe9581668fb82b87ac772046af55be6cafeaae28cb2a90d6c346939",
+      "contract_lab/ebin/Elixir.ContractLab.Contributions.beam": "94e0a389517bb37eaa312ca451462fe66acbe52971ece24aa33ac9a66e8d08ca",
+      "contract_lab/ebin/Elixir.ContractLab.Endpoint.beam": "fc4b1f7eb6f5db1fc3085f4ee8623dc7cab3db645d14afcc61ee39fd91326e88",
+      "contract_lab/ebin/Elixir.ContractLab.Engine.beam": "0655f06b9c25824e18729d00d061fae91ee9406bdcddb6acd1e199db521a902e",
+      "contract_lab/ebin/Elixir.ContractLab.FileSource.beam": "281336cdb3464bcdb6ce5933e61407293e09823849302afb01a7b6d93272104c",
+      "contract_lab/ebin/Elixir.ContractLab.Format.beam": "6537a1bc44f1f49f79c0f98b5a744b0552a23739159989af16180c800d1d9a6a",
+      "contract_lab/ebin/Elixir.ContractLab.HostInputs.beam": "ae0bf41828bd3a89ed44b614bb7900c051ea7e14391697dc209f513091729895",
+      "contract_lab/ebin/Elixir.ContractLab.HostKey.beam": "3a59470749818e04543b651c5045f967db3487d3f10439ee8a11442552c75da5",
+      "contract_lab/ebin/Elixir.ContractLab.HostSignals.beam": "d0d7da2c4ea72a1c28cd4e19a746d2e3786f1348ba431b1730fb27b776978e58",
+      "contract_lab/ebin/Elixir.ContractLab.Journal.beam": "397e82c2a936bf708068f0330199e7b641cb7540d48ce1c6744ca403a2e2eaa8",
+      "contract_lab/ebin/Elixir.ContractLab.Mentions.beam": "f2bc4a0caf805dc254fdb9e08ace22e64bfcc3f3518d92c0bc9181e5afa0232a",
+      "contract_lab/ebin/Elixir.ContractLab.MixCommand.beam": "ef2eb0b8392137ba7064bd0fa8e429c48cfd12d66d17d9386d0077acec14ebac",
+      "contract_lab/ebin/Elixir.ContractLab.Program.beam": "dd4af9f1d95f7029b058f90f8e090aaf1700648d72a5ecb40d217d84b45d21bf",
+      "contract_lab/ebin/Elixir.ContractLab.Prompts.beam": "6d473b60fa9537f1dec5c52a2cc565523c757d58d74514e8415d110b5a87a7d6",
+      "contract_lab/ebin/Elixir.ContractLab.Renewal.beam": "ae92acb84052c706df3ed41723101639ee0075d96e8509b66b221a13729e130d",
+      "contract_lab/ebin/Elixir.ContractLab.Replacement.beam": "d740e523cb45ab2cc7e942b8bdb3fd264f694316534213d6875786fa5f3e833e",
+      "contract_lab/ebin/Elixir.ContractLab.Replies.beam": "084ca150214caff4154bbd6047bf0f3f2c66901a6cda67be828cf6f9fdd6c05f",
+      "contract_lab/ebin/Elixir.ContractLab.Reserve.beam": "d01d3856a5d4c6f12005d9cd0457170fdd5222818ba8420b9125497df19a9a4d",
+      "contract_lab/ebin/Elixir.ContractLab.RoomEvents.beam": "b7ef2dd4bd5482627bf0a79bf81c7f0ebc0d088ea615c047cce6b35fcfe2afbf",
+      "contract_lab/ebin/Elixir.ContractLab.RoomPolicy.beam": "fa6ace188668562f99d7b5a8cd3012f96a3c534a5b34c7338d614c87d425a8c7",
+      "contract_lab/ebin/Elixir.ContractLab.Roster.beam": "c22b290f6352c9fbed187ab636980d8ceb31a713953b5d33b304d9839c7abe24",
+      "contract_lab/ebin/Elixir.ContractLab.Runner.beam": "83d18366104cb3e52d1c8d7936f657861053e40e55c32ad4f014e99171b4f49e",
+      "contract_lab/ebin/Elixir.ContractLab.SafePattern.beam": "d1182d0c1f8953fa684c88c370edcb385db23d429181c36ccf37925521e74445",
+      "contract_lab/ebin/Elixir.ContractLab.Scenario.beam": "99890cb17925917fbf897b862b526bf270e22a3a63e786a1576ab84cfb96860a",
+      "contract_lab/ebin/Elixir.ContractLab.Source.beam": "c4090c744f82d873ec13a0d6557265918794adb1c837aad3953d63562a1af8e7",
+      "contract_lab/ebin/Elixir.ContractLab.StateCodec.beam": "b6cc6c9d4f1f449f29f3d6dac00b93e22e25639b4fd786c58246f4ef93fc2d91",
+      "contract_lab/ebin/Elixir.ContractLab.Totals.beam": "be90187f3486ca25ba76f17c24065d318b2be2ca977993b548342d7e52c297a6",
+      "contract_lab/ebin/Elixir.ContractLab.Wire.beam": "c8e506692dc5f1447d5ffe0460a651f05b059735835f406df1d0f15bbfb835e1",
+      "contract_lab/ebin/Elixir.ContractLab.beam": "3df0ee7c6a1b3b82e68d328a5b8541608188a33148d4a6f07b3eb694831a1f3f",
+      "contract_lab/ebin/Elixir.Mix.Tasks.Contract.Check.beam": "f4e233cc9f2e5a3350a9ba83bb49622984b439da87921ccbf57f2c23ca100dc1",
+      "contract_lab/ebin/Elixir.Mix.Tasks.Contract.Format.beam": "3a477cd9d260bd70b76b05401cc001ff20ba3070291fc1a5639504601699da84",
+      "contract_lab/ebin/Elixir.Mix.Tasks.Contract.HostKey.beam": "c501b8010085219e1f40b55801a2cf1422e84e11b7bfefaa0515580c291f8197",
+      "contract_lab/ebin/Elixir.Mix.Tasks.Contract.Query.beam": "5524c5f44c1be615773d45944a48f6eed10c249007aa469c3f0bf1635db13f13",
+      "contract_lab/ebin/Elixir.Mix.Tasks.Contract.Replay.beam": "816d805ae80d34738fb4f458b3cb032376b012815d047df3464b4d54159799ad",
+      "header_spikes/ebin/Elixir.HeaderSpikes.FileSnapshot.beam": "96d29e22609dffb04771de8f62a289809209b9714288387819438d7f4d2966a1",
+      "header_spikes/ebin/Elixir.HeaderSpikes.Graphemes.beam": "81cbdb5a9d7356347e9e1eab0b51f648708197e1091dc5801797b4269e005cdb",
+      "header_spikes/ebin/Elixir.HeaderSpikes.Prefix.beam": "d1a4574beb89f9264a1c3be0f289db9b661a161eb5648673a5aa242f7307e13f",
+      "header_spikes/ebin/Elixir.HeaderSpikes.Schema.beam": "78740caf53cd0c3dd4954ffe35b3db47989860bb669ccdecfc5932e44033985a",
+      "header_spikes/ebin/Elixir.HeaderSpikes.Yaml.beam": "fd0a3fae78b459b866b6ff20b89f32c13999222a7b7b1c0936453e79f7ed21ef",
+      "header_spikes/ebin/Elixir.HeaderSpikes.beam": "1eb957499b4220ee8006b1788e1461d2fe4a4a4084afe54bed40f49583c288fc",
+      "yamerl/ebin/yamerl.beam": "5280bcedc6ca867a655119170d56e5a0fc761fb3ebe1b2d4cd8f39ef913cbc3b",
+      "yamerl/ebin/yamerl_app.beam": "22b019bc9223814fa080adb302112751292b21cda427e3a30be5ead5b36b78b1",
+      "yamerl/ebin/yamerl_constr.beam": "c8085b18f9c1259668eec0b44ab7b2f801fc79fb0c7b775c7530b4cadec33600",
+      "yamerl/ebin/yamerl_errors.beam": "f940f521866508668eed6b91b7e7c260c81f0ea3d18b8497abb05e0a09076d8f",
+      "yamerl/ebin/yamerl_node_binary.beam": "c8d504ed05b62fd03274f6428bd6b7bb9a73880ce352337c8000a67ea42319d9",
+      "yamerl/ebin/yamerl_node_bool.beam": "a1182a567aa597b37cc16201c4dfc217b452e79a7735e6681eaa301c17537de6",
+      "yamerl/ebin/yamerl_node_bool_ext.beam": "6ce7fb293595ddf8d67911470c513d6895e5e37d7e1b2653c509c7462b8070c4",
+      "yamerl/ebin/yamerl_node_bool_json.beam": "ddbdb9d06f1906a06fc11564cfdf3525ff76ff82a0e574560298beca41d5eebc",
+      "yamerl/ebin/yamerl_node_erlang_atom.beam": "9433994f56ab032a10ea372d7f57873f23166419e0372fe031c15a657d03b843",
+      "yamerl/ebin/yamerl_node_erlang_fun.beam": "9e165838c2fcac5a4926e5ed5467ce59a62f3606b0e6f17f86fef3a2fb211e3b",
+      "yamerl/ebin/yamerl_node_float.beam": "bfd183d634df909f6d61b8d1047a4bb9c5144f36b20e0c9b5370a3870d62d142",
+      "yamerl/ebin/yamerl_node_float_ext.beam": "f43470fddeb3836cb5d81f551c17884aaa251f528f7772556ec73f207f69a6cc",
+      "yamerl/ebin/yamerl_node_float_json.beam": "6a6b565153fbe6f08360ff94a3a0f562d86c64db10e1d55250894ed8fe62106a",
+      "yamerl/ebin/yamerl_node_int.beam": "13a78726c091ca9815a015ef5700057b9a13077a0eb33b74997a06d3b34cb776",
+      "yamerl/ebin/yamerl_node_int_ext.beam": "b7dfa7f064935ce75cfc59121609798005c33493e551161b31e6c8636be1b2ef",
+      "yamerl/ebin/yamerl_node_int_json.beam": "39af0ca8fd14d8e80a1740914aaae78e6ab79621a23dc7d4da720f565512bb08",
+      "yamerl/ebin/yamerl_node_ipaddr.beam": "554df582aa47b6fe188050546fe5a87f26f57c8ee923b658c5090ea98a27737b",
+      "yamerl/ebin/yamerl_node_map.beam": "67324f210b2a6d8f4ae28666752241b8e478c1e34ac258c9183c5b18c947319c",
+      "yamerl/ebin/yamerl_node_null.beam": "2afe8f8af5ce5f0e73f85ec183f5b893254d592eeb4aad9ae718903f3b3875d3",
+      "yamerl/ebin/yamerl_node_null_json.beam": "adba88e89a658927e9ed8821c14535117e5013ed56cef192800ef84220083885",
+      "yamerl/ebin/yamerl_node_seq.beam": "42ade2332500091c39558fb4c9a77b5a8b2d17a68b52314fcc70d5baa27825c5",
+      "yamerl/ebin/yamerl_node_size.beam": "818a8ab56bae1d47c4d468ee221b2a8a7bb0a1582ef31e6f4b62e373b39f36de",
+      "yamerl/ebin/yamerl_node_str.beam": "5e10f2410f457b50e9423abd74954f3ef6c54591772752c306adfefce7296e84",
+      "yamerl/ebin/yamerl_node_str_json.beam": "cdae8e143cc3f6e78880588e07c42237d14ae9a1a7da8dead0038b17d5dfd8e4",
+      "yamerl/ebin/yamerl_node_timestamp.beam": "dc193147c195117c9c4bd140e4e8fe25d29b529d1ff88345dd995c16ca3b2e3a",
+      "yamerl/ebin/yamerl_parser.beam": "b37f6f3b7d28d993e41ce3119613af029705d1e63a31d311d16f2f3fbc1b4e60",
+      "yamerl/ebin/yamerl_sup.beam": "ff8545edf6e91699ba2e2a74696c592cb9b3f09946e69e20fcd95dd6e9459942",
+      "yamerl/ebin/yamerl_yamler_compat.beam": "9ccf0cd9284d988c05ec674a2e8eef9ff4a7c0289e061a66ed97a1930de50837",
+      "yaml_elixir/ebin/Elixir.YamlElixir.FileNotFoundError.beam": "c6d64ac129ee7c36a86d36200e4b0a78c9295e2ed800f024963550fa6e67dfcb",
+      "yaml_elixir/ebin/Elixir.YamlElixir.Mapper.beam": "da0932e7fc05f7d7fbf7c0dea4c5cf3fd4434d754812aaa147ef8186ecc3852d",
+      "yaml_elixir/ebin/Elixir.YamlElixir.Node.KeywordList.beam": "8a094ccd33938f1304aa6c4891b23a8747f209197a8f2dd57d7ce9434729e5dc",
+      "yaml_elixir/ebin/Elixir.YamlElixir.ParsingError.beam": "c43d93a0e8c31a18770221306d8812b04f21bfc8d34993367505072852489434",
+      "yaml_elixir/ebin/Elixir.YamlElixir.Records.beam": "fcfbfcfeb3cbda4e1aeaf20b90740edd4a6de039b24a923dc46f871401c2a2d3",
+      "yaml_elixir/ebin/Elixir.YamlElixir.Sigil.beam": "070fef9f10a316006bcb7df6f4fb46fbe71bd553b5cc5ef28b07ed00bbef0d8b",
+      "yaml_elixir/ebin/Elixir.YamlElixir.beam": "dff67840431461cf46d867b8b67a452ea18495492857813e37de6a81e9f2e43f"
+    },
+    "intake_head": "5c00d5e4059e549d707a5d6e2e49faa14e2c0b0c",
+    "foreign_dirty_work_excluded": true,
+    "baseline_observed_at": "2026-10-15T07:38:18.620720+00:00"
+  },
+  "schema_only": {
+    "argv": [
+      "python3",
+      "spec/tools/checkspec.py",
+      "--schema-only"
+    ],
+    "exit_code": 0,
+    "cases": 164,
+    "assertions": 369,
+    "adapter_checked": false,
+    "qualification": "not_assessed"
+  },
+  "input_sha256": {
+    "SYNTAX-OPTIONS.md": "76f433b48bf33c570e1841d2bc6cfcb60a991cad5ad9153890863d5fca04227a",
+    "COVERAGE.md": "84f535c9274bb212ad21f6c7ff3d9c9c24d94d59b7633063275ab235a447cce8"
+  },
+  "refreshed_at": "2026-10-15T07:38:18.635616+00:00"
+}

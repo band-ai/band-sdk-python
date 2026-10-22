@@ -1,0 +1,1740 @@
+{
+  "profile": "band-contract/coverage/1",
+  "revision": "1.0.0-rc.3",
+  "qualification": "not_assessed",
+  "summary": {
+    "requirements": 94,
+    "requirements_with_examples": 36,
+    "requirements_without_examples": 58
+  },
+  "profiles": {
+    "band-room/1": {
+      "requirements": 14,
+      "requirements_with_examples": 2,
+      "requirements_without_examples": 12
+    },
+    "compiler/2": {
+      "requirements": 12,
+      "requirements_with_examples": 9,
+      "requirements_without_examples": 3
+    },
+    "durable-room/1": {
+      "requirements": 19,
+      "requirements_with_examples": 0,
+      "requirements_without_examples": 19
+    },
+    "remote-agent/1": {
+      "requirements": 45,
+      "requirements_with_examples": 6,
+      "requirements_without_examples": 39
+    },
+    "room-events/1": {
+      "requirements": 4,
+      "requirements_with_examples": 3,
+      "requirements_without_examples": 1
+    },
+    "session-engine/2": {
+      "requirements": 18,
+      "requirements_with_examples": 16,
+      "requirements_without_examples": 2
+    },
+    "standalone-http/1": {
+      "requirements": 8,
+      "requirements_with_examples": 1,
+      "requirements_without_examples": 7
+    }
+  },
+  "requirements": [
+    {
+      "id": "DSL-001",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Compile equivalent current packages in both supported forms; reject the native header without executing a body."
+      ],
+      "examples": {
+        "cases": [
+          "v2-frontmatter-and-standard-discovery",
+          "v2-reject-idle-header",
+          "v2-reject-native-header"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-002",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Probe exact boundary, oversized, unterminated, CRLF and invalid UTF-8 prefixes."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-003",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Reject traversal, symlinks, changed prefixes, changed bodies and oversized source."
+      ],
+      "examples": {
+        "cases": [
+          "v2-frontmatter-and-standard-discovery",
+          "v2-m21-unknown-engine",
+          "v2-m21-file-integrity",
+          "v2-m21-source-pin",
+          "v2-m21-state-profile",
+          "v2-m21-checkpoint-profile",
+          "v2-m21-view-profile",
+          "v2-m21-cross-profile-state"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-004",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Run positive and negative grammar vectors for every declaration and option."
+      ],
+      "examples": {
+        "cases": [
+          "v2-compile-agent-control",
+          "v2-compile-all-participants",
+          "v2-compile-assignment",
+          "v2-compile-bounded-review",
+          "v2-compile-explicit-infinity",
+          "v2-compile-first-responder",
+          "v2-compile-history-review-v2",
+          "v2-compile-history-review",
+          "v2-compile-hybrid-assistant",
+          "v2-compile-program-counter",
+          "v2-compile-progress-events",
+          "v2-compile-room-events",
+          "v2-compile-selected-deadlines",
+          "v2-compile-team-review",
+          "v2-reject-activity",
+          "v2-reject-due-all",
+          "v2-reject-due-any",
+          "v2-reject-plus-type",
+          "v2-m22-entry-self",
+          "v2-m22-entry-next",
+          "v2-m22-entry-any-state",
+          "v2-m22-entry-each",
+          "v2-m22-entry-deadline",
+          "v2-m22-entry-limit",
+          "v2-m22-pattern-syntax",
+          "v2-m22-pattern-cost",
+          "v2-m22-attributes-bytes"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-005",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Check indentation, escapes, newline, field/rule/duty attachment, interpolation rejection and orphan literals."
+      ],
+      "examples": {
+        "cases": [
+          "v2-compile-agent-control",
+          "v2-compile-all-participants",
+          "v2-compile-assignment",
+          "v2-compile-bounded-review",
+          "v2-compile-explicit-infinity",
+          "v2-compile-first-responder",
+          "v2-compile-history-review-v2",
+          "v2-compile-history-review",
+          "v2-compile-hybrid-assistant",
+          "v2-compile-program-counter",
+          "v2-compile-progress-events",
+          "v2-compile-room-events",
+          "v2-compile-selected-deadlines",
+          "v2-compile-team-review",
+          "v2-documentation-basic",
+          "v2-documentation-continuation",
+          "v2-documentation-crlf",
+          "v2-documentation-escaped-interpolation",
+          "v2-documentation-indent",
+          "v2-documentation-unicode"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-006",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Reject invalid bounds, duplicate values and unknown reference types."
+      ],
+      "examples": {
+        "cases": [
+          "v2-invalid-duplicate-ref-kind",
+          "v2-invalid-reversed-bounds",
+          "v2-invalid-unknown-ref-kind",
+          "v2-invalid-unsafe-bound",
+          "v2-m22-entry-self",
+          "v2-m22-entry-next",
+          "v2-m22-entry-any-state",
+          "v2-m22-entry-each",
+          "v2-m22-entry-deadline",
+          "v2-m22-entry-limit",
+          "v2-m22-pattern-syntax",
+          "v2-m22-pattern-cost",
+          "v2-m22-attributes-bytes"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-007",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Assert each documented error code with a bounded line/detail result."
+      ],
+      "examples": {
+        "cases": [
+          "v2-invalid-bad-doc-unicode",
+          "v2-invalid-duplicate-type",
+          "v2-invalid-interpolation",
+          "v2-invalid-reference",
+          "v2-invalid-unknown-directive",
+          "v2-invalid-unknown-role"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-008",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Compare full IR in independent adapters; documentation-only changes preserve only the behavior digest."
+      ],
+      "examples": {
+        "cases": [
+          "v2-compile-agent-control",
+          "v2-compile-all-participants",
+          "v2-compile-assignment",
+          "v2-compile-bounded-review",
+          "v2-compile-explicit-infinity",
+          "v2-compile-first-responder",
+          "v2-compile-history-review-v2",
+          "v2-compile-history-review",
+          "v2-compile-hybrid-assistant",
+          "v2-compile-program-counter",
+          "v2-compile-progress-events",
+          "v2-compile-room-events",
+          "v2-compile-selected-deadlines",
+          "v2-compile-team-review",
+          "v2-frontmatter-and-standard-discovery"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-009",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Query every node category and check filtering plus metadata preservation."
+      ],
+      "examples": {
+        "cases": [
+          "v2-compile-agent-control",
+          "v2-compile-all-participants",
+          "v2-compile-assignment",
+          "v2-compile-bounded-review",
+          "v2-compile-explicit-infinity",
+          "v2-compile-first-responder",
+          "v2-compile-history-review-v2",
+          "v2-compile-history-review",
+          "v2-compile-hybrid-assistant",
+          "v2-compile-program-counter",
+          "v2-compile-progress-events",
+          "v2-compile-room-events",
+          "v2-compile-selected-deadlines",
+          "v2-compile-team-review",
+          "v2-query-selectors"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DSL-010",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "contract-dsl.md",
+      "acceptance": [
+        "Fuzz bounded source, escapes, invalid Unicode, huge digits and unsupported YAML constructs."
+      ],
+      "examples": {
+        "cases": [
+          "v2-invalid-bad-doc-unicode",
+          "v2-invalid-duplicate-type",
+          "v2-invalid-interpolation",
+          "v2-invalid-reference",
+          "v2-invalid-unknown-directive",
+          "v2-invalid-unknown-role"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-001",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Reject missing/extra/duplicate bindings, invalid IDs, absent policy and overflow."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-session-configuration",
+          "v2-m22-entry-self",
+          "v2-m22-entry-next",
+          "v2-m22-entry-any-state",
+          "v2-m22-entry-each",
+          "v2-m22-entry-deadline",
+          "v2-m22-entry-limit",
+          "v2-m22-pattern-syntax",
+          "v2-m22-pattern-cost",
+          "v2-m22-attributes-bytes"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-002",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Run raw JSON and transport-carrier vectors including literal escapes and nested duplicate keys."
+      ],
+      "examples": {
+        "cases": [
+          "wire-0",
+          "wire-1",
+          "wire-2",
+          "wire-3",
+          "wire-4",
+          "wire-5",
+          "wire-6",
+          "wire-carrier-conflict",
+          "carrier-http-path",
+          "carrier-email-headers",
+          "carrier-equal-body-and-headers",
+          "carrier-body-defaults",
+          "carrier-mapped-source-absent-fallback",
+          "carrier-optional-absent",
+          "carrier-required-id",
+          "carrier-required-kind",
+          "carrier-required-payload",
+          "carrier-conflict-id",
+          "carrier-encode-conflict-id",
+          "carrier-conflict-session",
+          "carrier-encode-conflict-session",
+          "carrier-conflict-kind",
+          "carrier-encode-conflict-kind",
+          "carrier-conflict-expected_version",
+          "carrier-encode-conflict-expected_version",
+          "carrier-encode-http-omit-only-supplied",
+          "carrier-encode-email-omit-supplied",
+          "carrier-encode-fallback-keeps-body",
+          "carrier-encode-optional-absent",
+          "carrier-encode-cannot-introduce-optional",
+          "carrier-forbidden-map-actor",
+          "carrier-encode-forbidden-map-actor",
+          "carrier-forbidden-map-clock",
+          "carrier-encode-forbidden-map-clock",
+          "carrier-forbidden-map-payload",
+          "carrier-encode-forbidden-map-payload",
+          "carrier-forbidden-map-unknown",
+          "carrier-encode-forbidden-map-unknown",
+          "carrier-invalid-map-0",
+          "carrier-invalid-map-1",
+          "carrier-invalid-map-2",
+          "carrier-invalid-map-3",
+          "carrier-invalid-map-4",
+          "carrier-undeclared-supplied-source",
+          "carrier-shared-source-validates-each-field",
+          "carrier-body-token-is-not-external",
+          "carrier-external-type-id-",
+          "carrier-external-type-id-1",
+          "carrier-external-type-kind-",
+          "carrier-external-type-kind-True",
+          "carrier-external-type-session-1",
+          "carrier-version-0",
+          "carrier-version-1",
+          "carrier-version-2",
+          "carrier-version-3",
+          "carrier-version-4",
+          "carrier-version-5",
+          "carrier-duplicate-json",
+          "carrier-float-json",
+          "carrier-unsafe-json",
+          "carrier-trailing-json",
+          "carrier-actor-in-body",
+          "carrier-raw-size",
+          "carrier-normalized-size",
+          "carrier-legacy-id-session",
+          "carrier-cross-carrier-retry"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-003",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Compare byte vectors in at least two languages including controls and astral Unicode."
+      ],
+      "examples": {
+        "cases": [
+          "canonical-0",
+          "canonical-1",
+          "canonical-2",
+          "canonical-3",
+          "canonical-4",
+          "canonical-5",
+          "canonical-6",
+          "canonical-7"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-004",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Pass the pinned Unicode GraphemeBreakTest corpus and cross-runtime drift regressions; test exact multibyte byte bounds, grapheme bounds and rejected grapheme-only declarations."
+      ],
+      "examples": {
+        "cases": [
+          "v2-unicode16-graphemes",
+          "v2-utf8-and-grapheme-boundaries",
+          "v2-reject-grapheme-only"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-005",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Use inputs violating multiple conditions to assert the selected reason and any persisted expiry."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-identity-version-envelope",
+          "v2-trace-history-review-cancel",
+          "v2-trace-history-review-changes",
+          "v2-trace-history-review-idle",
+          "v2-trace-history-review-rejections",
+          "v2-trace-history-review-success",
+          "v2-trace-history-review-unclaimed",
+          "v2-trace-history-review-v2-deadline",
+          "v2-worked-session",
+          "carrier-cross-carrier-retry"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-006",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Compare exact state and decision after every trace step."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-trace-history-review-cancel",
+          "v2-trace-history-review-changes",
+          "v2-trace-history-review-idle",
+          "v2-trace-history-review-rejections",
+          "v2-trace-history-review-success",
+          "v2-trace-history-review-unclaimed",
+          "v2-trace-history-review-v2-deadline",
+          "v2-worked-session"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-007",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Reject a nonexistent ID, another fact of the same kind and an obsolete rebound ID."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-identity-version-envelope",
+          "v2-trace-history-review-cancel",
+          "v2-trace-history-review-changes",
+          "v2-trace-history-review-idle",
+          "v2-trace-history-review-rejections",
+          "v2-trace-history-review-success",
+          "v2-trace-history-review-unclaimed",
+          "v2-trace-history-review-v2-deadline",
+          "v2-worked-session"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-008",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Test all roles, selected sets, duplicate contributions, multiple timed events and first-responder behavior; reject removed due all/any grammar."
+      ],
+      "examples": {
+        "cases": [
+          "v2-each-all-participants",
+          "v2-each-deadline-boundary",
+          "v2-first-responder",
+          "v2-independent-selected-duties",
+          "v2-reject-activity",
+          "v2-reject-due-all",
+          "v2-reject-due-any",
+          "v2-reject-plus-type"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-009",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Test just-before/equal/after, ties, late observation, clock regression and terminal idempotence."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-clock-regression",
+          "v2-each-deadline-boundary",
+          "v2-inactivity-accepted",
+          "v2-inactivity-marked",
+          "v2-inactivity-transition",
+          "v2-independent-selected-duties",
+          "v2-timer-tie-duty-id",
+          "v2-timer-tie-inactivity",
+          "v2-timer-tie-lifetime",
+          "v2-trace-history-review-cancel",
+          "v2-trace-history-review-changes",
+          "v2-trace-history-review-idle",
+          "v2-trace-history-review-rejections",
+          "v2-trace-history-review-success",
+          "v2-trace-history-review-unclaimed",
+          "v2-trace-history-review-v2-deadline"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-010",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Exercise accepted events, transitions, duplicate/rejected/read attempts without idle expiry; reject removed source forms and check timed owed-work expiry."
+      ],
+      "examples": {
+        "cases": [
+          "v2-inactivity-accepted",
+          "v2-inactivity-marked",
+          "v2-inactivity-transition",
+          "v2-worked-session",
+          "v2-reject-activity",
+          "v2-reject-due-all",
+          "v2-reject-due-any",
+          "v2-reject-plus-type",
+          "v2-reject-idle-header"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-011",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Exercise exact limit, overflow, self-loop and preservation of attempted-entry count."
+      ],
+      "examples": {
+        "cases": [
+          "v2-entry-cap"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-012",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Resend before/after completion/expiry and reject conflicting actor/payload/version under the same ID."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-each-deadline-boundary",
+          "v2-identity-version-envelope",
+          "v2-worked-session"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-013",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Check sender exclusion, deduplicated delivery, message-cap recovery, more than 200 accepted mentions, and rejected mention_budget syntax."
+      ],
+      "examples": {
+        "cases": [
+          "v2-each-all-participants",
+          "v2-message-budget",
+          "v2-reject-session-mention-budget",
+          "v2-mentions-not-cumulative"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-014",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Compare views of every participant and reject outsiders."
+      ],
+      "examples": {
+        "cases": [
+          "v2-band-session",
+          "v2-private-receipt-projection",
+          "v2-role-visibility"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-015",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Round-trip full/redacted state and reject malformed recomputed-checksum packets."
+      ],
+      "examples": {
+        "cases": [
+          "v2-checkpoint-corruption",
+          "v2-checkpoint-restore",
+          "v2-private-receipt-projection",
+          "v2-role-visibility",
+          "v2-m21-unknown-engine",
+          "v2-m21-file-integrity",
+          "v2-m21-source-pin",
+          "v2-m21-state-profile",
+          "v2-m21-checkpoint-profile",
+          "v2-m21-view-profile",
+          "v2-m21-cross-profile-state"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ENG-016",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Compare remote/local decisions, stale views, deadline races and fresh-process restoration."
+      ],
+      "examples": {
+        "cases": [
+          "v2-portable-local-preflight",
+          "v2-private-receipt-projection",
+          "v2-m21-unknown-engine",
+          "v2-m21-file-integrity",
+          "v2-m21-source-pin",
+          "v2-m21-state-profile",
+          "v2-m21-checkpoint-profile",
+          "v2-m21-view-profile",
+          "v2-m21-cross-profile-state"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ROOM-001",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Verify no session transition/counter changes and reject unauthorized/session-bearing traffic."
+      ],
+      "examples": {
+        "cases": [
+          "v2-room-quota-retention"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ROOM-002",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Test multi-window gaps, exact boundaries and budget exhaustion."
+      ],
+      "examples": {
+        "cases": [
+          "v2-room-quota-retention"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ROOM-003",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Test duplicates across windows and explicit retention-limit rejection."
+      ],
+      "examples": {
+        "cases": [
+          "v2-room-quota-retention"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "ROOM-004",
+      "profiles": [
+        "room-events/1",
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Restart and race independent owners against the durable event authority."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-001",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Race simultaneous proposals through separate processes and assert one version order."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-002",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Crash after commit before reply and prove exactly one accepted effect/receipt."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-003",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Inject commit/snapshot failure and compare restored state and decisions."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-004",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Stop before a deadline, restart after it and observe the original expired_at and durable outcome."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-005",
+      "profiles": [
+        "durable-room/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        "Reject corrupted records, every corrupted snapshot and mismatched configuration/source."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-006",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Exhaust record, record-byte, database and disk capacities and verify prior commits remain recoverable."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "DUR-007",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Restore a backup containing accepted receipts and pending work; reject corrupt/aliased targets."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-001",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Exercise representative handled, delegated, ambiguous and unsuitable cases with expected semantics."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-002",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Check schema, checkpoint equality, illegal result shapes and no mutation of committed host state."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-003",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Reject forged/conflicting events and repeat a completed event without code/model/effect repetition."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-004",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Alternate qualified and free-form tasks and restart during ongoing takeover."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-005",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Propose wrong-turn, wrong-schema, stale-reference and stale-version outputs and inspect actual room effects."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-006",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Fail the transaction after room acceptance, recover, and assert one reply and one state transition."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-007",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Lose acknowledgements for idempotent and non-idempotent destinations and assert the permitted retry count."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "AG-008",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Exhaust each budget, retry/restart and verify no reset or hot loop."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "IO-001",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Observe the committed exact request at the actual execution boundary for initialization, turns and validation."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "IO-002",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Inspect raw stdout/stderr/result and failure records before the first room send."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "IO-003",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Reject conflicting reuse of an invocation ID and isolate validation identities from live work."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "invocation-replay.json"
+        ]
+      }
+    },
+    {
+      "id": "IO-004",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Crash after output commit before staging and block all execution functions during recovery."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "invocation-replay.json"
+        ]
+      }
+    },
+    {
+      "id": "IO-005",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Exit after input commit and fail output persistence; verify no rerun or publication on ordinary recovery."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "invocation-replay.json"
+        ]
+      }
+    },
+    {
+      "id": "IO-006",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Emit excessive/partial output, terminate, and assert explicit incomplete failure and preserved prior state."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "IO-007",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Disable execution/network interfaces while reconstructing and exporting a recorded invocation/history."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "invocation-replay.json"
+        ]
+      }
+    },
+    {
+      "id": "LLM-001",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Crash and timeout before/after provider result recording; verify uncertainty and completed-result reuse."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "LLM-002",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Return malformed, illegal and semantically wrong model replies and assert the relevant hold/rejection."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "LLM-003",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Stall a provider beyond its deadline and release it after another control/turn boundary."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "LLM-004",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Run the declared semantic quality set with the pinned provider/model and record usage without secrets."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "LLM-005",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Inspect captured prompts for private markers and stress long history/output capacity."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "LLM-006",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "openai-provider.md",
+      "acceptance": [
+        "Recover completed calls, race response and repair results, and compare reported/unreported calls and exact integer token/cost aggregates."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "openai-usage.json",
+          "openai-result-ceil.json",
+          "openai-usage-ceil.json"
+        ]
+      }
+    },
+    {
+      "id": "LLM-007",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "openai-provider.md",
+      "acceptance": [
+        "Capture the real prepared request before dispatch; simulate refusal, incomplete output, body overflow, rate limit and uncertain HTTP failure; verify no effect or repeated call."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "openai-request.json",
+          "openai-result.json"
+        ]
+      }
+    },
+    {
+      "id": "REP-001",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Hold repair execution and complete another live turn before releasing it."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "REP-002",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Reject changed schema, rewritten answers, bad pending-fault handling and insufficient validator evidence."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "REP-003",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Inspect validation invocation records and deny network/filesystem/process effects during probes."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "REP-004",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Advance conversation/control during validation and prove bounded catch-up and no stale automatic resume."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "REP-005",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Restart during generation/install and roll back a compatible artifact without replaying old effects."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "SEC-001",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Run real namespace/seccomp probes on the qualified release host and prove required denials."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "SEC-002",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Remove isolation capability and exercise memory, CPU, descriptors, output and wall-clock exhaustion."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "SEC-003",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Use permissive umask, wrong ownership/writable directories and aliased paths in filesystem probes."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "SEC-004",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Test spoofed body actors, insufficient grants, wrong rooms and revoked membership."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "SEC-005",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "remote-runtime.md",
+      "acceptance": [
+        "Replay/conflict controls and request unauthorized takeover, repair or resume."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "SEC-006",
+      "profiles": [
+        "compiler/2",
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Audit pinned dependencies, input boundaries, storage/effects and documented residual trust with findings dispositions."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "NET-001",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Use valid/untrusted/expired/wrong-host certificates, redirects and nonloopback HTTP."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "NET-002",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Test duplicate Content-Length, transfer encoding, slow TLS/headers/body, response overflow and saturation."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "NET-003",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Reject mismatched/unsupported capabilities before processing agent turns."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": [
+          "band-wire-examples-v2.json"
+        ]
+      }
+    },
+    {
+      "id": "NET-004",
+      "profiles": [
+        "standalone-http/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Fail recovery/storage and inspect unauthenticated/authenticated metrics/log output."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "NET-005",
+      "profiles": [
+        "standalone-http/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Stop during active bounded requests and restart with pending work intact."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "NET-006",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "transport.md",
+      "acceptance": [
+        "Drop notifications/connection, replay history and prove no lost or duplicate replies."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "BAND-001",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "acceptance": [
+        "Exercise both HTTP surfaces, agent-owned keys, human acting contexts, malformed typed IDs, removed/blocked/unbound participants and cross-tenant access; verify exact role coverage, distinct active bindings, immutable create retries and competing rooms claiming one session ID."
+      ],
+      "examples": {
+        "cases": [
+          "v2-human-binding-rejected"
+        ],
+        "artifacts": [
+          "band-wire-examples-v2.json"
+        ]
+      }
+    },
+    {
+      "id": "BAND-002",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "acceptance": [
+        "Race separate request owners and inject each transaction failure boundary, quota refusal and commit-before-reply loss; confirm one accepted state/receipt/chat record, original duplicate decisions and after-commit-only notification."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "BAND-003",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "acceptance": [
+        "Forge contract-looking metadata and verify adapter/authority rejection; submit a private canary in the proposal ID and prove it is absent from shared chat records and notifications while the expected receipt_handle is present; inspect the same records for private payload/documentation canaries and prove that only authenticated role data supplies the actual facts."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "BAND-004",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "acceptance": [
+        "Run a remote host against a real Band room; pin actor/session/source identities, inspect credentials/data/authority boundaries, drop notifications and reconcile an exact pending outbox without repeating execution."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "BAND-005",
+      "profiles": [
+        "band-room/1"
+      ],
+      "specification": "band-transport.md",
+      "acceptance": [
+        "Run affected native regression gates and authenticated end-to-end room delivery/reconnect checks; verify hidden advancing inbox pages, deadlines on identity/view/proposal/inbox and offline sweep, inactive/deleted rooms, terminal receipts and individual chat deletion."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-001",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Build/install in a clean environment and serve a real request through installed entrypoints."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-002",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Migrate/rollback a nonempty store with an unresolved effect and inspect exact identities afterward."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-003",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Exercise policy boundaries and verify archived recovery and deduplication guarantees."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-004",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Inspect metrics/logs with synthetic secret markers and induced faults/capacity pressure."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-005",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Start with each prerequisite broken and observe fail-closed readiness."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-006",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Exercise callback/provider/repair shutdown and subsequent ownership acquisition."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-007",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Restore an independently verified release backup and measure recovery with no repeated effects."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "OPS-008",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Run declared concurrency/load/soak/crash tests and publish measured distributions and limits."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "QUAL-001",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2",
+        "remote-agent/1"
+      ],
+      "specification": "implementation-guide.md",
+      "acceptance": [
+        "Validate IDs, links, schema instances, fixture manifests and profile coverage."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "QUAL-002",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "implementation-guide.md",
+      "acceptance": [
+        "Run a second-language reducer/oracle and mutation-sensitive expected trace checks."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "QUAL-003",
+      "profiles": [
+        "durable-room/1",
+        "remote-agent/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Verify a machine-readable release audit against produced artifacts and requirement dispositions."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "QUAL-004",
+      "profiles": [
+        "remote-agent/1"
+      ],
+      "specification": "implementation-guide.md",
+      "acceptance": [
+        "Generate/inspect an adapter from the specification and reject a deliberately weakened boundary."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "QUAL-005",
+      "profiles": [
+        "standalone-http/1",
+        "band-room/1"
+      ],
+      "specification": "operations.md",
+      "acceptance": [
+        "Audit final delivery against both selected deployment profiles without relabeling pending work."
+      ],
+      "examples": {
+        "cases": [],
+        "artifacts": []
+      }
+    }
+  ]
+}

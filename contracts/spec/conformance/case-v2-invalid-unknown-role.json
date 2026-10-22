@@ -1,0 +1,38 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-invalid-unknown-role",
+  "requirements": [
+    "DSL-007",
+    "DSL-010"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: assignment\ndescription: Test assignment with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [lead, worker, reviewer]\n---\n\"\"\"\nAssign work with explicit acceptance, independent review, and requester acceptance.\nReported artifacts are claims until the named reviewer and lead accept them.\n\"\"\"\ncontract @4h mentions 2 => expired\n\"\"\"\nOwn the task, constraints, and final acceptance decision.\n\"\"\"\nrole lead\n\"\"\"\nAccept or refuse the offer before performing work.\n\"\"\"\nrole worker\n\"\"\"\nCheck the exact submission independently of its author.\n\"\"\"\nrole reviewer\n\"\"\"\nAn offer describes what the worker must deliver and how to verify it.\n\"\"\"\ntype offer\n  \"\"\"\n  A self-contained task including constraints and verification instructions.\n  \"\"\"\n  task: text(bytes: 1..9600, graphemes: 1..600)\ntype accept\n  task: ref(offer|revise)\ntype refuse\n  task: ref(offer|revise)\n  reason: text(bytes: 1..3200, graphemes: 1..200)\ntype submit\n  task: ref(offer|revise)\n  artifact: text(bytes: 1..9600, graphemes: 1..600)\ntype approve\n  task: ref(offer|revise)\n  submission: ref(submit)\ntype accept_result\n  task: ref(offer|revise)\n  submission: ref(submit)\ntype changes\n  task: ref(offer|revise)\n  submission: ref(submit)\n  reason: text(bytes: 1..9600, graphemes: 1..600)\ntype revise\n  task: ref(offer|revise)\n  instruction: text(bytes: 1..9600, graphemes: 1..600)\ntype question\n  task: ref(offer|revise)\n  question: text(bytes: 1..4800, graphemes: 1..300)\ntype answer\n  task: ref(offer|revise)\n  question: ref(question)\n  answer: text(bytes: 1..9600, graphemes: 1..600)\ntype progress\n  task: ref(offer|revise)\n  note: text(bytes: 1..3200, graphemes: 1..200)\ntype cancel\n  reason: text(bytes: 1..3200, graphemes: 1..200)\ntype cancel_ack\n  cancel: ref(cancel)\n  effects: text(bytes: 1..9600, graphemes: 1..600)\nstate new\n  \"\"\"\n  Both the worker and reviewer receive the original offer.\n  \"\"\"\n  lead -> {worker,reviewer}: offer() as task => offered\n\"\"\"\nThe offer is pending; work has not been accepted yet.\n\"\"\"\nstate offered\n  \"\"\"\n  The worker must accept within two minutes or the task is unclaimed.\n  \"\"\"\n  intruder -> lead: accept(task=$task) @2m => working | unclaimed\n  worker -> lead: refuse(task=$task) => refused\nstate working\n  worker -> {lead,reviewer}: submit(task=$task) as submission @30m => reviewing | stalled\n  worker -> lead: question(task=$task) awaits blocked\n    => answer(task=$task) & working\n     | @30m & stalled\n  event worker -> lead: progress(task=$task)\nstate blocked max_entries 5 => too_many_questions\nstate reviewing max_entries 3 => exhausted\n  reviewer -> {lead,worker}: approve(task=$task,submission=$submission) @10m => acceptance | stalled\n  reviewer -> {lead,worker}: changes(task=$task,submission=$submission) => revising\nstate revising\n  lead -> {worker,reviewer}: revise(task=$task) as task @10m => offered | stalled\nstate acceptance\n  lead -> {worker,reviewer}: accept_result(task=$task,submission=$submission) @10m => complete | stalled\nstate cancelling\nanystate\n  lead -> worker: cancel() awaits cancelling\n    => cancel_ack() & cancelled\n     | @2m & effects_unknown\n\"\"\"\nThe lead accepted the exact reviewed submission.\n\"\"\"\nend complete\nend refused\nend unclaimed\nend stalled\nend exhausted\nend cancelled\n\"\"\"\nThe worker did not confirm cancellation; external effects remain unresolved.\n\"\"\"\nend effects_unknown\nend too_many_questions\nend expired\n",
+        "sha256": "d5bb654b82503086457cc6474cdb15ab5d0313e062328badf7b9c853329499d8"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unknown_role"
+    }
+  ],
+  "expected": [
+    {
+      "error": {
+        "code": "unknown_role",
+        "detail": [
+          "intruder"
+        ],
+        "line": 74
+      }
+    }
+  ]
+}

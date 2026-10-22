@@ -1,0 +1,43 @@
+{
+  "about": "The contract keywords the compiler accepts (contract-lab/lib/contract_lab/compiler.ex): its reserved words minus removed forms, plus connector words of its grammar. bandhighlight.py must mark exactly these; contract-lab/test/band_keywords_test.exs checks this record against the compiler.",
+  "keywords": [
+    "all",
+    "anystate",
+    "as",
+    "awaits",
+    "collect",
+    "contract",
+    "each",
+    "end",
+    "event",
+    "for",
+    "from",
+    "max",
+    "max_entries",
+    "mention",
+    "mentions",
+    "offline",
+    "on",
+    "online",
+    "quorum",
+    "removed",
+    "reply",
+    "require",
+    "role",
+    "room",
+    "state",
+    "total",
+    "type",
+    "watch"
+  ],
+  "connectors": {
+    "from": "collect <name> from <roles> -> <role> @<duration> => <state>",
+    "all": "quorum all => <outcome>",
+    "awaits": "<send> awaits <wait state>"
+  },
+  "removed": {
+    "due": "---\nname: removed-due\ndescription: The due form was removed.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\n---\ncontract @1h => expired\ntype review\nstate new\n  due all of {lead,reviewer} with review in 5m => stalled\n  lead -> reviewer: review() => done\nend done\nend stalled\n",
+    "failure": "---\nname: removed-failure\ndescription: The collect failure line was removed.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\nextensions: [room.contributions/1]\n---\ncontract @1h => expired\ntype report\ntype oops\nstate new\n  lead -> reviewer: report() => collecting\nstate collecting\n  collect reports from reviewer -> lead @10m => done\n    reply report()\n    failure oops()\nend done\n"
+  },
+  "probe": "band-keywords-probe.band"
+}

@@ -1,0 +1,1649 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-entry-cap",
+  "requirements": [
+    "ENG-011"
+  ],
+  "schema_profile": 6,
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: bounded-review\ndescription: Test bounded review with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [author, reviewer]\n---\n\"\"\"\nAn author submits work and a reviewer approves it or asks for one revision. The review may run\nat most twice; after that the session ends without approval.\n\"\"\"\ncontract @4h mentions 1 => expired\n\n\"\"\"\nYou are the author. Submit your work, and when the reviewer asks for a revision, fix what they\nnamed and submit again.\n\"\"\"\nrole author\n\n\"\"\"\nYou are the reviewer. Read the submission, then approve it or ask for a revision with the\nspecific changes you need.\n\"\"\"\nrole reviewer\n\n\"\"\"\nSubmit the current version of your work for review.\n\"\"\"\ntype submit\n\n\"\"\"\nAsk the author for a revision. Name the changes you need. Set submission to the submission you\nreviewed.\n\"\"\"\ntype revise\n  submission: ref(submit)\n\n\"\"\"\nApprove the submitted work as it is. Set submission to the submission you approve.\n\"\"\"\ntype approve\n  submission: ref(submit)\n\n\"\"\"\nThe author has not submitted yet. Submit your work to start the review.\n\"\"\"\nstate new\n  \"\"\"\n  Submit the work. The reviewer then owes one decision on this submission.\n  \"\"\"\n  author -> reviewer: submit() awaits reviewing\n    \"\"\"\n    The submission is approved as it is.\n    \"\"\"\n    => approve() & complete\n     \"\"\"\n     The submission needs the named changes.\n     \"\"\"\n     | revise() & awaiting\n     \"\"\"\n     The review has no deadline of its own; the four-hour contract clock bounds it.\n     \"\"\"\n     | @4h & expired\n\n\"\"\"\nThe reviewer reads the latest submission and approves it or asks for a revision. A decision on an\nearlier submission no longer counts. This state can be entered at most twice.\n\"\"\"\nstate reviewing max_entries 2 => exhausted\n\n\"\"\"\nThe reviewer asked for a revision. Make the requested changes and submit again.\n\"\"\"\nstate awaiting\n  \"\"\"\n  Resubmit. The reviewer then owes one decision on the new submission.\n  \"\"\"\n  author -> reviewer: submit() => reviewing\n\n\"\"\"\nThe reviewer approved the work. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe review limit was reached without approval. Stop and report the open changes to whoever owns\nthe work.\n\"\"\"\nend exhausted\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "author": "author",
+          "reviewer": "reviewer"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "author": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "reviewer": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "author",
+      "now": 0,
+      "message": {
+        "id": "s1",
+        "session": "s",
+        "kind": "submit",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "author": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "reviewer": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "reviewer",
+      "now": 0,
+      "message": {
+        "id": "r1",
+        "session": "s",
+        "kind": "revise",
+        "payload": {
+          "submission": "s1"
+        }
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "author": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "reviewer": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "author",
+      "now": 0,
+      "message": {
+        "id": "s2",
+        "session": "s",
+        "kind": "submit",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "author": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "reviewer": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "reviewer",
+      "now": 0,
+      "message": {
+        "id": "r2",
+        "session": "s",
+        "kind": "revise",
+        "payload": {
+          "submission": "s2"
+        }
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "author": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "reviewer": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "author",
+      "now": 0,
+      "message": {
+        "id": "s3",
+        "session": "s",
+        "kind": "submit",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "author": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "reviewer": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "exhausted"
+    },
+    {
+      "response": 6,
+      "pointer": "/state/state/entries",
+      "equals": {
+        "new": 1,
+        "awaiting": 2,
+        "reviewing": 3
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test bounded review with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [
+            "contract.replies/1"
+          ],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "bounded-review",
+          "roles": [
+            "author",
+            "reviewer"
+          ],
+          "version": null
+        },
+        "digest": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "An author submits work and a reviewer approves it or asks for one revision. The review may run\nat most twice; after that the session ends without approval.",
+          "line": 1
+        },
+        "name": "bounded-review",
+        "role_metadata": {
+          "author": {
+            "meta": {
+              "doc": "You are the author. Submit your work, and when the reviewer asks for a revision, fix what they\nnamed and submit again.",
+              "line": 7
+            },
+            "name": "author"
+          },
+          "reviewer": {
+            "meta": {
+              "doc": "You are the reviewer. Read the submission, then approve it or ask for a revision with the\nspecific changes you need.",
+              "line": 13
+            },
+            "name": "reviewer"
+          }
+        },
+        "roles": [
+          "author",
+          "reviewer"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "states": {
+          "awaiting": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer asked for a revision. Make the requested changes and submit again.",
+              "line": 64
+            },
+            "name": "awaiting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "reviewing",
+                "each": false,
+                "event": false,
+                "from": [
+                  "author"
+                ],
+                "id": "rule-4",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+                  "line": 68
+                },
+                "target": "reviewing",
+                "to": [
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The author has not submitted yet. Submit your work to start the review.",
+              "line": 37
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "reviewing",
+                "each": false,
+                "event": false,
+                "from": [
+                  "author"
+                ],
+                "id": "rule-0",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+                  "line": 41
+                },
+                "target": "reviewing",
+                "to": [
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [],
+            "max_entries": {
+              "limit": 2,
+              "outcome": "exhausted"
+            },
+            "meta": {
+              "doc": "The reviewer reads the latest submission and approves it or asks for a revision. A decision on an\nearlier submission no longer counts. This state can be entered at most twice.",
+              "line": 58
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-1",
+                "kind": "approve",
+                "literals": {},
+                "matches": {
+                  "submission": "reviewing"
+                },
+                "meta": {
+                  "doc": "The submission is approved as it is.",
+                  "line": 45
+                },
+                "target": "complete",
+                "to": [
+                  "author"
+                ],
+                "wait": "due-3"
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-2",
+                "kind": "revise",
+                "literals": {},
+                "matches": {
+                  "submission": "reviewing"
+                },
+                "meta": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "target": "awaiting",
+                "to": [
+                  "author"
+                ],
+                "wait": "due-3"
+              }
+            ],
+            "wait": {
+              "after_ms": 14400000,
+              "alternatives": [
+                "rule-1",
+                "rule-2"
+              ],
+              "from": [
+                "reviewer"
+              ],
+              "heads": [
+                "rule-0",
+                "rule-4"
+              ],
+              "id": "due-3",
+              "kinds": [
+                "approve",
+                "revise"
+              ],
+              "meta": {
+                "doc": "The review has no deadline of its own; the four-hour contract clock bounds it.",
+                "line": 53
+              },
+              "outcome": "expired",
+              "to": [
+                "author"
+              ]
+            }
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The reviewer approved the work. Send nothing more.",
+              "line": 73
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "exhausted": {
+            "meta": {
+              "doc": "The review limit was reached without approval. Stop and report the open changes to whoever owns\nthe work.",
+              "line": 78
+            },
+            "name": "exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 84
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "An author submits work and a reviewer approves it or asks for one revision. The review may run\nat most twice; after that the session ends without approval.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "approve": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 35
+                },
+                "values": [
+                  "submit"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Approve the submitted work as it is. Set submission to the submission you approve.",
+              "line": 31
+            },
+            "name": "approve"
+          },
+          "revise": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 29
+                },
+                "values": [
+                  "submit"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask the author for a revision. Name the changes you need. Set submission to the submission you\nreviewed.",
+              "line": 24
+            },
+            "name": "revise"
+          },
+          "submit": {
+            "fields": {},
+            "meta": {
+              "doc": "Submit the current version of your work for review.",
+              "line": 19
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "profile": "band-contract/state/6",
+        "source": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "state": {
+          "bindings": {
+            "author": "author",
+            "reviewer": "reviewer"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "author",
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "id": "s1",
+        "kind": "submit",
+        "metadata": {
+          "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+          "line": 41
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "reviewer"
+        ],
+        "role": "author",
+        "session": "s",
+        "state": "reviewing",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "profile": "band-contract/state/6",
+        "source": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "state": {
+          "bindings": {
+            "author": "author",
+            "reviewer": "reviewer"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "reviewing": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "s1": {
+              "actor": "author",
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "s1": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s1",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "ac600c1f08ae103b86b61bca4324f8e9d011c505d69d9a8d7cbb214a687c28c7"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "reviewing",
+          "status": "active",
+          "variables": {
+            "reviewing": "s1"
+          },
+          "version": 1,
+          "wait": {
+            "due_at": 14400000,
+            "head": "s1",
+            "id": "due-3",
+            "remaining": [
+              "reviewer"
+            ]
+          },
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "reviewer",
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "id": "r1",
+        "kind": "revise",
+        "metadata": {
+          "doc": "The submission needs the named changes.",
+          "line": 49
+        },
+        "outcome": null,
+        "payload": {
+          "submission": "s1"
+        },
+        "recipients": [
+          "author"
+        ],
+        "role": "reviewer",
+        "session": "s",
+        "state": "awaiting",
+        "status": "accepted",
+        "version": 2
+      },
+      "state": {
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "profile": "band-contract/state/6",
+        "source": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "state": {
+          "bindings": {
+            "author": "author",
+            "reviewer": "reviewer"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "awaiting": 1,
+            "new": 1,
+            "reviewing": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "r1": {
+              "actor": "reviewer",
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "payload": {
+                "submission": "s1"
+              },
+              "recipients": [
+                "author"
+              ],
+              "role": "reviewer",
+              "rule": "rule-2"
+            },
+            "s1": {
+              "actor": "author",
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "role": "reviewer",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "r1": {
+              "decision": {
+                "actor": "reviewer",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "r1",
+                "kind": "revise",
+                "metadata": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "outcome": null,
+                "payload": {
+                  "submission": "s1"
+                },
+                "recipients": [
+                  "author"
+                ],
+                "role": "reviewer",
+                "session": "s",
+                "state": "awaiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "33180de8598c0f006e7e0ad9b3ab46d5dc3fc31d3d86c900e4814b05e89e1721"
+            },
+            "s1": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s1",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "ac600c1f08ae103b86b61bca4324f8e9d011c505d69d9a8d7cbb214a687c28c7"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "awaiting",
+          "status": "active",
+          "variables": {
+            "reviewing": "s1"
+          },
+          "version": 2,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "author",
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "id": "s2",
+        "kind": "submit",
+        "metadata": {
+          "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+          "line": 68
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "reviewer"
+        ],
+        "role": "author",
+        "session": "s",
+        "state": "reviewing",
+        "status": "accepted",
+        "version": 3
+      },
+      "state": {
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "profile": "band-contract/state/6",
+        "source": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "state": {
+          "bindings": {
+            "author": "author",
+            "reviewer": "reviewer"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "awaiting": 1,
+            "new": 1,
+            "reviewing": 2
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "r1": {
+              "actor": "reviewer",
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "payload": {
+                "submission": "s1"
+              },
+              "recipients": [
+                "author"
+              ],
+              "role": "reviewer",
+              "rule": "rule-2"
+            },
+            "s1": {
+              "actor": "author",
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-0"
+            },
+            "s2": {
+              "actor": "author",
+              "at": 0,
+              "id": "s2",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-4"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "role": "reviewer",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "s2",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "r1": {
+              "decision": {
+                "actor": "reviewer",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "r1",
+                "kind": "revise",
+                "metadata": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "outcome": null,
+                "payload": {
+                  "submission": "s1"
+                },
+                "recipients": [
+                  "author"
+                ],
+                "role": "reviewer",
+                "session": "s",
+                "state": "awaiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "33180de8598c0f006e7e0ad9b3ab46d5dc3fc31d3d86c900e4814b05e89e1721"
+            },
+            "s1": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s1",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "ac600c1f08ae103b86b61bca4324f8e9d011c505d69d9a8d7cbb214a687c28c7"
+            },
+            "s2": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s2",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+                  "line": 68
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 3
+              },
+              "fingerprint": "c66bce177399e02728b90584968340b6122ce4876bfc1f2eaedc46b5455a3962"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "reviewing",
+          "status": "active",
+          "variables": {
+            "reviewing": "s2"
+          },
+          "version": 3,
+          "wait": {
+            "due_at": 14400000,
+            "head": "s2",
+            "id": "due-3",
+            "remaining": [
+              "reviewer"
+            ]
+          },
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "reviewer",
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "id": "r2",
+        "kind": "revise",
+        "metadata": {
+          "doc": "The submission needs the named changes.",
+          "line": 49
+        },
+        "outcome": null,
+        "payload": {
+          "submission": "s2"
+        },
+        "recipients": [
+          "author"
+        ],
+        "role": "reviewer",
+        "session": "s",
+        "state": "awaiting",
+        "status": "accepted",
+        "version": 4
+      },
+      "state": {
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "profile": "band-contract/state/6",
+        "source": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "state": {
+          "bindings": {
+            "author": "author",
+            "reviewer": "reviewer"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "awaiting": 2,
+            "new": 1,
+            "reviewing": 2
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "r1": {
+              "actor": "reviewer",
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "payload": {
+                "submission": "s1"
+              },
+              "recipients": [
+                "author"
+              ],
+              "role": "reviewer",
+              "rule": "rule-2"
+            },
+            "r2": {
+              "actor": "reviewer",
+              "at": 0,
+              "id": "r2",
+              "kind": "revise",
+              "payload": {
+                "submission": "s2"
+              },
+              "recipients": [
+                "author"
+              ],
+              "role": "reviewer",
+              "rule": "rule-2"
+            },
+            "s1": {
+              "actor": "author",
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-0"
+            },
+            "s2": {
+              "actor": "author",
+              "at": 0,
+              "id": "s2",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-4"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "role": "reviewer",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "s2",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "r2",
+              "kind": "revise",
+              "role": "reviewer",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 4,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "r1": {
+              "decision": {
+                "actor": "reviewer",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "r1",
+                "kind": "revise",
+                "metadata": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "outcome": null,
+                "payload": {
+                  "submission": "s1"
+                },
+                "recipients": [
+                  "author"
+                ],
+                "role": "reviewer",
+                "session": "s",
+                "state": "awaiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "33180de8598c0f006e7e0ad9b3ab46d5dc3fc31d3d86c900e4814b05e89e1721"
+            },
+            "r2": {
+              "decision": {
+                "actor": "reviewer",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "r2",
+                "kind": "revise",
+                "metadata": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "outcome": null,
+                "payload": {
+                  "submission": "s2"
+                },
+                "recipients": [
+                  "author"
+                ],
+                "role": "reviewer",
+                "session": "s",
+                "state": "awaiting",
+                "status": "accepted",
+                "version": 4
+              },
+              "fingerprint": "e01274a0b33a86d54b12f540f8fcdcf51539bb10f96c4dec2d3d9eeeb806e08e"
+            },
+            "s1": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s1",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "ac600c1f08ae103b86b61bca4324f8e9d011c505d69d9a8d7cbb214a687c28c7"
+            },
+            "s2": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s2",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+                  "line": 68
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 3
+              },
+              "fingerprint": "c66bce177399e02728b90584968340b6122ce4876bfc1f2eaedc46b5455a3962"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "awaiting",
+          "status": "active",
+          "variables": {
+            "reviewing": "s2"
+          },
+          "version": 4,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "author",
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "id": "s3",
+        "kind": "submit",
+        "metadata": {
+          "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+          "line": 68
+        },
+        "outcome": "exhausted",
+        "payload": {},
+        "recipients": [
+          "reviewer"
+        ],
+        "role": "author",
+        "session": "s",
+        "state": "exhausted",
+        "status": "accepted",
+        "version": 5
+      },
+      "state": {
+        "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+        "profile": "band-contract/state/6",
+        "source": "02a198bf879a6a2f36fe96e5f2d5ee0783b5b22d7c86108656808ec9712dae2c",
+        "state": {
+          "bindings": {
+            "author": "author",
+            "reviewer": "reviewer"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "awaiting": 2,
+            "new": 1,
+            "reviewing": 3
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "r1": {
+              "actor": "reviewer",
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "payload": {
+                "submission": "s1"
+              },
+              "recipients": [
+                "author"
+              ],
+              "role": "reviewer",
+              "rule": "rule-2"
+            },
+            "r2": {
+              "actor": "reviewer",
+              "at": 0,
+              "id": "r2",
+              "kind": "revise",
+              "payload": {
+                "submission": "s2"
+              },
+              "recipients": [
+                "author"
+              ],
+              "role": "reviewer",
+              "rule": "rule-2"
+            },
+            "s1": {
+              "actor": "author",
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-0"
+            },
+            "s2": {
+              "actor": "author",
+              "at": 0,
+              "id": "s2",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-4"
+            },
+            "s3": {
+              "actor": "author",
+              "at": 0,
+              "id": "s3",
+              "kind": "submit",
+              "payload": {},
+              "recipients": [
+                "reviewer"
+              ],
+              "role": "author",
+              "rule": "rule-4"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "s1",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "r1",
+              "kind": "revise",
+              "role": "reviewer",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "s2",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "r2",
+              "kind": "revise",
+              "role": "reviewer",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "s3",
+              "kind": "submit",
+              "role": "author",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 5,
+          "now": 0,
+          "obligations": [],
+          "outcome": "exhausted",
+          "receipts": {
+            "r1": {
+              "decision": {
+                "actor": "reviewer",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "r1",
+                "kind": "revise",
+                "metadata": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "outcome": null,
+                "payload": {
+                  "submission": "s1"
+                },
+                "recipients": [
+                  "author"
+                ],
+                "role": "reviewer",
+                "session": "s",
+                "state": "awaiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "33180de8598c0f006e7e0ad9b3ab46d5dc3fc31d3d86c900e4814b05e89e1721"
+            },
+            "r2": {
+              "decision": {
+                "actor": "reviewer",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "r2",
+                "kind": "revise",
+                "metadata": {
+                  "doc": "The submission needs the named changes.",
+                  "line": 49
+                },
+                "outcome": null,
+                "payload": {
+                  "submission": "s2"
+                },
+                "recipients": [
+                  "author"
+                ],
+                "role": "reviewer",
+                "session": "s",
+                "state": "awaiting",
+                "status": "accepted",
+                "version": 4
+              },
+              "fingerprint": "e01274a0b33a86d54b12f540f8fcdcf51539bb10f96c4dec2d3d9eeeb806e08e"
+            },
+            "s1": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s1",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Submit the work. The reviewer then owes one decision on this submission.",
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "ac600c1f08ae103b86b61bca4324f8e9d011c505d69d9a8d7cbb214a687c28c7"
+            },
+            "s2": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s2",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+                  "line": 68
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "reviewing",
+                "status": "accepted",
+                "version": 3
+              },
+              "fingerprint": "c66bce177399e02728b90584968340b6122ce4876bfc1f2eaedc46b5455a3962"
+            },
+            "s3": {
+              "decision": {
+                "actor": "author",
+                "definition": "668c217eb6a2bdea11015632577a65633228449ecdb0dabb09c08c03ad9ed2fd",
+                "id": "s3",
+                "kind": "submit",
+                "metadata": {
+                  "doc": "Resubmit. The reviewer then owes one decision on the new submission.",
+                  "line": 68
+                },
+                "outcome": "exhausted",
+                "payload": {},
+                "recipients": [
+                  "reviewer"
+                ],
+                "role": "author",
+                "session": "s",
+                "state": "exhausted",
+                "status": "accepted",
+                "version": 5
+              },
+              "fingerprint": "c9816ee6f96de55d55f8af20f282800f886e9c52ec49ab82e144c40e7f704b3a"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "exhausted",
+          "status": "terminal",
+          "variables": {
+            "reviewing": "s3"
+          },
+          "version": 5,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

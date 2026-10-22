@@ -1,0 +1,131 @@
+{
+  "operation": "op-6nsokny2",
+  "sid": "pmxxoweaog4wk",
+  "parent_head": "be79bd5e04ea5e81550c96ec4065594625d0ec38",
+  "consumer_owners": {
+    "conformance": "Lucas",
+    "final_site_stage": "Nadia",
+    "handoff": "Ada"
+  },
+  "origin_fetched": true,
+  "origin_relevant_head": "4e81564665c9809e9f2e54b3d0c050d06fe64b79",
+  "kenji_head": "d3d8df589deb0904439a52dbc2225dda44b8b631",
+  "combined_head": "9a7ed99acc915b034cca98728ff99b149a56d5f2",
+  "combined_parent_trial": "70e41f56b035dc6c01f9e1d3a894eca50abafee1",
+  "combined_kenji_sources_byte_identical": true,
+  "combined_tracked_clean": true,
+  "combined_force_compile": {
+    "argv": [
+      "mix",
+      "compile",
+      "--force",
+      "--warnings-as-errors"
+    ],
+    "exit_code": 0,
+    "elixir": "1.18.4-otp-27",
+    "erlang": "27.3.4.17"
+  },
+  "path_regression_red": {
+    "exit_code": 1,
+    "failures": 2,
+    "errors": 1,
+    "real_data_files_with_home_paths": 3
+  },
+  "path_regression_green": {
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "spec/tools",
+      "-p",
+      "test_replies_evidence_paths.py",
+      "-v"
+    ],
+    "tests": 3,
+    "exit_code": 0
+  },
+  "historical_results_hashes_timestamps_and_exits_preserved": true,
+  "normalization_idempotent": true,
+  "changed_native_vectors": [
+    "sugar-ambiguous-refs-explicit-control",
+    "sugar-one-eligible-of-several-refs"
+  ],
+  "unchanged_vectors": 46,
+  "native_portable_sources_identical": true,
+  "all_source_hashes_verified": true,
+  "generator_deterministic": true,
+  "source_hashes": {
+    "suite.json": "3fa3147fe5ba6c649a5aa76d0a71f8a102369d6c5803cfbda162023d8bd053ac",
+    "semantic-inputs.json": "2ee2606a9857b19cd8326f627ceae820ef4125a2aa390586400d3fdcb65c8064",
+    "EXPECTED.md": "1ffd2fc82faa1671407b2c91fc19f268767cb96707880cf27177594faff67b9a"
+  },
+  "commands": [
+    {
+      "argv": [
+        "python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--write"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--write"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--normalize-evidence"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "runner_red": {
+    "report": "landing-before.json",
+    "exit_code": 1,
+    "passed": 51,
+    "failed": 2
+  },
+  "runner_green": {
+    "report": "landing-after.json",
+    "exit_code": 0,
+    "passed": 53,
+    "failed": 0,
+    "old_reader_checked": true
+  },
+  "parser_only": {
+    "report": "landing-parser-only.json",
+    "exit_code": 1,
+    "passed": 0,
+    "failed": 1,
+    "reason": "Omar wait-renewal runtime absent; no parser-only full-suite GREEN claimed"
+  },
+  "doc_claims": {
+    "tests": 7,
+    "exit_code": 0,
+    "detector_source_unchanged": true
+  },
+  "schema_only": {
+    "cases": 164,
+    "assertions": 369,
+    "exit_code": 0,
+    "adapter_checked": false
+  },
+  "reviewer_gate": {
+    "build_exit_code": 0,
+    "gate_exit_code": 0,
+    "credential_access": false,
+    "blocking_hit_count": 0,
+    "secret_hit_count": 0,
+    "broken_internal_links": 0,
+    "full_spec_sync_stage": "Nadia owns at landing; Ada accepted reviewer mode"
+  },
+  "commit_scope": "single landing fix, separate from scaling; no merge/deploy/publication"
+}

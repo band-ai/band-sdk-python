@@ -1,0 +1,34 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-invalid-map-1",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}",
+      "carrier": [],
+      "transport": {
+        "header:Message-ID": "m",
+        "header:X-Band-Session": "s",
+        "header:X-Band-Kind": "ping",
+        "header:X-Band-Version": 0
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "error": "transport_fields"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": "transport_fields"
+    }
+  ]
+}

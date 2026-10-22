@@ -1,0 +1,35 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "canonical-6",
+  "requirements": [
+    "ENG-003"
+  ],
+  "requests": [
+    {
+      "op": "canonical",
+      "value": {
+        "z": "\u001f\u000b\b\n\t\f\r",
+        "é": "👩🏽‍💻",
+        "a": "\\u001f\\u000b"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/bytes",
+      "equals": "eyJhIjoiXFx1MDAxZlxcdTAwMGIiLCJ6IjoiXHUwMDFGXHUwMDBCXGJcblx0XGZcciIsIsOpIjoi8J+RqfCfj73igI3wn5K7In0="
+    },
+    {
+      "response": 0,
+      "pointer": "/sha256",
+      "equals": "383a95b22691f98b7154295b424cc810bad016c19ff927116c9de3352b2b9f44"
+    }
+  ],
+  "expected": [
+    {
+      "bytes": "eyJhIjoiXFx1MDAxZlxcdTAwMGIiLCJ6IjoiXHUwMDFGXHUwMDBCXGJcblx0XGZcciIsIsOpIjoi8J+RqfCfj73igI3wn5K7In0=",
+      "sha256": "383a95b22691f98b7154295b424cc810bad016c19ff927116c9de3352b2b9f44"
+    }
+  ]
+}

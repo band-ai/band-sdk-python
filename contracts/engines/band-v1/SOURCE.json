@@ -1,0 +1,89 @@
+{
+  "repository": "https://github.com/thenvoi/contract-spec",
+  "revision": "ca1147db8121297eeea7e70db13f0d41d8fee44f",
+  "purpose": "Band-v1 compatibility engine: ca1147 snapshot with explicitly listed compatible backports; preserves explicit-state contracts and old sessions. Current SDK engine remains separate.",
+  "backports": [
+    {
+      "files": [
+        "contract-lab/lib/contract_lab/totals.ex"
+      ],
+      "reason": "Count every reply wait against the remaining cumulative state budget before entry.",
+      "source_commit": "182bb3d1488051a6945c810a1737554a00438d8e",
+      "source_path": "contract-lab/lib/contract_lab/totals.ex"
+    },
+    {
+      "files": [
+        "contract-lab/lib/contract_lab/endpoint.ex",
+        "contract-lab/rel/overlays/bin/contract-engine"
+      ],
+      "reason": "SDK-OCT22-004: accept bounded complete file-source envelopes in the trusted host adapter, using the unchanged canonical compiler. Matches the current SDK adapters in this release.",
+      "source_base_commit": "88df80d84db5a6b96a36cbfb32a57eded222be66",
+      "source_sha256": {
+        "contract-lab/lib/contract_lab/endpoint.ex": "cee21d6d6fb34b65a18c16df0878508d1fc20d8d14db0d87b55c404a459a33ec",
+        "contract-lab/rel/overlays/bin/contract-engine": "466dd957227b4b063673a9a9a8aa120f4b8b1e5a178c41a1019faf784852e199"
+      }
+    }
+  ],
+  "files": {
+    "contract-lab/examples/engine_endpoint.exs": "bb45b60a936beb7324c3143e9c410ab5b284985dc4a530741b1faacda85a1b2a",
+    "contract-lab/lib/contract_lab.ex": "b48663b312df3e34df92afddb9528587ab79c239c30c9672722cdc55b959f269",
+    "contract-lab/lib/contract_lab/admission_limits.ex": "39d59e4e613c2a51c3f69b7defe34fe3ac529dd0802c4fde458e45a3fb87ba4f",
+    "contract-lab/lib/contract_lab/agent_gate.ex": "b78dea1aaa04481d2476b7620ec6da78667534a39ed60918d0ea82306ac13ea5",
+    "contract-lab/lib/contract_lab/canonical.ex": "bd56a08026b02dccd99e5b94c3764a414cb8116a652b87b4696a22917e94a7ae",
+    "contract-lab/lib/contract_lab/checkpoint.ex": "aa5a68cec8f5c2b245556327cec0b5216a2a39e30f56709860075795f6b9f81a",
+    "contract-lab/lib/contract_lab/cli.ex": "553ce638a34632519d2a7d4325401541673be5cad24fd287cf3f36deba43060c",
+    "contract-lab/lib/contract_lab/closing.ex": "5512170124f9a669525ceb5772d6d19ac0418f15f61bf2a80cf534c9313efe97",
+    "contract-lab/lib/contract_lab/collections.ex": "347119e36f9771cd9eda05661134f8c3bc74c7dd50d4e059cc35695a62f01e92",
+    "contract-lab/lib/contract_lab/command_sidecar.ex": "33fb71e21e6911266ee36c8794acbbfb6ee5063483a274e8f18d67f75c860528",
+    "contract-lab/lib/contract_lab/compiler.ex": "9adee1e37a794ee3b6f0c249c293319c051de421bfff0d3a3da5814f36739b2d",
+    "contract-lab/lib/contract_lab/contributions.ex": "94b844f0ba291679d08bd5b07dab7032f75b6ae223b648c2fa23b466f01fa083",
+    "contract-lab/lib/contract_lab/endpoint.ex": "cee21d6d6fb34b65a18c16df0878508d1fc20d8d14db0d87b55c404a459a33ec",
+    "contract-lab/lib/contract_lab/engine.ex": "e4adb9d417c75296b4ed5f774ab4dc2797a294a843a9594ffdb2b8d82d8d31f5",
+    "contract-lab/lib/contract_lab/file_source.ex": "cc9af0ef5538acd34e62c50f6664eeb917b3abbe9b0d5992e826cac991a2c30b",
+    "contract-lab/lib/contract_lab/format.ex": "b54d79152e1d3fd62d28e20b950a96e29d0a1ced4cd433b08af2dd8aa07bc380",
+    "contract-lab/lib/contract_lab/host_inputs.ex": "4dcc4d4b62f176c0dc216645b1984e6e1fc2bc844b87e918e1b9daa00270cd29",
+    "contract-lab/lib/contract_lab/host_key.ex": "74287fad423cfd8e515850889fd36dba0684336938f05f476099882fdd16d84f",
+    "contract-lab/lib/contract_lab/host_signals.ex": "b57f42ec8ba868e1bece8046763f014e2cdeca934dce88164acf30fc1311678c",
+    "contract-lab/lib/contract_lab/journal.ex": "207be8929a3df1799dd9824bb5f8d6b6d97bedc7eb5243bd4bec4dadfd1bb4f4",
+    "contract-lab/lib/contract_lab/mentions.ex": "6b882cb79abf495c62d0e60320c7b9a48c301dccb36ceae67a90df3b3114f694",
+    "contract-lab/lib/contract_lab/program.ex": "30ca923e70143dd013bf4ce0c4c4daa5b13c70a190f2dbd7afa5320589aeb230",
+    "contract-lab/lib/contract_lab/prompts.ex": "bbac743920cb5fbf658c65d46653d3b9dbb1eb77e78c400de42598098c44f042",
+    "contract-lab/lib/contract_lab/renewal.ex": "248b6ad670ef30e6728e73d03a596bd20ef0f100d2bf103876a6d6023511de0e",
+    "contract-lab/lib/contract_lab/replacement.ex": "f820879d8cc2a80a72bf167c7be90c751488c9cee02908df9e4eeb3ea32870e3",
+    "contract-lab/lib/contract_lab/replies.ex": "e6b228ac155a6d8e37d83c178234fb489a6adb0fd5e6bdf6fb6a6b05fffcfb37",
+    "contract-lab/lib/contract_lab/reply_wait.ex": "793d9f935edc188b7b30f74b509543c5350d2475e780c0a8af91cef282a8e865",
+    "contract-lab/lib/contract_lab/reserve.ex": "46cb78115f115982e1796a0659b00ac50f7500dd1a2719f50ea307b9d0e46d18",
+    "contract-lab/lib/contract_lab/room_events.ex": "b8cd1eeebbf9f715dbcdc82f619a2e834eaadea3cb82b3efabd80d27ced7e331",
+    "contract-lab/lib/contract_lab/room_policy.ex": "e7b8812ecd50e747d1b732c0398fd5a1ef5d17f2f3c30f7b31fd68384eba8978",
+    "contract-lab/lib/contract_lab/roster.ex": "0314a02acc2caebc1f19732e230a32e40ceb9d3011179f15d51525490207f8d3",
+    "contract-lab/lib/contract_lab/runner.ex": "049871defe0ebd97e32181d6a874853e6829e8987b05094ab6a354d4535801d6",
+    "contract-lab/lib/contract_lab/safe_pattern.ex": "0ccf2c05ac2d7c5310ff69bd31d297d71fdc98a7818b2d1fb847a736ddb37391",
+    "contract-lab/lib/contract_lab/scenario.ex": "9231816fe169a741f2389872263828c7b8146976edd952708cb277dc086f2279",
+    "contract-lab/lib/contract_lab/source.ex": "f8518f52057e9c3d3b52b1785ed242b8f7a030a1a51a8dd8e6c6be0f35e88f33",
+    "contract-lab/lib/contract_lab/state_codec.ex": "5e0ff528e5caa01cd544301b1037287baeaf7723588add74314926f49814f601",
+    "contract-lab/lib/contract_lab/totals.ex": "d38097b4985052d90ad0af1fd2d473a9a9b156680de846ede59f11943bdb7c84",
+    "contract-lab/lib/contract_lab/wire.ex": "2fd889cb00d2ed07d6695d2d96b214201502e3f4c68c68dce8bfb679e4f0f01e",
+    "contract-lab/lib/mix/tasks/contract.ex": "9a3784aa04e123e7c250bb0d6a4a1171c2cc9d7f96d3598b53969612c8d08c75",
+    "contract-lab/lib/mix/tasks/contract.format.ex": "48adcac7c895c70fae72ba4d470722b3b04d49c49902be7bebf8a2fd42719729",
+    "contract-lab/mix.exs": "4f9b465ef25a881ad57235066d4239f8689a67643121fbade7c1612438ac86cf",
+    "contract-lab/mix.lock": "235611ca8e3b1b7864b71743cb016929c3579dfee49ac76fdc1ce714d8eb8a15",
+    "contract-lab/rel/env.sh.eex": "12376faa0d4020656f7ddf16ac7680a8eef7e2e4eeb6660f8dd7edabbfc7c1c8",
+    "contract-lab/rel/overlays/bin/contract-engine": "466dd957227b4b063673a9a9a8aa120f4b8b1e5a178c41a1019faf784852e199",
+    "contract-lab/rel/vm.args.eex": "6f26df9fa2c3572e81012501ebfd42bee937ff4296245ed0b31bcedd00439994",
+    "header-spikes/lib/header_spikes.ex": "7c7037d2304c234ed42d20352661762eac7fa901acfc09bbfd224c9fee6e1ea0",
+    "header-spikes/lib/header_spikes/file_snapshot.ex": "f7d2edc4132ce50e7d327b23dd20cd4f71fbbcc7bd07e4e33a55e19be96a9f6e",
+    "header-spikes/lib/header_spikes/graphemes.ex": "ab4202a718a4e70e51754b8b5d0fef2a71298553c46ca4063e6eb4bb0e3db085",
+    "header-spikes/lib/header_spikes/prefix.ex": "771a36f1021914cb98d8662535a6602f239cc7290710300789698163ef57deb0",
+    "header-spikes/lib/header_spikes/schema.ex": "4bd5825693b151f2a651f4c35ad9c0f8612845ee964ad575cbbe171610695165",
+    "header-spikes/lib/header_spikes/yaml.ex": "cbb29de99ba26f0bbfecad294dcd26ae0ddb6a1157d6f4ea7509a0995f0a494a",
+    "header-spikes/mix.exs": "d0b6034cf51983a8c61b021f25283a6705eb423e5aebb1bde395738fe7a6894e",
+    "header-spikes/mix.lock": "235611ca8e3b1b7864b71743cb016929c3579dfee49ac76fdc1ce714d8eb8a15",
+    "header-spikes/priv/unicode16/DerivedCoreProperties.txt": "39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd",
+    "header-spikes/priv/unicode16/GraphemeBreakProperty.txt": "c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1",
+    "header-spikes/priv/unicode16/GraphemeBreakTest.txt": "ee2b9354d270ac061b29f09662cafea06341d77e704b8cc6bd72aaeeda363cb5",
+    "header-spikes/priv/unicode16/LICENSE.txt": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+    "header-spikes/priv/unicode16/README.md": "0e4da0cee90e2886e7180dfd096d4cbed7da5a1d71e9fac36ef788a674fe521c",
+    "header-spikes/priv/unicode16/emoji-data.txt": "f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a",
+    "header-spikes/priv/unicode16/manifest.json": "124cf235c339ccc16e950e3c740882601ffa9293c2cc41b48288ff8354d2423d"
+  }
+}

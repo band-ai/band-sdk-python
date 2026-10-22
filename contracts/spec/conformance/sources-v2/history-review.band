@@ -1,0 +1,167 @@
+---
+name: history-review
+description: A three-person release-note assignment derived from a documented chat fixture.
+engine: 0.2.0-lab.1
+roles: [lead, writer, reviewer]
+---
+"""
+The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead
+accepts it.
+Every message refers to the task, and a submission is only a claim until the reviewer has read it.
+Derived from histories/review-chat.md, messages H01-H09.
+The historical host selected transition-only inactivity (H07); this profile has no idle timer.
+Current runs keep the twenty-message bound and declared contract/work clocks.
+"""
+contract @30m mentions 2 => expired
+
+"""
+You are the lead. Offer the release-note task, accept or cancel, and give the final acceptance
+only after the reviewer approves.
+"""
+role lead
+
+"""
+You are the writer. Accept or refuse the offer within two minutes, then write the release note
+and submit it within fifteen minutes.
+"""
+role writer
+
+"""
+Inspect the exact artifact independently before approving it (H03, H06, H08).
+"""
+role reviewer
+
+"""
+Offer the release-note task: what the note must cover and how it will be checked.
+"""
+type offer
+  """
+  Work requested by the lead (H01). The 600-grapheme bound is an authoring choice.
+  """
+  task: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Accept the offer. Send this only if you can write the note as asked.
+"""
+type accept
+  task: ref(offer)
+
+"""
+Refuse the offer, and say why.
+"""
+type refuse
+  task: ref(offer)
+  reason: text(bytes: 1..4800, graphemes: 1..300)
+
+"""
+Submit the release note, or a reference to it, for review.
+"""
+type submit
+  task: ref(offer)
+  """
+  A reference is a claim; the reviewer must inspect its content (H08).
+  The 600-grapheme bound is an authoring choice.
+  """
+  artifact: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Approve the exact submission you read.
+"""
+type approve
+  task: ref(offer)
+  submission: ref(submit)
+
+"""
+Ask for changes to the submission. Name each change and why.
+"""
+type changes
+  task: ref(offer)
+  submission: ref(submit)
+  reason: text(bytes: 1..4800, graphemes: 1..300)
+
+"""
+Accept the reviewed release note as the result.
+"""
+type accept_result
+  task: ref(offer)
+  submission: ref(submit)
+
+"""
+Cancel the task, and say why.
+"""
+type cancel
+  reason: text(bytes: 1..4800, graphemes: 1..300)
+
+"""
+The lead has not offered the task yet. Send the offer to the writer and the reviewer.
+"""
+state new
+  lead -> {writer,reviewer}: offer() as task => offered
+
+"""
+The writer has the offer and must accept within two minutes, or refuse.
+"""
+state offered
+  """
+  Every assigned writer must accept before work starts (H01).
+  """
+  writer -> lead: accept(task=$task) @2m => writing | unclaimed
+  writer -> lead: refuse(task=$task) => refused
+
+"""
+The writer owes a submission within fifteen minutes.
+"""
+state writing
+  writer -> {lead,reviewer}: submit(task=$task) as submission @15m => reviewing | stalled
+
+"""
+The reviewer reads the exact submission and owes an approval within five minutes, or asks for
+changes.
+"""
+state reviewing
+  reviewer -> {lead,writer}: approve(task=$task,submission=$submission) @5m => acceptance | stalled
+  reviewer -> {lead,writer}: changes(task=$task,submission=$submission) => needs_revision
+
+"""
+The reviewer approved. The lead owes the final acceptance within five minutes.
+"""
+state acceptance
+  lead -> {writer,reviewer}: accept_result(task=$task,submission=$submission) @5m => complete | stalled
+
+anystate
+  lead -> {writer,reviewer}: cancel() => cancelled
+
+"""
+Only the lead's acceptance of the independently reviewed submission completes work (H04).
+"""
+end complete
+
+"""
+The writer refused the task. Send nothing more.
+"""
+end refused
+
+"""
+The writer did not accept within two minutes. The lead may offer the task again.
+"""
+end unclaimed
+
+"""
+An owed message did not arrive in time. Stop, and report what is missing to the lead.
+"""
+end stalled
+
+"""
+The reviewer asked for changes, which ends this session. The lead starts a new one for the revision.
+"""
+end needs_revision
+
+"""
+The lead cancelled the task. Send nothing more.
+"""
+end cancelled
+
+"""
+The thirty-minute contract clock ran out. Send nothing more.
+"""
+end expired

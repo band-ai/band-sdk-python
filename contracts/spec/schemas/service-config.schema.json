@@ -1,0 +1,552 @@
+{
+  "type": "object",
+  "properties": {
+    "profile": {
+      "const": "band-contract/service/1"
+    },
+    "kind": {
+      "enum": [
+        "room",
+        "agent"
+      ]
+    },
+    "store": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "durable": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000000
+        },
+        "max_record_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 4194304
+        },
+        "max_database_bytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 1073741824
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "engine": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "prefixItems": [
+            {
+              "type": "string",
+              "pattern": "^/",
+              "minLength": 1
+            }
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "contract": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "format": {
+          "enum": [
+            "frontmatter",
+            "standard",
+            "file-source"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 16777216
+        }
+      },
+      "required": [
+        "command",
+        "contract"
+      ],
+      "additionalProperties": false
+    },
+    "http": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "tokens_file": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "tls_certificate": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "tls_key": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "max_body_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        },
+        "max_connections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "read_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "host",
+        "port",
+        "tokens_file"
+      ],
+      "additionalProperties": false,
+      "dependentRequired": {
+        "tls_certificate": [
+          "tls_key"
+        ],
+        "tls_key": [
+          "tls_certificate"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "host": {
+                "not": {
+                  "const": "127.0.0.1"
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tls_certificate",
+              "tls_key"
+            ]
+          }
+        }
+      ]
+    },
+    "poll_interval_ms": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 60000
+    },
+    "room": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "bindings": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "inactivity": {
+          "enum": [
+            "accepted",
+            "transition",
+            "marked"
+          ]
+        },
+        "max_messages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        },
+        "snapshot_every": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)*/[1-9][0-9]{0,3}(?![\\s\\S])"
+          }
+        }
+      },
+      "required": [
+        "session",
+        "bindings"
+      ],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "program_source": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "artifact_directory": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "room": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^https?://"
+            },
+            "token_file": {
+              "type": "string",
+              "pattern": "^/",
+              "minLength": 1
+            },
+            "ca_file": {
+              "type": "string",
+              "pattern": "^/",
+              "minLength": 1
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 120000
+            },
+            "authentication": {
+              "enum": [
+                "bearer",
+                "band-api-key"
+              ],
+              "default": "bearer"
+            }
+          },
+          "required": [
+            "url",
+            "token_file"
+          ],
+          "additionalProperties": false
+        },
+        "provider": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "pattern": "^/",
+                      "minLength": 1
+                    }
+                  ],
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "timeout_ms": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 120000
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "openai"
+                },
+                "model": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{1,159}$"
+                },
+                "timeout_ms": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 120000
+                },
+                "max_output_tokens": {
+                  "type": "integer",
+                  "minimum": 16,
+                  "maximum": 8192
+                },
+                "max_request_bytes": {
+                  "type": "integer",
+                  "minimum": 1024,
+                  "maximum": 262144
+                },
+                "pricing": {
+                  "type": "object",
+                  "properties": {
+                    "input_nano_usd_per_token": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000
+                    },
+                    "cached_input_nano_usd_per_token": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000
+                    },
+                    "output_nano_usd_per_token": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    }
+                  },
+                  "required": [
+                    "input_nano_usd_per_token",
+                    "cached_input_nano_usd_per_token",
+                    "output_nano_usd_per_token",
+                    "as_of"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "model"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "validator": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "pattern": "^/",
+                  "minLength": 1
+                }
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 120000
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false
+        },
+        "control_actors": {
+          "type": "object",
+          "maxProperties": 256,
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "wake",
+                "takeover",
+                "resume",
+                "retry",
+                "repair",
+                "reconcile"
+              ]
+            }
+          }
+        },
+        "program_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        },
+        "model_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "snapshot_every": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "max_pending": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "max_repairs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "initial_route": {
+          "enum": [
+            "program",
+            "llm"
+          ]
+        }
+      },
+      "required": [
+        "actor",
+        "program_source",
+        "artifact_directory",
+        "room",
+        "provider"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "max_repairs"
+            ],
+            "properties": {
+              "max_repairs": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "validator"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "profile",
+    "kind",
+    "store",
+    "engine",
+    "http"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:band-contract:service-config:1",
+  "title": "Standalone room or remote agent service",
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "room"
+        },
+        "store": {
+          "properties": {
+            "durable": {
+              "const": true
+            }
+          }
+        }
+      },
+      "required": [
+        "room"
+      ],
+      "not": {
+        "required": [
+          "agent"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "agent"
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "not": {
+        "required": [
+          "room"
+        ]
+      }
+    }
+  ]
+}

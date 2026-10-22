@@ -1,0 +1,742 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-utf8-and-grapheme-boundaries",
+  "requirements": [
+    "ENG-004"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: explicit-infinity\ndescription: Test explicit infinity with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [a, b]\n---\n\"\"\"\nA keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou are A. Ping B while the connection is in use, and close it when you are done.\n\"\"\"\nrole a\n\n\"\"\"\nYou are B. Receive A's pings and close; you send nothing in this session.\n\"\"\"\nrole b\n\n\"\"\"\nSignal that the connection is still in use. The message carries no content.\n\"\"\"\ntype ping\n  text: text(bytes: 4, graphemes: 1)\n\n\"\"\"\nClose the connection. No pings follow.\n\"\"\"\ntype close\n\n\"\"\"\nThe connection is open. A may ping any number of times and closes it when done.\n\"\"\"\nstate new\n  event a -> b: ping()\n  a -> b: close() => complete\n\n\"\"\"\nA closed the connection. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe session expired. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "90c83a6650222fbdf2b19207e5f94fa3ade56feeee6bcb32e8343567749f7024"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "a": "a",
+          "b": "b"
+        },
+        "now": 0,
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "a": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "b": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "a",
+      "now": 0,
+      "message": {
+        "id": "astral",
+        "session": "s",
+        "kind": "ping",
+        "payload": {
+          "text": "🚀"
+        }
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "a": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "b": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "a",
+      "now": 0,
+      "message": {
+        "id": "byte-over",
+        "session": "s",
+        "kind": "ping",
+        "payload": {
+          "text": "🚀́"
+        }
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "a": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "b": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "a",
+      "now": 0,
+      "message": {
+        "id": "two-graphemes",
+        "session": "s",
+        "kind": "ping",
+        "payload": {
+          "text": "ab"
+        }
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "a": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "b": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "payload"
+    },
+    {
+      "response": 4,
+      "pointer": "/decision/reason",
+      "equals": "payload"
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 1
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test explicit infinity with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "explicit-infinity",
+          "roles": [
+            "a",
+            "b"
+          ],
+          "version": null
+        },
+        "digest": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "A keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.",
+          "line": 1
+        },
+        "name": "explicit-infinity",
+        "role_metadata": {
+          "a": {
+            "meta": {
+              "doc": "You are A. Ping B while the connection is in use, and close it when you are done.",
+              "line": 7
+            },
+            "name": "a"
+          },
+          "b": {
+            "meta": {
+              "doc": "You are B. Receive A's pings and close; you send nothing in this session.",
+              "line": 12
+            },
+            "name": "b"
+          }
+        },
+        "roles": [
+          "a",
+          "b"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "90c83a6650222fbdf2b19207e5f94fa3ade56feeee6bcb32e8343567749f7024",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The connection is open. A may ping any number of times and closes it when done.",
+              "line": 28
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-0",
+                "kind": "ping",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                },
+                "target": null,
+                "to": [
+                  "b"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-1",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 33
+                },
+                "target": "complete",
+                "to": [
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "A closed the connection. Send nothing more.",
+              "line": 35
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session expired. Send nothing more.",
+              "line": 40
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": "Close the connection. No pings follow.",
+              "line": 23
+            },
+            "name": "close"
+          },
+          "ping": {
+            "fields": {
+              "text": {
+                "bytes": {
+                  "max": 4,
+                  "min": 0
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 1,
+                  "min": 0
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 21
+                }
+              }
+            },
+            "meta": {
+              "doc": "Signal that the connection is still in use. The message carries no content.",
+              "line": 17
+            },
+            "name": "ping"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+        "profile": "band-contract/state/2",
+        "source": "90c83a6650222fbdf2b19207e5f94fa3ade56feeee6bcb32e8343567749f7024",
+        "state": {
+          "bindings": {
+            "a": "a",
+            "b": "b"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "a",
+        "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+        "id": "astral",
+        "kind": "ping",
+        "metadata": {
+          "doc": null,
+          "line": 32
+        },
+        "outcome": null,
+        "payload": {
+          "text": "🚀"
+        },
+        "recipients": [
+          "b"
+        ],
+        "role": "a",
+        "session": "s",
+        "state": "new",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+        "profile": "band-contract/state/2",
+        "source": "90c83a6650222fbdf2b19207e5f94fa3ade56feeee6bcb32e8343567749f7024",
+        "state": {
+          "bindings": {
+            "a": "a",
+            "b": "b"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "astral": {
+              "actor": "a",
+              "at": 0,
+              "id": "astral",
+              "kind": "ping",
+              "payload": {
+                "text": "🚀"
+              },
+              "recipients": [
+                "b"
+              ],
+              "role": "a",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "astral",
+              "kind": "ping",
+              "role": "a",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "astral": {
+              "decision": {
+                "actor": "a",
+                "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+                "id": "astral",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 32
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "🚀"
+                },
+                "recipients": [
+                  "b"
+                ],
+                "role": "a",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "6685b67cdace159169d7d4a1f9f7eaafb15ad7c0066093732a2468f8826fe762"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "detail": {
+          "constraint": "bytes",
+          "field": "text",
+          "max": 4,
+          "min": 0
+        },
+        "reason": "payload",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+        "profile": "band-contract/state/2",
+        "source": "90c83a6650222fbdf2b19207e5f94fa3ade56feeee6bcb32e8343567749f7024",
+        "state": {
+          "bindings": {
+            "a": "a",
+            "b": "b"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "astral": {
+              "actor": "a",
+              "at": 0,
+              "id": "astral",
+              "kind": "ping",
+              "payload": {
+                "text": "🚀"
+              },
+              "recipients": [
+                "b"
+              ],
+              "role": "a",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "astral",
+              "kind": "ping",
+              "role": "a",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "astral": {
+              "decision": {
+                "actor": "a",
+                "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+                "id": "astral",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 32
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "🚀"
+                },
+                "recipients": [
+                  "b"
+                ],
+                "role": "a",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "6685b67cdace159169d7d4a1f9f7eaafb15ad7c0066093732a2468f8826fe762"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "detail": {
+          "constraint": "graphemes",
+          "field": "text",
+          "max": 1,
+          "min": 0
+        },
+        "reason": "payload",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+        "profile": "band-contract/state/2",
+        "source": "90c83a6650222fbdf2b19207e5f94fa3ade56feeee6bcb32e8343567749f7024",
+        "state": {
+          "bindings": {
+            "a": "a",
+            "b": "b"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "astral": {
+              "actor": "a",
+              "at": 0,
+              "id": "astral",
+              "kind": "ping",
+              "payload": {
+                "text": "🚀"
+              },
+              "recipients": [
+                "b"
+              ],
+              "role": "a",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "astral",
+              "kind": "ping",
+              "role": "a",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "astral": {
+              "decision": {
+                "actor": "a",
+                "definition": "53503dca8094a57991bc6df7e26191e00760dded6dc3991d3505e2ce8172e384",
+                "id": "astral",
+                "kind": "ping",
+                "metadata": {
+                  "doc": null,
+                  "line": 32
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "🚀"
+                },
+                "recipients": [
+                  "b"
+                ],
+                "role": "a",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "6685b67cdace159169d7d4a1f9f7eaafb15ad7c0066093732a2468f8826fe762"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+---
+name: explicit-infinity
+description: Test explicit infinity with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [a, b]
+---
+"""
+A keeps a connection to B alive with pings for as long as needed, then closes it. There is no
+time limit.
+"""
+contract @infinity mentions 1 => expired
+
+"""
+You are A. Ping B while the connection is in use, and close it when you are done.
+"""
+role a
+
+"""
+You are B. Receive A's pings and close; you send nothing in this session.
+"""
+role b
+
+"""
+Signal that the connection is still in use. The message carries no content.
+"""
+type ping
+
+"""
+Close the connection. No pings follow.
+"""
+type close
+
+"""
+The connection is open. A may ping any number of times and closes it when done.
+"""
+state new
+  event a -> b: ping()
+  a -> b: close() => complete
+
+"""
+A closed the connection. Send nothing more.
+"""
+end complete
+
+"""
+The session expired. Send nothing more.
+"""
+end expired

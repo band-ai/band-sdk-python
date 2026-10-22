@@ -64,7 +64,7 @@ jobs:
       # workspace members that aren't a root dependency (packages/band-mcp) --
       # every uv command in this workflow needs it, or tests/mcp/*.py (which
       # import band_mcp) fail to collect and pyrefly misses packages/band-mcp/src.
-      run: uv sync --all-packages --locked --extra dev
+      run: uv sync --all-packages --locked --extra dev --extra contracts
 
     - name: Run pre-commit hooks
       run: uv run --all-packages pre-commit run --all-files
@@ -114,7 +114,9 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: uv sync --all-packages --locked --extra dev
+      # Portable contract tests run in every SDK matrix cell. Tests that need
+      # native capabilities declare those boundaries individually.
+      run: uv sync --all-packages --locked --extra dev --extra contracts
 
     - name: Collect baseline E2E in the core environment
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
@@ -130,6 +132,85 @@ jobs:
       run: |
         # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
         uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
+
+
+  contract-qualification:
+    # Native contract coverage is required for PRs and every queued merge.
+    if: *not-draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - name: Configure git to use HTTPS for GitHub
+      uses: ./.github/actions/git-https-auth
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
+
+    - name: Install the checked-in BEAM toolchain
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+      with:
+        version-file: contracts/.tool-versions
+        version-type: strict
+        install-hex: true
+        install-rebar: true
+
+    - name: Install Node for specification checks
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: "24"
+
+    - name: Install native qualification dependencies
+      # The callback sandbox requires the system Python under /usr.
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends python3.12-venv bubblewrap libseccomp2 apparmor
+
+    - name: Permit bubblewrap to create its isolated namespaces
+      # Keep Ubuntu's global namespace restriction and use the scoped profile.
+      run: sudo apparmor_parser --replace contracts/deploy/apparmor/bwrap
+
+    - name: Run canonical source and release qualification
+      id: qualification
+      timeout-minutes: 52
+      # ci.py builds both engines and passes --contract-qualification to every
+      # contract pytest suite, so absent native prerequisites fail the job.
+      run: |
+        bash .github/scripts/contractqualification.sh run \
+          "$GITHUB_WORKSPACE" "$RUNNER_TEMP/band-contract-qualification" \
+          "band-contract-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.service"
+
+    - name: Confirm qualification processes have stopped
+      if: always() && steps.qualification.outcome != 'skipped'
+      timeout-minutes: 2
+      run: |
+        bash .github/scripts/contractqualification.sh stop \
+          "$GITHUB_WORKSPACE" "$RUNNER_TEMP/band-contract-qualification" \
+          "band-contract-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.service"
+
+    - name: Retain qualification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: contract-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/band-contract-qualification/driver.log
+          ${{ runner.temp }}/band-contract-qualification/cleanup.log
+          ${{ runner.temp }}/band-contract-qualification/qualification/result.json
+          ${{ runner.temp }}/band-contract-qualification/qualification/logs/
+          ${{ runner.temp }}/band-contract-qualification/qualification/coordination-report.json
+          ${{ runner.temp }}/band-contract-qualification/qualification/http-report.json
+          ${{ runner.temp }}/band-contract-qualification/qualification/release-a/manifest.json
+          ${{ runner.temp }}/band-contract-qualification/qualification/release-b/manifest.json
+        if-no-files-found: warn
+        retention-days: 14
 
 
   test-crewai:
@@ -162,7 +243,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install crewai dependencies
-      run: uv sync --all-packages --locked --extra dev-crewai
+      run: uv sync --all-packages --locked --extra dev-crewai --extra contracts
 
     - name: Collect baseline E2E in the CrewAI environment
       env:
@@ -233,7 +314,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install Strands and NOOA dependencies
-      run: uv sync --all-packages --locked --extra dev-strands-nooa
+      run: uv sync --all-packages --locked --extra dev-strands-nooa --extra contracts
 
     - name: Collect baseline E2E in the Strands and NOOA environment
       env:
@@ -303,7 +384,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install parlant dependencies
-      run: uv sync --all-packages --locked --extra dev-parlant
+      run: uv sync --all-packages --locked --extra dev-parlant --extra contracts
 
     - name: Collect baseline E2E in the Parlant environment
       env:
@@ -513,7 +594,7 @@ jobs:
     # allowed to skip are the ones omitted from the merge queue.
     # always(), not !cancelled(): a skipped required check counts as passing.
     if: always()
-    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
+    needs: [lint, test, contract-qualification, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
     runs-on: ubuntu-latest
     steps:
     - name: Verify every CI job passed or was skipped
@@ -523,6 +604,7 @@ jobs:
         for entry in \
           "lint:${{ needs.lint.result }}:success" \
           "test:${{ needs.test.result }}:success" \
+          "contract-qualification:${{ needs.contract-qualification.result }}:success" \
           "test-crewai:${{ needs.test-crewai.result }}:success" \
           "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \
           "test-parlant:${{ needs.test-parlant.result }}:success" \

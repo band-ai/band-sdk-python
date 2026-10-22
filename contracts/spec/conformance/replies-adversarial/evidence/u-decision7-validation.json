@@ -1,0 +1,141 @@
+{
+  "created_at": "2026-10-15T07:44:57.672677+00:00",
+  "op": "op-cgb7ffgk",
+  "sid": "5ecoid32wkr2p",
+  "base": "1ca5735265924d77d75a9051b9cec277f85824cb",
+  "coverage_decision": 7,
+  "coverage_sha256": "2cddb433b3d5b5506e1950a8075e0ca9b171a278b48c104f4e386baec17a8984",
+  "red_before_edit": {
+    "actual_exit_code": 1,
+    "two_block_heads_reply_route_at_later_head": false,
+    "state_name_clash_stays_duplicate": true,
+    "pipe_no_opener_reply_timeout": false,
+    "double_opener_reply_timeout": false,
+    "one_line_alternatives_syntax": false
+  },
+  "green_after_edit": {
+    "actual_exit_code": 0,
+    "checks": {
+      "two_block_heads_reply_route_at_later_head": true,
+      "state_name_clash_stays_duplicate": true,
+      "pipe_no_opener_reply_timeout": true,
+      "double_opener_reply_timeout": true,
+      "one_line_alternatives_syntax_at_offending_row": true
+    },
+    "other_44_native_vectors_exactly_unchanged": [
+      "overlap-useful-exhaustive",
+      "overlap-bare-fallback",
+      "coverage-false-false-gap",
+      "disjoint-total-control",
+      "s4-16x4-staggered-booleans",
+      "s4-disjoint-large-domain",
+      "s4-disjoint-bigint-domain",
+      "s4-16x4-total-boundary",
+      "limit-17-rows",
+      "limit-5-literals",
+      "limit-contract-272-rows",
+      "unknown-enum-literal",
+      "unknown-boolean-literal",
+      "c1-late-reply-reentered-wait",
+      "c1-cycle-no-eligible-ref",
+      "c1-cycle-without-max-entries",
+      "c1-rebind-state-event",
+      "c1-rebind-anystate-event",
+      "c1-acyclic-cross-wait",
+      "sugar-stale-implicit-binding",
+      "c1-acyclic-rebind",
+      "c1-acyclic-implicit-binding",
+      "c1-acyclic-implicit-reference",
+      "c1-acyclic-wrong-reference",
+      "c1-reply-kind-ordinary-rule",
+      "c1-reply-kind-anystate-event",
+      "sugar-no-eligible-ref-kind",
+      "sugar-ambiguous-ref-fields",
+      "sugar-ambiguous-refs-explicit-control",
+      "sugar-one-eligible-of-several-refs",
+      "sugar-implicit-wrong-reference",
+      "sugar-rebind-wait-name-state",
+      "sugar-rebind-wait-name-anystate",
+      "sugar-auto-wait-positive-control",
+      "sugar-auto-wait-name-clash",
+      "u-pipe-reply-vs-timed-rule",
+      "u-pipe-reply-vs-timed-rule-second-alternative",
+      "u-pipe-timed-rule-timeout",
+      "v4-renew-all-targets-terminal-first",
+      "v4-renew-all-targets-long-first",
+      "v4-renew-exact-boundary",
+      "reserve-0-or-3-underflow",
+      "reserve-0-or-3-short",
+      "reserve-0-or-3-long"
+    ],
+    "malformed_source_shapes_checked": true,
+    "new_compile_expectations_identical_in_portable_assertions": true,
+    "generator_deterministic": true,
+    "source_hashes_verified": true,
+    "one_line_false_green_guard_observed": {
+      "expected": {
+        "code": "syntax",
+        "line": 9
+      },
+      "old_parser_observed": {
+        "code": "syntax",
+        "line": 8
+      },
+      "case_pass": false
+    }
+  },
+  "source_hashes": {
+    "suite.json": "3424c457191e2063ea8caf2660741200bbe91da337b450c1d5ae0f632569e5d1",
+    "semantic-inputs.json": "40b4edc9366b15b26ff2477a79941c1a841b1b8958d82948d1a2aebd60f09e53",
+    "EXPECTED.md": "1ffd2fc82faa1671407b2c91fc19f268767cb96707880cf27177594faff67b9a"
+  },
+  "candidate_head": "4eb674ca2f10fe53f7df206e5fea78b779d0555d",
+  "old_head": "95c9b25a3ead70d94fb3977a81dd7cd13d22097c",
+  "tracked_baseline_clean": true,
+  "candidate_feature_green": false,
+  "old_reader_checked": true,
+  "commands": [
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--write"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--write"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "~/tv/band-codex-engineers/.venv/bin/python3",
+        "spec/conformance/replies-adversarial/run_replies_adversarial.py",
+        "--repo",
+        "~/band-codex-engineers-workspace/felix-replies-u-kenji-baseline",
+        "--old-repo",
+        "~/band-codex-engineers-workspace/felix-replies-baseline-95c9b25",
+        "--report",
+        "spec/conformance/replies-adversarial/evidence/u-decision7-baseline-red.json"
+      ],
+      "exit_code": 1,
+      "elapsed_ms": 948,
+      "passed": 4,
+      "failed": 49
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "build_identity": "u-validation.json baseline.beam_sha256 (same immutable 4eb674c build)",
+  "baseline_beams_match_recorded_immutable_build": true
+}

@@ -1,0 +1,37 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-reject-due-all",
+  "requirements": [
+    "DSL-004",
+    "ENG-008",
+    "ENG-010"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: explicit-infinity\ndescription: Test explicit infinity with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [a, b]\n---\n\"\"\"\nA keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou are A. Ping B while the connection is in use, and close it when you are done.\n\"\"\"\nrole a\n\n\"\"\"\nYou are B. Receive A's pings and close; you send nothing in this session.\n\"\"\"\nrole b\n\n\"\"\"\nSignal that the connection is still in use. The message carries no content.\n\"\"\"\ntype ping\n\n\"\"\"\nClose the connection. No pings follow.\n\"\"\"\ntype close\n\n\"\"\"\nThe connection is open. A may ping any number of times and closes it when done.\n\"\"\"\nstate new\n  due all of a with ping in 1s => expired\n  a -> b: close() => complete\n\n\"\"\"\nA closed the connection. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe session expired. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "d3a1e02eccbffb7f4d61c0eaf2fc0300601b48c17a3a50edeeeb22473abe12a9"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "syntax"
+    }
+  ],
+  "expected": [
+    {
+      "error": {
+        "code": "syntax",
+        "detail": "due … with … in was removed; put @duration on the rule (a -> b: k() @5m => next | outcome) or on an event (event a -> b: k() @5m => outcome)",
+        "line": 31
+      }
+    }
+  ]
+}

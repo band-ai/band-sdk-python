@@ -1,0 +1,196 @@
+{
+  "request": "Focus on the contract specification and integration with the Band room specification.",
+  "scope": "Written specification, wire schemas, portable examples and source comparison. No Band runtime change or fresh live Band qualification.",
+  "revision": "1.0.0-rc.3",
+  "specification_baseline": "cb860322925d972f8aac5c0504fc66a163ae9cc0",
+  "repository_remote": null,
+  "band_source_review": {
+    "commit": "59c15330f5dfa57b32f7d3ba634e5026d46f0148",
+    "dirty": false,
+    "fetched_origin_dev": "cac330aac5565cfb355aea8461a08fd27333b27c",
+    "vendor_source_commit": "0f32c52c3affb05e957ca208cc2103eb77d04628",
+    "files": {
+      "lib/thenvoi_com/contract_rooms.ex": "ad7bcd2a8dd172b164c8432702345b52cf93d37b7200d2eb6421ddac6a6c97c4",
+      "lib/thenvoi_com_web/api/contract_rooms_http.ex": "dbc470d3b806e3dd96a5b0baeb1e0d85683049d9dbcb2ef4e5c1c8140655f9ce",
+      "lib/thenvoi_com_web/api/contract_rooms_spec.ex": "37ead2c385a63b182e3bd934a1f579158c30fce664f43ea342af585b7712727a",
+      "vendor/contract-source.json": "3938d12f30691493dab04743bea21902331560d7da24d413e96e103a89c452ef",
+      "test/thenvoi_com/contract_rooms/authority_test.exs": "326765bae57522d73bc8083370d3309c3ddd7635f9d8678449bad9dbf70ff8f1",
+      "test/thenvoi_com/contract_rooms/concurrency_test.exs": "05eab0c08ab150681d341bc71b5c45627fbe93b3f7de663b8176c2adf6d82c76",
+      "test/thenvoi_com_web/controllers/api/v1/contract_rooms_controller_test.exs": "2a149668ba8eee3b6f0840808aef67663c51aeb13a4d25955d5ed16d8c789cd8",
+      "priv/repo/migrations/20261010150000_create_contract_room_authorities.exs": "71ca0b318783ddd5dd7a63b488ca3243fe90b7b2e3d44d1b95dcd2694f360b9f"
+    },
+    "observations": [
+      {
+        "id": "openapi-actor",
+        "source": "lib/thenvoi_com_web/api/contract_rooms_spec.ex",
+        "finding": "create_schema/0 permits malformed UUID hyphen layouts in typed actors; normative band_actor is exact.",
+        "disposition": "Runtime OpenAPI follow-up recorded; no Band edit."
+      },
+      {
+        "id": "openapi-timeout",
+        "source": "lib/thenvoi_com_web/api/contract_rooms_spec.ex",
+        "finding": "OpenAPI default error description omits the 408 returned by ContractRoomsHTTP.read/4.",
+        "disposition": "Normative error table corrected; native OpenAPI follow-up recorded."
+      },
+      {
+        "id": "read-deadlines",
+        "source": "lib/thenvoi_com/contract_rooms.ex",
+        "finding": "identity/3 and inbox/4 authorize and lock without restoring/ticking/saving state; view and publish restore/advance and persist it.",
+        "disposition": "Retained deadline requirement, explicit runtime repair and native test obligation. Static observation only."
+      },
+      {
+        "id": "vendor-consumption",
+        "source": "vendor/contract-source.json",
+        "finding": "The inspected Band branch pins the older immutable core source/schema bundle.",
+        "disposition": "A future refresh and native qualification are required before claiming consumption of rc.3."
+      }
+    ]
+  },
+  "observed_red": [
+    {
+      "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_band_spec.py -v",
+      "exit_code": 1,
+      "tests": 4,
+      "failures": 4,
+      "reason": "The normative registry lacked Band identity/request schemas.",
+      "log_sha256": "59aa8ca29b1279a2ae3c040c53ce9641b370ad7ac766e7c6d48e2d2697bf52b5"
+    },
+    {
+      "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_band_spec.py -v",
+      "exit_code": 1,
+      "tests": 5,
+      "failures": 1,
+      "reason": "The prior checker accepted a hash-valid Band fixture with a false schema-validity expectation.",
+      "log_sha256": "22681fd6cf6ddd46e724b122a39a0d456522f9fa31f7b6b31e971bde5c0811db"
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "portable_specification": {
+      "revision": "1.0.0-rc.3",
+      "requirements": 94,
+      "schema_definitions": 92,
+      "cases": 78,
+      "generated_artifacts_checked": true,
+      "coverage": {
+        "requirements": 94,
+        "requirements_with_examples": 34,
+        "requirements_without_examples": 60
+      },
+      "qualification": "not_assessed",
+      "requests": 283,
+      "adapter_checked": true,
+      "invocation_replays": 2,
+      "band_wire_examples": 33,
+      "band_live_checked": false,
+      "provider_fixture_checked": true,
+      "command": [
+        ".venv/bin/python",
+        "spec/tools/check_spec.py",
+        "--output",
+        ".cache/band-spec-final.json"
+      ],
+      "exit_code": 0,
+      "passed": true
+    },
+    "checker_regressions": {
+      "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+      "passed": true,
+      "exit_code": 0,
+      "tests": 19,
+      "log_sha256": "0e684f7289abcb06e2b1660edb6db63952ba77666b352a603c75a17cdee5af59"
+    },
+    "documents_and_compatibility": {
+      "passed": true,
+      "exit_code": 0,
+      "baseline": "cb860322925d972f8aac5c0504fc66a163ae9cc0",
+      "documents": 10,
+      "local_links": 115,
+      "anchors": 9,
+      "json_examples": 2,
+      "verified_compiled_digests": 2,
+      "original_case_files_unchanged": 77,
+      "unchanged_existing_schema_definitions": 81,
+      "revision_only_schema_changes": [
+        "requirements",
+        "coverage_index"
+      ],
+      "new_definitions": [
+        "band_actor",
+        "band_create_request",
+        "band_envelope",
+        "band_http_identity",
+        "band_session_config",
+        "band_uuid",
+        "band_view_request",
+        "band_wire_example",
+        "band_wire_examples"
+      ],
+      "requirement_ids_and_statements_preserved": 94,
+      "command": ".venv/bin/python .cache/check_contract_band_docs.py",
+      "checker_sha256": "5d78f66a11dbe63abfda5c2aa2e196990e894a0f187397a19c93caadb5360d76",
+      "initial_failure": "An existing link used the original bounds heading. The heading was retained, then the check passed."
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "new_engine_case": {
+      "path": "spec/conformance/case-band-session.json",
+      "requests": 20,
+      "sha256": "120722ae8482809161bae3bdcffca4ac555a23892d2b8f66842b60af9bbc74e8"
+    },
+    "wire_examples": {
+      "path": "spec/conformance/band-wire-examples.json",
+      "count": 33,
+      "sha256": "a56ea7bf3d453e893a6d6ef052e2e23bb0cf8cd51cba5ee157efa8678ac9bb1e"
+    },
+    "limitations": [
+      "Schema examples establish structure, not authentication, membership, database atomicity or deployment.",
+      "The engine vector runs the reference reducer with independent assertions, not a second complete engine.",
+      "Band source observations are static; no native Band suite or live Band process was run for this specification pass.",
+      "Original production qualification remains open in PRODUCTION.md."
+    ]
+  },
+  "band_runtime_edited": false,
+  "band_live_checked": false,
+  "qualification": "not_assessed",
+  "publication": {
+    "published": false,
+    "merged": false,
+    "deployed": false
+  },
+  "expectations": {
+    "B1": {
+      "status": "as_expected",
+      "evidence": [
+        "spec/band-integration.md",
+        "spec/conformance/case-band-session.json"
+      ]
+    },
+    "B2": {
+      "status": "as_expected",
+      "evidence": [
+        "spec/band-transport.md",
+        "spec/schemas/protocol.schema.json",
+        "spec/requirements.json"
+      ]
+    },
+    "B3": {
+      "status": "as_expected",
+      "evidence": [
+        "observed_red",
+        "validation.portable_specification",
+        "validation.checker_regressions",
+        "validation.documents_and_compatibility"
+      ]
+    },
+    "B4": {
+      "status": "as_expected",
+      "evidence": [
+        "band_source_review",
+        "spec/band-integration.md#evidence-and-remaining-implementation-work"
+      ]
+    }
+  }
+}

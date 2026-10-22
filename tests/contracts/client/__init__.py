@@ -1,0 +1,1 @@
+"""Contract client tests."""

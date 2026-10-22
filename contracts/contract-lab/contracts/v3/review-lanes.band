@@ -1,0 +1,103 @@
+---
+name: review-lanes
+description: Coordinate independent review lanes and synthesize the available evidence.
+engine: 0.2.0-lab.1
+roles: [lead, reviewers]
+extensions: [host.presence/1, room.contributions/1]
+---
+"""
+Ask independent agents to examine the same change from their assigned perspectives.
+Collect their evidence even when a lane cannot finish. Missing coverage must be
+visible in the synthesis; receiving reports does not establish that a change is safe.
+"""
+contract @30m max @4h => expired
+
+"""
+Choose the participants and their lane guidance before starting this run.
+Give every reviewer the same immutable change and sufficient context. In the
+summary, distinguish observed findings, disagreements and missing coverage.
+"""
+role lead
+
+"""
+Work independently within your assigned lane. Cite evidence for actionable
+findings, state uncertainty and avoid presenting missing evidence as a clean review.
+Use the room's stop_contribution operation if you must stop your contribution.
+A heartbeat is evidence of activity, not a result.
+"""
+type reviewer: agent
+  """
+  Name the perspective this participant should bring to the review.
+  """
+  specialty: enum(devops|security|frontend|general)
+
+"""
+Bind the independent reviewers for this run; each follows its type and assignment.
+"""
+reviewers: list(reviewer)
+
+"""
+The shared review request every lane answers.
+"""
+type request
+  """
+  Identify the immutable change and the question the review should answer.
+  """
+  text: text(1..4000)
+
+"""
+One lane's report on the shared request.
+"""
+type review
+  """
+  Report evidence, scope checked and uncertainty, including a clean result when appropriate.
+  """
+  text: text(1..8000)
+
+"""
+I am still working on my lane. It renews the collection window; it is not a report.
+"""
+type heartbeat
+
+"""
+The lead's synthesis: supported findings, disagreements and missing coverage.
+"""
+type summary
+  text: text(1..8000)
+
+/* Author note: the roster size is a runtime choice, not a number in this skill.
+   The recipient ceiling above is a resource bound; it does not require 256 agents. */
+"""
+Only the lead starts the shared review request.
+"""
+state new
+  lead -> reviewers: request() => reviewing
+
+"""
+Preserve independent reports. Do not wait beyond the collection window for an
+unresponsive lane. The room applies the declared grace to trusted presence data.
+"""
+state reviewing
+  """
+  Renew this exact collection window while preserving reports already received.
+  """
+  event reviewers -> lead: heartbeat() => @self
+  """
+  Continue when all lanes settle, or return the available reports at the deadline.
+  """
+  collect reports from reviewers -> lead @5m => summarizing
+    reply review()
+    offline @30s
+
+"""
+Read the collection results and accepted reports. Combine supported findings,
+identify disagreement, and name failed, offline or timed-out lanes explicitly.
+Partial coverage is useful evidence, but it is not proof of complete coverage.
+"""
+state summarizing
+  lead -> reviewers: summary() => complete
+
+"""
+A summary was delivered; its quality and any release decision require evaluation.
+"""
+end complete

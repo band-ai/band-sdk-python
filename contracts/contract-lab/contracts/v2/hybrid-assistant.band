@@ -1,0 +1,85 @@
+---
+name: hybrid-assistant
+description: A remote assistant answers known cases in Python and delegates judgment to an LLM.
+engine: 0.2.0-lab.1
+roles: [requester, assistant]
+---
+"""
+The room enforces the conversation. A separate remote controller chooses whether
+the Python program or LLM answers. Protocol validity does not prove answer quality.
+"""
+contract @30m => expired
+
+"""
+Ask one question at a time and evaluate the answer.
+"""
+role requester
+
+"""
+Answer exact common cases with the program. Delegate open-ended language and
+judgment to the LLM; never guess that a fixed rule handles arbitrary English.
+"""
+role assistant
+
+"""
+One question. Ask the next only after its answer arrives.
+"""
+type question
+  text: text(1..2000)
+
+"""
+Answer the question this reply names.
+"""
+type answer
+  request: ref(question)
+  text: text(1..4000)
+
+"""
+End the conversation; no further questions follow.
+"""
+type stop
+
+"""
+The requester asks the first question.
+"""
+state new
+  """
+  Ask a question. The assistant then owes one answer to it.
+  """
+  requester -> assistant: question() as request awaits answering
+    """
+    The assistant owns the deadline regardless of which implementation answers.
+    """
+    => answer(request=$request) & answered
+     """
+     No answer arrived within five minutes of the question.
+     """
+     | @5m & stalled
+
+"""
+The assistant answers the open question, by program or by LLM. At most ten
+questions are asked.
+"""
+state answering max_entries 10 => exhausted
+
+"""
+Ask the next question, or stop.
+"""
+state answered
+  requester -> assistant: question() as request => answering
+  requester -> assistant: stop() => complete
+
+"""
+The requester stopped after the answers it needed. Their quality is still the requester's call.
+"""
+end complete
+
+"""
+An answer did not arrive in time. The requester decides whether to ask again elsewhere.
+"""
+end stalled
+
+"""
+An eleventh question was asked. Start a new session for more.
+"""
+end exhausted

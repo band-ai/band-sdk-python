@@ -1,0 +1,37 @@
+[Unit]
+Description=Band supervised participant gateway
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=contract-programs
+Group=contract-programs
+StateDirectory=contract-programs
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/contract-programs
+ExecStart=/opt/contract/current-env/bin/contract-band-programs --config /etc/contract-programs/service.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=200
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# The sandbox needs user/mount namespaces and AF_NETLINK to initialize its
+# isolated loopback device. Generated code subsequently has sockets denied.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+MemoryMax=1G
+TasksMax=128
+LimitNOFILE=1024
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+{
+  "description": "Existing qualified implementation retained; production configuration and packaging changes are reviewed separately.",
+  "sdk_parent": "ceffe87ba2f2783bfa11962c610888a416ae08a1",
+  "original_files_sha256": {
+    "program_host.py": "f48abe7e91450d2d5716ea18373fe2ef403e4dbd5948a03793926f0ff2371623",
+    "generic_program.py": "f014dc295442bc1189d0a6b00cbc9edbda7c5756aa193040467bed9e39a674a9",
+    "serve_programs.py": "bf7f227c8d6837852120af26da3363c2b835aa8abb5f107c7e3bddb65c90df16",
+    "program_worker.py": "a2eaa6c9d37e3e5a72e5d251fce783d85ddc892cd5f14b10f66d8f3f7734d321",
+    "quality_authoring.py": "9f7df06e71a2b1911cc77175d0a4d722809231e36695462004aac1038fe02baf",
+    "role_quality.py": "20359e23e6a5ad4ff54645d7f93179734c5a7e3b69b3dc45f4f1872cc158ad9f",
+    "external_effects.py": "b39ff5e38aa8ea8c8a4c47fa91904e2994264bf12167a62823d7f28278cbb5ec",
+    "program_model.py": "6a2ea992f6b8d04435082261e4934500285c5e8d34a3fb4dc559cd668bba3ed2",
+    "program_validator.py": "9961c2cc4c9bf0aa1f86ff78a3f404b66b07015cba76bf6ef114e27c30f3076f",
+    "agent_service.py": "982e50b0749114967f78a15011152da380ca55e8188eb9cb6c12f6a819d63927",
+    "studio_agent.py": "4ee87066b546e24fffebacfc5c0cc9f1caff17adf47efa223a06b9d3382c9a7e",
+    "arithmetic_program.py": "176c39d61be790fa1049ce57aa577575813f571311b6a30194909bab70331232",
+    "demo/AUTHORING.md": "b7ae9c52e3002a9d5199b3547fba0014bf818c4751e62fbd01e7b6defaf242e9",
+    "demo/skills/room-protocol-author/SKILL.md": "ba3280aae9764e75756e098e37657a4d5510b66e7e0246f42459928e9d1325c5",
+    "skills/replace-agent-with-program/SKILL.md": "0f765ef3c0ffdc70af74b4e32cabef6e85283f87f859e545f53eacd676a4365e"
+  }
+}

@@ -1,0 +1,287 @@
+{
+  "profile": "band-contract/spec-improvements/1",
+  "baseline": "33f5b266ef6bf05a3a0677d4f3cba033c570af52",
+  "scope": "specifications and their portable conformance tooling; no runtime or deployment qualification",
+  "checks": {
+    "S1": {
+      "red": {
+        "command": ".venv/bin/python spec/tools/check_spec.py --schema-only",
+        "exit_code": 1,
+        "diagnostic": "'contract' is a required property",
+        "log_sha256": "3e0070751f1a859dd6bb98e740b75b95b2f57d121a875a8f23066d8dd6e006b1",
+        "condition": "New all-selector query fixture; unchanged baseline response-schema selection"
+      },
+      "green": {
+        "requirements": 94,
+        "schema_definitions": 79,
+        "cases": 68,
+        "requests": 232,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--output",
+          ".cache/spec-query-green.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      }
+    },
+    "S2": {
+      "red": {
+        "command": ".venv/bin/python spec/tools/check_spec.py --adapter-config .cache/spec-diagnostic-probe/command.json",
+        "exit_code": 1,
+        "diagnostic": "adapter response 226 differs from its immutable fixture",
+        "condition": "Fixture replay adapter changes only compiler diagnostic detail; this is a checker probe, not an independent implementation"
+      },
+      "green": {
+        "requirements": 94,
+        "schema_definitions": 80,
+        "cases": 68,
+        "requests": 232,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--adapter-config",
+          ".cache/spec-diagnostic-probe/command.json",
+          "--output",
+          ".cache/spec-diagnostic-green.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      },
+      "reference": {
+        "requirements": 94,
+        "schema_definitions": 80,
+        "cases": 68,
+        "requests": 232,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--output",
+          ".cache/spec-diagnostic-reference.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      },
+      "regressions": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 0,
+        "tests": 4,
+        "checks": [
+          "vary only compiler error detail",
+          "reject changed code or line, missing detail, extra keys",
+          "reject unsafe diagnostic JSON",
+          "retain exact success and other-operation comparison"
+        ]
+      }
+    },
+    "S3": {
+      "red": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 1,
+        "tests": 6,
+        "failures": 2,
+        "condition": "Old gate accepted a changed ID length bound and a changed normative discovery requirement in isolated bundle copies"
+      },
+      "green": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 0,
+        "tests": 7,
+        "checks": [
+          "reject protocol schema drift",
+          "reject requirement catalog drift",
+          "do not rewrite stale files",
+          "generator imports do not write files"
+        ]
+      },
+      "reference": {
+        "requirements": 94,
+        "schema_definitions": 80,
+        "cases": 68,
+        "generated_artifacts_checked": true,
+        "requests": 232,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--output",
+          ".cache/spec-drift-green.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      }
+    },
+    "S4": {
+      "red": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 1,
+        "tests": 10,
+        "failures": 3,
+        "condition": "Mislabelled case requirements and unknown artifact requirements were accepted; report lacked an example/acceptance distinction"
+      },
+      "green": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 0,
+        "tests": 12
+      },
+      "reference": {
+        "requirements": 94,
+        "schema_definitions": 83,
+        "cases": 68,
+        "generated_artifacts_checked": true,
+        "coverage": {
+          "requirements": 94,
+          "requirements_with_examples": 30,
+          "requirements_without_examples": 64
+        },
+        "qualification": "not_assessed",
+        "requests": 232,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--output",
+          ".cache/spec-coverage-green.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      },
+      "coverage_index": "../../spec/conformance/coverage.json",
+      "qualification": "not_assessed"
+    },
+    "S5": {
+      "change_type": "specification clarifications, requirements applicability and new examples; no engine/runtime behavior change",
+      "revision": "1.0.0-rc.2",
+      "reference": {
+        "revision": "1.0.0-rc.2",
+        "requirements": 94,
+        "schema_definitions": 83,
+        "cases": 77,
+        "generated_artifacts_checked": true,
+        "coverage": {
+          "requirements": 94,
+          "requirements_with_examples": 32,
+          "requirements_without_examples": 62
+        },
+        "qualification": "not_assessed",
+        "requests": 263,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--output",
+          ".cache/spec-final-reference.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      },
+      "checker_regressions": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 0,
+        "tests": 12
+      },
+      "http": {
+        "profile": "contract-room/http/1",
+        "checks": [
+          "http_identity",
+          "projection",
+          "decision",
+          "decision",
+          "inbox_response",
+          "projection",
+          "decision",
+          "decision",
+          "inbox_response"
+        ],
+        "passed": true,
+        "exit_code": 0
+      },
+      "documents": {
+        "profile": "band-contract/spec-document-checks/1",
+        "local_links_and_anchors": 53,
+        "original_fixture_files_unchanged": 67,
+        "existing_schema_definition_changes": [
+          "requirements"
+        ],
+        "new_schema_definitions": [
+          "compiler_error",
+          "coverage_counts",
+          "coverage_index",
+          "coverage_requirement",
+          "scope_definition"
+        ],
+        "exit_code": 0,
+        "passed": true
+      },
+      "documentation_examples": {
+        "identity_schema": true,
+        "envelope_schema": true,
+        "exit_code": 0
+      },
+      "limitations": [
+        "No second full engine is claimed.",
+        "Portable examples do not complete all acceptance clauses.",
+        "Live-provider, capacity/load and deployment qualification remain separate."
+      ]
+    },
+    "S6": {
+      "red": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 1,
+        "tests": 14,
+        "failing_subcases": 8,
+        "condition": "Raw adapter decoder accepted duplicate keys (including nested), floats/exponents, nonfinite/unsafe numbers, unpaired surrogates and UTF-16"
+      },
+      "green": {
+        "command": ".venv/bin/python -W error -m unittest discover -s spec/tools -p test_*.py -v",
+        "exit_code": 0,
+        "tests": 14,
+        "checks": [
+          "strict UTF-8 and portable JSON domain before comparison",
+          "valid noncanonical JSON still accepted",
+          "response count remains exact"
+        ]
+      },
+      "reference": {
+        "revision": "1.0.0-rc.2",
+        "requirements": 94,
+        "schema_definitions": 83,
+        "cases": 77,
+        "generated_artifacts_checked": true,
+        "coverage": {
+          "requirements": 94,
+          "requirements_with_examples": 32,
+          "requirements_without_examples": 62
+        },
+        "qualification": "not_assessed",
+        "requests": 263,
+        "adapter_checked": true,
+        "invocation_replays": 2,
+        "provider_fixture_checked": true,
+        "command": [
+          ".venv/bin/python",
+          "spec/tools/check_spec.py",
+          "--output",
+          ".cache/spec-adapter-json-green.json"
+        ],
+        "exit_code": 0,
+        "passed": true
+      }
+    }
+  }
+}

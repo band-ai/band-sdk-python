@@ -1,0 +1,45 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-body-defaults",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "body/1",
+        "fields": {}
+      },
+      "transport": {}
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "ok": {
+          "id": "m",
+          "session": "s",
+          "kind": "ping",
+          "payload": {},
+          "expected_version": 0
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "expected_version": 0,
+        "id": "m",
+        "kind": "ping",
+        "payload": {},
+        "session": "s"
+      }
+    }
+  ]
+}

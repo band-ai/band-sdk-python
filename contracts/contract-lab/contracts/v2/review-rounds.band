@@ -1,0 +1,117 @@
+---
+name: review-rounds
+description: A reviewer approves, rejects or asks for a revision; each revision goes back for another round.
+engine: 0.2.0-lab.1
+roles: [lead, reviewer]
+---
+"""
+Review one change in at most three rounds. Approved is the reviewer's
+assertion that the change is ready; it grants nothing beyond the reviewer's
+role.
+"""
+contract @1h => expired
+
+"""
+Send the change and the question. When the reviewer asks for a revision,
+change the work and resend the request saying what changed, or withdraw.
+"""
+role lead
+
+"""
+Review only the latest request. Decide approve, revise or reject, with
+evidence. Ask for a revision only with specific, actionable changes.
+"""
+role reviewer
+
+"""
+The change to review, the question and, in a later round, what changed.
+"""
+type request
+  text: text(1..2000)
+
+"""
+The reviewer's decision on the request it names, with findings and evidence.
+"""
+type review
+  source: ref(request)
+  decision: enum(approve|revise|reject)
+  text: text(1..4000)
+
+"""
+The lead stops the review. Say why in the conversation around it.
+"""
+type withdraw
+
+"""
+The lead opens the first round.
+"""
+state new
+  """
+  Send the request. The reviewer owes one decision on it.
+  """
+  lead -> reviewer: request() as req awaits reviewing
+    """
+    The change is ready as sent.
+    """
+    => review(source=$req, decision=approve) & approved
+     """
+     The change needs specific revisions before it can be approved.
+     """
+     | review(source=$req, decision=revise) & revising
+     """
+     The change should not proceed in any revised form.
+     """
+     | review(source=$req, decision=reject) & rejected
+     """
+     No decision arrived within ten minutes of the request.
+     """
+     | @10m & stalled
+
+"""
+The reviewer reviews the latest request. A decision on an earlier request no
+longer counts. A fourth round ends the run as exhausted.
+"""
+state reviewing max_entries 3 => exhausted
+  """
+  Stop the review before the reviewer decides.
+  """
+  lead -> reviewer: withdraw() => withdrawn
+
+"""
+The reviewer asked for a revision. Revise and resend, or withdraw.
+"""
+state revising
+  """
+  Resend the revised change and say what changed since the last round.
+  """
+  lead -> reviewer: request() as req => reviewing
+  """
+  Stop instead of revising.
+  """
+  lead -> reviewer: withdraw() => withdrawn
+
+"""
+The reviewer approved the latest request. Acting on it is a separate decision.
+"""
+end approved
+
+"""
+The reviewer rejected the change. Do not resend it in this run.
+"""
+end rejected
+
+"""
+The lead withdrew the review. Send nothing more.
+"""
+end withdrawn
+
+"""
+No decision arrived in time; the lead must decide how to recover.
+"""
+end stalled
+
+"""
+Three rounds were used without approval or rejection. Keep the last review
+for recovery.
+"""
+end exhausted

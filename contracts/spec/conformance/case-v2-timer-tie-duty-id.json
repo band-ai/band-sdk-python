@@ -1,0 +1,1103 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-timer-tie-duty-id",
+  "requirements": [
+    "ENG-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: hybrid-assistant\ndescription: A remote assistant answers known cases in Python and delegates judgment to an LLM.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity mentions 1 => expired\ntype ack0\ntype ack1\ntype ack2\ntype ack3\ntype ack4\ntype ack5\ntype ack6\ntype ack7\ntype ack8\ntype ack9\nstate new\n  event assistant -> requester: ack0() @2s => late\n  event assistant -> requester: ack1() @1s => late\n  event assistant -> requester: ack2() @1s => late\n  event assistant -> requester: ack3() @1s => late\n  event assistant -> requester: ack4() @1s => late\n  event assistant -> requester: ack5() @1s => late\n  event assistant -> requester: ack6() @1s => late\n  event assistant -> requester: ack7() @1s => late\n  event assistant -> requester: ack8() @1s => late\n  event assistant -> requester: ack9() @1s => late\nend late\n",
+        "sha256": "5d7154ea0c33a5e63a7bdfe5fb4342d3a57f094fefc5c5c8e1a7b1a57d662802"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "tick",
+      "handle": "s",
+      "now": 1000
+    }
+  ],
+  "assertions": [
+    {
+      "response": 2,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 1000,
+        "id": "due-11",
+        "reason": "deadline",
+        "outcome": "late",
+        "missing": [
+          "assistant"
+        ]
+      }
+    },
+    {
+      "response": 2,
+      "pointer": "/state/state/version",
+      "equals": 1
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "hybrid-assistant",
+          "roles": [
+            "requester",
+            "assistant"
+          ],
+          "version": null
+        },
+        "digest": "bc5492df8c0d6d22498c1cae0789b8b153da85abcf4c17f081774a3841f54715",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": null,
+          "line": 1
+        },
+        "name": "hybrid-assistant",
+        "role_metadata": {
+          "assistant": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "assistant"
+          },
+          "requester": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "requester"
+          }
+        },
+        "roles": [
+          "requester",
+          "assistant"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "5d7154ea0c33a5e63a7bdfe5fb4342d3a57f094fefc5c5c8e1a7b1a57d662802",
+        "states": {
+          "new": {
+            "deadlines": [
+              {
+                "after_ms": 2000,
+                "id": "due-1",
+                "kind": "ack0",
+                "meta": {
+                  "doc": null,
+                  "line": 13
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-3",
+                "kind": "ack1",
+                "meta": {
+                  "doc": null,
+                  "line": 14
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-5",
+                "kind": "ack2",
+                "meta": {
+                  "doc": null,
+                  "line": 15
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-7",
+                "kind": "ack3",
+                "meta": {
+                  "doc": null,
+                  "line": 16
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-9",
+                "kind": "ack4",
+                "meta": {
+                  "doc": null,
+                  "line": 17
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-11",
+                "kind": "ack5",
+                "meta": {
+                  "doc": null,
+                  "line": 18
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-13",
+                "kind": "ack6",
+                "meta": {
+                  "doc": null,
+                  "line": 19
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-15",
+                "kind": "ack7",
+                "meta": {
+                  "doc": null,
+                  "line": 20
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-17",
+                "kind": "ack8",
+                "meta": {
+                  "doc": null,
+                  "line": 21
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 1000,
+                "id": "due-19",
+                "kind": "ack9",
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "outcome": "late",
+                "participants": [
+                  "assistant"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": null,
+              "line": 12
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-0",
+                "kind": "ack0",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 13
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-2",
+                "kind": "ack1",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 14
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-4",
+                "kind": "ack2",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 15
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-6",
+                "kind": "ack3",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 16
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-8",
+                "kind": "ack4",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 17
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-10",
+                "kind": "ack5",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 18
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-12",
+                "kind": "ack6",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 19
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-14",
+                "kind": "ack7",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 20
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-16",
+                "kind": "ack8",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 21
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-18",
+                "kind": "ack9",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "late": {
+            "meta": {
+              "doc": null,
+              "line": 23
+            },
+            "name": "late"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "ack0": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 2
+            },
+            "name": "ack0"
+          },
+          "ack1": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 3
+            },
+            "name": "ack1"
+          },
+          "ack2": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 4
+            },
+            "name": "ack2"
+          },
+          "ack3": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 5
+            },
+            "name": "ack3"
+          },
+          "ack4": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 6
+            },
+            "name": "ack4"
+          },
+          "ack5": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 7
+            },
+            "name": "ack5"
+          },
+          "ack6": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 8
+            },
+            "name": "ack6"
+          },
+          "ack7": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 9
+            },
+            "name": "ack7"
+          },
+          "ack8": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 10
+            },
+            "name": "ack8"
+          },
+          "ack9": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 11
+            },
+            "name": "ack9"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "bc5492df8c0d6d22498c1cae0789b8b153da85abcf4c17f081774a3841f54715",
+        "profile": "band-contract/state/2",
+        "source": "5d7154ea0c33a5e63a7bdfe5fb4342d3a57f094fefc5c5c8e1a7b1a57d662802",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [
+            {
+              "after_ms": 2000,
+              "due_at": 2000,
+              "id": "due-1",
+              "kind": "ack0",
+              "meta": {
+                "doc": null,
+                "line": 13
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-3",
+              "kind": "ack1",
+              "meta": {
+                "doc": null,
+                "line": 14
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-5",
+              "kind": "ack2",
+              "meta": {
+                "doc": null,
+                "line": 15
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-7",
+              "kind": "ack3",
+              "meta": {
+                "doc": null,
+                "line": 16
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-9",
+              "kind": "ack4",
+              "meta": {
+                "doc": null,
+                "line": 17
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-11",
+              "kind": "ack5",
+              "meta": {
+                "doc": null,
+                "line": 18
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-13",
+              "kind": "ack6",
+              "meta": {
+                "doc": null,
+                "line": 19
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-15",
+              "kind": "ack7",
+              "meta": {
+                "doc": null,
+                "line": 20
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-17",
+              "kind": "ack8",
+              "meta": {
+                "doc": null,
+                "line": 21
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-19",
+              "kind": "ack9",
+              "meta": {
+                "doc": null,
+                "line": 22
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            }
+          ],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "status": "ticked"
+      },
+      "state": {
+        "definition": "bc5492df8c0d6d22498c1cae0789b8b153da85abcf4c17f081774a3841f54715",
+        "profile": "band-contract/state/2",
+        "source": "5d7154ea0c33a5e63a7bdfe5fb4342d3a57f094fefc5c5c8e1a7b1a57d662802",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": 1000,
+          "expiry": {
+            "at": 1000,
+            "id": "due-11",
+            "missing": [
+              "assistant"
+            ],
+            "outcome": "late",
+            "reason": "deadline"
+          },
+          "facts": {},
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 1000,
+              "outcome": "late",
+              "reason": "deadline",
+              "type": "expiry"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 1000,
+          "obligations": [
+            {
+              "after_ms": 2000,
+              "due_at": 2000,
+              "id": "due-1",
+              "kind": "ack0",
+              "meta": {
+                "doc": null,
+                "line": 13
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-3",
+              "kind": "ack1",
+              "meta": {
+                "doc": null,
+                "line": 14
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-5",
+              "kind": "ack2",
+              "meta": {
+                "doc": null,
+                "line": 15
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-7",
+              "kind": "ack3",
+              "meta": {
+                "doc": null,
+                "line": 16
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-9",
+              "kind": "ack4",
+              "meta": {
+                "doc": null,
+                "line": 17
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-11",
+              "kind": "ack5",
+              "meta": {
+                "doc": null,
+                "line": 18
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-13",
+              "kind": "ack6",
+              "meta": {
+                "doc": null,
+                "line": 19
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-15",
+              "kind": "ack7",
+              "meta": {
+                "doc": null,
+                "line": 20
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-17",
+              "kind": "ack8",
+              "meta": {
+                "doc": null,
+                "line": 21
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            },
+            {
+              "after_ms": 1000,
+              "due_at": 1000,
+              "id": "due-19",
+              "kind": "ack9",
+              "meta": {
+                "doc": null,
+                "line": 22
+              },
+              "outcome": "late",
+              "participants": [
+                "assistant"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "assistant"
+              ]
+            }
+          ],
+          "outcome": "late",
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "late",
+          "status": "terminal",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

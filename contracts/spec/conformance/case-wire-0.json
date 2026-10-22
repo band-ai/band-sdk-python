@@ -1,0 +1,30 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "wire-0",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"id\":\"m\",\"session\":\"s\",\"kind\":\"k\",\"payload\":{}}"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/id",
+      "equals": "m"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "id": "m",
+        "kind": "k",
+        "payload": {},
+        "session": "s"
+      }
+    }
+  ]
+}

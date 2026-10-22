@@ -1,0 +1,1617 @@
+{
+  "profile": "band-contract/coverage/2",
+  "engine": "0.2.0-lab.1",
+  "qualification": "not_assessed",
+  "summary": {
+    "requirements": 39,
+    "requirements_with_checks": 39,
+    "requirements_without_checks": 0,
+    "acceptance_items": 89,
+    "acceptance_items_with_checks": 81,
+    "acceptance_items_without_checks": 8
+  },
+  "unasserted": [
+    "V2-PATTERN/2",
+    "V2-DOC-SIGIL/3",
+    "V2-WORD-SIGIL/2",
+    "V2-LOWERCASE/2",
+    "V2-DUE/2",
+    "V2-TIMED-RULE/2",
+    "V2-HUMAN/2",
+    "V2-RESTORE/2"
+  ],
+  "tooling_only_checks": [
+    "checkv2:plain-question-accepted",
+    "checkv2:plain-answer-completes",
+    "checkcoordination:schema-reproducible"
+  ],
+  "checks_without_v2_row": {
+    "contract-dsl.md": [
+      "checkv2:header-invalid-yaml",
+      "checkv2:header-bad-name",
+      "manifest:v2-compile-agent-control",
+      "manifest:v2-compile-all-participants",
+      "manifest:v2-compile-assignment",
+      "manifest:v2-compile-bounded-review",
+      "manifest:v2-compile-explicit-infinity",
+      "manifest:v2-compile-first-responder",
+      "manifest:v2-compile-history-review-v2",
+      "manifest:v2-compile-history-review",
+      "manifest:v2-compile-hybrid-assistant",
+      "manifest:v2-compile-program-counter",
+      "manifest:v2-compile-progress-events",
+      "manifest:v2-compile-room-events",
+      "manifest:v2-compile-selected-deadlines",
+      "manifest:v2-compile-team-review",
+      "manifest:v2-invalid-bad-doc-unicode",
+      "manifest:v2-invalid-duplicate-ref-kind",
+      "manifest:v2-invalid-duplicate-type",
+      "manifest:v2-invalid-interpolation",
+      "manifest:v2-invalid-reference",
+      "manifest:v2-invalid-unknown-directive",
+      "manifest:v2-invalid-unknown-ref-kind",
+      "manifest:v2-invalid-unknown-role"
+    ],
+    "engine.md": [
+      "checkv2:room-new-policy-required",
+      "checkv2:room-new-invalid-time",
+      "checkv2:room-new-invalid-bindings",
+      "manifest:v2-band-session",
+      "manifest:v2-clock-regression",
+      "manifest:v2-entry-cap",
+      "manifest:v2-identity-version-envelope",
+      "manifest:v2-private-receipt-projection",
+      "manifest:v2-role-visibility",
+      "manifest:v2-trace-history-review-cancel",
+      "manifest:v2-trace-history-review-changes",
+      "manifest:v2-trace-history-review-rejections",
+      "manifest:v2-trace-history-review-success",
+      "manifest:v2-worked-session"
+    ],
+    "file-identity.md": [
+      "checkv2:header-package-name-mismatch",
+      "manifest:v2-reject-native-header"
+    ],
+    "groups-and-events-v2.md": [
+      "manifest:v2-each-all-participants",
+      "manifest:v2-first-responder"
+    ]
+  },
+  "requirements": [
+    {
+      "id": "V2-ID",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "file-identity.md",
+      "acceptance": [
+        {
+          "obligation": "Compile the same bytes twice and get the same SHA-256 pin; change one byte, including only the author version, and get a different pin.",
+          "checks": [
+            "checkv2:v2-m21-source-pin-A0",
+            "checkv2:v2-m21-source-pin-A1",
+            "checkv2:v2-m21-source-pin-schema-0",
+            "checkv2:exact-file-sha",
+            "checkv2:author-version-changes-file-pin",
+            "checkcoordination:source-pinned",
+            "manifest:v2-m21-source-pin"
+          ]
+        },
+        {
+          "obligation": "Restore a session against a file whose hash differs from its pin and observe rejection; the session is never upgraded in place.",
+          "checks": [
+            "checkv2:v2-m21-source-pin-A2",
+            "manifest:v2-m21-source-pin"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:v2-m21-file-integrity-A0",
+        "checkv2:v2-m21-file-integrity-A1",
+        "checkv2:v2-m21-file-integrity-A2",
+        "checkv2:v2-m21-file-integrity-schema-0",
+        "checkv2:v2-m21-file-integrity-schema-1",
+        "checkv2:v2-m21-file-integrity-schema-2",
+        "checkv2:v2-m21-source-pin-A0",
+        "checkv2:v2-m21-source-pin-A1",
+        "checkv2:v2-m21-source-pin-A2",
+        "checkv2:v2-m21-source-pin-schema-0",
+        "checkv2:exact-file-sha",
+        "checkv2:author-version-not-behavior",
+        "checkv2:author-version-changes-file-pin",
+        "checkv2:loader-hash-before-format",
+        "checkcoordination:source-pinned",
+        "manifest:v2-frontmatter-and-standard-discovery",
+        "manifest:v2-m21-file-integrity",
+        "manifest:v2-m21-source-pin"
+      ]
+    },
+    {
+      "id": "V2-FAIL-CLOSED",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "README.md",
+      "acceptance": [
+        {
+          "obligation": "Compile a source with an unknown engine identifier and observe rejection.",
+          "checks": [
+            "checkv2:unknown-engine-refused-first",
+            "checkv2:v2-m21-unknown-engine-A0",
+            "checkv2:v2-m21-unknown-engine-A1",
+            "checkv2:v2-m21-unknown-engine-schema-0",
+            "checkv2:unknown-engine-refused",
+            "manifest:v2-m21-unknown-engine"
+          ]
+        },
+        {
+          "obligation": "Restore a checkpoint or read a view with an unsupported state, checkpoint or view profile and observe rejection.",
+          "checks": [
+            "checkv2:v2-m21-checkpoint-profile-A0",
+            "checkv2:v2-m21-checkpoint-profile-schema-0",
+            "checkv2:v2-m21-state-profile-A0",
+            "checkv2:v2-m21-state-profile-schema-0",
+            "checkv2:v2-m21-view-profile-A0",
+            "checkv2:v2-m21-view-profile-A1",
+            "checkv2:v2-m21-view-profile-schema-0",
+            "manifest:v2-m21-state-profile",
+            "manifest:v2-m21-checkpoint-profile",
+            "manifest:v2-m21-view-profile"
+          ]
+        },
+        {
+          "obligation": "Restore a checkpoint labelled state/2 that carries state/4 members and observe rejection, not a profile inferred from field shape.",
+          "checks": [
+            "checkv2:v2-m21-cross-profile-state-A0",
+            "checkv2:v2-m21-cross-profile-state-schema-0",
+            "manifest:v2-m21-cross-profile-state"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:unknown-engine-refused-first",
+        "checkv2:v2-m21-checkpoint-profile-A0",
+        "checkv2:v2-m21-checkpoint-profile-schema-0",
+        "checkv2:v2-m21-cross-profile-state-A0",
+        "checkv2:v2-m21-cross-profile-state-schema-0",
+        "checkv2:v2-m21-file-integrity-A1",
+        "checkv2:v2-m21-file-integrity-A2",
+        "checkv2:v2-m21-file-integrity-schema-1",
+        "checkv2:v2-m21-file-integrity-schema-2",
+        "checkv2:v2-m21-state-profile-A0",
+        "checkv2:v2-m21-state-profile-schema-0",
+        "checkv2:v2-m21-unknown-engine-A0",
+        "checkv2:v2-m21-unknown-engine-A1",
+        "checkv2:v2-m21-unknown-engine-schema-0",
+        "checkv2:v2-m21-view-profile-A0",
+        "checkv2:v2-m21-view-profile-A1",
+        "checkv2:v2-m21-view-profile-schema-0",
+        "checkv2:unknown-engine-refused",
+        "checkcoordination:old-reader-rejects-new-state-profile",
+        "manifest:v2-m21-unknown-engine",
+        "manifest:v2-m21-file-integrity",
+        "manifest:v2-m21-state-profile",
+        "manifest:v2-m21-checkpoint-profile",
+        "manifest:v2-m21-view-profile",
+        "manifest:v2-m21-cross-profile-state"
+      ]
+    },
+    {
+      "id": "V2-TEXT",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "text-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Compile text fields with omitted, infinite, reversed, overflowing and grapheme-only byte bounds and observe each rejected.",
+          "checks": [
+            "checkv2:grapheme-only-bound-rejected",
+            "manifest:v2-invalid-reversed-bounds",
+            "manifest:v2-invalid-unsafe-bound",
+            "manifest:v2-reject-grapheme-only"
+          ]
+        },
+        {
+          "obligation": "Admit a payload at exactly the byte bound and reject one byte more, including multibyte UTF-8 at the boundary.",
+          "checks": [
+            "manifest:v2-utf8-and-grapheme-boundaries"
+          ]
+        },
+        {
+          "obligation": "When a grapheme bound is declared, enforce it in addition to the byte bound.",
+          "checks": [
+            "manifest:v2-unicode16-graphemes",
+            "manifest:v2-utf8-and-grapheme-boundaries"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:encoding",
+        "checkv2:encoding-field-value",
+        "checkv2:grapheme-only-bound-rejected",
+        "manifest:v2-invalid-reversed-bounds",
+        "manifest:v2-invalid-unsafe-bound",
+        "manifest:v2-unicode16-graphemes",
+        "manifest:v2-utf8-and-grapheme-boundaries",
+        "manifest:v2-reject-grapheme-only"
+      ]
+    },
+    {
+      "id": "V2-PATTERN",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "safe-patterns.md",
+      "acceptance": [
+        {
+          "obligation": "Compile patterns outside the bounded DFA profile or over the compile limits and observe rejection.",
+          "checks": [
+            "checkv2:v2-m22-pattern-cost-A0",
+            "checkv2:v2-m22-pattern-cost-A1",
+            "checkv2:v2-m22-pattern-syntax-A0",
+            "checkv2:v2-m22-pattern-syntax-A1",
+            "manifest:v2-m22-pattern-syntax",
+            "manifest:v2-m22-pattern-cost"
+          ]
+        },
+        {
+          "obligation": "Match admitted and rejected payloads within the documented work limits, with no backtracking matcher on the path.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "checkv2:v2-m22-pattern-cost-A0",
+        "checkv2:v2-m22-pattern-cost-A1",
+        "checkv2:v2-m22-pattern-syntax-A0",
+        "checkv2:v2-m22-pattern-syntax-A1",
+        "checkv2:pattern-rejects-payload",
+        "checkv2:raw-pattern-single-backslash",
+        "manifest:v2-m22-pattern-syntax",
+        "manifest:v2-m22-pattern-cost"
+      ]
+    },
+    {
+      "id": "V2-PATTERN-LITERAL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "safe-patterns.md",
+      "acceptance": [
+        {
+          "obligation": "Compile ~r literals with each accepted delimiter and confirm the stored pattern bytes equal the authored bytes; a single backslash stays single.",
+          "checks": [
+            "checkv2:raw-pattern-single-backslash"
+          ]
+        },
+        {
+          "obligation": "Compile an uppercase ~R literal and a quoted-string pattern and observe syntax errors.",
+          "checks": [
+            "checkv2:uppercase-pattern-sigil-removed",
+            "checkv2:quoted-pattern-removed"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:uppercase-pattern-sigil-removed",
+        "checkv2:quoted-pattern-removed",
+        "checkv2:raw-pattern-single-backslash"
+      ]
+    },
+    {
+      "id": "V2-PROMPT",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "multi-agent-skills.md",
+      "acceptance": [
+        {
+          "obligation": "Attach one-line and multiline strings to a role, type, state and rule, and find each in queries and the agent view.",
+          "checks": [
+            "checkv2:plain-prompt-role",
+            "checkv2:plain-prompt-type",
+            "checkv2:plain-prompt-state",
+            "checkv2:plain-prompt-rule",
+            "checkv2:plain-prompt-agent-view",
+            "checkcoordination:participant-prompt-retained",
+            "manifest:v2-query-selectors"
+          ]
+        },
+        {
+          "obligation": "Add or remove prompt strings and confirm the behavior digest and admission decisions do not change.",
+          "checks": [
+            "checkv2:plain-prompts-preserve-behavior",
+            "checkv2:plain-prompts-not-admission-predicates"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:plain-prompt-role",
+        "checkv2:plain-prompt-type",
+        "checkv2:plain-prompt-state",
+        "checkv2:plain-prompt-rule",
+        "checkv2:plain-prompt-agent-view",
+        "checkv2:plain-prompts-preserve-behavior",
+        "checkv2:plain-prompts-not-admission-predicates",
+        "checkcoordination:participant-prompt-retained",
+        "checkcoordination:participant-view-assignment",
+        "manifest:v2-documentation-basic",
+        "manifest:v2-documentation-continuation",
+        "manifest:v2-documentation-crlf",
+        "manifest:v2-documentation-escaped-interpolation",
+        "manifest:v2-documentation-indent",
+        "manifest:v2-documentation-unicode",
+        "manifest:v2-query-selectors"
+      ]
+    },
+    {
+      "id": "V2-DOC-SIGIL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "sigils-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Query ~s documentation that contains expression-like text and get the literal bytes back unevaluated.",
+          "checks": [
+            "checkv2:raw-doc-query-content"
+          ]
+        },
+        {
+          "obligation": "Change only ~s text: behavior is unchanged, the file pin changes and existing sessions keep their pin.",
+          "checks": [
+            "checkv2:raw-doc-does-not-change-behavior",
+            "checkv2:raw-doc-changes-file-pin"
+          ]
+        },
+        {
+          "obligation": "Compile an uppercase ~S literal and observe a syntax error.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "checkv2:raw-doc-query-preserves-text",
+        "checkv2:raw-doc-query-content",
+        "checkv2:raw-doc-does-not-change-behavior",
+        "checkv2:raw-doc-changes-file-pin"
+      ]
+    },
+    {
+      "id": "V2-WORD-SIGIL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "sigils-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Use ~w for an enum, a reference type list and a role group, and confirm order and semantics equal the plain-list form.",
+          "checks": [
+            "checkv2:word-sigils-preserve-behavior",
+            "checkv2:word-sigil-enum-order",
+            "checkv2:word-sigil-reference-types",
+            "checkv2:word-sigil-request-rejects-wrong-reference",
+            "checkv2:word-sigil-request-waits-for-both",
+            "checkv2:word-sigil-request-collects-both",
+            "checkv2:word-sigil-request-original-deadline",
+            "checkv2:word-sigil-revision-rejects-wrong-reference",
+            "checkv2:word-sigil-revision-waits-for-both",
+            "checkv2:word-sigil-revision-collects-both",
+            "checkv2:word-sigil-revision-original-deadline"
+          ]
+        },
+        {
+          "obligation": "Confirm ~w names create no atoms or symbols, including on rejected input.",
+          "checks": []
+        },
+        {
+          "obligation": "Compile an uppercase ~W literal and observe a syntax error.",
+          "checks": [
+            "checkv2:uppercase-word-sigil-removed"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:word-sigils-preserve-behavior",
+        "checkv2:word-sigils-change-file-pin",
+        "checkv2:word-sigil-enum-order",
+        "checkv2:word-sigil-reference-types",
+        "checkv2:uppercase-word-sigil-removed",
+        "checkv2:word-sigil-request-rejects-wrong-reference",
+        "checkv2:word-sigil-request-waits-for-both",
+        "checkv2:word-sigil-request-collects-both",
+        "checkv2:word-sigil-request-original-deadline",
+        "checkv2:word-sigil-revision-rejects-wrong-reference",
+        "checkv2:word-sigil-revision-waits-for-both",
+        "checkv2:word-sigil-revision-collects-both",
+        "checkv2:word-sigil-revision-original-deadline"
+      ]
+    },
+    {
+      "id": "V2-LOWERCASE",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "lowercase-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Compile uppercase body keywords, uppercase rule options and plus-prefixed declarations and observe syntax errors.",
+          "checks": [
+            "checkv2:uppercase-option-removed",
+            "checkv2:uppercase-each-removed",
+            "manifest:v2-reject-plus-type"
+          ]
+        },
+        {
+          "obligation": "Confirm identifiers and literal contents that contain uppercase characters are preserved byte for byte.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "checkv2:uppercase-option-removed",
+        "checkv2:uppercase-each-removed",
+        "manifest:v2-reject-plus-type"
+      ]
+    },
+    {
+      "id": "V2-ENTRY",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "lifecycle-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Compile every transition form whose target is new and observe rejection.",
+          "checks": [
+            "checkv2:v2-m22-entry-any-state-A0",
+            "checkv2:v2-m22-entry-any-state-A1",
+            "checkv2:v2-m22-entry-deadline-A0",
+            "checkv2:v2-m22-entry-deadline-A1",
+            "checkv2:v2-m22-entry-each-A0",
+            "checkv2:v2-m22-entry-each-A1",
+            "checkv2:v2-m22-entry-limit-A0",
+            "checkv2:v2-m22-entry-limit-A1",
+            "checkv2:v2-m22-entry-next-A0",
+            "checkv2:v2-m22-entry-next-A1",
+            "checkv2:v2-m22-entry-self-A0",
+            "checkv2:v2-m22-entry-self-A1",
+            "checkv2:entry-only",
+            "checkv2:entry-only-code-line",
+            "manifest:v2-m22-entry-self",
+            "manifest:v2-m22-entry-next",
+            "manifest:v2-m22-entry-any-state",
+            "manifest:v2-m22-entry-each",
+            "manifest:v2-m22-entry-deadline",
+            "manifest:v2-m22-entry-limit"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:v2-m22-entry-any-state-A0",
+        "checkv2:v2-m22-entry-any-state-A1",
+        "checkv2:v2-m22-entry-deadline-A0",
+        "checkv2:v2-m22-entry-deadline-A1",
+        "checkv2:v2-m22-entry-each-A0",
+        "checkv2:v2-m22-entry-each-A1",
+        "checkv2:v2-m22-entry-limit-A0",
+        "checkv2:v2-m22-entry-limit-A1",
+        "checkv2:v2-m22-entry-next-A0",
+        "checkv2:v2-m22-entry-next-A1",
+        "checkv2:v2-m22-entry-self-A0",
+        "checkv2:v2-m22-entry-self-A1",
+        "checkv2:entry-only",
+        "checkv2:entry-only-code-line",
+        "manifest:v2-m22-entry-self",
+        "manifest:v2-m22-entry-next",
+        "manifest:v2-m22-entry-any-state",
+        "manifest:v2-m22-entry-each",
+        "manifest:v2-m22-entry-deadline",
+        "manifest:v2-m22-entry-limit"
+      ]
+    },
+    {
+      "id": "V2-DUE",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "lifecycle-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Compile the due ... with ... in form and observe a syntax error.",
+          "checks": [
+            "manifest:v2-reject-due-all",
+            "manifest:v2-reject-due-any"
+          ]
+        },
+        {
+          "obligation": "Compile a duty written as @duration on the discharging transition or event rule and find the derived duty in the compiled contract.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "manifest:v2-reject-due-all",
+        "manifest:v2-reject-due-any"
+      ]
+    },
+    {
+      "id": "V2-TIMED-RULE",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "timeouts-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Compile a state-local timed transition and a timed event and confirm each derives a matching duty that requires all senders.",
+          "checks": [
+            "checkv2:owed-answer-expires-as-stalled",
+            "checkv2:word-sigil-request-waits-for-both",
+            "checkv2:word-sigil-request-collects-both",
+            "checkv2:word-sigil-request-original-deadline",
+            "checkv2:word-sigil-revision-waits-for-both",
+            "checkv2:word-sigil-revision-collects-both",
+            "checkv2:word-sigil-revision-original-deadline",
+            "checkv2:scoped-example-missing-review",
+            "manifest:v2-trace-history-review-unclaimed",
+            "manifest:v2-trace-history-review-v2-deadline"
+          ]
+        },
+        {
+          "obligation": "Confirm a rule without a duration permits any sender and a timed event never transitions.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "checkv2:owed-answer-expires-as-stalled",
+        "checkv2:word-sigil-request-waits-for-both",
+        "checkv2:word-sigil-request-collects-both",
+        "checkv2:word-sigil-request-original-deadline",
+        "checkv2:word-sigil-revision-waits-for-both",
+        "checkv2:word-sigil-revision-collects-both",
+        "checkv2:word-sigil-revision-original-deadline",
+        "checkv2:scoped-example-missing-review",
+        "manifest:v2-each-deadline-boundary",
+        "manifest:v2-independent-selected-duties",
+        "manifest:v2-trace-history-review-unclaimed",
+        "manifest:v2-trace-history-review-v2-deadline"
+      ]
+    },
+    {
+      "id": "V2-TIMEOUT-SCOPES",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "timeouts-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Expire a state cap from its saved entry time and a whole-run cap from creation time, including the initial wait.",
+          "checks": [
+            "checkv2:state-clock-retains-absolute-time",
+            "checkv2:whole-run-includes-initial-wait",
+            "checkv2:whole-run-uses-creation-time",
+            "checkcoordination:late-collection-next-clock-from-deadline",
+            "checkcoordination:late-collection-after-restore",
+            "checkcoordination:late-dwell-entry-at-trigger"
+          ]
+        },
+        {
+          "obligation": "Restart and retry before expiry and confirm neither clock resets.",
+          "checks": [
+            "checkv2:state-clock-survives-restart",
+            "checkv2:state-clock-retains-absolute-time"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:scope-clock-profile",
+        "checkv2:role-query-keeps-contract-clock",
+        "checkv2:role-query-keeps-state-clock",
+        "checkv2:state-clock-survives-restart",
+        "checkv2:state-clock-retains-absolute-time",
+        "checkv2:state-expiry-restores-portably",
+        "checkv2:whole-run-includes-initial-wait",
+        "checkv2:whole-run-uses-creation-time",
+        "checkv2:whole-run-keeps-full-response-window",
+        "checkv2:scoped-example-phase-expiry",
+        "checkv2:scoped-example-completion",
+        "checkcoordination:late-collection-next-clock-from-deadline",
+        "checkcoordination:late-collection-after-restore",
+        "checkcoordination:late-dwell-entry-at-trigger"
+      ]
+    },
+    {
+      "id": "V2-TIE-ORDER",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "timeouts-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Make duties due-2 and due-10 fall due at the same instant and confirm due-10 fires first, not the lower number or the earlier declaration.",
+          "checks": [
+            "checkv2:tie-due-10-before-due-2",
+            "checkv2:tie-duty-ids-derived",
+            "manifest:v2-timer-tie-duty-id"
+          ]
+        },
+        {
+          "obligation": "Make timers of each adjacent category pair fall due together and confirm the category order, with the remaining due timers cascading before any proposal is admitted.",
+          "checks": [
+            "checkv2:inline-duty-wins-phase-tie",
+            "checkcoordination:tie-duty-before-collection",
+            "checkcoordination:tie-collection-before-offline",
+            "checkcoordination:tie-collection-before-state-timeout",
+            "checkcoordination:tie-state-timeout-before-host-trigger",
+            "checkcoordination:tie-host-trigger-before-cap",
+            "checkcoordination:tie-cap-after-host-trigger",
+            "checkcoordination:tie-collection-before-cap",
+            "checkcoordination:tie-terminal-collection-stands",
+            "checkcoordination:late-collection-proposal-after-cascade",
+            "manifest:v2-timer-tie-inactivity",
+            "manifest:v2-timer-tie-lifetime"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:tie-due-10-before-due-2",
+        "checkv2:tie-duty-ids-derived",
+        "checkv2:inline-duty-wins-phase-tie",
+        "checkcoordination:tie-duty-before-collection",
+        "checkcoordination:tie-collection-before-offline",
+        "checkcoordination:tie-collection-before-state-timeout",
+        "checkcoordination:tie-state-timeout-before-host-trigger",
+        "checkcoordination:tie-host-trigger-before-cap",
+        "checkcoordination:tie-cap-after-host-trigger",
+        "checkcoordination:tie-collection-before-cap",
+        "checkcoordination:tie-terminal-collection-stands",
+        "checkcoordination:late-collection-proposal-after-cascade",
+        "manifest:v2-timer-tie-duty-id",
+        "manifest:v2-timer-tie-inactivity",
+        "manifest:v2-timer-tie-lifetime"
+      ]
+    },
+    {
+      "id": "V2-RENEWAL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "renewable-timeouts.md",
+      "acceptance": [
+        {
+          "obligation": "Renew a contract @W max @M window and confirm max_at moves to acceptance plus W while clocks.hard_at stays at creation plus M, including after restore.",
+          "checks": [
+            "checkcoordination:contract-renewed",
+            "checkcoordination:maximum-unchanged",
+            "checkcoordination:window-and-maximum-initial",
+            "checkcoordination:window-and-maximum-restored"
+          ]
+        },
+        {
+          "obligation": "Introduce a duty that does not fit before max_at and observe insufficient_time; one that fits is accepted.",
+          "checks": [
+            "checkcoordination:window-admission-uses-max-at",
+            "checkcoordination:window-admission-fits"
+          ]
+        },
+        {
+          "obligation": "Compile contract @infinity max @M and observe a duration error at the contract line.",
+          "checks": [
+            "checkcoordination:infinite-window-finite-maximum-rejected"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:contract-renewed",
+        "checkcoordination:maximum-unchanged",
+        "checkcoordination:infinite-window-finite-maximum-rejected",
+        "checkcoordination:window-admission-uses-max-at",
+        "checkcoordination:window-admission-fits",
+        "checkcoordination:window-and-maximum-initial",
+        "checkcoordination:window-and-maximum-restored"
+      ]
+    },
+    {
+      "id": "V2-RENEWAL-FIT",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "renewable-timeouts.md",
+      "acceptance": [
+        {
+          "obligation": "Ask a collection member that already replied to renew and observe already_contributed.",
+          "checks": [
+            "checkcoordination:renewal-settled-and-untimed-window"
+          ]
+        },
+        {
+          "obligation": "Renew a collection so its close would leave the untimed next state less than a whole window before max_at and observe insufficient_time, with the deadline left at the last renewal that fit.",
+          "checks": [
+            "checkcoordination:renewal-close-leaves-summary-window",
+            "checkcoordination:renewal-settled-and-untimed-window"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:renewal-close-leaves-summary-window",
+        "checkcoordination:renewal-settled-and-untimed-window"
+      ]
+    },
+    {
+      "id": "V2-TIMER-TARGET",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "renewable-timeouts.md",
+      "acceptance": [
+        {
+          "obligation": "Compile @state in a state without a declared clock and observe timer_target at that rule's line.",
+          "checks": [
+            "checkv2:timer-target-plain-v2",
+            "checkcoordination:timer-target-state-target-without-clock"
+          ]
+        },
+        {
+          "obligation": "Compile @contract under contract @30m and under contract @infinity and observe timer_target at that rule's line.",
+          "checks": [
+            "checkcoordination:timer-target-contract-target-fixed-clock",
+            "checkcoordination:timer-target-contract-target-no-cap"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:timer-target-plain-v2",
+        "checkcoordination:timer-target-contract-target-fixed-clock",
+        "checkcoordination:timer-target-contract-target-no-cap",
+        "checkcoordination:timer-target-state-target-without-clock"
+      ]
+    },
+    {
+      "id": "V2-TIMED-RENEWAL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "renewable-timeouts.md",
+      "acceptance": [
+        {
+          "obligation": "Compile event x -> y: k() @15m => outcome @self directly before a timed rule and confirm one event rule carries both the derived duty and an @self reset that names the following rule.",
+          "checks": [
+            "checkcoordination:timed-renewal-event-compiles"
+          ]
+        },
+        {
+          "obligation": "Accept that event before its deadline and confirm the session outlives the event deadline and the following duty falls due one window after the acceptance; send nothing and observe the event outcome at its deadline.",
+          "checks": [
+            "checkcoordination:timed-renewal-event-acks-and-renews",
+            "checkcoordination:timed-renewal-event-silence-ends"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:timed-renewal-event-compiles",
+        "checkcoordination:timed-renewal-event-acks-and-renews",
+        "checkcoordination:timed-renewal-event-silence-ends"
+      ]
+    },
+    {
+      "id": "V2-DEFAULTS",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "defaults-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Compile a contract without a clock and observe contract_clock_required; compile contract @infinity => expired and observe success.",
+          "checks": [
+            "checkv2:no-hard-cap-default",
+            "checkv2:contract-clock-required"
+          ]
+        },
+        {
+          "obligation": "Leave a session idle and confirm no generic idle expiry occurs.",
+          "checks": [
+            "manifest:v2-inactivity-accepted",
+            "manifest:v2-inactivity-marked",
+            "manifest:v2-inactivity-transition",
+            "manifest:v2-trace-history-review-idle"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:no-idle-default",
+        "checkv2:no-hard-cap-default",
+        "checkv2:contract-clock-required",
+        "checkv2:card-inactivity-infinite-only",
+        "manifest:v2-inactivity-accepted",
+        "manifest:v2-inactivity-marked",
+        "manifest:v2-inactivity-transition",
+        "manifest:v2-trace-history-review-idle",
+        "manifest:v2-reject-activity",
+        "manifest:v2-reject-idle-header"
+      ]
+    },
+    {
+      "id": "V2-CAPACITY",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "defaults-v2.md",
+      "acceptance": [
+        {
+          "obligation": "Refuse new work when the remaining duty message capacity cannot fit the owed answer.",
+          "checks": [
+            "checkv2:refuse-work-without-answer-capacity",
+            "manifest:v2-message-budget"
+          ]
+        },
+        {
+          "obligation": "Apply a contract-level mention cap and a rule override per message and confirm there is no session mention budget.",
+          "checks": [
+            "manifest:v2-reject-session-mention-budget",
+            "manifest:v2-mentions-not-cumulative"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:refuse-work-without-answer-capacity",
+        "checkv2:mention-default-compiled",
+        "checkv2:mention-rule-override",
+        "checkv2:completion-size-refused",
+        "checkcoordination:closed-round-limit-outcome",
+        "checkcoordination:closing-reserve-completes",
+        "checkcoordination:heartbeat-keeps-closing-reserve",
+        "checkcoordination:message-budget-after-transition",
+        "checkcoordination:event-keeps-closing-unit",
+        "checkcoordination:events-reach-message-budget",
+        "manifest:v2-message-budget",
+        "manifest:v2-reject-session-mention-budget",
+        "manifest:v2-mentions-not-cumulative"
+      ]
+    },
+    {
+      "id": "V2-HUMAN",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-room/1"
+      ],
+      "specification": "agents-and-extensions.md",
+      "acceptance": [
+        {
+          "obligation": "Bind a human to a contract role at creation and on a step and observe refusal.",
+          "checks": [
+            "checkv2:human-binding-refused-at-new",
+            "checkv2:human-binding-refused-on-step",
+            "manifest:v2-human-binding-rejected"
+          ]
+        },
+        {
+          "obligation": "Exchange agent-human messages and confirm they never enter contract admission.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "checkv2:human-binding-refused-at-new",
+        "checkv2:human-binding-refused-on-step",
+        "manifest:v2-human-binding-rejected"
+      ]
+    },
+    {
+      "id": "V2-POLICY",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-room/1"
+      ],
+      "specification": "agents-and-extensions.md",
+      "acceptance": [
+        {
+          "obligation": "Omit fresh trusted room policy at creation, on a step, on an exact retry and on a view, and observe refusal.",
+          "checks": [
+            "checkv2:policy-required-at-new",
+            "checkv2:policy-required-on-step",
+            "checkv2:policy-refusal-admits-nothing",
+            "checkv2:policy-evidence-admits",
+            "checkv2:policy-required-on-exact-retry",
+            "checkv2:policy-required-on-view"
+          ]
+        },
+        {
+          "obligation": "Use a revoked member and a mismatched fixed role assignment and observe a refusal that admits nothing.",
+          "checks": [
+            "checkv2:revoked-member-room-access",
+            "checkv2:fixed-role-mismatch"
+          ]
+        },
+        {
+          "obligation": "Supply empty, mixed and unknown policy evidence and observe a fail-closed refusal.",
+          "checks": [
+            "checkv2:policy-empty-invalid",
+            "checkv2:policy-mixed-invalid",
+            "checkv2:policy-unknown-mode-invalid"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:h8-result-markers-checked",
+        "checkv2:h8-result-markers-unchecked",
+        "checkv2:policy-required-at-new",
+        "checkv2:policy-required-on-step",
+        "checkv2:policy-refusal-admits-nothing",
+        "checkv2:policy-evidence-admits",
+        "checkv2:policy-required-on-exact-retry",
+        "checkv2:policy-required-on-view",
+        "checkv2:checked-session-unmarked",
+        "checkv2:revoked-member-room-access",
+        "checkv2:fixed-role-mismatch",
+        "checkv2:unchecked-local-mode-accepted",
+        "checkv2:unchecked-decision-marked",
+        "checkv2:unchecked-state-marked",
+        "checkv2:unchecked-view-marked",
+        "checkv2:unchecked-is-start-time-only",
+        "checkv2:policy-empty-invalid",
+        "checkv2:policy-mixed-invalid",
+        "checkv2:policy-unknown-mode-invalid"
+      ]
+    },
+    {
+      "id": "V2-EXT",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "agents-and-extensions.md",
+      "acceptance": [
+        {
+          "obligation": "Declare an extension the host does not support and observe unsupported_extension at creation.",
+          "checks": [
+            "checkv2:unsupported-extension-refused"
+          ]
+        },
+        {
+          "obligation": "Send a host event whose kind needs an extension the session did not enable and observe unsupported_extension.",
+          "checks": [
+            "checkcoordination:host-extension-before-value"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:unsupported-extension-refused",
+        "checkcoordination:host-extension-before-value"
+      ]
+    },
+    {
+      "id": "V2-PRESENCE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "host-signals.md",
+      "acceptance": [
+        {
+          "obligation": "Restart during an offline dwell and confirm the dwell transition fires at its original time.",
+          "checks": [
+            "checkv2:restart-dwell-transition"
+          ]
+        },
+        {
+          "obligation": "Observe online, and separately unknown, during a dwell; each interrupts continuity and a later offline starts a new period.",
+          "checks": [
+            "checkv2:reconnect-cancels-dwell",
+            "checkv2:unknown-presence-cancels-dwell"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:restart-dwell-transition",
+        "checkv2:reconnect-cancels-dwell",
+        "checkv2:unknown-presence-cancels-dwell",
+        "checkcoordination:seeded-presence-fires-at-entry",
+        "checkcoordination:seeded-presence-settles-grace"
+      ]
+    },
+    {
+      "id": "V2-REMOVAL",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "host-signals.md",
+      "acceptance": [
+        {
+          "obligation": "With host.membership/1, remove a bound agent and confirm immediate termination, including when only the final control record remains.",
+          "checks": [
+            "checkv2:removal-uses-final-reserve",
+            "checkv2:control-records-bounded"
+          ]
+        },
+        {
+          "obligation": "Without host.membership/1, confirm a membership event is refused with unsupported_extension.",
+          "checks": [
+            "checkcoordination:host-extension-before-value"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:removal-uses-final-reserve",
+        "checkv2:control-records-bounded",
+        "checkcoordination:host-extension-before-value"
+      ]
+    },
+    {
+      "id": "V2-CONTROL",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "host-signals.md",
+      "acceptance": [
+        {
+          "obligation": "Create with max_controls outside 0-1024, or below 2 with a signal extension, and observe control_budget_required.",
+          "checks": [
+            "checkv2:control-budget-absent",
+            "checkv2:control-budget-zero",
+            "checkv2:control-budget-one",
+            "checkv2:control-budget-over",
+            "checkv2:control-budget-two",
+            "checkv2:control-budget-undeclared-capability"
+          ]
+        },
+        {
+          "obligation": "Spend control records with presence or membership events until only the final record remains; the next non-removal event is rejected with control_capacity and records control_capacity_exhausted.",
+          "checks": [
+            "checkcoordination:control-capacity-rejection-records-exhaustion"
+          ]
+        },
+        {
+          "obligation": "Retry an exact host event and confirm it consumes no further record.",
+          "checks": [
+            "checkcoordination:host-retry-after-newer-sequence",
+            "checkcoordination:host-retry-keeps-state"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:host-retry-idempotent",
+        "checkv2:removal-uses-final-reserve",
+        "checkv2:control-records-bounded",
+        "checkv2:control-budget-absent",
+        "checkv2:control-budget-zero",
+        "checkv2:control-budget-one",
+        "checkv2:control-budget-over",
+        "checkv2:control-budget-two",
+        "checkv2:control-budget-undeclared-capability",
+        "checkcoordination:control-capacity-rejection-records-exhaustion",
+        "checkcoordination:host-retry-after-newer-sequence",
+        "checkcoordination:contribution-capacity",
+        "checkcoordination:capacity-rejection-keeps-state",
+        "checkcoordination:host-retry-keeps-state"
+      ]
+    },
+    {
+      "id": "V2-HOST-ORDER",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "host-signals.md",
+      "acceptance": [
+        {
+          "obligation": "With an initial_presence snapshot, send sequence 1 and observe stale_host_event, then sequence 2 accepted; without a snapshot, sequence 1 is accepted.",
+          "checks": [
+            "checkcoordination:host-no-snapshot-sequence-1-valid",
+            "checkcoordination:host-snapshot-takes-sequence-1"
+          ]
+        },
+        {
+          "obligation": "Send an equal sequence, an older sequence, and an event whose reducer time is behind the stored now, and observe stale_host_event for each.",
+          "checks": [
+            "checkcoordination:host-time-behind-state-stale",
+            "checkcoordination:host-stale-equal-sequence",
+            "checkcoordination:host-stale-old-sequence"
+          ]
+        },
+        {
+          "obligation": "Send a changed event under an accepted ID and observe id_conflict.",
+          "checks": [
+            "checkcoordination:host-id-conflict"
+          ]
+        },
+        {
+          "obligation": "Confirm each rejection before the timer step, such as stale_host_event and id_conflict, leaves the whole state unchanged.",
+          "checks": [
+            "checkcoordination:host-snapshot-takes-sequence-1",
+            "checkcoordination:host-time-behind-state-stale",
+            "checkcoordination:host-rejections-keep-state"
+          ]
+        },
+        {
+          "obligation": "Send a host event after an elapsed timer ended the session and observe terminal with the state those timers produced; a control_capacity rejection instead appends the exhaustion record.",
+          "checks": [
+            "checkcoordination:control-capacity-rejection-records-exhaustion",
+            "checkcoordination:host-terminal-after-elapsed-timers"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:control-capacity-rejection-records-exhaustion",
+        "checkcoordination:host-no-snapshot-sequence-1-valid",
+        "checkcoordination:host-snapshot-takes-sequence-1",
+        "checkcoordination:host-time-behind-state-stale",
+        "checkcoordination:host-id-conflict",
+        "checkcoordination:host-stale-equal-sequence",
+        "checkcoordination:host-stale-old-sequence",
+        "checkcoordination:host-rejections-keep-state",
+        "checkcoordination:host-terminal-after-elapsed-timers"
+      ]
+    },
+    {
+      "id": "V2-RESTORE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "host-signals.md",
+      "acceptance": [
+        {
+          "obligation": "Checkpoint and restore mid-session and confirm file identity, original duties, host sequence and control receipts are preserved exactly.",
+          "checks": [
+            "checkv2:original-duty-preserved",
+            "checkv2:original-duty-still-terminates"
+          ]
+        },
+        {
+          "obligation": "Retry an exact host event after restore and confirm the original receipt is returned.",
+          "checks": []
+        }
+      ],
+      "checks": [
+        "checkv2:original-duty-preserved",
+        "checkv2:original-duty-still-terminates",
+        "manifest:v2-checkpoint-corruption",
+        "manifest:v2-checkpoint-restore"
+      ]
+    },
+    {
+      "id": "V2-ROSTER",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2",
+        "band-contract/roster/1",
+        "band-contract/roster/2"
+      ],
+      "specification": "coordination.md",
+      "acceptance": [
+        {
+          "obligation": "Create a session with an actor ID repeated across roles or groups, and one with an empty collection, and observe each rejected.",
+          "checks": [
+            "checkcoordination:roster-duplicate-member-actor",
+            "checkcoordination:roster-empty",
+            "checkcoordination:roster-lead-as-member"
+          ]
+        },
+        {
+          "obligation": "Restore a typed roster and confirm attributes are revalidated, the roster is re-instantiated and the binding match is verified.",
+          "checks": [
+            "checkcoordination:portable-recovery-attributes"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:v2-m22-attributes-bytes-A0",
+        "checkv2:v2-m22-attributes-bytes-A1",
+        "checkcoordination:roster-255-members",
+        "checkcoordination:roster-256-members",
+        "checkcoordination:roster-duplicate-member-actor",
+        "checkcoordination:roster-empty",
+        "checkcoordination:roster-guidance-16384",
+        "checkcoordination:roster-guidance-16385",
+        "checkcoordination:roster-lead-as-member",
+        "checkcoordination:portable-recovery-attributes",
+        "checkcoordination:typed-roster-profile",
+        "checkcoordination:participant-type-query",
+        "checkcoordination:participant-view-attributes",
+        "checkcoordination:participant-invalid-attribute-rejected",
+        "checkcoordination:roster-total-under-262144",
+        "checkcoordination:roster-total-over-262144",
+        "manifest:v2-m22-attributes-bytes"
+      ]
+    },
+    {
+      "id": "V2-COLLECTION",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1",
+        "band-contract/collection/1",
+        "band-contract/collection/2"
+      ],
+      "specification": "coordination.md",
+      "acceptance": [
+        {
+          "obligation": "Close a collection by settlement, by deadline and by offline grace, and confirm each member status, settlement time and reason.",
+          "checks": [
+            "checkcoordination:seeded-presence-settles-grace",
+            "checkcoordination:all-settled-continues",
+            "checkcoordination:result-success",
+            "checkcoordination:result-failed",
+            "checkcoordination:known-old-offline",
+            "checkcoordination:early-close",
+            "checkcoordination:timeout-partial-state",
+            "checkcoordination:timeout-member",
+            "checkcoordination:late-collection-entry-at-deadline",
+            "checkcoordination:capacity-keeps-deadlines"
+          ]
+        },
+        {
+          "obligation": "Close a collection with zero successes and confirm the session stays active.",
+          "checks": [
+            "checkcoordination:closed-rounds-below-limit-continue"
+          ]
+        },
+        {
+          "obligation": "Restore after close and confirm the result is unchanged and a reconnect does not reopen it.",
+          "checks": [
+            "checkcoordination:portable-recovery-results"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:cancelled-round-without-contribution-no-result",
+        "checkcoordination:closed-round-limit-outcome",
+        "checkcoordination:closed-rounds-below-limit-continue",
+        "checkcoordination:collection-close-drops-state-duties",
+        "checkcoordination:dropped-duty-never-fires",
+        "checkcoordination:seeded-presence-settles-grace",
+        "checkcoordination:all-settled-continues",
+        "checkcoordination:session-active",
+        "checkcoordination:result-success",
+        "checkcoordination:result-failed",
+        "checkcoordination:known-old-offline",
+        "checkcoordination:early-close",
+        "checkcoordination:collection-outcome-profile",
+        "checkcoordination:portable-recovery-results",
+        "checkcoordination:timeout-partial-state",
+        "checkcoordination:timeout-member",
+        "checkcoordination:tie-collection-continues",
+        "checkcoordination:late-collection-entry-at-deadline",
+        "checkcoordination:capacity-keeps-deadlines",
+        "checkcoordination:host-transition-carries-duty",
+        "checkcoordination:collection-close-drops-carried-duty",
+        "checkcoordination:carried-duty-never-fires"
+      ]
+    },
+    {
+      "id": "V2-REPORT-VISIBILITY",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-contract/collection/2"
+      ],
+      "specification": "coordination.md",
+      "acceptance": [
+        {
+          "obligation": "Confirm a collection receiver's view shows an accepted report's payload.",
+          "checks": [
+            "checkcoordination:lead-sees-report"
+          ]
+        },
+        {
+          "obligation": "Confirm another contributor's view does not list that report.",
+          "checks": [
+            "checkcoordination:private-report-hidden"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:lead-sees-report",
+        "checkcoordination:private-report-hidden"
+      ]
+    },
+    {
+      "id": "V2-CONTRIBUTION",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-contract/contribution/1",
+        "band-contract/collection/2"
+      ],
+      "specification": "contribution-outcomes.md",
+      "acceptance": [
+        {
+          "obligation": "Confirm a member can stop its own contribution but not another member's.",
+          "checks": [
+            "checkcoordination:peer-replay-after-settlement",
+            "checkcoordination:member-cannot-stop-other-member",
+            "checkcoordination:member-can-stop-own"
+          ]
+        },
+        {
+          "obligation": "Send reports for a wrong session, a stale round, an unrelated member and an already-settled contribution and observe each rejected.",
+          "checks": [
+            "checkcoordination:stale-entry-rejected",
+            "checkcoordination:wrong-session-rejected",
+            "checkcoordination:unrelated-member-rejected",
+            "checkcoordination:settled-member-rejected",
+            "checkcoordination:scope-rejections-keep-state"
+          ]
+        },
+        {
+          "obligation": "At the exact deadline the deadline settles first; whichever of a reply or a terminal failure wins first cannot be replaced.",
+          "checks": [
+            "checkcoordination:reply-wins-before-failure",
+            "checkcoordination:failure-wins-before-reply",
+            "checkcoordination:deadline-before-exact-report",
+            "checkcoordination:deadline-before-exact-reply"
+          ]
+        },
+        {
+          "obligation": "Retry an exact control before and after restart and confirm a single receipt with the original cause.",
+          "checks": [
+            "checkcoordination:control-exact-retry",
+            "checkcoordination:control-retry-after-restart",
+            "checkcoordination:contribution-retry-original-receipt",
+            "checkcoordination:contribution-retry-keeps-state",
+            "checkcoordination:capacity-keeps-retries"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:peer-checkpoint-failure-id-opaque",
+        "checkcoordination:peer-checkpoint-hidden-failure-shape",
+        "checkcoordination:peer-replay-after-settlement",
+        "checkcoordination:receiver-checkpoint-keeps-failure-id",
+        "checkcoordination:result-failed",
+        "checkcoordination:room-contribution-profile",
+        "checkcoordination:failure-is-not-a-business-message",
+        "checkcoordination:original-cause-type",
+        "checkcoordination:original-cause-reference",
+        "checkcoordination:failure-origin",
+        "checkcoordination:member-discovers-scoped-control",
+        "checkcoordination:member-cannot-stop-other-member",
+        "checkcoordination:member-can-stop-own",
+        "checkcoordination:control-exact-retry",
+        "checkcoordination:control-is-not-agent-message",
+        "checkcoordination:other-projection-redacts-cause",
+        "checkcoordination:control-retry-after-restart",
+        "checkcoordination:contribution-retry-original-receipt",
+        "checkcoordination:contribution-retry-keeps-state",
+        "checkcoordination:contribution-id-conflict-changed-cause",
+        "checkcoordination:contribution-id-conflict-changed-producer",
+        "checkcoordination:contribution-conflict-keeps-state",
+        "checkcoordination:reply-wins-before-failure",
+        "checkcoordination:failure-wins-before-reply",
+        "checkcoordination:deadline-before-exact-report",
+        "checkcoordination:deadline-before-exact-reply",
+        "checkcoordination:stale-entry-rejected",
+        "checkcoordination:wrong-session-rejected",
+        "checkcoordination:unrelated-member-rejected",
+        "checkcoordination:settled-member-rejected",
+        "checkcoordination:scope-rejections-keep-state",
+        "checkcoordination:contribution-capacity",
+        "checkcoordination:capacity-rejection-keeps-state",
+        "checkcoordination:capacity-keeps-retries",
+        "checkcoordination:reserved-redacted-prefix"
+      ]
+    },
+    {
+      "id": "V2-STATE5",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1",
+        "band-contract/contribution/1"
+      ],
+      "specification": "contribution-outcomes.md",
+      "acceptance": [
+        {
+          "obligation": "Export and restore a state/5 checkpoint and confirm member statuses, failure causes and control receipts survive.",
+          "checks": [
+            "checkcoordination:portable-recovery-results",
+            "checkcoordination:control-retry-after-restart"
+          ]
+        },
+        {
+          "obligation": "Give contribution compiled data and a state/5 checkpoint to a reader without that support and observe rejection.",
+          "checks": [
+            "checkcoordination:old-reader-rejects-contribution-compiled",
+            "checkcoordination:old-reader-rejects-new-state-profile"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:receiver-checkpoint-keeps-failure-id",
+        "checkcoordination:state-profile",
+        "checkcoordination:portable-recovery-results",
+        "checkcoordination:old-reader-rejects-contribution-compiled",
+        "checkcoordination:old-reader-rejects-new-state-profile",
+        "checkcoordination:control-retry-after-restart"
+      ]
+    },
+    {
+      "id": "V2-ID-NAMESPACE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        {
+          "obligation": "After actor B's ID X is accepted, send actor A's proposal with X and observe id_conflict with the state unchanged.",
+          "checks": [
+            "checkv2:h7-shared-session-id-namespace"
+          ]
+        },
+        {
+          "obligation": "Retry B's exact envelope and confirm the duplicate returns B's original receipt.",
+          "checks": [
+            "checkv2:h7-shared-session-id-namespace"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:h7-shared-session-id-namespace",
+        "checkcoordination:reserved-redacted-prefix"
+      ]
+    },
+    {
+      "id": "V2-CONFIG",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        {
+          "obligation": "Create with a misspelled cap key and observe invalid_config, and confirm the config schema rejects it.",
+          "checks": [
+            "checkv2:unknown-config-key-invalid"
+          ]
+        }
+      ],
+      "checks": [
+        "checkv2:unknown-config-key-invalid",
+        "manifest:v2-session-configuration"
+      ]
+    },
+    {
+      "id": "V2-REFERENCE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        {
+          "obligation": "Reference a bound fact from a participant that neither authored nor received it and observe reference with the version unchanged.",
+          "checks": [
+            "checkcoordination:hidden-reference-rejected"
+          ]
+        },
+        {
+          "obligation": "Reference the same fact from its recipient and observe acceptance.",
+          "checks": [
+            "checkcoordination:received-reference-accepted"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:hidden-reference-rejected",
+        "checkcoordination:received-reference-accepted"
+      ]
+    },
+    {
+      "id": "V2-VERSION",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        {
+          "obligation": "Settle a collection's last member with a reply and confirm the version adds the fact and the round close.",
+          "checks": [
+            "checkcoordination:version-message-close"
+          ]
+        },
+        {
+          "obligation": "Accept presence reports and a fired host trigger and confirm each adds one, while entering the paused state adds nothing.",
+          "checks": [
+            "checkcoordination:version-presence-and-trigger"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:version-message-close",
+        "checkcoordination:version-presence-and-trigger"
+      ]
+    },
+    {
+      "id": "V2-PREFLIGHT",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        {
+          "obligation": "Run the optional checker on a contributor's agent-view projection with a legal reply and confirm accepted.",
+          "checks": [
+            "checkcoordination:optional-local-checker"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:optional-local-checker",
+        "manifest:v2-portable-local-preflight"
+      ]
+    },
+    {
+      "id": "V2-ROOM-SHARE",
+      "level": "MUST",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "acceptance": [
+        {
+          "obligation": "With per-actor shares, a sender past its event share gets room_budget while another sender is accepted; after the window resets it may send again, and a sender holding its receipt share gets retention_limit.",
+          "checks": [
+            "checkcoordination:room-actor-shares"
+          ]
+        },
+        {
+          "obligation": "Without per-actor shares, one sender may use the whole room-wide window, and the room-wide limit refuses the next event with room_budget.",
+          "checks": [
+            "checkcoordination:room-actor-shares-default-room-wide"
+          ]
+        },
+        {
+          "obligation": "A fan-out past the sender's mention share gets room_budget while another sender's event is accepted.",
+          "checks": [
+            "checkcoordination:room-mention-share"
+          ]
+        }
+      ],
+      "checks": [
+        "checkcoordination:room-actor-shares",
+        "checkcoordination:room-actor-shares-default-room-wide",
+        "checkcoordination:room-mention-share",
+        "manifest:v2-room-quota-retention"
+      ]
+    }
+  ]
+}

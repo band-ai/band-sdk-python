@@ -1,0 +1,43 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-encode-http-omit-only-supplied",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire_encode",
+      "message": {
+        "id": "m",
+        "session": "s",
+        "kind": "ping",
+        "payload": {},
+        "expected_version": 0
+      },
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "http/1",
+        "fields": {
+          "session": "path:id"
+        }
+      },
+      "transport": {
+        "path:id": "s"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "ok": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{}}"
+    }
+  ]
+}

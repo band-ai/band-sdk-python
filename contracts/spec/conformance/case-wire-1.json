@@ -1,0 +1,25 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "wire-1",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"id\":\"m\",\"id\":\"n\",\"kind\":\"k\",\"payload\":{}}"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error",
+      "equals": "duplicate_key"
+    }
+  ],
+  "expected": [
+    {
+      "error": "duplicate_key"
+    }
+  ]
+}

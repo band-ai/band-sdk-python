@@ -1,0 +1,72 @@
+---
+name: sigil-review
+description: Collect two agent reviews of a request or revision.
+engine: 0.2.0-lab.1
+roles: [lead, a, b]
+---
+"""
+Review a request or a revision. Two reviewers report independently, and the run
+collects both reports. Collected means both reports arrived, not that either
+report approved the work.
+"""
+contract @1h => expired
+
+"""
+Send one labelled request or revision to both reviewers. Read both reports
+before deciding anything; a single approval is not consensus.
+"""
+role lead
+
+"""
+Review the labelled request or revision independently. Name the label you are
+answering and give approve, revise or reject with your reasons.
+"""
+role a
+
+"""
+Review the labelled request or revision independently. Name the label you are
+answering and give approve, revise or reject with your reasons.
+"""
+role b
+
+"""
+A first-round request, identified by an uppercase label.
+"""
+type request
+  label: text(1..32, regex: ~r/[A-Z][A-Z0-9_-]*/)
+
+"""
+A revised version of earlier work, identified by an uppercase label.
+"""
+type revision
+  label: text(1..32, regex: ~r/[A-Z][A-Z0-9_-]*/)
+
+"""
+One reviewer's decision on the request or revision it names.
+"""
+type review
+  source: ref(~w[request revision])
+  decision: enum(~w[approve revise reject])
+
+"""
+The lead sends a request or a revision to both reviewers.
+"""
+state new
+  lead -> ~w[a b]: request() as task => reviewing
+  lead -> ~w[a b]: revision() as task => reviewing
+
+"""
+Both reviewers report within five minutes.
+"""
+state reviewing
+  ~w[a b] -> lead: review(source=$task) each @5m => collected | stalled
+
+"""
+Both reports arrived. The lead weighs them; disagreement stays visible.
+"""
+end collected
+
+"""
+A report is missing. The lead decides whether to proceed on partial review.
+"""
+end stalled

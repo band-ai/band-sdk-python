@@ -23,7 +23,8 @@ the workflow files cannot say for themselves.
   cancelled or queued behind one another: each one is the verdict for the commit that
   lands, in a concurrency group of its own.
 - **The merge queue runs a slim `ci.yml`:** `lint` plus the `test`, `test-crewai` and
-  `test-parlant` suites on Ubuntu with Python 3.12. `test-strands-nooa`, `packaging`
+  `test-parlant` suites on Ubuntu with Python 3.12, and the native
+  `contract-qualification` job. `test-strands-nooa`, `packaging`
   and `wheel-extras` stay out of the queue, and
   `python-core-coverage.yml` does not run in the queue. A break that shows only on a lane the
   queue skips reaches `main` and surfaces in the next PR's CI.
@@ -35,6 +36,18 @@ the workflow files cannot say for themselves.
   When adding a supported Python version, update the matrix exclusions so normal
   PRs retain only the newest validated Windows interpreter; the matrix guard
   checks this against the version grid.
+- **Contract coverage runs in both the SDK matrix and a required native job.** The
+  ordinary Linux/Windows `test` jobs install the `contracts` extra and collect the
+  portable contract tests. Individual native tests declare their prerequisites.
+  `contract-qualification` runs on Ubuntu 24.04 with system Python 3.12, the
+  checked-in Elixir/OTP versions, Node 24 and callback-isolation dependencies. It
+  invokes `contracts.deploy.ci`, which builds the current and pinned engines,
+  requires every selected contract test's capabilities with
+  `--contract-qualification`, and checks reproducible releases and installed
+  operation. It runs on every ready PR, merge queue entry, schedule and manual
+  CI run; `ci-status` requires success. A job-owned service cgroup bounds the run
+  and its descendants, with cleanup verified before the final verdict. Logs,
+  result reports and release manifests are retained for 14 days.
 
 ## PyPI publish
 

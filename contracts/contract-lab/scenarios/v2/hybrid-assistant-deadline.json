@@ -1,0 +1,67 @@
+{
+  "bindings": {
+    "requester": "requester",
+    "assistant": "assistant"
+  },
+  "session": "s",
+  "now": 0,
+  "inactivity": "accepted",
+  "max_messages": 100,
+  "max_bytes": 16384,
+  "steps": [
+    {
+      "actor": "requester",
+      "now": 0,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "answering",
+        "version": 1
+      }
+    },
+    {
+      "tick": 299999,
+      "expect": {
+        "state": "answering",
+        "outcome": null,
+        "version": 1
+      }
+    },
+    {
+      "actor": "assistant",
+      "now": 300000,
+      "message": {
+        "id": "a",
+        "session": "s",
+        "kind": "answer",
+        "payload": {
+          "request": "q",
+          "text": "pong"
+        },
+        "expected_version": 1
+      },
+      "expect": {
+        "status": "rejected",
+        "state": "stalled",
+        "outcome": "stalled",
+        "version": 2
+      }
+    },
+    {
+      "tick": 400000,
+      "expect": {
+        "state": "stalled",
+        "outcome": "stalled",
+        "version": 2
+      }
+    }
+  ]
+}

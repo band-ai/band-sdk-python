@@ -1,0 +1,25 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "wire-3",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"id\":\"m\",\"kind\":\"k\",\"payload\":{\"a\":1.0}}"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error",
+      "equals": "unsupported_number"
+    }
+  ],
+  "expected": [
+    {
+      "error": "unsupported_number"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-legacy-id-session",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"kind\":\"ping\",\"payload\":{}}",
+      "transport": {
+        "id": "m",
+        "session": "s"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "ok": {
+          "id": "m",
+          "kind": "ping",
+          "payload": {},
+          "session": "s"
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "id": "m",
+        "kind": "ping",
+        "payload": {},
+        "session": "s"
+      }
+    }
+  ]
+}

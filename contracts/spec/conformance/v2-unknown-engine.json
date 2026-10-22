@@ -1,0 +1,172 @@
+{
+  "profile": "band-contract/conformance-case/2",
+  "id": "v2-unknown-engine",
+  "requirements": [
+    "V2-FAIL-CLOSED"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: probe\ndescription: Probe an unknown engine.\nengine: 9.9.9\nroles: [lead, worker]\n---\ncontract @infinity => expired\ntype task\nstate new\n  lead -> worker: task() => done\nend done\n",
+        "sha256": "9173c23fcda625884e9925c8f8f9b4a4a2aba7a2fe9cf9ad00f800cd924b0b99"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: probe\ndescription: Probe an unknown engine.\nengine: 0.3.0-lab.1\nroles: [lead, worker]\n---\ncontract @infinity => expired\ntype task\nstate new\n  lead -> worker: task() => done\nend done\n",
+        "sha256": "44aab4628d81192bbd09ddde0c4a0b93de773ee51748c0ecb779bd73046514b6"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: probe\ndescription: Probe an unknown engine.\nengine: latest\nroles: [lead, worker]\n---\ncontract @infinity => expired\ntype task\nstate new\n  lead -> worker: task() => done\nend done\n",
+        "sha256": "7ed6a6f28d9d41be9f6bc46c957fe5289ebd74289d58ac812b2056308251b325"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: probe\ndescription: Probe an unknown engine.\nengine: 0.2.0-lab.2\nroles: [lead, worker]\n---\ncontract @infinity => expired\ntype task\nstate new\n  lead -> worker: task() => done\nend done\n",
+        "sha256": "4b0e171bd49025a7f6d43b479f619fd08674641a79916aba7d2def4447be5d81"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: Bad Name\ndescription: Probe an unknown engine.\nengine: 9.9.9\nroles: [lead, worker]\n---\ncontract @infinity => expired\ntype task\nstate new\n  lead -> worker: task() => done\nend done\n",
+        "sha256": "34578076211d880856f090f6a35d0df6f3b89b4e4281937adb55fb65be584cce"
+      }
+    },
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "native",
+        "content": "+SKILL probe\n+SUMMARY Probe an unknown engine.\n+ENGINE 9.9.9\n+ROLES lead, worker\n+BODY\ncontract @infinity => expired\ntype task\nstate new\n  lead -> worker: task() => done\nend done\n",
+        "sha256": "19ddc705cfe6582f9d9315c12d2480914a6aadcba6c105a50cb621b50b85d4eb"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": {
+        "code": "engine",
+        "detail": null,
+        "line": 1
+      }
+    },
+    {
+      "error": {
+        "code": "engine",
+        "detail": null,
+        "line": 1
+      }
+    },
+    {
+      "error": {
+        "code": "engine",
+        "detail": null,
+        "line": 1
+      }
+    },
+    {
+      "error": {
+        "code": "engine",
+        "detail": null,
+        "line": 1
+      }
+    },
+    {
+      "error": {
+        "code": "engine",
+        "detail": null,
+        "line": 1
+      }
+    },
+    {
+      "error": "frontmatter_required"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "engine"
+    },
+    {
+      "response": 0,
+      "pointer": "/error/line",
+      "equals": 1
+    },
+    {
+      "response": 1,
+      "pointer": "/error/code",
+      "equals": "engine"
+    },
+    {
+      "response": 1,
+      "pointer": "/error/line",
+      "equals": 1
+    },
+    {
+      "response": 2,
+      "pointer": "/error/code",
+      "equals": "engine"
+    },
+    {
+      "response": 2,
+      "pointer": "/error/line",
+      "equals": 1
+    },
+    {
+      "response": 3,
+      "pointer": "/error/code",
+      "equals": "engine"
+    },
+    {
+      "response": 3,
+      "pointer": "/error/line",
+      "equals": 1
+    },
+    {
+      "response": 4,
+      "pointer": "/error/code",
+      "equals": "engine"
+    },
+    {
+      "response": 4,
+      "pointer": "/error/line",
+      "equals": 1
+    },
+    {
+      "response": 5,
+      "pointer": "/error",
+      "equals": "frontmatter_required"
+    }
+  ],
+  "source_schema_assertions": [
+    {
+      "request": 5,
+      "valid": false
+    }
+  ]
+}

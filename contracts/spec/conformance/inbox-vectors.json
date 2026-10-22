@@ -1,0 +1,1216 @@
+{
+  "profile": "band-contract/inbox-vectors/1",
+  "wire_profile": "contract-room/inbox/1",
+  "qualification": "not_assessed",
+  "event_bytes_limit": 2097152,
+  "provenance": "Independent paging expectations, not generated from the room implementation. Receipt payload expansion is specified in the conformance README; lifecycle labels are adapter scenarios, not live qualification.",
+  "receipts": {
+    "small": {
+      "decision": {
+        "status": "accepted",
+        "id": "small",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:44444444-4444-4444-8444-444444444444"
+        ],
+        "version": 10,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 0
+      },
+      "canonical_bytes": 414
+    },
+    "hidden": {
+      "decision": {
+        "status": "accepted",
+        "id": "hidden",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:33333333-3333-4333-8333-333333333333"
+        ],
+        "version": 3,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 0
+      },
+      "canonical_bytes": 414
+    },
+    "large_a": {
+      "decision": {
+        "status": "accepted",
+        "id": "large_a",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:44444444-4444-4444-8444-444444444444"
+        ],
+        "version": 1,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 1048161
+      },
+      "canonical_bytes": 1048576
+    },
+    "large_b": {
+      "decision": {
+        "status": "accepted",
+        "id": "large_b",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:44444444-4444-4444-8444-444444444444"
+        ],
+        "version": 4,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 1048161
+      },
+      "canonical_bytes": 1048576
+    },
+    "oversized": {
+      "decision": {
+        "status": "accepted",
+        "id": "oversized",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:44444444-4444-4444-8444-444444444444"
+        ],
+        "version": 5,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 2096736
+      },
+      "canonical_bytes": 2097153
+    },
+    "unicode": {
+      "decision": {
+        "status": "accepted",
+        "id": "unicode",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:44444444-4444-4444-8444-444444444444"
+        ],
+        "version": 1,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "\u00e9",
+        "count": 1000
+      },
+      "canonical_bytes": 2415
+    },
+    "hidden_tail": {
+      "decision": {
+        "status": "accepted",
+        "id": "hidden_tail",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:33333333-3333-4333-8333-333333333333"
+        ],
+        "version": 11,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 0
+      },
+      "canonical_bytes": 420
+    },
+    "small_new": {
+      "decision": {
+        "status": "accepted",
+        "id": "small_new",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "role": "requester",
+        "actor": "Agent:33333333-3333-4333-8333-333333333333",
+        "kind": "question",
+        "payload": {
+          "text": ""
+        },
+        "recipients": [
+          "Agent:44444444-4444-4444-8444-444444444444"
+        ],
+        "version": 12,
+        "state": "waiting",
+        "outcome": null,
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "metadata": {
+          "doc": null,
+          "line": 1
+        }
+      },
+      "text_fill": {
+        "scalar": "x",
+        "count": 0
+      },
+      "canonical_bytes": 418
+    }
+  },
+  "cases": [
+    {
+      "id": "scan-bound-includes-hidden",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 2
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 40,
+          "events": [
+            "small"
+          ]
+        }
+      }
+    },
+    {
+      "id": "hidden-only-advances",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 40,
+        "limit": 1
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 99,
+          "events": []
+        }
+      }
+    },
+    {
+      "id": "exclusive-after",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 40,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 99,
+          "events": []
+        }
+      }
+    },
+    {
+      "id": "at-head",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 99,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 99,
+          "events": []
+        }
+      }
+    },
+    {
+      "id": "after-head-refused",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 100,
+        "limit": 128
+      },
+      "expected": {
+        "status": 409,
+        "body": {
+          "code": "cursor_ahead"
+        }
+      }
+    },
+    {
+      "id": "empty-origin",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 0,
+      "records": [],
+      "request": {
+        "after": 0,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 0,
+          "events": []
+        }
+      }
+    },
+    {
+      "id": "empty-future-refused",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 0,
+      "records": [],
+      "request": {
+        "after": 1,
+        "limit": 128
+      },
+      "expected": {
+        "status": 409,
+        "body": {
+          "code": "cursor_ahead"
+        }
+      }
+    },
+    {
+      "id": "unsafe-after",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 9007199254740992,
+        "limit": 1
+      },
+      "expected": {
+        "status": 400
+      }
+    },
+    {
+      "id": "negative-after",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": -1,
+        "limit": 1
+      },
+      "expected": {
+        "status": 400
+      }
+    },
+    {
+      "id": "boolean-after",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": true,
+        "limit": 1
+      },
+      "expected": {
+        "status": 400
+      }
+    },
+    {
+      "id": "zero-limit",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 0
+      },
+      "expected": {
+        "status": 400
+      }
+    },
+    {
+      "id": "over-limit",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 129
+      },
+      "expected": {
+        "status": 400
+      }
+    },
+    {
+      "id": "unicode-canonical-bytes",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 17,
+      "records": [
+        {
+          "position": 17,
+          "receipt": "unicode"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 1
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 17,
+          "events": [
+            "unicode"
+          ]
+        }
+      }
+    },
+    {
+      "id": "restart-stable-replay",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "restart",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 2
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 40,
+          "events": [
+            "small"
+          ]
+        }
+      },
+      "replay_of": "scan-bound-includes-hidden"
+    },
+    {
+      "id": "restart-stable-resume",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "restart",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 40,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 99,
+          "events": []
+        }
+      },
+      "replay_of": "exclusive-after"
+    },
+    {
+      "id": "compacted-stable-replay",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "compacted",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 2
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 40,
+          "events": [
+            "small"
+          ]
+        }
+      },
+      "replay_of": "scan-bound-includes-hidden"
+    },
+    {
+      "id": "compacted-stable-resume",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "compacted",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 40,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 99,
+          "events": []
+        }
+      },
+      "replay_of": "exclusive-after"
+    },
+    {
+      "id": "archived-stable-replay",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "archived",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 2
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 40,
+          "events": [
+            "small"
+          ]
+        }
+      },
+      "replay_of": "scan-bound-includes-hidden"
+    },
+    {
+      "id": "archived-stable-resume",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "archived",
+      "head": 99,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        }
+      ],
+      "request": {
+        "after": 40,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 99,
+          "events": []
+        }
+      },
+      "replay_of": "exclusive-after"
+    },
+    {
+      "id": "next-receipt-after-retention",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "compacted",
+      "head": 140,
+      "records": [
+        {
+          "position": 7,
+          "receipt": "hidden"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 99,
+          "receipt": "hidden_tail"
+        },
+        {
+          "position": 140,
+          "receipt": "small_new"
+        }
+      ],
+      "request": {
+        "after": 99,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 140,
+          "events": [
+            "small_new"
+          ]
+        }
+      }
+    },
+    {
+      "id": "safe-max-head",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 9007199254740991,
+      "records": [
+        {
+          "position": 9007199254740991,
+          "receipt": "small"
+        }
+      ],
+      "request": {
+        "after": 9007199254740990,
+        "limit": 1
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 9007199254740991,
+          "events": [
+            "small"
+          ]
+        }
+      }
+    },
+    {
+      "id": "exact-page-bound",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 40,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "large_b"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 30,
+          "events": [
+            "large_a",
+            "large_b"
+          ]
+        }
+      }
+    },
+    {
+      "id": "overflow-retains-hidden-prefix",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 40,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "large_b"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        }
+      ],
+      "request": {
+        "after": 10,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 40,
+          "events": [
+            "large_b",
+            "small"
+          ]
+        }
+      }
+    },
+    {
+      "id": "later-overflow-no-skip",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 30,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "oversized"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 20,
+          "events": [
+            "large_a"
+          ]
+        }
+      }
+    },
+    {
+      "id": "blocked-next-page-refused",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 30,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "oversized"
+        }
+      ],
+      "request": {
+        "after": 20,
+        "limit": 128
+      },
+      "expected": {
+        "status": 503
+      }
+    },
+    {
+      "id": "first-visible-oversized",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 10,
+      "records": [
+        {
+          "position": 5,
+          "receipt": "hidden"
+        },
+        {
+          "position": 10,
+          "receipt": "oversized"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 128
+      },
+      "expected": {
+        "status": 503
+      }
+    },
+    {
+      "id": "later-fits-next-page",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 30,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "large_b"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 2
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 20,
+          "events": [
+            "large_a"
+          ]
+        }
+      }
+    },
+    {
+      "id": "resume-next-visible",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 30,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "large_b"
+        }
+      ],
+      "request": {
+        "after": 20,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 30,
+          "events": [
+            "large_b"
+          ]
+        }
+      }
+    },
+    {
+      "id": "nonreceipt-hidden-position",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 21,
+      "records": [
+        {
+          "position": 11,
+          "receipt": null
+        },
+        {
+          "position": 21,
+          "receipt": "small"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 1
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 11,
+          "events": []
+        }
+      }
+    },
+    {
+      "id": "overflow-blocks-following-event",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 50,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "large_b"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        },
+        {
+          "position": 50,
+          "receipt": "unicode"
+        }
+      ],
+      "request": {
+        "after": 0,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 30,
+          "events": [
+            "large_a",
+            "large_b"
+          ]
+        }
+      }
+    },
+    {
+      "id": "exact-bound-next-page",
+      "session": "22222222-2222-4222-8222-222222222222",
+      "actor": "Agent:44444444-4444-4444-8444-444444444444",
+      "storage": "live",
+      "head": 40,
+      "records": [
+        {
+          "position": 10,
+          "receipt": "large_a"
+        },
+        {
+          "position": 20,
+          "receipt": "hidden"
+        },
+        {
+          "position": 30,
+          "receipt": "large_b"
+        },
+        {
+          "position": 40,
+          "receipt": "small"
+        }
+      ],
+      "request": {
+        "after": 30,
+        "limit": 128
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "cursor": 40,
+          "events": [
+            "small"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1319 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-m21-cross-profile-state",
+  "requirements": [
+    "DSL-003",
+    "ENG-015",
+    "ENG-016"
+  ],
+  "schema_profile": 6,
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: assignment\ndescription: Test assignment with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [lead, worker, reviewer]\n---\n\"\"\"\nAssign work with explicit acceptance, independent review, and requester acceptance.\nReported artifacts are claims until the named reviewer and lead accept them.\n\"\"\"\ncontract @4h mentions 2 => expired\n\n\"\"\"\nOwn the task, constraints, and final acceptance decision.\n\"\"\"\nrole lead\n\n\"\"\"\nAccept or refuse the offer before performing work.\n\"\"\"\nrole worker\n\n\"\"\"\nCheck the exact submission independently of its author.\n\"\"\"\nrole reviewer\n\n\"\"\"\nAn offer describes what the worker must deliver and how to verify it.\n\"\"\"\ntype offer\n  \"\"\"\n  A self-contained task including constraints and verification instructions.\n  \"\"\"\n  task: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nAccept the offer. Send this only if you can do the task as described, before you start work.\n\"\"\"\ntype accept\n  task: ref(offer|revise)\n\n\"\"\"\nRefuse the offer, and say why in a sentence or two.\n\"\"\"\ntype refuse\n  task: ref(offer|revise)\n  reason: text(bytes: 1..3200, graphemes: 1..200)\n\n\"\"\"\nSubmit the finished artifact, or a reference to it, for the reviewer to check.\n\"\"\"\ntype submit\n  task: ref(offer|revise)\n  artifact: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nApprove the exact submission you checked. Approve only what you inspected yourself.\n\"\"\"\ntype approve\n  task: ref(offer|revise)\n  submission: ref(submit)\n\n\"\"\"\nAccept the reviewed submission as the result of the task.\n\"\"\"\ntype accept_result\n  task: ref(offer|revise)\n  submission: ref(submit)\n\n\"\"\"\nAsk for changes to the submission. Name each change and why it is needed.\n\"\"\"\ntype changes\n  task: ref(offer|revise)\n  submission: ref(submit)\n  reason: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nRevise the task for another pass. Give the worker the new instruction in full.\n\"\"\"\ntype revise\n  task: ref(offer|revise)\n  instruction: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nAsk the lead one question that blocks your work on the task.\n\"\"\"\ntype question\n  task: ref(offer|revise)\n  question: text(bytes: 1..4800, graphemes: 1..300)\n\n\"\"\"\nAnswer the worker's question so the work can continue. Set question to the question you answer.\n\"\"\"\ntype answer\n  task: ref(offer|revise)\n  question: ref(question)\n  answer: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nReport briefly how the task is going. It doesn't extend any deadline.\n\"\"\"\ntype progress\n  task: ref(offer|revise)\n  note: text(bytes: 1..3200, graphemes: 1..200)\n\n\"\"\"\nCancel the task, and say why.\n\"\"\"\ntype cancel\n  reason: text(bytes: 1..3200, graphemes: 1..200)\n\n\"\"\"\nConfirm the cancellation and list every effect your work left behind, finished or not. Set cancel\nto the cancel you confirm.\n\"\"\"\ntype cancel_ack\n  cancel: ref(cancel)\n  effects: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nThe lead has not offered the task yet. Send the offer to the worker and the reviewer together.\n\"\"\"\nstate new\n  \"\"\"\n  Both the worker and reviewer receive the original offer.\n  \"\"\"\n  lead -> {worker,reviewer}: offer() as task => offered\n\n\"\"\"\nThe offer is pending; work has not been accepted yet.\n\"\"\"\nstate offered\n  \"\"\"\n  The worker must accept within two minutes or the task is unclaimed.\n  \"\"\"\n  worker -> lead: accept(task=$task) @2m => working | unclaimed\n  worker -> lead: refuse(task=$task) => refused\n\n\"\"\"\nThe worker is doing the task and owes a submission within thirty minutes. Ask the lead if\nsomething blocks you; progress notes are optional.\n\"\"\"\nstate working\n  worker -> {lead,reviewer}: submit(task=$task) as submission @30m => reviewing | stalled\n  \"\"\"\n  Ask the lead a question that blocks you. The lead then owes one answer to it.\n  \"\"\"\n  worker -> lead: question(task=$task) awaits blocked\n    \"\"\"\n    Answer within thirty minutes so the work can continue.\n    \"\"\"\n    => answer(task=$task) & working\n     \"\"\"\n     No answer arrived within thirty minutes of the question.\n     \"\"\"\n     | @30m & stalled\n  event worker -> lead: progress(task=$task)\n\n\"\"\"\nThe worker asked a question. The lead owes an answer within thirty minutes. A sixth question\nends the run.\n\"\"\"\nstate blocked max_entries 5 => too_many_questions\n\n\"\"\"\nThe reviewer checks the exact submission and owes approval within ten minutes, or asks for\nchanges. At most three reviews.\n\"\"\"\nstate reviewing max_entries 3 => exhausted\n  reviewer -> {lead,worker}: approve(task=$task,submission=$submission) @10m => acceptance | stalled\n  reviewer -> {lead,worker}: changes(task=$task,submission=$submission) => revising\n\n\"\"\"\nThe reviewer asked for changes. The lead owes a revised task within ten minutes.\n\"\"\"\nstate revising\n  lead -> {worker,reviewer}: revise(task=$task) as task @10m => offered | stalled\n\n\"\"\"\nThe reviewer approved. The lead owes the final acceptance within ten minutes.\n\"\"\"\nstate acceptance\n  lead -> {worker,reviewer}: accept_result(task=$task,submission=$submission) @10m => complete | stalled\n\n\"\"\"\nThe lead cancelled. The worker owes a cancellation report within two minutes, listing every effect.\n\"\"\"\nstate cancelling\n\nanystate\n  \"\"\"\n  Stop the task from any state, a pending question included. The worker then owes one\n  cancellation report. Until group replies (RULE.md §3) land, the reviewer is not told of a cancel\n  and gets no cancel_ack.\n  \"\"\"\n  lead -> worker: cancel() awaits cancelling\n    => cancel_ack() & cancelled\n     | @2m & effects_unknown\n\n\"\"\"\nThe lead accepted the exact reviewed submission.\n\"\"\"\nend complete\n\n\"\"\"\nThe worker refused the offer. Send nothing more; the lead decides what happens next.\n\"\"\"\nend refused\n\n\"\"\"\nThe worker did not accept within two minutes. The lead may offer the task again in a new session.\n\"\"\"\nend unclaimed\n\n\"\"\"\nAn owed message did not arrive in time. Stop, and report what was missing to the lead.\n\"\"\"\nend stalled\n\n\"\"\"\nThree reviews did not produce an approved submission. Stop, and report the open changes to the lead.\n\"\"\"\nend exhausted\n\n\"\"\"\nThe worker needed more than five answers to do the task. Stop, and agree a clearer task with the\nlead in a new session.\n\"\"\"\nend too_many_questions\n\n\"\"\"\nThe lead cancelled the task and the worker confirmed its effects. Send nothing more.\n\"\"\"\nend cancelled\n\n\"\"\"\nThe worker did not confirm cancellation; external effects remain unresolved.\n\"\"\"\nend effects_unknown\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "0a17bd1e8c490ecc20e238f9836f42e005c231e8dc3e5f0ac73ba2863e055f83"
+      }
+    },
+    {
+      "op": "restore",
+      "contract": "c",
+      "handle": "s",
+      "checkpoint": {
+        "data": {
+          "definition": "76b5805bee2ea03ae160e8e1981248388bf487a62147815b00e583a7a43ac291",
+          "profile": "band-contract/state/6",
+          "source": "0a17bd1e8c490ecc20e238f9836f42e005c231e8dc3e5f0ac73ba2863e055f83",
+          "state": {
+            "bindings": {
+              "lead": "lead",
+              "reviewer": "reviewer",
+              "worker": "worker"
+            },
+            "contributions": {},
+            "control_limit": 0,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1,
+              "offered": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {
+              "offer": {
+                "actor": "lead",
+                "at": 0,
+                "id": "offer",
+                "kind": "offer",
+                "payload": {
+                  "task": "Portable task"
+                },
+                "recipients": [
+                  "worker",
+                  "reviewer"
+                ],
+                "role": "lead",
+                "rule": "rule-0"
+              }
+            },
+            "fired_signals": {},
+            "history": [
+              {
+                "at": 0,
+                "id": "offer",
+                "kind": "offer",
+                "role": "lead",
+                "type": "accepted"
+              }
+            ],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": 14400000,
+            "max_bytes": 16384,
+            "max_messages": 100,
+            "mentions_used": 2,
+            "now": 0,
+            "obligations": [
+              {
+                "after_ms": 120000,
+                "due_at": 120000,
+                "id": "due-2",
+                "kind": "accept",
+                "meta": {
+                  "doc": "The worker must accept within two minutes or the task is unclaimed.",
+                  "line": 129
+                },
+                "outcome": "unclaimed",
+                "participants": [
+                  "worker"
+                ],
+                "quantifier": "all",
+                "remaining": [
+                  "worker"
+                ]
+              }
+            ],
+            "outcome": null,
+            "receipts": {
+              "offer": {
+                "decision": {
+                  "actor": "lead",
+                  "definition": "76b5805bee2ea03ae160e8e1981248388bf487a62147815b00e583a7a43ac291",
+                  "id": "offer",
+                  "kind": "offer",
+                  "metadata": {
+                    "doc": "Both the worker and reviewer receive the original offer.",
+                    "line": 120
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "task": "Portable task"
+                  },
+                  "recipients": [
+                    "worker",
+                    "reviewer"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "offered",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "fingerprint": "6d506b10fe272ac2b28339843156263a4a4dc32788922b650e4db0d4e7d8dbd0"
+              }
+            },
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "offered",
+            "status": "active",
+            "variables": {
+              "task": "offer"
+            },
+            "version": 1,
+            "wait": null,
+            "watch_bindings": {},
+            "roster_config": {
+              "lead": "lead",
+              "reviewers": [
+                {
+                  "actor": "member",
+                  "name": "member",
+                  "attributes": {
+                    "specialty": "backend"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "hash": "b05b999ea15695cb020de1db7674236b07106ca949c55b0a595e7ac88861d293",
+        "profile": "band-contract/room-checkpoint/1"
+      },
+      "now": 0
+    }
+  ],
+  "assertions": [
+    {
+      "response": 1,
+      "pointer": "/error",
+      "equals": "invalid_checkpoint"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 186
+        },
+        "any_rules": [
+          {
+            "activity": false,
+            "bind": "cancelling",
+            "each": false,
+            "event": false,
+            "from": [
+              "lead"
+            ],
+            "id": "rule-17",
+            "kind": "cancel",
+            "matches": {},
+            "meta": {
+              "doc": "Stop the task from any state, a pending question included. The worker then owes one\ncancellation report. Until group replies (RULE.md §3) land, the reviewer is not told of a cancel\nand gets no cancel_ack.",
+              "line": 187
+            },
+            "target": "cancelling",
+            "to": [
+              "worker"
+            ]
+          }
+        ],
+        "card": {
+          "description": "Test assignment with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [
+            "contract.replies/1"
+          ],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "assignment",
+          "roles": [
+            "lead",
+            "worker",
+            "reviewer"
+          ],
+          "version": null
+        },
+        "digest": "76b5805bee2ea03ae160e8e1981248388bf487a62147815b00e583a7a43ac291",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 2
+        },
+        "meta": {
+          "doc": "Assign work with explicit acceptance, independent review, and requester acceptance.\nReported artifacts are claims until the named reviewer and lead accept them.",
+          "line": 1
+        },
+        "name": "assignment",
+        "role_metadata": {
+          "lead": {
+            "meta": {
+              "doc": "Own the task, constraints, and final acceptance decision.",
+              "line": 7
+            },
+            "name": "lead"
+          },
+          "reviewer": {
+            "meta": {
+              "doc": "Check the exact submission independently of its author.",
+              "line": 17
+            },
+            "name": "reviewer"
+          },
+          "worker": {
+            "meta": {
+              "doc": "Accept or refuse the offer before performing work.",
+              "line": 12
+            },
+            "name": "worker"
+          }
+        },
+        "roles": [
+          "lead",
+          "worker",
+          "reviewer"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "0a17bd1e8c490ecc20e238f9836f42e005c231e8dc3e5f0ac73ba2863e055f83",
+        "states": {
+          "acceptance": {
+            "deadlines": [
+              {
+                "after_ms": 600000,
+                "id": "due-16",
+                "kind": "accept_result",
+                "meta": {
+                  "doc": null,
+                  "line": 179
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "lead"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer approved. The lead owes the final acceptance within ten minutes.",
+              "line": 175
+            },
+            "name": "acceptance",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-15",
+                "kind": "accept_result",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 179
+                },
+                "target": "complete",
+                "to": [
+                  "worker",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "blocked": {
+            "deadlines": [],
+            "max_entries": {
+              "limit": 5,
+              "outcome": "too_many_questions"
+            },
+            "meta": {
+              "doc": "The worker asked a question. The lead owes an answer within thirty minutes. A sixth question\nends the run.",
+              "line": 155
+            },
+            "name": "blocked",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-7",
+                "kind": "answer",
+                "literals": {},
+                "matches": {
+                  "question": "blocked",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": "Answer within thirty minutes so the work can continue.",
+                  "line": 145
+                },
+                "target": "working",
+                "to": [
+                  "worker"
+                ],
+                "wait": "due-8"
+              }
+            ],
+            "wait": {
+              "after_ms": 1800000,
+              "alternatives": [
+                "rule-7"
+              ],
+              "from": [
+                "lead"
+              ],
+              "heads": [
+                "rule-6"
+              ],
+              "id": "due-8",
+              "kinds": [
+                "answer"
+              ],
+              "meta": {
+                "doc": "No answer arrived within thirty minutes of the question.",
+                "line": 149
+              },
+              "outcome": "stalled",
+              "to": [
+                "worker"
+              ]
+            }
+          },
+          "cancelling": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead cancelled. The worker owes a cancellation report within two minutes, listing every effect.",
+              "line": 181
+            },
+            "name": "cancelling",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-18",
+                "kind": "cancel_ack",
+                "literals": {},
+                "matches": {
+                  "cancel": "cancelling"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 193
+                },
+                "target": "cancelled",
+                "to": [
+                  "lead"
+                ],
+                "wait": "due-19"
+              }
+            ],
+            "wait": {
+              "after_ms": 120000,
+              "alternatives": [
+                "rule-18"
+              ],
+              "from": [
+                "worker"
+              ],
+              "heads": [
+                "rule-17"
+              ],
+              "id": "due-19",
+              "kinds": [
+                "cancel_ack"
+              ],
+              "meta": {
+                "doc": null,
+                "line": 194
+              },
+              "outcome": "effects_unknown",
+              "to": [
+                "lead"
+              ]
+            }
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not offered the task yet. Send the offer to the worker and the reviewer together.",
+              "line": 116
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "task",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "offer",
+                "matches": {},
+                "meta": {
+                  "doc": "Both the worker and reviewer receive the original offer.",
+                  "line": 120
+                },
+                "target": "offered",
+                "to": [
+                  "worker",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "offered": {
+            "deadlines": [
+              {
+                "after_ms": 120000,
+                "id": "due-2",
+                "kind": "accept",
+                "meta": {
+                  "doc": "The worker must accept within two minutes or the task is unclaimed.",
+                  "line": 129
+                },
+                "outcome": "unclaimed",
+                "participants": [
+                  "worker"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The offer is pending; work has not been accepted yet.",
+              "line": 125
+            },
+            "name": "offered",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-1",
+                "kind": "accept",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": "The worker must accept within two minutes or the task is unclaimed.",
+                  "line": 129
+                },
+                "target": "working",
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-3",
+                "kind": "refuse",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 133
+                },
+                "target": "refused",
+                "to": [
+                  "lead"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [
+              {
+                "after_ms": 600000,
+                "id": "due-11",
+                "kind": "approve",
+                "meta": {
+                  "doc": null,
+                  "line": 166
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "reviewer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": {
+              "limit": 3,
+              "outcome": "exhausted"
+            },
+            "meta": {
+              "doc": "The reviewer checks the exact submission and owes approval within ten minutes, or asks for\nchanges. At most three reviews.",
+              "line": 161
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-10",
+                "kind": "approve",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 166
+                },
+                "target": "acceptance",
+                "to": [
+                  "lead",
+                  "worker"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-12",
+                "kind": "changes",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 167
+                },
+                "target": "revising",
+                "to": [
+                  "lead",
+                  "worker"
+                ]
+              }
+            ]
+          },
+          "revising": {
+            "deadlines": [
+              {
+                "after_ms": 600000,
+                "id": "due-14",
+                "kind": "revise",
+                "meta": {
+                  "doc": null,
+                  "line": 173
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "lead"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer asked for changes. The lead owes a revised task within ten minutes.",
+              "line": 169
+            },
+            "name": "revising",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "task",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-13",
+                "kind": "revise",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 173
+                },
+                "target": "offered",
+                "to": [
+                  "worker",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "working": {
+            "deadlines": [
+              {
+                "after_ms": 1800000,
+                "id": "due-5",
+                "kind": "submit",
+                "meta": {
+                  "doc": null,
+                  "line": 140
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "worker"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The worker is doing the task and owes a submission within thirty minutes. Ask the lead if\nsomething blocks you; progress notes are optional.",
+              "line": 135
+            },
+            "name": "working",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "submission",
+                "each": false,
+                "event": false,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-4",
+                "kind": "submit",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 140
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": "blocked",
+                "each": false,
+                "event": false,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-6",
+                "kind": "question",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": "Ask the lead a question that blocks you. The lead then owes one answer to it.",
+                  "line": 141
+                },
+                "target": "blocked",
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "worker"
+                ],
+                "id": "rule-9",
+                "kind": "progress",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 153
+                },
+                "target": null,
+                "to": [
+                  "lead"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "cancelled": {
+            "meta": {
+              "doc": "The lead cancelled the task and the worker confirmed its effects. Send nothing more.",
+              "line": 227
+            },
+            "name": "cancelled"
+          },
+          "complete": {
+            "meta": {
+              "doc": "The lead accepted the exact reviewed submission.",
+              "line": 196
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "effects_unknown": {
+            "meta": {
+              "doc": "The worker did not confirm cancellation; external effects remain unresolved.",
+              "line": 232
+            },
+            "name": "effects_unknown"
+          },
+          "exhausted": {
+            "meta": {
+              "doc": "Three reviews did not produce an approved submission. Stop, and report the open changes to the lead.",
+              "line": 216
+            },
+            "name": "exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 237
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "refused": {
+            "meta": {
+              "doc": "The worker refused the offer. Send nothing more; the lead decides what happens next.",
+              "line": 201
+            },
+            "name": "refused"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "An owed message did not arrive in time. Stop, and report what was missing to the lead.",
+              "line": 211
+            },
+            "name": "stalled"
+          },
+          "too_many_questions": {
+            "meta": {
+              "doc": "The worker needed more than five answers to do the task. Stop, and agree a clearer task with the\nlead in a new session.",
+              "line": 221
+            },
+            "name": "too_many_questions"
+          },
+          "unclaimed": {
+            "meta": {
+              "doc": "The worker did not accept within two minutes. The lead may offer the task again in a new session.",
+              "line": 206
+            },
+            "name": "unclaimed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "Assign work with explicit acceptance, independent review, and requester acceptance.\nReported artifacts are claims until the named reviewer and lead accept them.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "accept": {
+            "fields": {
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 35
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the offer. Send this only if you can do the task as described, before you start work.",
+              "line": 31
+            },
+            "name": "accept"
+          },
+          "accept_result": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 63
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 62
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the reviewed submission as the result of the task.",
+              "line": 58
+            },
+            "name": "accept_result"
+          },
+          "answer": {
+            "fields": {
+              "answer": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 93
+                }
+              },
+              "question": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 92
+                },
+                "values": [
+                  "question"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 91
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Answer the worker's question so the work can continue. Set question to the question you answer.",
+              "line": 87
+            },
+            "name": "answer"
+          },
+          "approve": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 56
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Approve the exact submission you checked. Approve only what you inspected yourself.",
+              "line": 51
+            },
+            "name": "approve"
+          },
+          "cancel": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 3200,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 200,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 106
+                }
+              }
+            },
+            "meta": {
+              "doc": "Cancel the task, and say why.",
+              "line": 102
+            },
+            "name": "cancel"
+          },
+          "cancel_ack": {
+            "fields": {
+              "cancel": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 113
+                },
+                "values": [
+                  "cancel"
+                ]
+              },
+              "effects": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 114
+                }
+              }
+            },
+            "meta": {
+              "doc": "Confirm the cancellation and list every effect your work left behind, finished or not. Set cancel\nto the cancel you confirm.",
+              "line": 108
+            },
+            "name": "cancel_ack"
+          },
+          "changes": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 71
+                }
+              },
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 70
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 69
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask for changes to the submission. Name each change and why it is needed.",
+              "line": 65
+            },
+            "name": "changes"
+          },
+          "offer": {
+            "fields": {
+              "task": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "A self-contained task including constraints and verification instructions.",
+                  "line": 26
+                }
+              }
+            },
+            "meta": {
+              "doc": "An offer describes what the worker must deliver and how to verify it.",
+              "line": 22
+            },
+            "name": "offer"
+          },
+          "progress": {
+            "fields": {
+              "note": {
+                "bytes": {
+                  "max": 3200,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 200,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 100
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 99
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Report briefly how the task is going. It doesn't extend any deadline.",
+              "line": 95
+            },
+            "name": "progress"
+          },
+          "question": {
+            "fields": {
+              "question": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 85
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 84
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask the lead one question that blocks your work on the task.",
+              "line": 80
+            },
+            "name": "question"
+          },
+          "refuse": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 3200,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 200,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 42
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Refuse the offer, and say why in a sentence or two.",
+              "line": 37
+            },
+            "name": "refuse"
+          },
+          "revise": {
+            "fields": {
+              "instruction": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 78
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 77
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Revise the task for another pass. Give the worker the new instruction in full.",
+              "line": 73
+            },
+            "name": "revise"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                },
+                "values": [
+                  "offer",
+                  "revise"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Submit the finished artifact, or a reference to it, for the reviewer to check.",
+              "line": 44
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "error": "invalid_checkpoint"
+    }
+  ]
+}

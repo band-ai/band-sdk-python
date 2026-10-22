@@ -1,0 +1,39 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "canonical-7",
+  "requirements": [
+    "ENG-003"
+  ],
+  "requests": [
+    {
+      "op": "canonical",
+      "value": {
+        "𝄞": "music",
+        "a": [
+          1,
+          false,
+          null
+        ],
+        "é": "é"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/bytes",
+      "equals": "eyJhIjpbMSxmYWxzZSxudWxsXSwiw6kiOiJlzIEiLCLwnYSeIjoibXVzaWMifQ=="
+    },
+    {
+      "response": 0,
+      "pointer": "/sha256",
+      "equals": "dbc2de901646f1d709dc2fe12395e08124010b85ce3d8617b7d524c9641385e2"
+    }
+  ],
+  "expected": [
+    {
+      "bytes": "eyJhIjpbMSxmYWxzZSxudWxsXSwiw6kiOiJlzIEiLCLwnYSeIjoibXVzaWMifQ==",
+      "sha256": "dbc2de901646f1d709dc2fe12395e08124010b85ce3d8617b7d524c9641385e2"
+    }
+  ]
+}

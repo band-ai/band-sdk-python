@@ -1,0 +1,2819 @@
+{
+  "cases": [
+    {
+      "id": "replies-adversarial-overlap-useful-exhaustive",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: overlap-useful-exhaustive\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & done\n     | answer(request=$req, y=true) & done\n     | answer(request=$req, x=false, y=false) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "60dd3f6b2c76444dacce4fb4f179a6c3cfc2e5d05869aa28ad9d6b626bf4a4b0"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_overlap"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 10
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-overlap-bare-fallback",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: overlap-bare-fallback\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & done\n     | answer(request=$req) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "92a274b535cfe76e48dcc0b2426abdf547fbba7424830ba35d5c8046861785fb"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_overlap"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 10
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-coverage-false-false-gap",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: coverage-false-false-gap\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & done\n     | answer(request=$req, x=false, y=true) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "4b3f0d9aaa9c7f9d8bce1ce60b13ee5e62f73b1fedf20becce8a01cbcf49f744"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_not_exhaustive"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 8
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-disjoint-total-control",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: disjoint-total-control\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & done\n     | answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "0a6ebf10d957f2a021d43622c32c30cc4df44d1fd74d9b171671e5c02f11f599"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req",
+              "x": false,
+              "y": false
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-s4-16x4-staggered-booleans",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: s4-16x4-staggered-booleans\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  b0: boolean\n  b1: boolean\n  b2: boolean\n  b3: boolean\n  b4: boolean\n  b5: boolean\n  b6: boolean\n  b7: boolean\n  b8: boolean\n  b9: boolean\n  b10: boolean\n  b11: boolean\n  b12: boolean\n  b13: boolean\n  b14: boolean\n  b15: boolean\n  b16: boolean\n  b17: boolean\n  b18: boolean\n  b19: boolean\n  b20: boolean\n  b21: boolean\n  b22: boolean\n  b23: boolean\n  b24: boolean\n  b25: boolean\n  b26: boolean\n  b27: boolean\n  b28: boolean\n  b29: boolean\n  b30: boolean\n  b31: boolean\n  b32: boolean\n  b33: boolean\n  b34: boolean\n  b35: boolean\n  b36: boolean\n  b37: boolean\n  b38: boolean\n  b39: boolean\n  b40: boolean\n  b41: boolean\n  b42: boolean\n  b43: boolean\n  b44: boolean\n  b45: boolean\n  b46: boolean\n  b47: boolean\n  b48: boolean\n  b49: boolean\n  b50: boolean\n  b51: boolean\n  b52: boolean\n  b53: boolean\n  b54: boolean\n  b55: boolean\n  b56: boolean\n  b57: boolean\n  b58: boolean\n  b59: boolean\n  b60: boolean\n  b61: boolean\n  b62: boolean\n  b63: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b4=true, b5=true, b6=true, b7=true) & done\n     | answer(request=$req, b8=true, b9=true, b10=true, b11=true) & done\n     | answer(request=$req, b12=true, b13=true, b14=true, b15=true) & done\n     | answer(request=$req, b16=true, b17=true, b18=true, b19=true) & done\n     | answer(request=$req, b20=true, b21=true, b22=true, b23=true) & done\n     | answer(request=$req, b24=true, b25=true, b26=true, b27=true) & done\n     | answer(request=$req, b28=true, b29=true, b30=true, b31=true) & done\n     | answer(request=$req, b32=true, b33=true, b34=true, b35=true) & done\n     | answer(request=$req, b36=true, b37=true, b38=true, b39=true) & done\n     | answer(request=$req, b40=true, b41=true, b42=true, b43=true) & done\n     | answer(request=$req, b44=true, b45=true, b46=true, b47=true) & done\n     | answer(request=$req, b48=true, b49=true, b50=true, b51=true) & done\n     | answer(request=$req, b52=true, b53=true, b54=true, b55=true) & done\n     | answer(request=$req, b56=true, b57=true, b58=true, b59=true) & done\n     | answer(request=$req, b60=true, b61=true, b62=true, b63=true) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "d7a58b9feb2964aec2b7e27e0ea5751bcc1361b7733905eef383907ebfbe141d"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_overlap"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 72
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-s4-disjoint-large-domain",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: s4-disjoint-large-domain\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  tag: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  b0: boolean\n  b1: boolean\n  b2: boolean\n  b3: boolean\n  b4: boolean\n  b5: boolean\n  b6: boolean\n  b7: boolean\n  b8: boolean\n  b9: boolean\n  b10: boolean\n  b11: boolean\n  b12: boolean\n  b13: boolean\n  b14: boolean\n  b15: boolean\n  b16: boolean\n  b17: boolean\n  b18: boolean\n  b19: boolean\n  b20: boolean\n  b21: boolean\n  b22: boolean\n  b23: boolean\n  b24: boolean\n  b25: boolean\n  b26: boolean\n  b27: boolean\n  b28: boolean\n  b29: boolean\n  b30: boolean\n  b31: boolean\n  b32: boolean\n  b33: boolean\n  b34: boolean\n  b35: boolean\n  b36: boolean\n  b37: boolean\n  b38: boolean\n  b39: boolean\n  b40: boolean\n  b41: boolean\n  b42: boolean\n  b43: boolean\n  b44: boolean\n  b45: boolean\n  b46: boolean\n  b47: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, tag=v0, b0=true, b1=true, b2=true) & done\n     | answer(request=$req, tag=v1, b3=true, b4=true, b5=true) & done\n     | answer(request=$req, tag=v2, b6=true, b7=true, b8=true) & done\n     | answer(request=$req, tag=v3, b9=true, b10=true, b11=true) & done\n     | answer(request=$req, tag=v4, b12=true, b13=true, b14=true) & done\n     | answer(request=$req, tag=v5, b15=true, b16=true, b17=true) & done\n     | answer(request=$req, tag=v6, b18=true, b19=true, b20=true) & done\n     | answer(request=$req, tag=v7, b21=true, b22=true, b23=true) & done\n     | answer(request=$req, tag=v8, b24=true, b25=true, b26=true) & done\n     | answer(request=$req, tag=v9, b27=true, b28=true, b29=true) & done\n     | answer(request=$req, tag=v10, b30=true, b31=true, b32=true) & done\n     | answer(request=$req, tag=v11, b33=true, b34=true, b35=true) & done\n     | answer(request=$req, tag=v12, b36=true, b37=true, b38=true) & done\n     | answer(request=$req, tag=v13, b39=true, b40=true, b41=true) & done\n     | answer(request=$req, tag=v14, b42=true, b43=true, b44=true) & done\n     | answer(request=$req, tag=v15, b45=true, b46=true, b47=true) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "c2148e6d724bdec917111b22d71838f6b64ccd84e07bfe1638f56afde63d2f71"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_not_exhaustive"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 55
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-s4-disjoint-bigint-domain",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: s4-disjoint-bigint-domain\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  tag: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e0: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e1: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e2: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e3: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e4: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e5: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e6: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e7: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e8: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e9: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e10: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e11: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e12: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e13: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e14: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e15: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e16: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e17: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e18: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e19: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e20: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e21: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e22: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e23: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e24: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e25: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e26: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e27: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e28: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e29: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e30: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e31: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e32: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e33: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e34: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e35: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e36: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e37: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e38: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e39: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e40: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e41: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e42: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e43: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e44: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e45: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e46: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\n  e47: enum(v0|v1|v2|v3|v4|v5|v6|v7|v8|v9|v10|v11|v12|v13|v14|v15)\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, tag=v0, e0=v0, e1=v0, e2=v0) & done\n     | answer(request=$req, tag=v1, e3=v0, e4=v0, e5=v0) & done\n     | answer(request=$req, tag=v2, e6=v0, e7=v0, e8=v0) & done\n     | answer(request=$req, tag=v3, e9=v0, e10=v0, e11=v0) & done\n     | answer(request=$req, tag=v4, e12=v0, e13=v0, e14=v0) & done\n     | answer(request=$req, tag=v5, e15=v0, e16=v0, e17=v0) & done\n     | answer(request=$req, tag=v6, e18=v0, e19=v0, e20=v0) & done\n     | answer(request=$req, tag=v7, e21=v0, e22=v0, e23=v0) & done\n     | answer(request=$req, tag=v8, e24=v0, e25=v0, e26=v0) & done\n     | answer(request=$req, tag=v9, e27=v0, e28=v0, e29=v0) & done\n     | answer(request=$req, tag=v10, e30=v0, e31=v0, e32=v0) & done\n     | answer(request=$req, tag=v11, e33=v0, e34=v0, e35=v0) & done\n     | answer(request=$req, tag=v12, e36=v0, e37=v0, e38=v0) & done\n     | answer(request=$req, tag=v13, e39=v0, e40=v0, e41=v0) & done\n     | answer(request=$req, tag=v14, e42=v0, e43=v0, e44=v0) & done\n     | answer(request=$req, tag=v15, e45=v0, e46=v0, e47=v0) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "4cfa6b51ae1d4432deafce93752b6778673761ae293c398a8baf6fb9282039ae"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_not_exhaustive"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 55
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-s4-16x4-total-boundary",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: s4-16x4-total-boundary\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  b0: boolean\n  b1: boolean\n  b2: boolean\n  b3: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "cd11d9bada979e781088ec53b187a6e95102b656043f49a11434b761740601ef"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-limit-17-rows",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: limit-17-rows\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  b0: boolean\n  b1: boolean\n  b2: boolean\n  b3: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | answer(request=$req) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "f9826a7adbaf733bae9459fee053f2cd239d164c766b4bdd7d63fb52fb25c03a"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_limit"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-limit-5-literals",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: limit-5-literals\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  b0: boolean\n  b1: boolean\n  b2: boolean\n  b3: boolean\n  b4: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, b0=true, b1=true, b2=true, b3=true, b4=true) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "baa22e4cfa2075e7a074e1945e181c2462a357fd0b3050e0faa15595cfa9fd93"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_limit"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-limit-contract-272-rows",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: limit-contract-272-rows\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype answer\n  request: ref(request0|request1|request2|request3|request4|request5|request6|request7|request8|request9|request10|request11|request12|request13|request14|request15|request16)\n  b0: boolean\n  b1: boolean\n  b2: boolean\n  b3: boolean\ntype request0\ntype request1\ntype request2\ntype request3\ntype request4\ntype request5\ntype request6\ntype request7\ntype request8\ntype request9\ntype request10\ntype request11\ntype request12\ntype request13\ntype request14\ntype request15\ntype request16\nstate new\n  lead -> worker: request0() as req awaits wait0\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request1() as req awaits wait1\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request2() as req awaits wait2\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request3() as req awaits wait3\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request4() as req awaits wait4\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request5() as req awaits wait5\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request6() as req awaits wait6\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request7() as req awaits wait7\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request8() as req awaits wait8\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request9() as req awaits wait9\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request10() as req awaits wait10\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request11() as req awaits wait11\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request12() as req awaits wait12\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request13() as req awaits wait13\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request14() as req awaits wait14\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request15() as req awaits wait15\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\n  lead -> worker: request16() as req awaits wait16\n    => answer(request=$req, b0=false, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=false, b1=true, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=false, b2=true, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=false, b3=true) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=false) & done\n     | answer(request=$req, b0=true, b1=true, b2=true, b3=true) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "8e3d5d716ab5c03015d8befd78d15e51b957000621fe6ab02eb101dc50097af3"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_limit"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-unknown-enum-literal",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: unknown-enum-literal\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  value: enum(ok|error)\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, value=felix_unknown_literal_6b7f5f) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "13b9c9bc4eada0959043b6ed929734b56bc79f7f64bb50b5b1050c70d166c639"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_match"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-unknown-boolean-literal",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: unknown-boolean-literal\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=felix_unknown_boolean_6b7f5f) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "ce662f3b88798217ae059fe21693403068b4b69faaf0606a5f5010d574c33eb1"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_match"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-late-reply-reentered-wait",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-late-reply-reentered-wait\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  choice: enum(approve|revise)\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, choice=approve) & done\n     | answer(request=$req, choice=revise) & revising\n     | @10m & stalled\nstate waiting max_entries 3 => exhausted\nstate revising\n  lead -> worker: request() as req => waiting\nend done\nend stalled\nend exhausted\n",
+            "sha256": "87bd3abbc73ded2c999595f7debba2fe6f0223354c2019665863018997a3f6d6"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req1",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 10,
+          "message": {
+            "id": "revise1",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req1",
+              "choice": "revise"
+            }
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 20,
+          "message": {
+            "id": "late-before-reentry",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req1",
+              "choice": "approve"
+            }
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 30,
+          "message": {
+            "id": "req2",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 40,
+          "message": {
+            "id": "late-after-reentry",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req1",
+              "choice": "approve"
+            },
+            "expected_version": 3
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 50,
+          "message": {
+            "id": "current-reply",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req2",
+              "choice": "approve"
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "revising"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/reason",
+          "equals": "illegal_message"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "revising"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/variables/req",
+          "equals": "req2"
+        },
+        {
+          "response": 7,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 7,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        },
+        {
+          "response": 7,
+          "pointer": "/state/state/version",
+          "equals": 4
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-cycle-no-eligible-ref",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-cycle-no-eligible-ref\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: text(1..100)\n  choice: enum(approve|revise)\nstate new\n  lead -> worker: request() awaits waiting\n    => answer(choice=approve) & done\n     | answer(choice=revise) & revising\n     | @10m & stalled\nstate waiting max_entries 3 => exhausted\nstate revising\n  lead -> worker: request() => waiting\nend done\nend stalled\nend exhausted\n",
+            "sha256": "e48ccd85988cb2e9b022da3cbed434198970e44f7f3e633116498053d540b60c"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 8
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-cycle-without-max-entries",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-cycle-without-max-entries\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  choice: enum(approve|revise)\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, choice=approve) & done\n     | answer(request=$req, choice=revise) & revising\n     | @10m & stalled\nstate waiting\nstate revising\n  lead -> worker: request() as req => waiting\nend done\nend stalled\nend exhausted\n",
+            "sha256": "7252570d6316e387465716d3e48b58e444ce62405d5fcbb077ba903d153c8f60"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_cycle"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-rebind-state-event",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-rebind-state-event\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  choice: enum(approve|revise)\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, choice=approve) & done\n     | answer(request=$req, choice=revise) & revising\n     | @10m & stalled\nstate waiting max_entries 3 => exhausted\n  event lead -> worker: request() as req\nstate revising\n  lead -> worker: request() as req => waiting\nend done\nend stalled\nend exhausted\n",
+            "sha256": "58eaa2070b859825662e4a7072ef5b16dda0620c397f617d3a1082b5e2bf54a6"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-rebind-anystate-event",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-rebind-anystate-event\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  choice: enum(approve|revise)\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, choice=approve) & done\n     | answer(request=$req, choice=revise) & revising\n     | @10m & stalled\nstate waiting max_entries 3 => exhausted\nstate revising\n  lead -> worker: request() as req => waiting\nend done\nend stalled\nend exhausted\nanystate\n  event lead -> worker: request() as req\n",
+            "sha256": "fef5e348f7462fae2c24146ccc467328bc74e490446fe3ebe9d32f68218cdaee"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-acyclic-cross-wait",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-acyclic-cross-wait\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() as req awaits w1\n    => answer(request=$req) & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() as req awaits w2\n    => answer(request=$req) & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "86ed0d91c7f963c999ccc1d1c21ee04bd6d9aeea55e3edbba2f4eae1cb1ecd3c"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "q1",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 10,
+          "message": {
+            "id": "cancel1",
+            "session": "s",
+            "kind": "cancel",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 20,
+          "message": {
+            "id": "q2",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 30,
+          "message": {
+            "id": "r1-first-arrival",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "q1"
+            },
+            "expected_version": 3
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 40,
+          "message": {
+            "id": "r2",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "q2"
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "w1"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "between"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "w2"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "w2"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/variables/req",
+          "equals": "q2"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/outcome",
+          "equals": "second_done"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/version",
+          "equals": 4
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-stale-implicit-binding",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-stale-implicit-binding\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() awaits w1\n    => answer() & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() awaits w2\n    => answer() & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "c578bd0bd101217699a6a644dcdd1c69962b0f0775fe0958460644404bfaff98"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "q1",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 10,
+          "message": {
+            "id": "cancel1",
+            "session": "s",
+            "kind": "cancel",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 20,
+          "message": {
+            "id": "q2",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 30,
+          "message": {
+            "id": "r1-first-arrival",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "q1"
+            },
+            "expected_version": 3
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 40,
+          "message": {
+            "id": "r2",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "q2"
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "w1"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "between"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "w2"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/reason",
+          "equals": "reference"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "w2"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/variables/w2",
+          "equals": "q2"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/outcome",
+          "equals": "second_done"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/version",
+          "equals": 4
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-acyclic-rebind",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-acyclic-rebind\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() as req awaits w1\n    => answer(request=$req) & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() as req awaits w2\n    => answer(request=$req) & second_done\n     | @10m & stalled\nstate w2\n  event lead -> worker: request() as req\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "3a17cf8df41222d2ff993a6f71da656979244cb019b86dd434bd946d4f613924"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-acyclic-implicit-binding",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-acyclic-implicit-binding\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() awaits w1\n    => answer() & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() awaits w2\n    => answer() & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "a7444f8e08237b21700e677ceff10ed5e2bf3c4279d83536c42db8ab04533dea"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-acyclic-implicit-reference",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-acyclic-implicit-reference\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() as req awaits w1\n    => answer() & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() as req awaits w2\n    => answer() & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "324478d4dcd5930f303813c33a53c7f3a6c0034443ad4b53b48bcf0d0751c236"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-acyclic-wrong-reference",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-acyclic-wrong-reference\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() as req awaits w1\n    => answer(request=$other) & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() as req awaits w2\n    => answer(request=$other) & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "84ac3ce044de333ed0199663e5689f7656896885018c546908c1833ee968e995"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-reply-kind-ordinary-rule",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-reply-kind-ordinary-rule\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() as req awaits w1\n    => answer(request=$req) & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  worker -> lead: answer(request=$req) => first_done\n  lead -> worker: request() as req awaits w2\n    => answer(request=$req) & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\n",
+            "sha256": "dd75b5a449f51a5d878db791b962c82f9bfb74f47607e72e42eab8dfc73eef5f"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-c1-reply-kind-anystate-event",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: c1-reply-kind-anystate-event\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype cancel\ntype answer\n  request: ref(request)\nstate new\n  lead -> worker: request() as req awaits w1\n    => answer(request=$req) & first_done\n     | @10m & stalled\nstate w1\n  lead -> worker: cancel() => between\nstate between\n  lead -> worker: request() as req awaits w2\n    => answer(request=$req) & second_done\n     | @10m & stalled\nend first_done\nend second_done\nend stalled\nanystate\n  event worker -> lead: answer(request=$req)\n",
+            "sha256": "52d3114607dd51bd92f4c8f69c7dbe25bd323001e7a2bdeb314790c36b83d9b2"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-no-eligible-ref-kind",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-no-eligible-ref-kind\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype unrelated\ntype answer\n  request: ref(unrelated)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() awaits waiting\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "0564714839f8937abd72ad87696ffed702e7ec0b9ae4f694d7da7539417818a1"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 10
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-ambiguous-ref-fields",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-ambiguous-ref-fields\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  previous: ref(request)\nstate new\n  lead -> worker: request() awaits waiting\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "ec2dff1282376bfb974451ba9ff18707c330d70f572c7e0ced834085508a89e9"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 8
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-ambiguous-refs-explicit-control",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-ambiguous-refs-explicit-control\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  previous: ref(request)\nstate new\n  lead -> worker: request() awaits waiting\n    => answer(request=$waiting, previous=$waiting) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "d355fec9d835ad3952d83dca5d4157cc0df777f0724791685f71dcf85530f6e2"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-one-eligible-of-several-refs",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-one-eligible-of-several-refs\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype unrelated\ntype answer\n  request: ref(request)\n  previous: ref(unrelated)\nstate new\n  lead -> worker: request() awaits waiting\n    => answer(previous=$waiting) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "6b3193a5f13753e2deed98683cf3ee51f3a8af363feb2014dbf266d4156907b8"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-implicit-wrong-reference",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-implicit-wrong-reference\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() awaits waiting\n    => answer(request=$other) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "f4861823fd1820580aeea28907fdb5569eec6002734c4d12d25404d647c558fd"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 9
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-rebind-wait-name-state",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-rebind-wait-name-state\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() awaits waiting\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\nstate waiting\n  event lead -> worker: request() as waiting\n",
+            "sha256": "36d82c9a48b103cda6bd6dda93ce6aae373044c0fb91ac47267719d153878e84"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 14
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-rebind-wait-name-anystate",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-rebind-wait-name-anystate\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() awaits waiting\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\nanystate\n  event lead -> worker: request() as waiting\n",
+            "sha256": "be0ca601143dd7c8f638a68813053b44117e2a2ecefce19017d69d7e38b62d5e"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_correlation"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 14
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-auto-wait-positive-control",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-auto-wait-positive-control\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request()\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "a786fa546db21ad5478a228441ec714b7b693f7afd7493782d520930e6b4a7d4"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "auto-req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "auto-ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "auto-req",
+              "x": true,
+              "y": false
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "request_wait"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-auto-wait-name-clash",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-auto-wait-name-clash\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request()\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\nstate request_wait\n",
+            "sha256": "183173cfd4b2041aa000f092b5fd0f8f4fcb1158e87fb9b275dab2b412fc90be"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-sugar-auto-wait-two-heads-clash",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: sugar-auto-wait-two-heads-clash\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request()\n    => answer() & done\n     | @10m & stalled\nstate later\n  lead -> worker: request()\n    => answer() & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "0185a7862eda860f6fe78513374468245ba75bed473d7072564ec6f96e5a07a0"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_route"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 12
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-u-pipe-no-opener",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: u-pipe-no-opener\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n     | answer(request=$req, x=true) & done\n     | answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "53c2d5ca4fdb63e3a541fec2c7fc804648df0ef5c1a21c453125ae53b9ddd6fb"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_timeout"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-u-double-opener",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: u-double-opener\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & done\n    => answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "22b5cb989f05c60214487d96c378760102991e101e19b98de00848bd4f1f47ab"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "reply_timeout"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-u-two-alternatives-one-line",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: u-two-alternatives-one-line\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & done | answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\n",
+            "sha256": "a13e02e5a9205d151445b8935cc6af3e4e9f6f73a3d1599cd7afa5eafa6fe7b6"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/error/code",
+          "equals": "syntax"
+        },
+        {
+          "response": 0,
+          "pointer": "/error/line",
+          "equals": 9
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-u-pipe-reply-vs-timed-rule",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: u-pipe-reply-vs-timed-rule\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype follow\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & reporting\n     | answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\nstate reporting\n  worker -> lead: follow() @5m => done | stalled\n",
+            "sha256": "c9ebf6aa3570817ee73f2fa8678f8a49f23e4a68e68e25d6a67e322b6ccc7957"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "pipe-req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "pipe-ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "pipe-req",
+              "x": true,
+              "y": false
+            }
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 2,
+          "message": {
+            "id": "pipe-follow",
+            "session": "s",
+            "kind": "follow",
+            "payload": {}
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "reporting"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": null
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 3
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-u-pipe-reply-vs-timed-rule-second-alternative",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: u-pipe-reply-vs-timed-rule-second-alternative\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype follow\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & reporting\n     | answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\nstate reporting\n  worker -> lead: follow() @5m => done | stalled\n",
+            "sha256": "8049b7623a296eb0c2a5c97050b3d22fc4780a0f9ad0553a618551d4da8db1e0"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "pipe-req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "pipe-ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "pipe-req",
+              "x": false,
+              "y": false
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-u-pipe-timed-rule-timeout",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: u-pipe-timed-rule-timeout\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype follow\ntype answer\n  request: ref(request)\n  x: boolean\n  y: boolean\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, x=true) & reporting\n     | answer(request=$req, x=false) & done\n     | @10m & stalled\nend done\nend stalled\nstate reporting\n  worker -> lead: follow() @5m => done | stalled\n",
+            "sha256": "a0f8250b66b07eff03dbe42a9625b014d9ac4bc6e4c3c448723e8875ec6ffe36"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "pipe-req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "pipe-ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "pipe-req",
+              "x": true,
+              "y": false
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "handle": "s",
+          "now": 300001
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "reporting"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "ticked"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/outcome",
+          "equals": "stalled"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-v4-renew-all-targets-terminal-first",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: v4-renew-all-targets-terminal-first\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m max @4h => expired\ntype request\ntype answer\n  request: ref(request)\n  long: boolean\ntype heartbeat\ntype summary\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, long=false) & done\n     | answer(request=$req, long=true) & reporting\n     | @10m & stalled\nstate waiting\n  event worker -> lead: heartbeat() => @self\nstate reporting\n  worker -> lead: summary() @20m => done | stalled\nend done\nend stalled\n",
+            "sha256": "7ee6ab1a18c6f30e1f7c320bd97483cd0d027f90847275c408cdc754b66b3447"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 300000,
+          "message": {
+            "id": "hb",
+            "session": "s",
+            "kind": "heartbeat",
+            "payload": {}
+          }
+        },
+        {
+          "op": "tick",
+          "handle": "s",
+          "now": 600000
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "insufficient_time"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "ticked"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/outcome",
+          "equals": "stalled"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-v4-renew-all-targets-long-first",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: v4-renew-all-targets-long-first\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m max @4h => expired\ntype request\ntype answer\n  request: ref(request)\n  long: boolean\ntype heartbeat\ntype summary\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, long=true) & reporting\n     | answer(request=$req, long=false) & done\n     | @10m & stalled\nstate waiting\n  event worker -> lead: heartbeat() => @self\nstate reporting\n  worker -> lead: summary() @20m => done | stalled\nend done\nend stalled\n",
+            "sha256": "fbbf09926be21d1abc4d3456a4f667c6eb15ec1e70f0a537b3512eac101c126a"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 300000,
+          "message": {
+            "id": "hb",
+            "session": "s",
+            "kind": "heartbeat",
+            "payload": {}
+          }
+        },
+        {
+          "op": "tick",
+          "handle": "s",
+          "now": 600000
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/reason",
+          "equals": "insufficient_time"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "ticked"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/outcome",
+          "equals": "stalled"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-v4-renew-exact-boundary",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: v4-renew-exact-boundary\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m max @4h => expired\ntype request\ntype answer\n  request: ref(request)\n  long: boolean\ntype heartbeat\ntype summary\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, long=false) & done\n     | answer(request=$req, long=true) & reporting\n     | @10m & stalled\nstate waiting\n  event worker -> lead: heartbeat() => @self\nstate reporting\n  worker -> lead: summary() @15m => done | stalled\nend done\nend stalled\n",
+            "sha256": "dc8e5b1ca9a77a2d36edc48038e0d8164654e43dfbcec48bae4685c0b54475b4"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 30,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 300000,
+          "message": {
+            "id": "hb-fit",
+            "session": "s",
+            "kind": "heartbeat",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 300001,
+          "message": {
+            "id": "hb-over",
+            "session": "s",
+            "kind": "heartbeat",
+            "payload": {}
+          }
+        },
+        {
+          "op": "tick",
+          "handle": "s",
+          "now": 600000
+        },
+        {
+          "op": "tick",
+          "handle": "s",
+          "now": 900000
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/reason",
+          "equals": "insufficient_time"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "ticked"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/outcome",
+          "equals": null
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "ticked"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/outcome",
+          "equals": "stalled"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-reserve-0-or-3-underflow",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: reserve-0-or-3-underflow\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  long: boolean\ntype follow\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, long=false) & done\n     | answer(request=$req, long=true) & f1\n     | @5m & stalled\nstate f1\n  worker -> lead: follow() @5m => f2 | stalled\nstate f2\n  worker -> lead: follow() @5m => f3 | stalled\nstate f3\n  worker -> lead: follow() @5m => done | stalled\nend done\nend stalled\n",
+            "sha256": "373f18e92d741c7502dcddf6d81eb004573fb8bb8a63a515da60f46efad4057f"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 4,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "rejected"
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/reason",
+          "equals": "completion_capacity"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "new"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 0
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-reserve-0-or-3-short",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: reserve-0-or-3-short\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  long: boolean\ntype follow\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, long=false) & done\n     | answer(request=$req, long=true) & f1\n     | @5m & stalled\nstate f1\n  worker -> lead: follow() @5m => f2 | stalled\nstate f2\n  worker -> lead: follow() @5m => f3 | stalled\nstate f3\n  worker -> lead: follow() @5m => done | stalled\nend done\nend stalled\n",
+            "sha256": "036b2b21ba597507fbc37c4b6eb9684c006497fcacff13e17eace47ae10e6cf8"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 5,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req",
+              "long": false
+            }
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        }
+      ]
+    },
+    {
+      "id": "replies-adversarial-reserve-0-or-3-long",
+      "requirements": [],
+      "requests": [
+        {
+          "op": "compile",
+          "handle": "c",
+          "source": {
+            "profile": "band-contract/file-source/1",
+            "format": "frontmatter",
+            "content": "---\nname: reserve-0-or-3-long\ndescription: Local adversarial reply conformance.\nengine: 0.2.0-lab.1\nroles: [lead, worker]\n---\ncontract @30m => expired\ntype request\ntype answer\n  request: ref(request)\n  long: boolean\ntype follow\nstate new\n  lead -> worker: request() as req awaits waiting\n    => answer(request=$req, long=false) & done\n     | answer(request=$req, long=true) & f1\n     | @5m & stalled\nstate f1\n  worker -> lead: follow() @5m => f2 | stalled\nstate f2\n  worker -> lead: follow() @5m => f3 | stalled\nstate f3\n  worker -> lead: follow() @5m => done | stalled\nend done\nend stalled\n",
+            "sha256": "ef3c96aaaf920307b0eaa219f1fe7335d9410412ca0e2db3ac0402b46a934013"
+          }
+        },
+        {
+          "op": "new",
+          "contract": "c",
+          "handle": "s",
+          "config": {
+            "session": "s",
+            "bindings": {
+              "lead": "l",
+              "worker": "w"
+            },
+            "now": 0,
+            "max_messages": 5,
+            "room_policy": {
+              "mode": "unchecked"
+            },
+            "capabilities": [
+              "contract.replies/1"
+            ]
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "l",
+          "now": 0,
+          "message": {
+            "id": "req",
+            "session": "s",
+            "kind": "request",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 1,
+          "message": {
+            "id": "ans",
+            "session": "s",
+            "kind": "answer",
+            "payload": {
+              "request": "req",
+              "long": true
+            }
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 2,
+          "message": {
+            "id": "follow0",
+            "session": "s",
+            "kind": "follow",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 3,
+          "message": {
+            "id": "follow1",
+            "session": "s",
+            "kind": "follow",
+            "payload": {}
+          }
+        },
+        {
+          "op": "step",
+          "handle": "s",
+          "actor": "w",
+          "now": 4,
+          "message": {
+            "id": "follow2",
+            "session": "s",
+            "kind": "follow",
+            "payload": {}
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "response": 0,
+          "pointer": "/ok/card/extensions",
+          "equals": [
+            "contract.replies/1"
+          ]
+        },
+        {
+          "response": 2,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/state",
+          "equals": "waiting"
+        },
+        {
+          "response": 2,
+          "pointer": "/state/state/version",
+          "equals": 1
+        },
+        {
+          "response": 3,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/version",
+          "equals": 2
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/state",
+          "equals": "f1"
+        },
+        {
+          "response": 3,
+          "pointer": "/state/state/outcome",
+          "equals": null
+        },
+        {
+          "response": 4,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/version",
+          "equals": 3
+        },
+        {
+          "response": 4,
+          "pointer": "/state/state/state",
+          "equals": "f2"
+        },
+        {
+          "response": 5,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/version",
+          "equals": 4
+        },
+        {
+          "response": 5,
+          "pointer": "/state/state/state",
+          "equals": "f3"
+        },
+        {
+          "response": 6,
+          "pointer": "/decision/status",
+          "equals": "accepted"
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/version",
+          "equals": 5
+        },
+        {
+          "response": 6,
+          "pointer": "/state/state/outcome",
+          "equals": "done"
+        }
+      ]
+    }
+  ]
+}

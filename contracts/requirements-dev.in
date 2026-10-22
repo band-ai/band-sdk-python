@@ -1,0 +1,4 @@
+# Build and specification validation roots. Exact transitive wheel hashes are locked.
+setuptools==84.0.0
+build==1.6.1
+jsonschema==4.26.0

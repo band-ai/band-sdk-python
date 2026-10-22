@@ -1,0 +1,76 @@
+---
+name: selected-deadlines
+description: Test selected deadlines with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [lead, alpha, beta]
+---
+"""
+The lead starts work with two members, who each acknowledge on their own deadline: Alpha within
+two minutes, Beta within five. The lead then finishes it.
+"""
+contract @4h mentions 2 => expired
+
+"""
+You are the lead. Start the work, wait for both acknowledgements, then send finish.
+"""
+role lead
+
+"""
+You are Alpha. Acknowledge the start within two minutes.
+"""
+role alpha
+
+"""
+You are Beta. Acknowledge the start within five minutes.
+"""
+role beta
+
+"""
+Start the work with both members.
+"""
+type start
+
+"""
+Confirm that you received the start. The message carries no content.
+"""
+type ack
+
+"""
+Finish the work. Nothing follows.
+"""
+type finish
+
+"""
+The lead has not started yet. Send start to Alpha and Beta.
+"""
+state new
+  lead -> {alpha,beta}: start() => waiting
+
+"""
+Alpha owes an acknowledgement within two minutes and Beta within five. The lead finishes when
+ready.
+"""
+state waiting
+  event alpha -> lead: ack() @2m => alpha_late
+  event beta -> lead: ack() @5m => beta_late
+  lead -> {alpha,beta}: finish() => complete
+
+"""
+The lead finished the work. Send nothing more.
+"""
+end complete
+
+"""
+Alpha did not acknowledge within two minutes. Stop, and tell the lead Alpha is missing.
+"""
+end alpha_late
+
+"""
+Beta did not acknowledge within five minutes. Stop, and tell the lead Beta is missing.
+"""
+end beta_late
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

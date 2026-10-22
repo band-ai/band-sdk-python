@@ -1,0 +1,919 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-each-deadline-boundary",
+  "requirements": [
+    "ENG-008",
+    "ENG-009",
+    "ENG-012"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: all-participants\ndescription: Test all participants with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [alice, bob, carol]\n---\n\"\"\"\nEvery participant acknowledges before proceeding.\n\"\"\"\ncontract @4h mentions 2 => expired\n\n\"\"\"\nYou are Alice. Send your acknowledgement to Bob and Carol within five minutes.\n\"\"\"\nrole alice\n\n\"\"\"\nYou are Bob. Send your acknowledgement to Alice and Carol within five minutes.\n\"\"\"\nrole bob\n\n\"\"\"\nYou are Carol. Send your acknowledgement to Alice and Bob within five minutes.\n\"\"\"\nrole carol\n\n\"\"\"\nConfirm that you are present and ready. The message carries no content.\n\"\"\"\ntype ack\n\n\"\"\"\nEach of the three participants owes one acknowledgement within five minutes. The session\ncompletes when all three have sent theirs.\n\"\"\"\nstate new\n  * -> *: ack() each @5m => complete | stalled\n\n\"\"\"\nAll three participants acknowledged. Proceed with the work outside this session.\n\"\"\"\nend complete\n\n\"\"\"\nAt least one participant did not acknowledge within five minutes. Do not proceed; report who is\nmissing to whoever started the session.\n\"\"\"\nend stalled\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "d5bd8f709a29faf958a06bc2296e9deb29b604e5525dda513eb476ac0a56f5d8"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "alice": "alice",
+          "bob": "bob",
+          "carol": "carol"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "alice": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "bob": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "carol": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "alice",
+      "now": 299999,
+      "message": {
+        "id": "a",
+        "session": "s",
+        "kind": "ack",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "carol": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "bob",
+      "now": 300000,
+      "message": {
+        "id": "b",
+        "session": "s",
+        "kind": "ack",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "carol": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "alice",
+      "now": 300001,
+      "message": {
+        "id": "a",
+        "session": "s",
+        "kind": "ack",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "alice": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "bob": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "carol": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    {
+      "response": 3,
+      "pointer": "/state/state/expired_at",
+      "equals": 300000
+    },
+    {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "due-1",
+        "outcome": "stalled",
+        "reason": "deadline",
+        "missing": [
+          "bob",
+          "carol"
+        ]
+      }
+    },
+    {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test all participants with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "all-participants",
+          "roles": [
+            "alice",
+            "bob",
+            "carol"
+          ],
+          "version": null
+        },
+        "digest": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 2
+        },
+        "meta": {
+          "doc": "Every participant acknowledges before proceeding.",
+          "line": 1
+        },
+        "name": "all-participants",
+        "role_metadata": {
+          "alice": {
+            "meta": {
+              "doc": "You are Alice. Send your acknowledgement to Bob and Carol within five minutes.",
+              "line": 6
+            },
+            "name": "alice"
+          },
+          "bob": {
+            "meta": {
+              "doc": "You are Bob. Send your acknowledgement to Alice and Carol within five minutes.",
+              "line": 11
+            },
+            "name": "bob"
+          },
+          "carol": {
+            "meta": {
+              "doc": "You are Carol. Send your acknowledgement to Alice and Bob within five minutes.",
+              "line": 16
+            },
+            "name": "carol"
+          }
+        },
+        "roles": [
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "d5bd8f709a29faf958a06bc2296e9deb29b604e5525dda513eb476ac0a56f5d8",
+        "states": {
+          "new": {
+            "deadlines": [
+              {
+                "after_ms": 300000,
+                "id": "due-1",
+                "kind": "ack",
+                "meta": {
+                  "doc": null,
+                  "line": 31
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "alice",
+                  "bob",
+                  "carol"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Each of the three participants owes one acknowledgement within five minutes. The session\ncompletes when all three have sent theirs.",
+              "line": 26
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": true,
+                "event": false,
+                "from": [
+                  "alice",
+                  "bob",
+                  "carol"
+                ],
+                "id": "rule-0",
+                "kind": "ack",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 31
+                },
+                "target": "complete",
+                "to": [
+                  "alice",
+                  "bob",
+                  "carol"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "All three participants acknowledged. Proceed with the work outside this session.",
+              "line": 33
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 44
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "At least one participant did not acknowledge within five minutes. Do not proceed; report who is\nmissing to whoever started the session.",
+              "line": 38
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "Every participant acknowledges before proceeding.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "ack": {
+            "fields": {},
+            "meta": {
+              "doc": "Confirm that you are present and ready. The message carries no content.",
+              "line": 21
+            },
+            "name": "ack"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+        "profile": "band-contract/state/2",
+        "source": "d5bd8f709a29faf958a06bc2296e9deb29b604e5525dda513eb476ac0a56f5d8",
+        "state": {
+          "bindings": {
+            "alice": "alice",
+            "bob": "bob",
+            "carol": "carol"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-1",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 31
+              },
+              "outcome": "stalled",
+              "participants": [
+                "alice",
+                "bob",
+                "carol"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "alice",
+                "bob",
+                "carol"
+              ]
+            }
+          ],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "alice",
+        "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+        "id": "a",
+        "kind": "ack",
+        "metadata": {
+          "doc": null,
+          "line": 31
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "bob",
+          "carol"
+        ],
+        "role": "alice",
+        "session": "s",
+        "state": "new",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+        "profile": "band-contract/state/2",
+        "source": "d5bd8f709a29faf958a06bc2296e9deb29b604e5525dda513eb476ac0a56f5d8",
+        "state": {
+          "bindings": {
+            "alice": "alice",
+            "bob": "bob",
+            "carol": "carol"
+          },
+          "contributions": {
+            "rule-0": [
+              "alice"
+            ]
+          },
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "alice",
+              "at": 299999,
+              "id": "a",
+              "kind": "ack",
+              "payload": {},
+              "recipients": [
+                "bob",
+                "carol"
+              ],
+              "role": "alice",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 299999,
+              "id": "a",
+              "kind": "ack",
+              "role": "alice",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 299999,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 299999,
+          "obligations": [
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-1",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 31
+              },
+              "outcome": "stalled",
+              "participants": [
+                "alice",
+                "bob",
+                "carol"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "bob",
+                "carol"
+              ]
+            }
+          ],
+          "outcome": null,
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "alice",
+                "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+                "id": "a",
+                "kind": "ack",
+                "metadata": {
+                  "doc": null,
+                  "line": 31
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "bob",
+                  "carol"
+                ],
+                "role": "alice",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "9b618e3f694de13f85e483ec4c7b9cdb6623777dd3cf88d38dde3c923840cf95"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "terminal",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+        "profile": "band-contract/state/2",
+        "source": "d5bd8f709a29faf958a06bc2296e9deb29b604e5525dda513eb476ac0a56f5d8",
+        "state": {
+          "bindings": {
+            "alice": "alice",
+            "bob": "bob",
+            "carol": "carol"
+          },
+          "contributions": {
+            "rule-0": [
+              "alice"
+            ]
+          },
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": 300000,
+          "expiry": {
+            "at": 300000,
+            "id": "due-1",
+            "missing": [
+              "bob",
+              "carol"
+            ],
+            "outcome": "stalled",
+            "reason": "deadline"
+          },
+          "facts": {
+            "a": {
+              "actor": "alice",
+              "at": 299999,
+              "id": "a",
+              "kind": "ack",
+              "payload": {},
+              "recipients": [
+                "bob",
+                "carol"
+              ],
+              "role": "alice",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 299999,
+              "id": "a",
+              "kind": "ack",
+              "role": "alice",
+              "type": "accepted"
+            },
+            {
+              "at": 300000,
+              "outcome": "stalled",
+              "reason": "deadline",
+              "type": "expiry"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 299999,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 300000,
+          "obligations": [
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-1",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 31
+              },
+              "outcome": "stalled",
+              "participants": [
+                "alice",
+                "bob",
+                "carol"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "bob",
+                "carol"
+              ]
+            }
+          ],
+          "outcome": "stalled",
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "alice",
+                "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+                "id": "a",
+                "kind": "ack",
+                "metadata": {
+                  "doc": null,
+                  "line": 31
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "bob",
+                  "carol"
+                ],
+                "role": "alice",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "9b618e3f694de13f85e483ec4c7b9cdb6623777dd3cf88d38dde3c923840cf95"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "stalled",
+          "status": "terminal",
+          "variables": {},
+          "version": 2,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "original": {
+          "actor": "alice",
+          "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+          "id": "a",
+          "kind": "ack",
+          "metadata": {
+            "doc": null,
+            "line": 31
+          },
+          "outcome": null,
+          "payload": {},
+          "recipients": [
+            "bob",
+            "carol"
+          ],
+          "role": "alice",
+          "session": "s",
+          "state": "new",
+          "status": "accepted",
+          "version": 1
+        },
+        "status": "duplicate"
+      },
+      "state": {
+        "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+        "profile": "band-contract/state/2",
+        "source": "d5bd8f709a29faf958a06bc2296e9deb29b604e5525dda513eb476ac0a56f5d8",
+        "state": {
+          "bindings": {
+            "alice": "alice",
+            "bob": "bob",
+            "carol": "carol"
+          },
+          "contributions": {
+            "rule-0": [
+              "alice"
+            ]
+          },
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": 300000,
+          "expiry": {
+            "at": 300000,
+            "id": "due-1",
+            "missing": [
+              "bob",
+              "carol"
+            ],
+            "outcome": "stalled",
+            "reason": "deadline"
+          },
+          "facts": {
+            "a": {
+              "actor": "alice",
+              "at": 299999,
+              "id": "a",
+              "kind": "ack",
+              "payload": {},
+              "recipients": [
+                "bob",
+                "carol"
+              ],
+              "role": "alice",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 299999,
+              "id": "a",
+              "kind": "ack",
+              "role": "alice",
+              "type": "accepted"
+            },
+            {
+              "at": 300000,
+              "outcome": "stalled",
+              "reason": "deadline",
+              "type": "expiry"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 299999,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 300001,
+          "obligations": [
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-1",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 31
+              },
+              "outcome": "stalled",
+              "participants": [
+                "alice",
+                "bob",
+                "carol"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "bob",
+                "carol"
+              ]
+            }
+          ],
+          "outcome": "stalled",
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "alice",
+                "definition": "cd86038b76bb7564280c53b88dcf9c3f94720ed4a83bfc873ada606af6413eb8",
+                "id": "a",
+                "kind": "ack",
+                "metadata": {
+                  "doc": null,
+                  "line": 31
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "bob",
+                  "carol"
+                ],
+                "role": "alice",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "9b618e3f694de13f85e483ec4c7b9cdb6623777dd3cf88d38dde3c923840cf95"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "stalled",
+          "status": "terminal",
+          "variables": {},
+          "version": 2,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

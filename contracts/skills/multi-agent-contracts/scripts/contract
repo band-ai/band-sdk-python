@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Run the bundled contract tools without depending on the caller's directory."""
+
+from __future__ import annotations
+
+import pathlib
+import subprocess
+import sys
+
+if len(sys.argv) < 3 or sys.argv[1] not in {"check", "query", "replay"}:
+    raise SystemExit("usage: contract {check|query|replay} CONTRACT [SCENARIO] [options]")
+
+command, *arguments = sys.argv[1:]
+caller = pathlib.Path.cwd()
+value_options = {"--format", "--role", "--type", "--state", "--outcome"}
+normalized = []
+option_value = False
+for argument in arguments:
+    if option_value:
+        normalized.append(argument)
+        option_value = False
+    elif argument.startswith("--"):
+        normalized.append(argument)
+        option_value = argument in value_options
+    else:
+        normalized.append(str((caller / argument).resolve()))
+
+lab = pathlib.Path(__file__).resolve().parents[3] / "contract-lab"
+if not (lab / "mix.exs").is_file():
+    raise SystemExit(f"Bundled contract lab not found: {lab}")
+
+try:
+    result = subprocess.run(["mix", "contract." + command, *normalized], cwd=lab)
+except FileNotFoundError:
+    raise SystemExit("Elixir/Mix is required to run contract tools") from None
+raise SystemExit(result.returncode)

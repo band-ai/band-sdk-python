@@ -1,0 +1,77 @@
+---
+name: renewable-work
+description: Keep a long-running job alive through explicit heartbeats under an absolute cap.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+"""
+The worker may renew its activity window, but the run cannot pass its creation-anchored four hours.
+"""
+contract @4h => expired
+
+"""
+Assign one well-defined job and wait for the result. Heartbeats show activity;
+they are not progress you can rely on.
+"""
+role lead
+
+"""
+Complete the assigned work and provide honest progress evidence.
+"""
+role worker
+
+"""
+The job, its acceptance criteria and any context the worker needs.
+"""
+type request
+  text: text(1..2000)
+
+"""
+I am still working. Send it only while you are, never to hold the session open.
+"""
+type heartbeat
+
+"""
+The finished work, or what you could not finish and why. Set request to the request this
+answers.
+"""
+type result
+  request: ref(request)
+  text: text(1..4000)
+
+"""
+The lead assigns the job.
+"""
+state new
+  """
+  Assign the job. The worker then owes one result.
+  """
+  lead -> worker: request() awaits working
+    """
+    Deliver the result before the activity window closes.
+    """
+    => result() & complete
+     """
+     Eighty minutes passed without a result or a heartbeat.
+     """
+     | @80m & stalled
+
+"""
+Only the explicitly declared event renews the activity window.
+"""
+state working
+  """
+  Send a heartbeat only while you are working; it gives you another eighty minutes, never past the
+  four-hour contract clock.
+  """
+  event worker -> lead: heartbeat() => @self
+
+"""
+The worker delivered a result; the lead still checks it against the criteria.
+"""
+end complete
+
+"""
+The worker went quiet for eighty minutes. Reassign the job in a new session.
+"""
+end stalled

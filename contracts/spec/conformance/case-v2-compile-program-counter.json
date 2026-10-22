@@ -1,0 +1,723 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-compile-program-counter",
+  "requirements": [
+    "DSL-004",
+    "DSL-005",
+    "DSL-008",
+    "DSL-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: program-counter\ndescription: Test program counter with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [requester, counter]\n---\n\"\"\"\nYou run a deterministic counter: the requester sends increments, the counter reports totals, and\nthe requester stops it when done. The counter is used to exercise journal and snapshot recovery.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou ask the counter to add to its total and stop it when you are done.\n\"\"\"\nrole requester\n\n\"\"\"\nYou keep a running total. Add each increment you receive and report the new total. The same\ninputs must always give the same totals.\n\"\"\"\nrole counter\n\n\"\"\"\nAdd this amount to the running total.\n\"\"\"\ntype increment\n  by: integer(1..100)\n\n\"\"\"\nReport the running total after every increment so far.\n\"\"\"\ntype total\n  value: integer(0..1000000)\n\n\"\"\"\nStop counting. No increments follow this message.\n\"\"\"\ntype stop\n\n\"\"\"\nCounting is open until the requester sends stop.\n\"\"\"\nstate new\n  event requester -> counter: increment()\n  event counter -> requester: total()\n  requester -> counter: stop() => complete\n\n\"\"\"\nThe requester stopped the counter. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe session expired before the requester stopped the counter. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "182f09ca0c4db6451ff563843147988f6aa61a7405a488013a597f6fa6c08d03"
+      }
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "requester"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "counter"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "program-counter"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test program counter with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "program-counter",
+          "roles": [
+            "requester",
+            "counter"
+          ],
+          "version": null
+        },
+        "digest": "569414c3005d564cbcfb5655b21c7a78b170bad6709d09720616610b564d3819",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "You run a deterministic counter: the requester sends increments, the counter reports totals, and\nthe requester stops it when done. The counter is used to exercise journal and snapshot recovery.",
+          "line": 1
+        },
+        "name": "program-counter",
+        "role_metadata": {
+          "counter": {
+            "meta": {
+              "doc": "You keep a running total. Add each increment you receive and report the new total. The same\ninputs must always give the same totals.",
+              "line": 12
+            },
+            "name": "counter"
+          },
+          "requester": {
+            "meta": {
+              "doc": "You ask the counter to add to its total and stop it when you are done.",
+              "line": 7
+            },
+            "name": "requester"
+          }
+        },
+        "roles": [
+          "requester",
+          "counter"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "182f09ca0c4db6451ff563843147988f6aa61a7405a488013a597f6fa6c08d03",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Counting is open until the requester sends stop.",
+              "line": 35
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "increment",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 39
+                },
+                "target": null,
+                "to": [
+                  "counter"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "counter"
+                ],
+                "id": "rule-1",
+                "kind": "total",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 40
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-2",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "target": "complete",
+                "to": [
+                  "counter"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the counter. Send nothing more.",
+              "line": 43
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session expired before the requester stopped the counter. Send nothing more.",
+              "line": 48
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "increment": {
+            "fields": {
+              "by": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "min": 1
+              }
+            },
+            "meta": {
+              "doc": "Add this amount to the running total.",
+              "line": 18
+            },
+            "name": "increment"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "Stop counting. No increments follow this message.",
+              "line": 30
+            },
+            "name": "stop"
+          },
+          "total": {
+            "fields": {
+              "value": {
+                "kind": "integer",
+                "max": 1000000,
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report the running total after every increment so far.",
+              "line": 24
+            },
+            "name": "total"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test program counter with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": "infinite",
+            "name": "program-counter",
+            "roles": [
+              "requester",
+              "counter"
+            ],
+            "version": null
+          },
+          "digest": "569414c3005d564cbcfb5655b21c7a78b170bad6709d09720616610b564d3819",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "You run a deterministic counter: the requester sends increments, the counter reports totals, and\nthe requester stops it when done. The counter is used to exercise journal and snapshot recovery.",
+            "line": 1
+          },
+          "name": "program-counter",
+          "source_digest": "182f09ca0c4db6451ff563843147988f6aa61a7405a488013a597f6fa6c08d03"
+        },
+        "role": {
+          "meta": {
+            "doc": "You ask the counter to add to its total and stop it when you are done.",
+            "line": 7
+          },
+          "name": "requester"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Counting is open until the requester sends stop.",
+              "line": 35
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "increment",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 39
+                },
+                "target": null,
+                "to": [
+                  "counter"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "counter"
+                ],
+                "id": "rule-1",
+                "kind": "total",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 40
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-2",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "target": "complete",
+                "to": [
+                  "counter"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the counter. Send nothing more.",
+              "line": 43
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session expired before the requester stopped the counter. Send nothing more.",
+              "line": 48
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "increment": {
+            "fields": {
+              "by": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "min": 1
+              }
+            },
+            "meta": {
+              "doc": "Add this amount to the running total.",
+              "line": 18
+            },
+            "name": "increment"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "Stop counting. No increments follow this message.",
+              "line": 30
+            },
+            "name": "stop"
+          },
+          "total": {
+            "fields": {
+              "value": {
+                "kind": "integer",
+                "max": 1000000,
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report the running total after every increment so far.",
+              "line": 24
+            },
+            "name": "total"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test program counter with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": "infinite",
+            "name": "program-counter",
+            "roles": [
+              "requester",
+              "counter"
+            ],
+            "version": null
+          },
+          "digest": "569414c3005d564cbcfb5655b21c7a78b170bad6709d09720616610b564d3819",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "You run a deterministic counter: the requester sends increments, the counter reports totals, and\nthe requester stops it when done. The counter is used to exercise journal and snapshot recovery.",
+            "line": 1
+          },
+          "name": "program-counter",
+          "source_digest": "182f09ca0c4db6451ff563843147988f6aa61a7405a488013a597f6fa6c08d03"
+        },
+        "role": {
+          "meta": {
+            "doc": "You keep a running total. Add each increment you receive and report the new total. The same\ninputs must always give the same totals.",
+            "line": 12
+          },
+          "name": "counter"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Counting is open until the requester sends stop.",
+              "line": 35
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "increment",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 39
+                },
+                "target": null,
+                "to": [
+                  "counter"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "counter"
+                ],
+                "id": "rule-1",
+                "kind": "total",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 40
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-2",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "target": "complete",
+                "to": [
+                  "counter"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the counter. Send nothing more.",
+              "line": 43
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session expired before the requester stopped the counter. Send nothing more.",
+              "line": 48
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "increment": {
+            "fields": {
+              "by": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "min": 1
+              }
+            },
+            "meta": {
+              "doc": "Add this amount to the running total.",
+              "line": 18
+            },
+            "name": "increment"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "Stop counting. No increments follow this message.",
+              "line": 30
+            },
+            "name": "stop"
+          },
+          "total": {
+            "fields": {
+              "value": {
+                "kind": "integer",
+                "max": 1000000,
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report the running total after every increment so far.",
+              "line": 24
+            },
+            "name": "total"
+          }
+        }
+      }
+    }
+  ]
+}

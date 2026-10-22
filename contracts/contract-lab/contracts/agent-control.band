@@ -1,0 +1,71 @@
+---
+name: agent-control
+description: A counter with a typed sessionless request to wake its repair sidecar.
+engine: 0.2.0-lab.1
+roles: [requester, counter]
+---
+"""
+A counter continues ordinary work in a program; its requester can explicitly wake the sidecar.
+"""
+contract @infinity mentions 1 => expired
+
+"""
+You ask the counter to add to its total, read the totals it reports, and stop it when you are
+done. Wake the repair sidecar only when the counter needs repair, and say why.
+"""
+role requester
+
+"""
+You keep a running total. Add each increment you receive, report the new total, and stop when
+the requester tells you to.
+"""
+role counter
+
+"""
+Add this amount to the running total.
+"""
+type increment
+  by: integer(1..100)
+
+"""
+Report the running total after every increment so far.
+"""
+type total
+  value: integer(0..1000000)
+
+"""
+Stop counting. No increments follow this message.
+"""
+type stop
+
+"""
+Wake the repair sidecar. Say in a sentence or two what needs repair.
+"""
+type activate
+  reason: text(bytes: 1..64000, graphemes: 1..4000)
+
+"""
+Counting is open. The requester sends increments, the counter reports totals, and the requester
+ends the session with stop.
+"""
+state new
+  event requester -> counter: increment()
+  event counter -> requester: total()
+  requester -> counter: stop() => complete
+
+room
+  """
+  Wake the sidecar once for this accepted control event. A repeated delivery must not wake it again.
+  The host must separately grant control authority; this documentation grants no tool permissions.
+  """
+  event requester -> counter: activate()
+
+"""
+The requester stopped the counter. Send nothing more in this session.
+"""
+end complete
+
+"""
+The session's clock ran out before the requester stopped the counter. Send nothing more.
+"""
+end expired

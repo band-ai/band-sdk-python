@@ -1,0 +1,1647 @@
+{
+  "profile": "band-contract/band-binding-examples/2",
+  "provenance": "Independent specification qualification targets; no HTTP, authenticated membership, archive database, notification or deployment is executed. Context is trusted-test evidence, never caller API data.",
+  "band_live_checked": false,
+  "qualification": "not_assessed",
+  "creation": [
+    {
+      "id": "human_owner_create",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "identity": {
+          "profile": "contract-room/http/1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "actor": "User:33333333-3333-4333-8333-333333333333",
+          "identity": {
+            "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152",
+            "ready": true
+          },
+          "idempotent": true,
+          "inbox_profile": "contract-room/inbox/1"
+        }
+      }
+    },
+    {
+      "id": "agent_admin_create",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:66666666-6666-4666-8666-666666666666",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "admin",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "identity": {
+          "profile": "contract-room/http/1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "actor": "Agent:66666666-6666-4666-8666-666666666666",
+          "identity": {
+            "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152",
+            "ready": true
+          },
+          "idempotent": true,
+          "inbox_profile": "contract-room/inbox/1"
+        }
+      }
+    },
+    {
+      "id": "human_admin_create",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "admin",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "identity": {
+          "profile": "contract-room/http/1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "actor": "User:33333333-3333-4333-8333-333333333333",
+          "identity": {
+            "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152",
+            "ready": true
+          },
+          "idempotent": true,
+          "inbox_profile": "contract-room/inbox/1"
+        }
+      }
+    },
+    {
+      "id": "bound_agent_owner_create",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "identity": {
+          "profile": "contract-room/http/1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "actor": "Agent:44444444-4444-4444-8444-444444444444",
+          "identity": {
+            "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152",
+            "ready": true
+          },
+          "idempotent": true,
+          "inbox_profile": "contract-room/inbox/1"
+        }
+      }
+    },
+    {
+      "id": "participant_create",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:66666666-6666-4666-8666-666666666666",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "participant",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "creator_active",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": false,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "creator_blocked",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": true,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "creator_room_active",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": false,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "exact_create_retry",
+      "operation": "create",
+      "exact_create_retry": true,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "identity": {
+          "profile": "contract-room/http/1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "actor": "User:33333333-3333-4333-8333-333333333333",
+          "identity": {
+            "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152",
+            "ready": true
+          },
+          "idempotent": true,
+          "inbox_profile": "contract-room/inbox/1"
+        }
+      }
+    },
+    {
+      "id": "revoked_create_retry",
+      "operation": "create",
+      "exact_create_retry": true,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": false,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "human_binding",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 422
+      }
+    },
+    {
+      "id": "missing_binding",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 422
+      }
+    },
+    {
+      "id": "extra_binding",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555",
+            "observer": "Agent:66666666-6666-4666-8666-666666666666"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 422
+      }
+    },
+    {
+      "id": "duplicate_binding",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 422
+      }
+    },
+    {
+      "id": "binding_active",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": false,
+            "blocked": false
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 422
+      }
+    },
+    {
+      "id": "binding_blocked",
+      "operation": "create",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": true
+          }
+        }
+      },
+      "request": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "profile": "band-contract/file-source/1",
+          "format": "frontmatter",
+          "content": "---\nname: band-binding-target\ndescription: Agent-only binding qualification target.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event requester -> assistant: notice()\nend expired\n",
+          "sha256": "f24928f1b87c7f4d1276802692d79851f75be2495262cfca1f550849306cb152"
+        },
+        "config": {
+          "bindings": {
+            "requester": "Agent:44444444-4444-4444-8444-444444444444",
+            "assistant": "Agent:55555555-5555-4555-8555-555555555555"
+          },
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      },
+      "expected": {
+        "http_status": 422
+      }
+    },
+    {
+      "id": "human_identity",
+      "operation": "identity",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "unbound_agent_identity",
+      "operation": "identity",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:66666666-6666-4666-8666-666666666666",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "admin",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "bound_agent_identity",
+      "operation": "identity",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "participant",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 200
+      }
+    },
+    {
+      "id": "removed_agent_identity",
+      "operation": "identity",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": false,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "human_view",
+      "operation": "view",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "unbound_agent_view",
+      "operation": "view",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:66666666-6666-4666-8666-666666666666",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "admin",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "bound_agent_view",
+      "operation": "view",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "participant",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 200
+      }
+    },
+    {
+      "id": "removed_agent_view",
+      "operation": "view",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": false,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "human_proposals",
+      "operation": "proposals",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "unbound_agent_proposals",
+      "operation": "proposals",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:66666666-6666-4666-8666-666666666666",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "admin",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "bound_agent_proposals",
+      "operation": "proposals",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "participant",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 200
+      }
+    },
+    {
+      "id": "removed_agent_proposals",
+      "operation": "proposals",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": false,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "human_inbox",
+      "operation": "inbox",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "User:33333333-3333-4333-8333-333333333333",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "unbound_agent_inbox",
+      "operation": "inbox",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:66666666-6666-4666-8666-666666666666",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "admin",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    },
+    {
+      "id": "bound_agent_inbox",
+      "operation": "inbox",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": true,
+        "blocked": false,
+        "permission": "participant",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 200
+      }
+    },
+    {
+      "id": "removed_agent_inbox",
+      "operation": "inbox",
+      "exact_create_retry": false,
+      "context": {
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "room_active": true,
+        "active": false,
+        "blocked": false,
+        "permission": "owner",
+        "memberships": {
+          "Agent:44444444-4444-4444-8444-444444444444": {
+            "active": true,
+            "blocked": false
+          },
+          "Agent:55555555-5555-4555-8555-555555555555": {
+            "active": true,
+            "blocked": false
+          }
+        }
+      },
+      "request": {},
+      "expected": {
+        "http_status": 404
+      }
+    }
+  ],
+  "retention": [
+    {
+      "id": "full_new_create",
+      "operation": "new_create",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "http_status": 409,
+        "body": {
+          "error": "room_session_limit"
+        },
+        "retryable": false,
+        "unarchived_after": 256
+      }
+    },
+    {
+      "id": "full_exact_create_retry",
+      "operation": "exact_create_retry",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "retryable": false,
+        "unarchived_after": 256
+      }
+    },
+    {
+      "id": "terminal_without_archive_still_full",
+      "operation": "new_create",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": false,
+        "archive_committed": false,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "http_status": 409,
+        "body": {
+          "error": "room_session_limit"
+        },
+        "retryable": false,
+        "unarchived_after": 256
+      }
+    },
+    {
+      "id": "verified_terminal_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": true,
+        "unarchived_after": 255,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_after": 41,
+        "exact_retry": {
+          "status": "duplicate",
+          "original": {
+            "status": "accepted",
+            "id": "archive-receipt-1",
+            "session": "22222222-2222-4222-8222-222222222222",
+            "version": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "active_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": false,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": false,
+        "unarchived_after": 256,
+        "history_unchanged": true
+      }
+    },
+    {
+      "id": "unverified_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": false,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": false,
+        "unarchived_after": 256,
+        "history_unchanged": true
+      }
+    },
+    {
+      "id": "uncommitted_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": false,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": false,
+        "unarchived_after": 256,
+        "history_unchanged": true
+      }
+    },
+    {
+      "id": "unresolved_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": true,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": false,
+        "unarchived_after": 256,
+        "history_unchanged": true
+      }
+    },
+    {
+      "id": "unreachable_receipts_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": false,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": false,
+        "unarchived_after": 256,
+        "history_unchanged": true
+      }
+    },
+    {
+      "id": "lost_id_claim_archive",
+      "operation": "archive",
+      "context": {
+        "unarchived_before": 256,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": false,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "slot_released": false,
+        "unarchived_after": 256,
+        "history_unchanged": true
+      }
+    },
+    {
+      "id": "new_create_after_archive",
+      "operation": "new_create",
+      "context": {
+        "unarchived_before": 255,
+        "terminal": true,
+        "unresolved_effects": false,
+        "archive_verified": true,
+        "archive_committed": true,
+        "receipts_reachable": true,
+        "global_id_claim": true,
+        "cursor_before": 41,
+        "original_receipt": {
+          "status": "accepted",
+          "id": "archive-receipt-1",
+          "session": "22222222-2222-4222-8222-222222222222",
+          "version": 1
+        }
+      },
+      "expected": {
+        "http_status": 201,
+        "retryable": false,
+        "unarchived_after": 256
+      }
+    }
+  ],
+  "visibility": [
+    {
+      "id": "private_id_canary",
+      "context": {
+        "session": "22222222-2222-4222-8222-222222222222",
+        "proposal_id": "private-canary-id:only-requester-assistant",
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "payload": {
+          "text": "private-canary-payload:do-not-share"
+        },
+        "documentation": "private-canary-doc:do-not-share"
+      },
+      "expected": {
+        "shared_history": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "d247fe10713fd8ed2cf90c47756d0093d26444ac0398ed09ce96d29beb3a4d70",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "notifications": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "d247fe10713fd8ed2cf90c47756d0093d26444ac0398ed09ce96d29beb3a4d70",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "private_link": {
+          "session": "22222222-2222-4222-8222-222222222222",
+          "proposal_id": "private-canary-id:only-requester-assistant"
+        },
+        "stable_retry_handle": "d247fe10713fd8ed2cf90c47756d0093d26444ac0398ed09ce96d29beb3a4d70"
+      }
+    },
+    {
+      "id": "same_id_other_session",
+      "context": {
+        "session": "77777777-7777-4777-8777-777777777777",
+        "proposal_id": "private-canary-id:only-requester-assistant",
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "payload": {
+          "text": "private-canary-payload:do-not-share"
+        },
+        "documentation": "private-canary-doc:do-not-share"
+      },
+      "expected": {
+        "shared_history": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "77777777-7777-4777-8777-777777777777",
+              "receipt_handle": "1c694b9ca5056ae14bee215b043dacd07fa7cee17b0435ec3946c9d05b31e239",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "notifications": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "77777777-7777-4777-8777-777777777777",
+              "receipt_handle": "1c694b9ca5056ae14bee215b043dacd07fa7cee17b0435ec3946c9d05b31e239",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "private_link": {
+          "session": "77777777-7777-4777-8777-777777777777",
+          "proposal_id": "private-canary-id:only-requester-assistant"
+        },
+        "stable_retry_handle": "1c694b9ca5056ae14bee215b043dacd07fa7cee17b0435ec3946c9d05b31e239"
+      }
+    },
+    {
+      "id": "exact_utf8_id",
+      "context": {
+        "session": "22222222-2222-4222-8222-222222222222",
+        "proposal_id": "private-canary-id:café|λ",
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "payload": {
+          "text": "private-canary-payload:do-not-share"
+        },
+        "documentation": "private-canary-doc:do-not-share"
+      },
+      "expected": {
+        "shared_history": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "b1821e51b33c31b1aeb033771f190baa8f50756c223fce50cf7d4b912ef4beab",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "notifications": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "b1821e51b33c31b1aeb033771f190baa8f50756c223fce50cf7d4b912ef4beab",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "private_link": {
+          "session": "22222222-2222-4222-8222-222222222222",
+          "proposal_id": "private-canary-id:café|λ"
+        },
+        "stable_retry_handle": "b1821e51b33c31b1aeb033771f190baa8f50756c223fce50cf7d4b912ef4beab"
+      }
+    },
+    {
+      "id": "decomposed_utf8_id",
+      "context": {
+        "session": "22222222-2222-4222-8222-222222222222",
+        "proposal_id": "private-canary-id:café|λ",
+        "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "payload": {
+          "text": "private-canary-payload:do-not-share"
+        },
+        "documentation": "private-canary-doc:do-not-share"
+      },
+      "expected": {
+        "shared_history": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "a5d0b0f0db0a1ff1c836ff74f0a06a2eb5756e3b3b1f7d82ba4381894aa2496a",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "notifications": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "a5d0b0f0db0a1ff1c836ff74f0a06a2eb5756e3b3b1f7d82ba4381894aa2496a",
+              "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ],
+        "private_link": {
+          "session": "22222222-2222-4222-8222-222222222222",
+          "proposal_id": "private-canary-id:café|λ"
+        },
+        "stable_retry_handle": "a5d0b0f0db0a1ff1c836ff74f0a06a2eb5756e3b3b1f7d82ba4381894aa2496a"
+      }
+    },
+    {
+      "id": "definition_not_in_handle",
+      "context": {
+        "session": "22222222-2222-4222-8222-222222222222",
+        "proposal_id": "private-canary-id:only-requester-assistant",
+        "definition": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "payload": {
+          "text": "private-canary-payload:do-not-share"
+        },
+        "documentation": "private-canary-doc:do-not-share"
+      },
+      "expected": {
+        "shared_history": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "d247fe10713fd8ed2cf90c47756d0093d26444ac0398ed09ce96d29beb3a4d70",
+              "definition": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ],
+        "notifications": [
+          {
+            "text": "Contract event accepted.",
+            "contract": {
+              "session": "22222222-2222-4222-8222-222222222222",
+              "receipt_handle": "d247fe10713fd8ed2cf90c47756d0093d26444ac0398ed09ce96d29beb3a4d70",
+              "definition": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ],
+        "private_link": {
+          "session": "22222222-2222-4222-8222-222222222222",
+          "proposal_id": "private-canary-id:only-requester-assistant"
+        },
+        "stable_retry_handle": "d247fe10713fd8ed2cf90c47756d0093d26444ac0398ed09ce96d29beb3a4d70"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "command": [
+    "mix",
+    "test",
+    "--seed",
+    "0"
+  ],
+  "exit_code": 2,
+  "phase": "Unimplemented API; observed failure before room behavior implementation"
+}

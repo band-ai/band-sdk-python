@@ -1,0 +1,93 @@
+---
+name: bounded-review
+description: Test bounded review with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [author, reviewer]
+---
+"""
+An author submits work and a reviewer approves it or asks for one revision. The review may run
+at most twice; after that the session ends without approval.
+"""
+contract @4h mentions 1 => expired
+
+"""
+You are the author. Submit your work, and when the reviewer asks for a revision, fix what they
+named and submit again.
+"""
+role author
+
+"""
+You are the reviewer. Read the submission, then approve it or ask for a revision with the
+specific changes you need.
+"""
+role reviewer
+
+"""
+Submit the current version of your work for review.
+"""
+type submit
+
+"""
+Ask the author for a revision. Name the changes you need. Set submission to the submission you
+reviewed.
+"""
+type revise
+  submission: ref(submit)
+
+"""
+Approve the submitted work as it is. Set submission to the submission you approve.
+"""
+type approve
+  submission: ref(submit)
+
+"""
+The author has not submitted yet. Submit your work to start the review.
+"""
+state new
+  """
+  Submit the work. The reviewer then owes one decision on this submission.
+  """
+  author -> reviewer: submit() awaits reviewing
+    """
+    The submission is approved as it is.
+    """
+    => approve() & complete
+     """
+     The submission needs the named changes.
+     """
+     | revise() & awaiting
+     """
+     The review has no deadline of its own; the four-hour contract clock bounds it.
+     """
+     | @4h & expired
+
+"""
+The reviewer reads the latest submission and approves it or asks for a revision. A decision on an
+earlier submission no longer counts. This state can be entered at most twice.
+"""
+state reviewing max_entries 2 => exhausted
+
+"""
+The reviewer asked for a revision. Make the requested changes and submit again.
+"""
+state awaiting
+  """
+  Resubmit. The reviewer then owes one decision on the new submission.
+  """
+  author -> reviewer: submit() => reviewing
+
+"""
+The reviewer approved the work. Send nothing more.
+"""
+end complete
+
+"""
+The review limit was reached without approval. Stop and report the open changes to whoever owns
+the work.
+"""
+end exhausted
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

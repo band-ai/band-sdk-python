@@ -1,0 +1,866 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-session-configuration",
+  "requirements": [
+    "ENG-001"
+  ],
+  "schema_profile": 6,
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: hybrid-assistant\ndescription: A remote assistant answers known cases in Python and delegates judgment to an LLM.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\n\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\ncontract @30m mentions 1 => expired\n\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\nrole requester\n\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\nrole assistant\n\n\"\"\"\nAsk one self-contained question in plain language.\n\"\"\"\ntype question\n  text: text(bytes: 1..32000, graphemes: 1..2000)\n\n\"\"\"\nAnswer the question it names. Say so when you are not sure.\n\"\"\"\ntype answer\n  request: ref(question)\n  text: text(bytes: 1..64000, graphemes: 1..4000)\n\n\"\"\"\nEnd the conversation. No questions follow.\n\"\"\"\ntype stop\n\n\"\"\"\nNo question is open. Ask one, or stop.\n\"\"\"\nstate new\n  \"\"\"\n  Ask a question. The assistant then owes one answer to it.\n  \"\"\"\n  requester -> assistant: question() as request awaits answering\n    \"\"\"\n    The assistant owns the deadline regardless of which implementation answers.\n    \"\"\"\n    => answer(request=$request) & ready\n     \"\"\"\n     No answer arrived within five minutes of the question.\n     \"\"\"\n     | @5m & stalled\n  requester -> assistant: stop() => complete\n\n\"\"\"\nA question is open. The assistant owes an answer within five minutes. At most ten\nquestions are asked.\n\"\"\"\nstate answering max_entries 10 => exhausted\n\n\"\"\"\nThe last question was answered. Ask the next one, or stop.\n\"\"\"\nstate ready\n  requester -> assistant: question() as request => answering\n  requester -> assistant: stop() => complete\n\n\"\"\"\nThe requester stopped the conversation. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe assistant did not answer within five minutes. Stop, and tell the requester no answer came.\n\"\"\"\nend stalled\n\n\"\"\"\nAn eleventh question was asked. Start a new session for more.\n\"\"\"\nend exhausted\n\n\"\"\"\nThe thirty-minute contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {},
+        "now": -1,
+        "inactivity": null,
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {}
+        }
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "same",
+          "assistant": "same"
+        },
+        "now": -1,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "same": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": -1,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 0,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 9007199254740991,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        },
+        "capabilities": [
+          "contract.replies/1"
+        ]
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        },
+        "max_bytes": 76,
+        "capabilities": [
+          "contract.replies/1"
+        ]
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        },
+        "max_bytes": 77,
+        "capabilities": [
+          "contract.replies/1"
+        ]
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 1,
+      "pointer": "/error",
+      "equals": "inactivity_policy_required"
+    },
+    {
+      "response": 2,
+      "pointer": "/error",
+      "equals": "invalid_bindings"
+    },
+    {
+      "response": 3,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    {
+      "response": 4,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    {
+      "response": 5,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    {
+      "response": 6,
+      "pointer": "/error",
+      "equals": "invalid_time_range"
+    },
+    {
+      "response": 7,
+      "pointer": "/ok/state/max_bytes",
+      "equals": 16384
+    },
+    {
+      "response": 7,
+      "pointer": "/ok/state/version",
+      "equals": 0
+    },
+    {
+      "response": 8,
+      "pointer": "/error",
+      "equals": "completion_size"
+    },
+    {
+      "response": 9,
+      "pointer": "/ok/state/max_bytes",
+      "equals": 77
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [
+            "contract.replies/1"
+          ],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            1800
+          ],
+          "name": "hybrid-assistant",
+          "roles": [
+            "requester",
+            "assistant"
+          ],
+          "version": null
+        },
+        "digest": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "The room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.",
+          "line": 1
+        },
+        "name": "hybrid-assistant",
+        "role_metadata": {
+          "assistant": {
+            "meta": {
+              "doc": "Answer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.",
+              "line": 12
+            },
+            "name": "assistant"
+          },
+          "requester": {
+            "meta": {
+              "doc": "Ask one question at a time and evaluate the answer.",
+              "line": 7
+            },
+            "name": "requester"
+          }
+        },
+        "roles": [
+          "requester",
+          "assistant"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "states": {
+          "answering": {
+            "deadlines": [],
+            "max_entries": {
+              "limit": 10,
+              "outcome": "exhausted"
+            },
+            "meta": {
+              "doc": "A question is open. The assistant owes an answer within five minutes. At most ten\nquestions are asked.",
+              "line": 54
+            },
+            "name": "answering",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-1",
+                "kind": "answer",
+                "literals": {},
+                "matches": {
+                  "request": "request"
+                },
+                "meta": {
+                  "doc": "The assistant owns the deadline regardless of which implementation answers.",
+                  "line": 44
+                },
+                "target": "ready",
+                "to": [
+                  "requester"
+                ],
+                "wait": "due-2"
+              }
+            ],
+            "wait": {
+              "after_ms": 300000,
+              "alternatives": [
+                "rule-1"
+              ],
+              "from": [
+                "assistant"
+              ],
+              "heads": [
+                "rule-0",
+                "rule-4"
+              ],
+              "id": "due-2",
+              "kinds": [
+                "answer"
+              ],
+              "meta": {
+                "doc": "No answer arrived within five minutes of the question.",
+                "line": 48
+              },
+              "outcome": "stalled",
+              "to": [
+                "requester"
+              ]
+            }
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "No question is open. Ask one, or stop.",
+              "line": 36
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "request",
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "question",
+                "matches": {},
+                "meta": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "target": "answering",
+                "to": [
+                  "assistant"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-3",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 52
+                },
+                "target": "complete",
+                "to": [
+                  "assistant"
+                ]
+              }
+            ]
+          },
+          "ready": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The last question was answered. Ask the next one, or stop.",
+              "line": 60
+            },
+            "name": "ready",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "request",
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-4",
+                "kind": "question",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 64
+                },
+                "target": "answering",
+                "to": [
+                  "assistant"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-5",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 65
+                },
+                "target": "complete",
+                "to": [
+                  "assistant"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the conversation. Send nothing more.",
+              "line": 67
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "exhausted": {
+            "meta": {
+              "doc": "An eleventh question was asked. Start a new session for more.",
+              "line": 77
+            },
+            "name": "exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The thirty-minute contract clock ran out. Send nothing more.",
+              "line": 82
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "The assistant did not answer within five minutes. Stop, and tell the requester no answer came.",
+              "line": 72
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 1800000,
+          "meta": {
+            "doc": "The room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "answer": {
+            "fields": {
+              "request": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "values": [
+                  "question"
+                ]
+              },
+              "text": {
+                "bytes": {
+                  "max": 64000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 4000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 29
+                }
+              }
+            },
+            "meta": {
+              "doc": "Answer the question it names. Say so when you are not sure.",
+              "line": 24
+            },
+            "name": "answer"
+          },
+          "question": {
+            "fields": {
+              "text": {
+                "bytes": {
+                  "max": 32000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 2000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                }
+              }
+            },
+            "meta": {
+              "doc": "Ask one self-contained question in plain language.",
+              "line": 18
+            },
+            "name": "question"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "End the conversation. No questions follow.",
+              "line": 31
+            },
+            "name": "stop"
+          }
+        }
+      }
+    },
+    {
+      "error": "inactivity_policy_required"
+    },
+    {
+      "error": "invalid_bindings"
+    },
+    {
+      "error": "invalid_config"
+    },
+    {
+      "error": "invalid_config"
+    },
+    {
+      "error": "invalid_config"
+    },
+    {
+      "error": "invalid_time_range"
+    },
+    {
+      "ok": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "error": "completion_size"
+    },
+    {
+      "ok": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 1800000,
+          "max_bytes": 77,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

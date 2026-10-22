@@ -1,0 +1,31 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "canonical-4",
+  "requirements": [
+    "ENG-003"
+  ],
+  "requests": [
+    {
+      "op": "canonical",
+      "value": -1
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/bytes",
+      "equals": "LTE="
+    },
+    {
+      "response": 0,
+      "pointer": "/sha256",
+      "equals": "1bad6b8cf97131fceab8543e81f7757195fbb1d36b376ee994ad1cf17699c464"
+    }
+  ],
+  "expected": [
+    {
+      "bytes": "LTE=",
+      "sha256": "1bad6b8cf97131fceab8543e81f7757195fbb1d36b376ee994ad1cf17699c464"
+    }
+  ]
+}

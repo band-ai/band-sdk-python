@@ -1,0 +1,3 @@
+interface:
+  display_name: "Iterate a Contract"
+  short_description: "Refine contracts using observed conversation traces"

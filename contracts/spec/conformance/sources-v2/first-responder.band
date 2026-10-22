@@ -1,0 +1,66 @@
+---
+name: first-responder
+description: Test first responder with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [lead, alpha, beta]
+---
+"""
+The lead asks two responders the same question. The first answer within five minutes completes
+the session.
+"""
+contract @4h mentions 2 => expired
+
+"""
+You are the lead. Ask the question once, then use the first answer that arrives.
+"""
+role lead
+
+"""
+You are Alpha, one of two responders. If you can answer, answer within five minutes; the first
+answer from either responder wins.
+"""
+role alpha
+
+"""
+You are Beta, one of two responders. If you can answer, answer within five minutes; the first
+answer from either responder wins.
+"""
+role beta
+
+"""
+Start the question. Both responders receive it.
+"""
+type start
+
+"""
+Your answer to the lead's question, in at most 200 characters.
+"""
+type answer
+  value: text(bytes: 1..3200, graphemes: 1..200)
+
+"""
+The lead has not asked yet. Send start to both responders.
+"""
+state new
+  lead -> {alpha,beta}: start() => waiting
+
+"""
+Both responders have the question. One answer within five minutes is enough.
+"""
+state waiting
+  {alpha,beta} -> lead: answer() @5m => complete | stalled
+
+"""
+A responder answered. Use that answer; send nothing more here.
+"""
+end complete
+
+"""
+Nobody answered within five minutes. Tell whoever asked that there is no answer.
+"""
+end stalled
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

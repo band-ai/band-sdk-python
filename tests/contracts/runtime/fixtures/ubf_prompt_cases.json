@@ -1,0 +1,49 @@
+{
+  "source_sha": "2a67b8906fcf7e216abf9bc38da730e2bc0834a3",
+  "cases": [
+    {
+      "id": "v2-reply-prompts-implied-documented",
+      "input": "---\nname: one-review\ndescription: Reply alternatives conformance vector.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\n---\n\"\"\"\nOne lead asks one reviewer for a review.\n\"\"\"\ncontract @1h => expired\n\"\"\"\nThe lead asks for the review.\n\"\"\"\nrole lead\n\"\"\"\nThe reviewer answers with a review.\n\"\"\"\nrole reviewer\n\"\"\"\nA request for a review.\n\"\"\"\ntype request\n  text: text(1..2000)\n\"\"\"\nThe review of one request.\n\"\"\"\ntype review\n  request: ref(request)\n  text: text(1..4000)\n\"\"\"\nNothing has been asked yet.\n\"\"\"\nstate new\n  \"\"\"\n  Waiting for the reviewer's review of this request.\n  \"\"\"\n  lead -> reviewer: request()\n    => review() & collected\n     | @5m & stalled\nend collected\nend stalled\n",
+      "missing": [],
+      "notes": "The implied request_wait takes the documented head's prompt."
+    },
+    {
+      "id": "v2-reply-prompts-implied-undocumented",
+      "input": "---\nname: one-review\ndescription: Reply alternatives conformance vector.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\n---\n\"\"\"\nOne lead asks one reviewer for a review.\n\"\"\"\ncontract @1h => expired\n\"\"\"\nThe lead asks for the review.\n\"\"\"\nrole lead\n\"\"\"\nThe reviewer answers with a review.\n\"\"\"\nrole reviewer\n\"\"\"\nA request for a review.\n\"\"\"\ntype request\n  text: text(1..2000)\n\"\"\"\nThe review of one request.\n\"\"\"\ntype review\n  request: ref(request)\n  text: text(1..4000)\n\"\"\"\nNothing has been asked yet.\n\"\"\"\nstate new\n  lead -> reviewer: request()\n    => review() & collected\n     | @5m & stalled\nend collected\nend stalled\n",
+      "missing": [
+        {
+          "item": "state",
+          "name": "request_wait",
+          "line": 28,
+          "file_line": 34
+        }
+      ],
+      "notes": "No head prompt and no section: request_wait is missing, at the head line."
+    },
+    {
+      "id": "v2-reply-prompts-awaits-no-section",
+      "input": "---\nname: one-review\ndescription: Reply alternatives conformance vector.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\n---\n\"\"\"\nOne lead asks one reviewer for a review.\n\"\"\"\ncontract @1h => expired\n\"\"\"\nThe lead asks for the review.\n\"\"\"\nrole lead\n\"\"\"\nThe reviewer answers with a review.\n\"\"\"\nrole reviewer\n\"\"\"\nA request for a review.\n\"\"\"\ntype request\n  text: text(1..2000)\n\"\"\"\nThe review of one request.\n\"\"\"\ntype review\n  request: ref(request)\n  text: text(1..4000)\n\"\"\"\nNothing has been asked yet.\n\"\"\"\nstate new\n  \"\"\"\n  Waiting for the reviewer's review of this request.\n  \"\"\"\n  lead -> reviewer: request() awaits reviewing\n    => review() & collected\n     | @5m & stalled\nend collected\nend stalled\n",
+      "missing": [],
+      "notes": "awaits W with no state section: the head's prompt documents W."
+    },
+    {
+      "id": "v2-reply-prompts-section-documented",
+      "input": "---\nname: one-review\ndescription: Reply alternatives conformance vector.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\n---\n\"\"\"\nOne lead asks one reviewer for a review.\n\"\"\"\ncontract @1h => expired\n\"\"\"\nThe lead asks for the review.\n\"\"\"\nrole lead\n\"\"\"\nThe reviewer answers with a review.\n\"\"\"\nrole reviewer\n\"\"\"\nA request for a review.\n\"\"\"\ntype request\n  text: text(1..2000)\n\"\"\"\nThe review of one request.\n\"\"\"\ntype review\n  request: ref(request)\n  text: text(1..4000)\n\"\"\"\nNothing has been asked yet.\n\"\"\"\nstate new\n  lead -> reviewer: request() awaits reviewing\n    => review() & collected\n     | @5m & stalled\n\"\"\"\nThe reviewer owes a review.\n\"\"\"\nstate reviewing max_entries 2 => stalled\nend collected\nend stalled\n",
+      "missing": [],
+      "notes": "The state W section's prompt documents W; the head (a rule) needs none."
+    },
+    {
+      "id": "v2-reply-prompts-section-undocumented",
+      "input": "---\nname: one-review\ndescription: Reply alternatives conformance vector.\nengine: 0.2.0-lab.1\nroles: [lead, reviewer]\n---\n\"\"\"\nOne lead asks one reviewer for a review.\n\"\"\"\ncontract @1h => expired\n\"\"\"\nThe lead asks for the review.\n\"\"\"\nrole lead\n\"\"\"\nThe reviewer answers with a review.\n\"\"\"\nrole reviewer\n\"\"\"\nA request for a review.\n\"\"\"\ntype request\n  text: text(1..2000)\n\"\"\"\nThe review of one request.\n\"\"\"\ntype review\n  request: ref(request)\n  text: text(1..4000)\n\"\"\"\nNothing has been asked yet.\n\"\"\"\nstate new\n  \"\"\"\n  Waiting for the reviewer's review of this request.\n  \"\"\"\n  lead -> reviewer: request() awaits reviewing\n    => review() & collected\n     | @5m & stalled\nstate reviewing max_entries 2 => stalled\nend collected\nend stalled\n",
+      "missing": [
+        {
+          "item": "state",
+          "name": "reviewing",
+          "line": 34,
+          "file_line": 40
+        }
+      ],
+      "notes": "When the section exists its prompt is W's doc, so a documented head does not cover it."
+    }
+  ]
+}

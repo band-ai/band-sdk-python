@@ -1,0 +1,107 @@
+---
+name: presence-recovery
+description: Agent work pauses after sustained absence and ends on removal.
+engine: 0.2.0-lab.1
+roles: [requester, assistant]
+extensions: [host.presence/1, host.membership/1]
+---
+"""
+One assistant works on one question while the room watches presence. Sustained
+absence pauses the work instead of failing it; removal from the room ends it.
+Presence is a host signal, not proof that work is or is not happening.
+"""
+contract @infinity => expired
+
+watch supervisor
+
+"""
+Ask one question and wait. A pause means the assistant or supervisor went
+offline; it is not an answer and not a failure. A pause ends the open question:
+ask it again once the assistant is back.
+"""
+role requester
+
+"""
+Answer the question. If you were offline, say so when you come back and continue
+from what you already had; do not restart silently.
+"""
+role assistant
+
+"""
+One question, with the context needed to answer it.
+"""
+type question
+  text: text(2000)
+
+"""
+The answer, noting any interruption that may have affected it. Set question to
+the question you answer.
+"""
+type answer
+  question: ref(question)
+  text: text(4000)
+
+"""
+The requester asks its question.
+"""
+state new
+  """
+  Ask the question. The assistant then owes one answer to it.
+  """
+  requester -> assistant: question() awaits working
+    """
+    The assistant answers within ten minutes of the question.
+    """
+    => answer() & complete
+     """
+     No answer arrived within ten minutes of the question.
+     """
+     | @10m & stalled
+
+"""
+The assistant works while present. Five minutes offline, for the assistant or
+the watched supervisor, pauses the work and ends the open question. The question
+can be asked at most four times.
+"""
+state working max_entries 4 => stalled
+  on assistant offline for 5m => paused
+  on watch.supervisor offline for 5m => paused
+
+"""
+Work is paused for absence, and the question is no longer owed. The pause lasts
+until the assistant returns; after three pauses the session stalls.
+"""
+state paused max_entries 3 => stalled
+  on assistant online => resumed
+
+"""
+The assistant is back. The requester asks the question again within ten minutes,
+and the assistant then owes a fresh answer.
+"""
+state resumed @10m => stalled
+  """
+  Ask the same question again. The assistant answers it within ten minutes.
+  """
+  requester -> assistant: question() => working
+
+"""
+In any state, removing the assistant from the room ends the session.
+"""
+anystate
+  on assistant removed => left
+
+"""
+An answer arrived; the requester still judges it.
+"""
+end complete
+
+"""
+No answer in time, no question again in time, or too many pauses. The requester
+decides how to recover.
+"""
+end stalled
+
+"""
+The assistant left the room; nothing more will arrive in this session.
+"""
+end left

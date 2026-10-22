@@ -1,0 +1,5 @@
+# Preserve the exact licensed Unicode bytes pinned in SOURCE.json.
+contracts/header-spikes/priv/unicode16/emoji-data.txt -whitespace
+contracts/engines/band-v1/header-spikes/priv/unicode16/emoji-data.txt -whitespace
+# Formatter inputs intentionally exercise trailing whitespace and blank lines.
+contracts/spec/conformance/format/*/input.band -whitespace

@@ -1,0 +1,59 @@
+---
+name: fmt-prompt-blocks
+description: Formatter vector fmt-prompt-blocks.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+"""
+Coordinates one offer and its answer.
+"""
+contract @1h => expired
+
+"""
+The lead plans the work.
+"""
+role lead
+
+"""
+The worker answers with \"done\" or a question.
+"""
+role worker
+
+"""
+A block prompt, then blank lines before its item.
+"""
+type offer
+  """
+  The text of the offer.
+  """
+  text: text(1..200)
+
+type answer
+  ~s"""
+  Raw prompt that keeps C:\work literally.
+  """
+  text: text(1..200)
+  offer: ref(offer)
+
+"""
+Waiting for the offer.
+"""
+state new
+  """
+  The lead sends the offer.
+  """
+  lead -> worker: offer() awaits answering
+    """
+    The worker answers.
+    """
+    => answer() & done
+     | @30m & stalled
+
+"""
+Raw prompt without escapes: 100% plain.
+"""
+state answering
+
+end done
+
+end stalled

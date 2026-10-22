@@ -1,0 +1,1588 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-compile-team-review",
+  "requirements": [
+    "DSL-004",
+    "DSL-005",
+    "DSL-008",
+    "DSL-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: team-review\ndescription: Test team review with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [lead, alpha, beta, reviewer]\n---\n\"\"\"\nCollect two independent submissions before review.\n\"\"\"\ncontract @4h mentions 3 => expired\n\n\"\"\"\nYou are the lead. State the goal once, then wait for both submissions and the reviewer's\napproval.\n\"\"\"\nrole lead\n\n\"\"\"\nYou are Alpha. Work on the goal on your own, without copying Beta, and submit within ten minutes.\n\"\"\"\nrole alpha\n\n\"\"\"\nYou are Beta. Work on the goal on your own, without copying Alpha, and submit within ten minutes.\n\"\"\"\nrole beta\n\n\"\"\"\nYou are the reviewer. Wait for both submissions, compare them against the goal, and approve\nwithin two minutes.\n\"\"\"\nrole reviewer\n\n\"\"\"\nThe goal for both members, with what a good submission must contain.\n\"\"\"\ntype start\n  goal: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nYour submission for the goal: the artifact itself or a reference to it.\n\"\"\"\ntype submit\n  artifact: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nApprove both submissions.\n\"\"\"\ntype approve\n\n\"\"\"\nThe lead has not stated the goal yet. Send start to both members and the reviewer.\n\"\"\"\nstate new\n  lead -> {alpha,beta,reviewer}: start() => collecting\n\n\"\"\"\nAlpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.\n\"\"\"\nstate collecting\n  {alpha,beta} -> {lead,reviewer}: submit() each @10m => reviewing | stalled\n\n\"\"\"\nBoth submissions are in. The reviewer owes an approval within two minutes.\n\"\"\"\nstate reviewing\n  reviewer -> {lead,alpha,beta}: approve() @2m => complete | stalled\n\n\"\"\"\nThe reviewer approved both submissions. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nA submission or the approval did not arrive in time. Stop, and report what is missing to the\nlead.\n\"\"\"\nend stalled\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "819cfbea391f2776e973831cb47a3dad6b566bae9abba288e77bc3a0c851f490"
+      }
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "lead"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "alpha"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "beta"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "reviewer"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "team-review"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test team review with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "team-review",
+          "roles": [
+            "lead",
+            "alpha",
+            "beta",
+            "reviewer"
+          ],
+          "version": null
+        },
+        "digest": "dc62bcaf2140d9b839d0a9310213299ea6c242c0a243571956f624453c8586ac",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 3
+        },
+        "meta": {
+          "doc": "Collect two independent submissions before review.",
+          "line": 1
+        },
+        "name": "team-review",
+        "role_metadata": {
+          "alpha": {
+            "meta": {
+              "doc": "You are Alpha. Work on the goal on your own, without copying Beta, and submit within ten minutes.",
+              "line": 12
+            },
+            "name": "alpha"
+          },
+          "beta": {
+            "meta": {
+              "doc": "You are Beta. Work on the goal on your own, without copying Alpha, and submit within ten minutes.",
+              "line": 17
+            },
+            "name": "beta"
+          },
+          "lead": {
+            "meta": {
+              "doc": "You are the lead. State the goal once, then wait for both submissions and the reviewer's\napproval.",
+              "line": 6
+            },
+            "name": "lead"
+          },
+          "reviewer": {
+            "meta": {
+              "doc": "You are the reviewer. Wait for both submissions, compare them against the goal, and approve\nwithin two minutes.",
+              "line": 22
+            },
+            "name": "reviewer"
+          }
+        },
+        "roles": [
+          "lead",
+          "alpha",
+          "beta",
+          "reviewer"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "819cfbea391f2776e973831cb47a3dad6b566bae9abba288e77bc3a0c851f490",
+        "states": {
+          "collecting": {
+            "deadlines": [
+              {
+                "after_ms": 600000,
+                "id": "due-2",
+                "kind": "submit",
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "alpha",
+                  "beta"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Alpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.",
+              "line": 51
+            },
+            "name": "collecting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": true,
+                "event": false,
+                "from": [
+                  "alpha",
+                  "beta"
+                ],
+                "id": "rule-1",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not stated the goal yet. Send start to both members and the reviewer.",
+              "line": 45
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "target": "collecting",
+                "to": [
+                  "alpha",
+                  "beta",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [
+              {
+                "after_ms": 120000,
+                "id": "due-4",
+                "kind": "approve",
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "reviewer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Both submissions are in. The reviewer owes an approval within two minutes.",
+              "line": 57
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-3",
+                "kind": "approve",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "target": "complete",
+                "to": [
+                  "lead",
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The reviewer approved both submissions. Send nothing more.",
+              "line": 63
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 74
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "A submission or the approval did not arrive in time. Stop, and report what is missing to the\nlead.",
+              "line": 68
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "Collect two independent submissions before review.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "approve": {
+            "fields": {},
+            "meta": {
+              "doc": "Approve both submissions.",
+              "line": 40
+            },
+            "name": "approve"
+          },
+          "start": {
+            "fields": {
+              "goal": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "The goal for both members, with what a good submission must contain.",
+              "line": 28
+            },
+            "name": "start"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 38
+                }
+              }
+            },
+            "meta": {
+              "doc": "Your submission for the goal: the artifact itself or a reference to it.",
+              "line": 34
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test team review with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              14400
+            ],
+            "name": "team-review",
+            "roles": [
+              "lead",
+              "alpha",
+              "beta",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "dc62bcaf2140d9b839d0a9310213299ea6c242c0a243571956f624453c8586ac",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "Collect two independent submissions before review.",
+            "line": 1
+          },
+          "name": "team-review",
+          "source_digest": "819cfbea391f2776e973831cb47a3dad6b566bae9abba288e77bc3a0c851f490",
+          "timeout": {
+            "after_ms": 14400000,
+            "meta": {
+              "doc": "Collect two independent submissions before review.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are the lead. State the goal once, then wait for both submissions and the reviewer's\napproval.",
+            "line": 6
+          },
+          "name": "lead"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "collecting": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Alpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.",
+              "line": 51
+            },
+            "name": "collecting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": true,
+                "event": false,
+                "from": [
+                  "alpha",
+                  "beta"
+                ],
+                "id": "rule-1",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not stated the goal yet. Send start to both members and the reviewer.",
+              "line": 45
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "target": "collecting",
+                "to": [
+                  "alpha",
+                  "beta",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Both submissions are in. The reviewer owes an approval within two minutes.",
+              "line": 57
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-3",
+                "kind": "approve",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "target": "complete",
+                "to": [
+                  "lead",
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The reviewer approved both submissions. Send nothing more.",
+              "line": 63
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 74
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "A submission or the approval did not arrive in time. Stop, and report what is missing to the\nlead.",
+              "line": 68
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "approve": {
+            "fields": {},
+            "meta": {
+              "doc": "Approve both submissions.",
+              "line": 40
+            },
+            "name": "approve"
+          },
+          "start": {
+            "fields": {
+              "goal": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "The goal for both members, with what a good submission must contain.",
+              "line": 28
+            },
+            "name": "start"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 38
+                }
+              }
+            },
+            "meta": {
+              "doc": "Your submission for the goal: the artifact itself or a reference to it.",
+              "line": 34
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test team review with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              14400
+            ],
+            "name": "team-review",
+            "roles": [
+              "lead",
+              "alpha",
+              "beta",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "dc62bcaf2140d9b839d0a9310213299ea6c242c0a243571956f624453c8586ac",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "Collect two independent submissions before review.",
+            "line": 1
+          },
+          "name": "team-review",
+          "source_digest": "819cfbea391f2776e973831cb47a3dad6b566bae9abba288e77bc3a0c851f490",
+          "timeout": {
+            "after_ms": 14400000,
+            "meta": {
+              "doc": "Collect two independent submissions before review.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are Alpha. Work on the goal on your own, without copying Beta, and submit within ten minutes.",
+            "line": 12
+          },
+          "name": "alpha"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "collecting": {
+            "deadlines": [
+              {
+                "after_ms": 600000,
+                "id": "due-2",
+                "kind": "submit",
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "alpha",
+                  "beta"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Alpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.",
+              "line": 51
+            },
+            "name": "collecting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": true,
+                "event": false,
+                "from": [
+                  "alpha",
+                  "beta"
+                ],
+                "id": "rule-1",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not stated the goal yet. Send start to both members and the reviewer.",
+              "line": 45
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "target": "collecting",
+                "to": [
+                  "alpha",
+                  "beta",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Both submissions are in. The reviewer owes an approval within two minutes.",
+              "line": 57
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-3",
+                "kind": "approve",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "target": "complete",
+                "to": [
+                  "lead",
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The reviewer approved both submissions. Send nothing more.",
+              "line": 63
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 74
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "A submission or the approval did not arrive in time. Stop, and report what is missing to the\nlead.",
+              "line": 68
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "approve": {
+            "fields": {},
+            "meta": {
+              "doc": "Approve both submissions.",
+              "line": 40
+            },
+            "name": "approve"
+          },
+          "start": {
+            "fields": {
+              "goal": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "The goal for both members, with what a good submission must contain.",
+              "line": 28
+            },
+            "name": "start"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 38
+                }
+              }
+            },
+            "meta": {
+              "doc": "Your submission for the goal: the artifact itself or a reference to it.",
+              "line": 34
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test team review with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              14400
+            ],
+            "name": "team-review",
+            "roles": [
+              "lead",
+              "alpha",
+              "beta",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "dc62bcaf2140d9b839d0a9310213299ea6c242c0a243571956f624453c8586ac",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "Collect two independent submissions before review.",
+            "line": 1
+          },
+          "name": "team-review",
+          "source_digest": "819cfbea391f2776e973831cb47a3dad6b566bae9abba288e77bc3a0c851f490",
+          "timeout": {
+            "after_ms": 14400000,
+            "meta": {
+              "doc": "Collect two independent submissions before review.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are Beta. Work on the goal on your own, without copying Alpha, and submit within ten minutes.",
+            "line": 17
+          },
+          "name": "beta"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "collecting": {
+            "deadlines": [
+              {
+                "after_ms": 600000,
+                "id": "due-2",
+                "kind": "submit",
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "alpha",
+                  "beta"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Alpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.",
+              "line": 51
+            },
+            "name": "collecting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": true,
+                "event": false,
+                "from": [
+                  "alpha",
+                  "beta"
+                ],
+                "id": "rule-1",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not stated the goal yet. Send start to both members and the reviewer.",
+              "line": 45
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "target": "collecting",
+                "to": [
+                  "alpha",
+                  "beta",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Both submissions are in. The reviewer owes an approval within two minutes.",
+              "line": 57
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-3",
+                "kind": "approve",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "target": "complete",
+                "to": [
+                  "lead",
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The reviewer approved both submissions. Send nothing more.",
+              "line": 63
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 74
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "A submission or the approval did not arrive in time. Stop, and report what is missing to the\nlead.",
+              "line": 68
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "approve": {
+            "fields": {},
+            "meta": {
+              "doc": "Approve both submissions.",
+              "line": 40
+            },
+            "name": "approve"
+          },
+          "start": {
+            "fields": {
+              "goal": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "The goal for both members, with what a good submission must contain.",
+              "line": 28
+            },
+            "name": "start"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 38
+                }
+              }
+            },
+            "meta": {
+              "doc": "Your submission for the goal: the artifact itself or a reference to it.",
+              "line": 34
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "Test team review with explicit roles and outcomes.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              14400
+            ],
+            "name": "team-review",
+            "roles": [
+              "lead",
+              "alpha",
+              "beta",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "dc62bcaf2140d9b839d0a9310213299ea6c242c0a243571956f624453c8586ac",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "Collect two independent submissions before review.",
+            "line": 1
+          },
+          "name": "team-review",
+          "source_digest": "819cfbea391f2776e973831cb47a3dad6b566bae9abba288e77bc3a0c851f490",
+          "timeout": {
+            "after_ms": 14400000,
+            "meta": {
+              "doc": "Collect two independent submissions before review.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are the reviewer. Wait for both submissions, compare them against the goal, and approve\nwithin two minutes.",
+            "line": 22
+          },
+          "name": "reviewer"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "collecting": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Alpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.",
+              "line": 51
+            },
+            "name": "collecting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": true,
+                "event": false,
+                "from": [
+                  "alpha",
+                  "beta"
+                ],
+                "id": "rule-1",
+                "kind": "submit",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 55
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not stated the goal yet. Send start to both members and the reviewer.",
+              "line": 45
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "target": "collecting",
+                "to": [
+                  "alpha",
+                  "beta",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [
+              {
+                "after_ms": 120000,
+                "id": "due-4",
+                "kind": "approve",
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "reviewer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Both submissions are in. The reviewer owes an approval within two minutes.",
+              "line": 57
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-3",
+                "kind": "approve",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 61
+                },
+                "target": "complete",
+                "to": [
+                  "lead",
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The reviewer approved both submissions. Send nothing more.",
+              "line": 63
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 74
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "A submission or the approval did not arrive in time. Stop, and report what is missing to the\nlead.",
+              "line": 68
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "approve": {
+            "fields": {},
+            "meta": {
+              "doc": "Approve both submissions.",
+              "line": 40
+            },
+            "name": "approve"
+          },
+          "start": {
+            "fields": {
+              "goal": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "The goal for both members, with what a good submission must contain.",
+              "line": 28
+            },
+            "name": "start"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 38
+                }
+              }
+            },
+            "meta": {
+              "doc": "Your submission for the goal: the artifact itself or a reference to it.",
+              "line": 34
+            },
+            "name": "submit"
+          }
+        }
+      }
+    }
+  ]
+}

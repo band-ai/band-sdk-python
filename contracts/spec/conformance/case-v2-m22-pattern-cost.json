@@ -1,0 +1,42 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-m22-pattern-cost",
+  "requirements": [
+    "DSL-004",
+    "DSL-006",
+    "ENG-001"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: safety-oracle\ndescription: Portable compiler safety checks.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype question\n f0: text(100000, regex: ~r/a*/)\n f1: text(100000, regex: ~r/a*/)\n f2: text(100000, regex: ~r/a*/)\nstate new\n requester -> assistant: question() => complete\nend complete\n",
+        "sha256": "3b65c2eb6eab99c2451b4f40998de3e7adc2dfafa5d805ac07e0f873aac0a204"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "pattern_limit"
+    },
+    {
+      "response": 0,
+      "pointer": "/error/line",
+      "equals": 2
+    }
+  ],
+  "expected": [
+    {
+      "error": {
+        "code": "pattern_limit",
+        "detail": null,
+        "line": 2
+      }
+    }
+  ]
+}

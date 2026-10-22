@@ -1,0 +1,3 @@
+interface:
+  display_name: "Create a Contract"
+  short_description: "Derive a documented contract from chat history"

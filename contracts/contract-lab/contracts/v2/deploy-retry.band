@@ -1,0 +1,128 @@
+---
+name: deploy-retry
+description: A lead asks a deployer to roll out a build; the deployer's reply decides whether it is done, retried or failed.
+engine: 0.2.0-lab.1
+roles: [lead, deployer]
+---
+"""
+Coordinate one deployment in at most three attempts. Deployed means the
+deployer reported success, not that anyone verified the release.
+"""
+contract @1h => expired
+
+"""
+Name the exact build and target. After a retryable error, resend the deploy
+or abandon it. Never resend after a non-retryable error.
+"""
+role lead
+
+"""
+Deploy exactly what the latest deploy names. Reply once per attempt: ok with
+what now runs where, or error saying whether another attempt could succeed.
+"""
+role deployer
+
+"""
+The build to deploy, the target environment and any rollout constraints.
+"""
+type deploy
+  text: text(1..2000)
+
+"""
+The deployment succeeded. Name the deployed version and where it runs. Set
+request to the deploy this answers; a reply to an earlier deploy is refused.
+"""
+type ok
+  request: ref(deploy)
+  text: text(1..2000)
+
+"""
+The deployment failed. Say what failed. Set retryable to true only if the
+same deploy could succeed on another attempt. Set request to the deploy this
+answers.
+"""
+type error
+  request: ref(deploy)
+  retryable: boolean
+  text: text(1..2000)
+
+"""
+A short note on a slow rollout. It renews the reply window.
+"""
+type progress
+  text: text(1..500)
+
+"""
+The lead stops retrying. Say why in the conversation around it.
+"""
+type abandon
+
+"""
+The lead starts the first attempt.
+"""
+state new
+  """
+  Send the deploy. The deployer owes one reply to this attempt.
+  """
+  lead -> deployer: deploy() awaits deploying
+    """
+    Report success for this attempt.
+    """
+    => ok() & deployed
+     """
+     Report a failure that another attempt could fix.
+     """
+     | error(retryable=true) & retrying
+     """
+     Report a failure that another attempt cannot fix.
+     """
+     | error(retryable=false) & failed
+     """
+     No reply arrived within ten minutes of the deploy.
+     """
+     | @10m & stalled
+
+"""
+The deployer works on the current attempt. Only a reply that names this
+attempt's deploy counts. A fourth attempt ends the run as exhausted.
+"""
+state deploying max_entries 3 => exhausted
+  """
+  Send progress to keep the reply window open while a rollout is slow.
+  """
+  event deployer -> lead: progress() => @self
+
+"""
+The last attempt failed but can be retried. Resend the deploy, or abandon it.
+"""
+state retrying
+  """
+  Resend. A reply to the earlier deploy can no longer match.
+  """
+  lead -> deployer: deploy() => deploying
+  """
+  Stop retrying and end the run as failed.
+  """
+  lead -> deployer: abandon() => failed
+
+"""
+The deployer reported success. Verifying the release is a separate step.
+"""
+end deployed
+
+"""
+The deployer reported a failure that cannot be retried, or the lead abandoned
+the retries.
+"""
+end failed
+
+"""
+No reply arrived in time. The state of the target is unknown; check it before
+deploying again.
+"""
+end stalled
+
+"""
+Three attempts were used without success. Keep the last error for recovery.
+"""
+end exhausted

@@ -1,0 +1,59 @@
+{
+  "bindings": {
+    "lead": "l",
+    "writer": "w",
+    "reviewer": "r"
+  },
+  "session": "review",
+  "now": 0,
+  "inactivity": "transition",
+  "max_messages": 20,
+  "steps": [
+    {
+      "actor": "l",
+      "now": 0,
+      "message": {
+        "id": "offer-1",
+        "session": "review",
+        "kind": "offer",
+        "payload": {
+          "task": "Draft the release note"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "offered"
+      }
+    },
+    {
+      "actor": "w",
+      "now": 0,
+      "message": {
+        "id": "accept-1",
+        "session": "review",
+        "kind": "accept",
+        "payload": {
+          "task": "offer-1"
+        }
+      },
+      "expect": {
+        "status": "accepted",
+        "state": "writing"
+      }
+    },
+    {
+      "tick": 300000,
+      "expect": {
+        "state": "writing",
+        "outcome": null
+      }
+    },
+    {
+      "tick": 900000,
+      "expect": {
+        "state": "stalled",
+        "outcome": "stalled"
+      }
+    }
+  ]
+}

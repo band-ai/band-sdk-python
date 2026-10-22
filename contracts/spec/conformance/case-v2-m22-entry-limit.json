@@ -1,0 +1,42 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-m22-entry-limit",
+  "requirements": [
+    "DSL-004",
+    "DSL-006",
+    "ENG-001"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: safety-oracle\ndescription: Portable compiler safety checks.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype question\ntype answer\nstate new max_entries 1 => new\n requester -> assistant: question() => complete\nend complete\n",
+        "sha256": "a1c482c60af16d56e156127f7669ccc2f131f952e0914658e1c2655c56d235c7"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "initial_state_target"
+    },
+    {
+      "response": 0,
+      "pointer": "/error/line",
+      "equals": 4
+    }
+  ],
+  "expected": [
+    {
+      "error": {
+        "code": "initial_state_target",
+        "detail": "new is the initial state and cannot be re-entered",
+        "line": 4
+      }
+    }
+  ]
+}

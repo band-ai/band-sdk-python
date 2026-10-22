@@ -1,0 +1,11 @@
+{
+  "passed": 0,
+  "failed": 1,
+  "cases": [
+    {
+      "id": "harness",
+      "pass": false,
+      "evidence": "adapter failed with exit 1:  \"participant_removed\"}, \"stalled\" => %{meta: %{line: 18, doc: nil}, name: \"stalled\"}, \"unserviceable_obligation\" => %{meta: %{line: 1, doc: nil}, name: \"unserviceable_obligation\"}}, any_rules: [], any_meta: %{line: 1, doc: nil}, room_rules: [], room_meta: %{line: 1, doc: nil}, source_digest: \"7ee6ab1a18c6f30e1f7c320bd97483cd0d027f90847275c408cdc754b66b3447\", renewal_profile: \"band-contract/renewal/1\"}, created_at: 0, control_log: [], expiry: nil, control_limit: 0, status: :active, policy_mode: :unchecked, watch_bindings: %{}, variables: %{\"req\" => \"req\"}, signal_revision: 0, contributions: %{}, outcome: nil, version: 1, idle_ms: nil, id: \"s\", clocks: %{phase_at: nil, hard_at: 14400000}, fired_signals: %{}, history: [%{id: \"req\", type: :accepted, at: 0, kind: \"request\", role: \"lead\"}], entered_at: 0, mentions_used: 1, signal_receipts: %{}, last_activity: 0, bindings: %{\"lead\" => \"l\", \"worker\" => \"w\"}, entries: %{\"new\" => 1, \"waiting\" => 1}, state: \"waiting\", obligations: [], inactivity: :accepted, max_at: 1800000}\n    \n        # 2\n        %{profile: \"band-contract/renewal/1\", scope: \"wait\", duty: \"due-3\"}\n    \n    Attempted function clauses (showing 5 out of 5):\n    \n        defp deadline(+_+, -nil-)\n        defp deadline(+s+, -%{scope: \"state\"}-)\n        defp deadline(+s+, -%{scope: \"contract\"}-)\n        defp deadline(+s+, -%{scope: \"collection\", collection: name}-)\n        defp deadline(+s+, -%{scope: \"rule\", duty: id}-)\n    \n    lib/contract_lab/renewal.ex:154: ContractLab.Renewal.deadline/2\n    lib/contract_lab/renewal.ex:38: ContractLab.Renewal.check/3\n    lib/contract_lab/engine.ex:535: ContractLab.Engine.new_message/5\n    lib/contract_lab/engine.ex:181: ContractLab.Engine.step/3\n    lib/contract_lab/scenario.ex:117: ContractLab.Scenario.apply_step/2\n    lib/contract_lab/scenario.ex:63: ContractLab.Scenario.execute/3\n    lib/contract_lab/scenario.ex:37: anonymous fn/3 in ContractLab.Scenario.run/3\n    (elixir 1.18.4) lib/enum.ex:4968: Enumerable.List.reduce/3\n"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-encode-forbidden-map-clock",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire_encode",
+      "message": {
+        "id": "m",
+        "session": "s",
+        "kind": "ping",
+        "payload": {},
+        "expected_version": 0
+      },
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "forbidden/1",
+        "fields": {
+          "clock": "header:X"
+        }
+      },
+      "transport": {}
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "error": "transport_fields"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": "transport_fields"
+    }
+  ]
+}

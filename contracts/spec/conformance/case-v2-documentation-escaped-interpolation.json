@@ -1,0 +1,216 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-documentation-escaped-interpolation",
+  "requirements": [
+    "DSL-005"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: explicit-infinity\ndescription: Test explicit infinity with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [a, b]\n---\n\"\"\"\n\\#{literal}\n\"\"\"\ncontract @infinity mentions 1 => expired\ntype ping\ntype close\nstate new\n  event a -> b: ping()\n  a -> b: close() => complete\nend complete\nend expired\n",
+        "sha256": "3cc31043868c09f696c09921c80ce0e2aa1cc600edfa0ff615add21cff77effb"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "#{literal}"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test explicit infinity with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "explicit-infinity",
+          "roles": [
+            "a",
+            "b"
+          ],
+          "version": null
+        },
+        "digest": "464eac28786c5e455b65e1f3153709c864f37541601d2712da4bd1ab93336f46",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "#{literal}",
+          "line": 1
+        },
+        "name": "explicit-infinity",
+        "role_metadata": {
+          "a": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "a"
+          },
+          "b": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "b"
+          }
+        },
+        "roles": [
+          "a",
+          "b"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "3cc31043868c09f696c09921c80ce0e2aa1cc600edfa0ff615add21cff77effb",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": null,
+              "line": 7
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-0",
+                "kind": "ping",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 8
+                },
+                "target": null,
+                "to": [
+                  "b"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-1",
+                "kind": "close",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 9
+                },
+                "target": "complete",
+                "to": [
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": null,
+              "line": 10
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": null,
+              "line": 11
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "close": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 6
+            },
+            "name": "close"
+          },
+          "ping": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 5
+            },
+            "name": "ping"
+          }
+        }
+      }
+    }
+  ]
+}

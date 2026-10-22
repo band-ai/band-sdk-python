@@ -1,0 +1,12 @@
+graft contracts
+prune contracts/contract-lab/_build
+prune contracts/contract-lab/deps
+prune contracts/header-spikes/_build
+prune contracts/header-spikes/deps
+prune contracts/room-sim/_build
+prune contracts/room-sim/deps
+prune contracts/engines/band-v1/contract-lab/_build
+prune contracts/engines/band-v1/contract-lab/deps
+prune contracts/engines/band-v1/header-spikes/_build
+prune contracts/engines/band-v1/header-spikes/deps
+global-exclude __pycache__ *.py[cod]

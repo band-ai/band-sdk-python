@@ -1,0 +1,145 @@
+{
+  "profile": "band-contract/invocation-fixture/1",
+  "input": {
+    "profile": "remote-agent/program-input/1",
+    "id": "turn:input-1:1",
+    "purpose": "turn",
+    "program": {
+      "path": "/fixture/artifacts/fcca5a79b810646a0eb5e92508f0a4624202538395774574e49b001bee849055.py",
+      "sha256": "fcca5a79b810646a0eb5e92508f0a4624202538395774574e49b001bee849055"
+    },
+    "request": {
+      "op": "handle",
+      "artifact": {
+        "path": "/program/program.py",
+        "sha256": "fcca5a79b810646a0eb5e92508f0a4624202538395774574e49b001bee849055"
+      },
+      "isolation": {
+        "profile": "remote-agent/linux-pure-python/1",
+        "memory_bytes": 268435456,
+        "cpu_seconds": 1
+      },
+      "event": {
+        "id": "input-1",
+        "type": "increment",
+        "by": 1
+      },
+      "state": {
+        "count": 0
+      },
+      "view": {
+        "version": 0
+      }
+    },
+    "timeout_ms": 1000,
+    "max_output_bytes": 262144
+  },
+  "output": {
+    "profile": "remote-agent/program-output/1",
+    "id": "turn:input-1:1",
+    "input_hash": "532d363cfb356a1722414552fb89fff0a7f91faa97c64b4649288a32dff86292",
+    "execution": {
+      "profile": "remote-agent/process-result/1",
+      "stdout": "eyJtZXNzYWdlIjpudWxsLCJzbmFwc2hvdCI6eyJjb3VudCI6MX0sInN0YXRlIjp7ImNvdW50IjoxfSwidHlwZSI6ImhhbmRsZWQifQo=",
+      "stderr": "Zml4dHVyZSBkaWFnbm9zdGljHwo=",
+      "exit_code": 0,
+      "failure": null,
+      "complete": true,
+      "elapsed_ms": 3
+    }
+  },
+  "journal": [
+    {
+      "sequence": 1,
+      "kind": "program_input",
+      "data": {
+        "profile": "remote-agent/program-input/1",
+        "id": "turn:input-1:1",
+        "purpose": "turn",
+        "program": {
+          "path": "/fixture/artifacts/fcca5a79b810646a0eb5e92508f0a4624202538395774574e49b001bee849055.py",
+          "sha256": "fcca5a79b810646a0eb5e92508f0a4624202538395774574e49b001bee849055"
+        },
+        "request": {
+          "op": "handle",
+          "artifact": {
+            "path": "/program/program.py",
+            "sha256": "fcca5a79b810646a0eb5e92508f0a4624202538395774574e49b001bee849055"
+          },
+          "isolation": {
+            "profile": "remote-agent/linux-pure-python/1",
+            "memory_bytes": 268435456,
+            "cpu_seconds": 1
+          },
+          "event": {
+            "id": "input-1",
+            "type": "increment",
+            "by": 1
+          },
+          "state": {
+            "count": 0
+          },
+          "view": {
+            "version": 0
+          }
+        },
+        "timeout_ms": 1000,
+        "max_output_bytes": 262144
+      },
+      "updates": {
+        "invocation:turn:input-1:1": {
+          "fingerprint": "532d363cfb356a1722414552fb89fff0a7f91faa97c64b4649288a32dff86292",
+          "status": "started"
+        }
+      },
+      "previous": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "1f308d5618bf95c7c8f91685aba70c895da1a49fcf28824be3008cb19f9d2d98"
+    },
+    {
+      "sequence": 2,
+      "kind": "program_output",
+      "data": {
+        "profile": "remote-agent/program-output/1",
+        "id": "turn:input-1:1",
+        "input_hash": "532d363cfb356a1722414552fb89fff0a7f91faa97c64b4649288a32dff86292",
+        "execution": {
+          "profile": "remote-agent/process-result/1",
+          "stdout": "eyJtZXNzYWdlIjpudWxsLCJzbmFwc2hvdCI6eyJjb3VudCI6MX0sInN0YXRlIjp7ImNvdW50IjoxfSwidHlwZSI6ImhhbmRsZWQifQo=",
+          "stderr": "Zml4dHVyZSBkaWFnbm9zdGljHwo=",
+          "exit_code": 0,
+          "failure": null,
+          "complete": true,
+          "elapsed_ms": 3
+        }
+      },
+      "updates": {
+        "invocation:turn:input-1:1": {
+          "fingerprint": "532d363cfb356a1722414552fb89fff0a7f91faa97c64b4649288a32dff86292",
+          "status": "completed",
+          "execution": {
+            "profile": "remote-agent/process-result/1",
+            "stdout": "eyJtZXNzYWdlIjpudWxsLCJzbmFwc2hvdCI6eyJjb3VudCI6MX0sInN0YXRlIjp7ImNvdW50IjoxfSwidHlwZSI6ImhhbmRsZWQifQo=",
+            "stderr": "Zml4dHVyZSBkaWFnbm9zdGljHwo=",
+            "exit_code": 0,
+            "failure": null,
+            "complete": true,
+            "elapsed_ms": 3
+          }
+        }
+      },
+      "previous": "1f308d5618bf95c7c8f91685aba70c895da1a49fcf28824be3008cb19f9d2d98",
+      "hash": "53a609166464476d97c420324a9110c373e8cb24e50f6b7392267e99397bee65"
+    }
+  ],
+  "recovered_result": {
+    "type": "handled",
+    "state": {
+      "count": 1
+    },
+    "message": null,
+    "snapshot": {
+      "count": 1
+    }
+  },
+  "interrupted_result": "hold"
+}

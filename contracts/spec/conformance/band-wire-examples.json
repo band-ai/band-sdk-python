@@ -1,0 +1,846 @@
+{
+  "profile": "band-contract/band-wire-examples/1",
+  "provenance": "Independent structural expectations. No HTTP, membership, database or deployment qualification.",
+  "examples": [
+    {
+      "id": "create",
+      "schema": "band_create_request",
+      "valid": true,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_upper_uuid",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_malformed_uuid",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "------------------------------------",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_caller_actor",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        },
+        "actor": "User:33333333-3333-4333-8333-333333333333"
+      }
+    },
+    {
+      "id": "create_caller_clock",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384,
+          "now": 0
+        }
+      }
+    },
+    {
+      "id": "create_untyped_actor",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "worker"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_malformed_actor",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:------------------------------------"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_actor_newline",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333\n",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_actor_case",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_messages_zero",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 0,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_messages_over",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 10001,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_bytes_zero",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 0
+        }
+      }
+    },
+    {
+      "id": "create_bytes_over",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100,
+          "max_bytes": 65537
+        }
+      }
+    },
+    {
+      "id": "create_unknown_policy",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "caller",
+          "max_messages": 100,
+          "max_bytes": 16384
+        }
+      }
+    },
+    {
+      "id": "create_missing_bytes",
+      "schema": "band_create_request",
+      "valid": false,
+      "value": {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "source": {
+          "card": {
+            "name": "hybrid-assistant",
+            "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+            "engine": "0.1.0-lab.1",
+            "roles": [
+              "requester",
+              "assistant"
+            ],
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "inactivity_timeout": [
+              "seconds",
+              300
+            ],
+            "mentions": {
+              "per_message": 1,
+              "per_session": 100
+            }
+          },
+          "body": "\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\n+CONTRACT\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\n+ROLE requester\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\n+ROLE assistant\n+TYPE question\n  text: text(1..2000)\n+TYPE answer\n  request: ref(question)\n  text: text(1..4000)\n+TYPE stop\n+STATE new\n  requester -> assistant: question() AS request => answering\n  requester -> assistant: stop() => complete\n+STATE answering\n  \"\"\"\nThe assistant owns the deadline regardless of which implementation answers.\n\"\"\"\n  DUE all OF assistant WITH answer IN 5m => stalled\n  assistant -> requester: answer(request=$request) => new\n+END complete\n+END stalled\n+END expired\n"
+        },
+        "config": {
+          "bindings": {
+            "requester": "User:33333333-3333-4333-8333-333333333333",
+            "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+          },
+          "inactivity": "accepted",
+          "max_messages": 100
+        }
+      }
+    },
+    {
+      "id": "view",
+      "schema": "band_view_request",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "id": "view_actor",
+      "schema": "band_view_request",
+      "valid": false,
+      "value": {
+        "actor": "User:33333333-3333-4333-8333-333333333333"
+      }
+    },
+    {
+      "id": "view_clock",
+      "schema": "band_view_request",
+      "valid": false,
+      "value": {
+        "now": 0
+      }
+    },
+    {
+      "id": "proposal",
+      "schema": "band_envelope",
+      "valid": true,
+      "value": {
+        "id": "q",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      }
+    },
+    {
+      "id": "proposal_actor",
+      "schema": "band_envelope",
+      "valid": false,
+      "value": {
+        "id": "q",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0,
+        "actor": "User:33333333-3333-4333-8333-333333333333"
+      }
+    },
+    {
+      "id": "proposal_clock",
+      "schema": "band_envelope",
+      "valid": false,
+      "value": {
+        "id": "q",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0,
+        "now": 0
+      }
+    },
+    {
+      "id": "proposal_session",
+      "schema": "band_envelope",
+      "valid": false,
+      "value": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      }
+    },
+    {
+      "id": "proposal_version",
+      "schema": "band_envelope",
+      "valid": false,
+      "value": {
+        "id": "q",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": -1
+      }
+    },
+    {
+      "id": "inbox",
+      "schema": "inbox_request",
+      "valid": true,
+      "value": {
+        "after": 0,
+        "limit": 128
+      }
+    },
+    {
+      "id": "inbox_negative",
+      "schema": "inbox_request",
+      "valid": false,
+      "value": {
+        "after": -1,
+        "limit": 1
+      }
+    },
+    {
+      "id": "inbox_empty_limit",
+      "schema": "inbox_request",
+      "valid": false,
+      "value": {
+        "after": 0,
+        "limit": 0
+      }
+    },
+    {
+      "id": "inbox_over_limit",
+      "schema": "inbox_request",
+      "valid": false,
+      "value": {
+        "after": 0,
+        "limit": 129
+      }
+    },
+    {
+      "id": "inbox_actor",
+      "schema": "inbox_request",
+      "valid": false,
+      "value": {
+        "after": 0,
+        "limit": 1,
+        "actor": "Agent:44444444-4444-4444-8444-444444444444"
+      }
+    },
+    {
+      "id": "identity",
+      "schema": "band_http_identity",
+      "valid": true,
+      "value": {
+        "profile": "contract-room/http/1",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "identity": {
+          "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ready": true
+        },
+        "idempotent": true,
+        "inbox_profile": "contract-room/inbox/1"
+      }
+    },
+    {
+      "id": "identity_actor",
+      "schema": "band_http_identity",
+      "valid": false,
+      "value": {
+        "profile": "contract-room/http/1",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "actor": "worker",
+        "identity": {
+          "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ready": true
+        },
+        "idempotent": true,
+        "inbox_profile": "contract-room/inbox/1"
+      }
+    },
+    {
+      "id": "identity_session",
+      "schema": "band_http_identity",
+      "valid": false,
+      "value": {
+        "profile": "contract-room/http/1",
+        "session": "s",
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "identity": {
+          "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ready": true
+        },
+        "idempotent": true,
+        "inbox_profile": "contract-room/inbox/1"
+      }
+    },
+    {
+      "id": "identity_dedup",
+      "schema": "band_http_identity",
+      "valid": false,
+      "value": {
+        "profile": "contract-room/http/1",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "identity": {
+          "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ready": true
+        },
+        "idempotent": false,
+        "inbox_profile": "contract-room/inbox/1"
+      }
+    },
+    {
+      "id": "identity_inbox",
+      "schema": "band_http_identity",
+      "valid": false,
+      "value": {
+        "profile": "contract-room/http/1",
+        "session": "22222222-2222-4222-8222-222222222222",
+        "actor": "Agent:44444444-4444-4444-8444-444444444444",
+        "identity": {
+          "definition": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ready": true
+        },
+        "idempotent": true
+      }
+    }
+  ]
+}

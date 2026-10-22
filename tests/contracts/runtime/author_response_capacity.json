@@ -1,0 +1,179 @@
+{
+  "definition": {
+    "profile": "band-contract/spike-definition/1",
+    "name": "explicit-infinity",
+    "description": "Test explicit infinity with explicit roles and outcomes.",
+    "engine": "0.2.0-lab.1",
+    "source": "37ef8958850270ddb5daf8adff934d4859ec5372f7048db85996142fe356e776",
+    "definition": "464eac28786c5e455b65e1f3153709c864f37541601d2712da4bd1ab93336f46",
+    "roles": [
+      {
+        "name": "a",
+        "doc": "$role_doc"
+      },
+      {
+        "name": "b",
+        "doc": "You are B. Receive A's pings and close; you send nothing in this session."
+      }
+    ],
+    "declarations": {
+      "meta": {
+        "doc": "A keeps a connection to B alive with pings for as long as needed, then closes it. There is no\ntime limit.",
+        "line": 1
+      },
+      "role_metadata": {
+        "a": {
+          "meta": {
+            "doc": "$role_doc",
+            "line": 7
+          },
+          "name": "a"
+        },
+        "b": {
+          "meta": {
+            "doc": "You are B. Receive A's pings and close; you send nothing in this session.",
+            "line": 12
+          },
+          "name": "b"
+        }
+      },
+      "types": {
+        "close": {
+          "fields": {},
+          "meta": {
+            "doc": "Close the connection. No pings follow.",
+            "line": 22
+          },
+          "name": "close"
+        },
+        "ping": {
+          "fields": {},
+          "meta": {
+            "doc": "Signal that the connection is still in use. The message carries no content.",
+            "line": 17
+          },
+          "name": "ping"
+        }
+      },
+      "states": {
+        "new": {
+          "deadlines": [],
+          "max_entries": null,
+          "meta": {
+            "doc": "The connection is open. A may ping any number of times and closes it when done.",
+            "line": 27
+          },
+          "name": "new",
+          "rules": [
+            {
+              "activity": false,
+              "bind": null,
+              "each": false,
+              "event": true,
+              "from": [
+                "a"
+              ],
+              "id": "rule-0",
+              "kind": "ping",
+              "matches": {},
+              "meta": {
+                "doc": null,
+                "line": 31
+              },
+              "target": null,
+              "to": [
+                "b"
+              ]
+            },
+            {
+              "activity": false,
+              "bind": null,
+              "each": false,
+              "event": false,
+              "from": [
+                "a"
+              ],
+              "id": "rule-1",
+              "kind": "close",
+              "matches": {},
+              "meta": {
+                "doc": null,
+                "line": 32
+              },
+              "target": "complete",
+              "to": [
+                "b"
+              ]
+            }
+          ]
+        }
+      },
+      "terminals": {
+        "complete": {
+          "meta": {
+            "doc": "A closed the connection. Send nothing more.",
+            "line": 34
+          },
+          "name": "complete"
+        },
+        "completion_capacity": {
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "completion_capacity"
+        },
+        "control_capacity_exhausted": {
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "control_capacity_exhausted"
+        },
+        "expired": {
+          "meta": {
+            "doc": "The session expired. Send nothing more.",
+            "line": 39
+          },
+          "name": "expired"
+        },
+        "insufficient_time": {
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "insufficient_time"
+        },
+        "participant_removed": {
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "participant_removed"
+        },
+        "unserviceable_obligation": {
+          "meta": {
+            "doc": null,
+            "line": 1
+          },
+          "name": "unserviceable_obligation"
+        }
+      },
+      "any_rules": [],
+      "room_rules": [],
+      "extensions": {
+        "permission_meta": {},
+        "permissions": {},
+        "triggers": [],
+        "watch_meta": {},
+        "watches": []
+      }
+    }
+  },
+  "doc_bytes": 196608,
+  "derivation_rules": 75,
+  "source_sha256": "37ef8958850270ddb5daf8adff934d4859ec5372f7048db85996142fe356e776",
+  "response_sha256": "8ca4c3317f993438eb70d2bf9205ebe1793062653f27ef73414b99065d694ee5",
+  "compiled_sha256": "5f5396378419b14c960928bbc8bcb52c2697a84fc35ce1b10034b90027b0bc14",
+  "frozen_source_manifest_sha256": "1788e215705cc77ff2dd9fc2d9b12954e97d82d3d4dc5bda13733722792b7971"
+}

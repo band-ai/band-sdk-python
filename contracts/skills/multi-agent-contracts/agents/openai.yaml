@@ -1,0 +1,3 @@
+interface:
+  display_name: "Multi-agent Skills"
+  short_description: "Author guided, enforceable multi-agent workflows"

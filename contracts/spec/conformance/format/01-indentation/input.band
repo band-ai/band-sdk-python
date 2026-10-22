@@ -1,0 +1,25 @@
+---
+name: fmt-indentation
+description: Formatter vector fmt-indentation.
+engine: 0.2.0-lab.1
+roles: [lead, reviewers]
+extensions: [host.presence/1]
+---
+contract @30m => expired
+type reviewer: agent
+	specialty: enum(devops|general)
+reviewers: list(reviewer)
+type review
+        text: text(1..100)
+type ping
+type stop
+state new
+lead -> reviewers: ping() => reviewing
+state reviewing
+      event reviewers -> lead: ping()
+collect reports from reviewers -> lead @5m => done
+reply review()
+            offline @30s
+anystate
+lead -> reviewers: stop() => done
+end done

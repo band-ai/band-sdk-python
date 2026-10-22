@@ -1,0 +1,12 @@
+{
+  "command": [
+    "mix",
+    "test",
+    "test/agent_gate_test.exs:48",
+    "--seed",
+    "0",
+    "--warnings-as-errors"
+  ],
+  "mutation": "Omit fixed Engine atom vocabulary loading before safe decode",
+  "exit_code": 2
+}

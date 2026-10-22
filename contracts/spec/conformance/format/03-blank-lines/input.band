@@ -1,0 +1,36 @@
+---
+name: fmt-blank-lines
+description: Formatter vector fmt-blank-lines.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+
+
+contract @1h => expired
+role lead
+
+role worker
+type offer
+type cancel
+type result
+  offer: ref(offer)
+  text: text(1..200)
+state new
+  lead -> worker: offer() awaits working
+    => result() & done
+     | @30m & stalled
+
+
+
+  lead -> worker: cancel() => cancelled
+
+
+end done
+end stalled
+end cancelled
+
+
+
+end expired
+
+

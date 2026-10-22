@@ -1,0 +1,34 @@
+---
+name: h7-preclaim
+description: A peer can claim visible IDs without changing the assistant's turn.
+engine: 0.2.0-lab.1
+roles: [requester, assistant, peer]
+---
+contract @30m => expired
+
+type question
+  text: text(1..2000)
+
+type answer
+  request: ref(question)
+  text: text(1..4000)
+
+type notice
+
+state new
+  event peer -> requester: notice()
+  requester -> assistant: question() as request awaits answering
+    => answer(request=$request) & ready
+     | @5m & stalled
+
+state answering max_entries 10 => exhausted
+
+state ready
+  event peer -> requester: notice()
+  requester -> assistant: question() as request => answering
+
+end stalled
+
+end exhausted
+
+end expired

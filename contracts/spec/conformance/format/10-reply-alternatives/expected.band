@@ -1,0 +1,56 @@
+---
+name: fmt-reply-alternatives
+description: Formatter vector fmt-reply-alternatives.
+engine: 0.2.0-lab.1
+roles: [lead, deployer]
+---
+contract @1h => expired
+
+role lead
+
+role deployer
+
+type deploy
+
+type ok
+  request: ref(deploy)
+
+type error
+  request: ref(deploy)
+  retryable: boolean
+
+type progress
+
+type abandon
+
+state new
+  lead -> deployer: deploy() awaits deploying
+    """
+    A success.
+    """
+    => ok() & deployed
+     %% Two errors, by retryable.
+     | error(retryable=true) & retrying
+     """
+     Not retryable.
+     """
+     | error(retryable=false) & failed
+     | @10m & stalled
+
+state deploying max_entries 3 => exhausted
+  event deployer -> lead: progress() => @self
+
+state retrying
+  """
+  Resend; a reply to the earlier deploy can no longer match.
+  """
+  lead -> deployer: deploy() => deploying
+  lead -> deployer: abandon() => failed
+
+end deployed
+
+end failed
+
+end stalled
+
+end exhausted

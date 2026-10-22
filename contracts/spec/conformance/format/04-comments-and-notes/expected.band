@@ -1,0 +1,26 @@
+---
+name: fmt-comments
+description: Formatter vector fmt-comments.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+%% The whole run gets one hour.
+contract @1h => expired
+
+type offer
+  %% A field comment follows the field's indentation.
+  task: text(1..200)
+
+state new
+  /* An author note spanning
+     two lines moves as a whole. */
+  lead -> worker: offer() => done
+
+%% This comment belongs to the next end.
+end done
+
+/* A one-line note. */
+	/* A tab-indented note is kept byte for byte. */
+end expired
+
+%% A closing comment with nothing after it.

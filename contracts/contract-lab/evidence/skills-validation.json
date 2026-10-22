@@ -1,0 +1,59 @@
+{
+  "skills": [
+    {
+      "skill": "multi-agent-contracts",
+      "validator_exit": 0,
+      "validator_output": "Skill is valid!",
+      "installed": "~/.codex/skills/multi-agent-contracts",
+      "source": "skills/multi-agent-contracts",
+      "installed_validator_exit": 0
+    },
+    {
+      "skill": "create-multi-agent-contract",
+      "validator_exit": 0,
+      "validator_output": "Skill is valid!",
+      "installed": "~/.codex/skills/create-multi-agent-contract",
+      "source": "skills/create-multi-agent-contract",
+      "installed_validator_exit": 0
+    },
+    {
+      "skill": "iterate-multi-agent-contract",
+      "validator_exit": 0,
+      "validator_output": "Skill is valid!",
+      "installed": "~/.codex/skills/iterate-multi-agent-contract",
+      "source": "skills/iterate-multi-agent-contract",
+      "installed_validator_exit": 0
+    },
+    {
+      "skill": "replace-agent-with-program",
+      "validator_exit": 0,
+      "validator_output": "Skill is valid!",
+      "installed": "~/.codex/skills/replace-agent-with-program",
+      "source": "skills/replace-agent-with-program",
+      "installed_validator_exit": 0
+    }
+  ],
+  "relative_links": "all exist",
+  "installed_helper_exit": 0,
+  "installed_replay_outcome": "stalled",
+  "files_sha256": {
+    "skills/create-multi-agent-contract/SKILL.md": "9936410ac4f239c257af8ebe5aed0110bf6c7be3f51d142cf7633934bd109183",
+    "skills/create-multi-agent-contract/agents/openai.yaml": "b7f75bd64a559c1f3e39d45da310c9b420b00fd9e87d38b9f9b6b42368b01e27",
+    "skills/iterate-multi-agent-contract/SKILL.md": "b7ac2af941bb0e97365789bb7886588c09b18826d78b498fc2e30625c4e41ac6",
+    "skills/iterate-multi-agent-contract/agents/openai.yaml": "e76ee28a0b5b57d2ef00b80576f58abc4d3fc230fd133ea8c149e2cfe8b1b486",
+    "skills/multi-agent-contracts/SKILL.md": "08aac244807df2ddab2d65929b9718ee3fa757f0ef1b159543ee929960adcd57",
+    "skills/multi-agent-contracts/agents/openai.yaml": "fd64fd0ebe7355c21ca4d382fe5adb08416a43753c212cf95a5615a11afa66ef",
+    "skills/multi-agent-contracts/references/authoring.md": "c4e440f2f2a5405b6dc352312b3d0c300c58ff8a8d9f9fe58a9a730014701554",
+    "skills/multi-agent-contracts/scripts/contract": "c19eae10797ea545b0cf01d3fc6692fb0730df1f8bf291f3cbf892e515e99e32",
+    "skills/replace-agent-with-program/SKILL.md": "68641aef1ef97eec8648bc85ccf931aa840954f4f6380eaa24f1ecafd305bcc2",
+    "skills/replace-agent-with-program/agents/openai.yaml": "2dcc185a9c9055f99924dbf9e2f0d121ef461f35c8772a78cb71121b7a9a3a65",
+    "skills/replace-agent-with-program/references/replacement.md": "2eddfdaff196ed841a3822128541da1162a89d5ebfdca7462209aecc300af885"
+  },
+  "behavioral_evidence": [
+    "contract-lab/histories/review-derivation.md",
+    "contract-lab/histories/review-followup.md",
+    "contract-lab/evidence/authoring-checks.json",
+    "contract-lab/evidence/room-recovery-checks.json"
+  ],
+  "evaluation": "author validation and executed artifacts; no independent subagent or live model-provider evaluation"
+}

@@ -1,0 +1,26 @@
+{
+  "candidate_head": "d3d8df589deb0904439a52dbc2225dda44b8b631",
+  "command_exit": 0,
+  "rows": [
+    {
+      "id": "sugar-ambiguous-refs-explicit-control",
+      "result": {
+        "error": {
+          "code": "unmatched_reference",
+          "detail": "previous",
+          "line": 8
+        }
+      }
+    },
+    {
+      "id": "sugar-one-eligible-of-several-refs",
+      "result": {
+        "error": {
+          "code": "unmatched_reference",
+          "detail": "previous",
+          "line": 9
+        }
+      }
+    }
+  ]
+}

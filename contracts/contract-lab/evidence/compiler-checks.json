@@ -1,0 +1,38 @@
+{
+  "checks": [
+    {
+      "command": [
+        "mix",
+        "compile",
+        "--warnings-as-errors"
+      ],
+      "exit_code": 0,
+      "seconds": 6.277
+    },
+    {
+      "command": [
+        "mix",
+        "format",
+        "--check-formatted"
+      ],
+      "exit_code": 0,
+      "seconds": 1.31
+    },
+    {
+      "command": [
+        "mix",
+        "test",
+        "--seed",
+        "0",
+        "--warnings-as-errors"
+      ],
+      "exit_code": 0,
+      "seconds": 2.253
+    }
+  ],
+  "mutation": {
+    "exit_code": 2,
+    "change": "Discard parsed documentation metadata",
+    "detected": true
+  }
+}

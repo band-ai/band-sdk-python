@@ -1,0 +1,2682 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-compile-history-review",
+  "requirements": [
+    "DSL-004",
+    "DSL-005",
+    "DSL-008",
+    "DSL-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: history-review\ndescription: A three-person release-note assignment derived from a documented chat fixture.\nengine: 0.2.0-lab.1\nroles: [lead, writer, reviewer]\n---\n\"\"\"\nThe lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.\n\"\"\"\ncontract @30m mentions 2 => expired\n\n\"\"\"\nYou are the lead. Offer the release-note task, accept or cancel, and give the final acceptance\nonly after the reviewer approves.\n\"\"\"\nrole lead\n\n\"\"\"\nYou are the writer. Accept or refuse the offer within two minutes, then write the release note\nand submit it within fifteen minutes.\n\"\"\"\nrole writer\n\n\"\"\"\nInspect the exact artifact independently before approving it (H03, H06, H08).\n\"\"\"\nrole reviewer\n\n\"\"\"\nOffer the release-note task: what the note must cover and how it will be checked.\n\"\"\"\ntype offer\n  \"\"\"\n  Work requested by the lead (H01). The 600-grapheme bound is an authoring choice.\n  \"\"\"\n  task: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nAccept the offer. Send this only if you can write the note as asked.\n\"\"\"\ntype accept\n  task: ref(offer)\n\n\"\"\"\nRefuse the offer, and say why.\n\"\"\"\ntype refuse\n  task: ref(offer)\n  reason: text(bytes: 1..4800, graphemes: 1..300)\n\n\"\"\"\nSubmit the release note, or a reference to it, for review.\n\"\"\"\ntype submit\n  task: ref(offer)\n  \"\"\"\n  A reference is a claim; the reviewer must inspect its content (H08).\n  The 600-grapheme bound is an authoring choice.\n  \"\"\"\n  artifact: text(bytes: 1..9600, graphemes: 1..600)\n\n\"\"\"\nApprove the exact submission you read.\n\"\"\"\ntype approve\n  task: ref(offer)\n  submission: ref(submit)\n\n\"\"\"\nAsk for changes to the submission. Name each change and why.\n\"\"\"\ntype changes\n  task: ref(offer)\n  submission: ref(submit)\n  reason: text(bytes: 1..4800, graphemes: 1..300)\n\n\"\"\"\nAccept the reviewed release note as the result.\n\"\"\"\ntype accept_result\n  task: ref(offer)\n  submission: ref(submit)\n\n\"\"\"\nCancel the task, and say why.\n\"\"\"\ntype cancel\n  reason: text(bytes: 1..4800, graphemes: 1..300)\n\n\"\"\"\nThe lead has not offered the task yet. Send the offer to the writer and the reviewer.\n\"\"\"\nstate new\n  lead -> {writer,reviewer}: offer() as task => offered\n\n\"\"\"\nThe writer has the offer and must accept within two minutes, or refuse.\n\"\"\"\nstate offered\n  \"\"\"\n  Every assigned writer must accept before work starts (H01).\n  \"\"\"\n  writer -> lead: accept(task=$task) @2m => writing | unclaimed\n  writer -> lead: refuse(task=$task) => refused\n\n\"\"\"\nThe writer owes a submission within fifteen minutes.\n\"\"\"\nstate writing\n  writer -> {lead,reviewer}: submit(task=$task) as submission @15m => reviewing | stalled\n\n\"\"\"\nThe reviewer reads the exact submission and owes an approval within five minutes, or asks for\nchanges.\n\"\"\"\nstate reviewing\n  reviewer -> {lead,writer}: approve(task=$task,submission=$submission) @5m => acceptance | stalled\n  reviewer -> {lead,writer}: changes(task=$task,submission=$submission) => needs_revision\n\n\"\"\"\nThe reviewer approved. The lead owes the final acceptance within five minutes.\n\"\"\"\nstate acceptance\n  lead -> {writer,reviewer}: accept_result(task=$task,submission=$submission) @5m => complete | stalled\n\nanystate\n  lead -> {writer,reviewer}: cancel() => cancelled\n\n\"\"\"\nOnly the lead's acceptance of the independently reviewed submission completes work (H04).\n\"\"\"\nend complete\n\n\"\"\"\nThe writer refused the task. Send nothing more.\n\"\"\"\nend refused\n\n\"\"\"\nThe writer did not accept within two minutes. The lead may offer the task again.\n\"\"\"\nend unclaimed\n\n\"\"\"\nAn owed message did not arrive in time. Stop, and report what is missing to the lead.\n\"\"\"\nend stalled\n\n\"\"\"\nThe reviewer asked for changes, which ends this session. The lead starts a new one for the revision.\n\"\"\"\nend needs_revision\n\n\"\"\"\nThe lead cancelled the task. Send nothing more.\n\"\"\"\nend cancelled\n\n\"\"\"\nThe thirty-minute contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "5da180f75c7e1e0834b5dc6d1a271e1b0feb004ee4b7162518a6a8a535da5af4"
+      }
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "lead"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "writer"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "reviewer"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "history-review"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 125
+        },
+        "any_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": false,
+            "from": [
+              "lead"
+            ],
+            "id": "rule-11",
+            "kind": "cancel",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 126
+            },
+            "target": "cancelled",
+            "to": [
+              "writer",
+              "reviewer"
+            ]
+          }
+        ],
+        "card": {
+          "description": "A three-person release-note assignment derived from a documented chat fixture.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            1800
+          ],
+          "name": "history-review",
+          "roles": [
+            "lead",
+            "writer",
+            "reviewer"
+          ],
+          "version": null
+        },
+        "digest": "36386273a20ae3c2d89111bff436c3f1c34670fdc56c448e20cf1962768dd168",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 2
+        },
+        "meta": {
+          "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+          "line": 1
+        },
+        "name": "history-review",
+        "role_metadata": {
+          "lead": {
+            "meta": {
+              "doc": "You are the lead. Offer the release-note task, accept or cancel, and give the final acceptance\nonly after the reviewer approves.",
+              "line": 11
+            },
+            "name": "lead"
+          },
+          "reviewer": {
+            "meta": {
+              "doc": "Inspect the exact artifact independently before approving it (H03, H06, H08).",
+              "line": 23
+            },
+            "name": "reviewer"
+          },
+          "writer": {
+            "meta": {
+              "doc": "You are the writer. Accept or refuse the offer within two minutes, then write the release note\nand submit it within fifteen minutes.",
+              "line": 17
+            },
+            "name": "writer"
+          }
+        },
+        "roles": [
+          "lead",
+          "writer",
+          "reviewer"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "5da180f75c7e1e0834b5dc6d1a271e1b0feb004ee4b7162518a6a8a535da5af4",
+        "states": {
+          "acceptance": {
+            "deadlines": [
+              {
+                "after_ms": 300000,
+                "id": "due-10",
+                "kind": "accept_result",
+                "meta": {
+                  "doc": null,
+                  "line": 123
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "lead"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer approved. The lead owes the final acceptance within five minutes.",
+              "line": 119
+            },
+            "name": "acceptance",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-9",
+                "kind": "accept_result",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 123
+                },
+                "target": "complete",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not offered the task yet. Send the offer to the writer and the reviewer.",
+              "line": 89
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "task",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "offer",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 93
+                },
+                "target": "offered",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "offered": {
+            "deadlines": [
+              {
+                "after_ms": 120000,
+                "id": "due-2",
+                "kind": "accept",
+                "meta": {
+                  "doc": "Every assigned writer must accept before work starts (H01).",
+                  "line": 99
+                },
+                "outcome": "unclaimed",
+                "participants": [
+                  "writer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer has the offer and must accept within two minutes, or refuse.",
+              "line": 95
+            },
+            "name": "offered",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-1",
+                "kind": "accept",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": "Every assigned writer must accept before work starts (H01).",
+                  "line": 99
+                },
+                "target": "writing",
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-3",
+                "kind": "refuse",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 103
+                },
+                "target": "refused",
+                "to": [
+                  "lead"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [
+              {
+                "after_ms": 300000,
+                "id": "due-7",
+                "kind": "approve",
+                "meta": {
+                  "doc": null,
+                  "line": 116
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "reviewer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer reads the exact submission and owes an approval within five minutes, or asks for\nchanges.",
+              "line": 111
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-6",
+                "kind": "approve",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 116
+                },
+                "target": "acceptance",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-8",
+                "kind": "changes",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 117
+                },
+                "target": "needs_revision",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              }
+            ]
+          },
+          "writing": {
+            "deadlines": [
+              {
+                "after_ms": 900000,
+                "id": "due-5",
+                "kind": "submit",
+                "meta": {
+                  "doc": null,
+                  "line": 109
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "writer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer owes a submission within fifteen minutes.",
+              "line": 105
+            },
+            "name": "writing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "submission",
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-4",
+                "kind": "submit",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 109
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "cancelled": {
+            "meta": {
+              "doc": "The lead cancelled the task. Send nothing more.",
+              "line": 153
+            },
+            "name": "cancelled"
+          },
+          "complete": {
+            "meta": {
+              "doc": "Only the lead's acceptance of the independently reviewed submission completes work (H04).",
+              "line": 128
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The thirty-minute contract clock ran out. Send nothing more.",
+              "line": 158
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "needs_revision": {
+            "meta": {
+              "doc": "The reviewer asked for changes, which ends this session. The lead starts a new one for the revision.",
+              "line": 148
+            },
+            "name": "needs_revision"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "refused": {
+            "meta": {
+              "doc": "The writer refused the task. Send nothing more.",
+              "line": 133
+            },
+            "name": "refused"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "An owed message did not arrive in time. Stop, and report what is missing to the lead.",
+              "line": 143
+            },
+            "name": "stalled"
+          },
+          "unclaimed": {
+            "meta": {
+              "doc": "The writer did not accept within two minutes. The lead may offer the task again.",
+              "line": 138
+            },
+            "name": "unclaimed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 1800000,
+          "meta": {
+            "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "accept": {
+            "fields": {
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the offer. Send this only if you can write the note as asked.",
+              "line": 37
+            },
+            "name": "accept"
+          },
+          "accept_result": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 81
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 80
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the reviewed release note as the result.",
+              "line": 76
+            },
+            "name": "accept_result"
+          },
+          "approve": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 66
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 65
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Approve the exact submission you read.",
+              "line": 61
+            },
+            "name": "approve"
+          },
+          "cancel": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 87
+                }
+              }
+            },
+            "meta": {
+              "doc": "Cancel the task, and say why.",
+              "line": 83
+            },
+            "name": "cancel"
+          },
+          "changes": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 74
+                }
+              },
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 73
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 72
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask for changes to the submission. Name each change and why.",
+              "line": 68
+            },
+            "name": "changes"
+          },
+          "offer": {
+            "fields": {
+              "task": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "Work requested by the lead (H01). The 600-grapheme bound is an authoring choice.",
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "Offer the release-note task: what the note must cover and how it will be checked.",
+              "line": 28
+            },
+            "name": "offer"
+          },
+          "refuse": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Refuse the offer, and say why.",
+              "line": 43
+            },
+            "name": "refuse"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "A reference is a claim; the reviewer must inspect its content (H08).\nThe 600-grapheme bound is an authoring choice.",
+                  "line": 55
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 54
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Submit the release note, or a reference to it, for review.",
+              "line": 50
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 125
+        },
+        "any_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": false,
+            "from": [
+              "lead"
+            ],
+            "id": "rule-11",
+            "kind": "cancel",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 126
+            },
+            "target": "cancelled",
+            "to": [
+              "writer",
+              "reviewer"
+            ]
+          }
+        ],
+        "contract": {
+          "card": {
+            "description": "A three-person release-note assignment derived from a documented chat fixture.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "name": "history-review",
+            "roles": [
+              "lead",
+              "writer",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "36386273a20ae3c2d89111bff436c3f1c34670fdc56c448e20cf1962768dd168",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+            "line": 1
+          },
+          "name": "history-review",
+          "source_digest": "5da180f75c7e1e0834b5dc6d1a271e1b0feb004ee4b7162518a6a8a535da5af4",
+          "timeout": {
+            "after_ms": 1800000,
+            "meta": {
+              "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are the lead. Offer the release-note task, accept or cancel, and give the final acceptance\nonly after the reviewer approves.",
+            "line": 11
+          },
+          "name": "lead"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "acceptance": {
+            "deadlines": [
+              {
+                "after_ms": 300000,
+                "id": "due-10",
+                "kind": "accept_result",
+                "meta": {
+                  "doc": null,
+                  "line": 123
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "lead"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer approved. The lead owes the final acceptance within five minutes.",
+              "line": 119
+            },
+            "name": "acceptance",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-9",
+                "kind": "accept_result",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 123
+                },
+                "target": "complete",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not offered the task yet. Send the offer to the writer and the reviewer.",
+              "line": 89
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "task",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "offer",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 93
+                },
+                "target": "offered",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "offered": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer has the offer and must accept within two minutes, or refuse.",
+              "line": 95
+            },
+            "name": "offered",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-1",
+                "kind": "accept",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": "Every assigned writer must accept before work starts (H01).",
+                  "line": 99
+                },
+                "target": "writing",
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-3",
+                "kind": "refuse",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 103
+                },
+                "target": "refused",
+                "to": [
+                  "lead"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer reads the exact submission and owes an approval within five minutes, or asks for\nchanges.",
+              "line": 111
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-6",
+                "kind": "approve",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 116
+                },
+                "target": "acceptance",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-8",
+                "kind": "changes",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 117
+                },
+                "target": "needs_revision",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              }
+            ]
+          },
+          "writing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer owes a submission within fifteen minutes.",
+              "line": 105
+            },
+            "name": "writing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "submission",
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-4",
+                "kind": "submit",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 109
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "cancelled": {
+            "meta": {
+              "doc": "The lead cancelled the task. Send nothing more.",
+              "line": 153
+            },
+            "name": "cancelled"
+          },
+          "complete": {
+            "meta": {
+              "doc": "Only the lead's acceptance of the independently reviewed submission completes work (H04).",
+              "line": 128
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The thirty-minute contract clock ran out. Send nothing more.",
+              "line": 158
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "needs_revision": {
+            "meta": {
+              "doc": "The reviewer asked for changes, which ends this session. The lead starts a new one for the revision.",
+              "line": 148
+            },
+            "name": "needs_revision"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "refused": {
+            "meta": {
+              "doc": "The writer refused the task. Send nothing more.",
+              "line": 133
+            },
+            "name": "refused"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "An owed message did not arrive in time. Stop, and report what is missing to the lead.",
+              "line": 143
+            },
+            "name": "stalled"
+          },
+          "unclaimed": {
+            "meta": {
+              "doc": "The writer did not accept within two minutes. The lead may offer the task again.",
+              "line": 138
+            },
+            "name": "unclaimed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "accept": {
+            "fields": {
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the offer. Send this only if you can write the note as asked.",
+              "line": 37
+            },
+            "name": "accept"
+          },
+          "accept_result": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 81
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 80
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the reviewed release note as the result.",
+              "line": 76
+            },
+            "name": "accept_result"
+          },
+          "approve": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 66
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 65
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Approve the exact submission you read.",
+              "line": 61
+            },
+            "name": "approve"
+          },
+          "cancel": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 87
+                }
+              }
+            },
+            "meta": {
+              "doc": "Cancel the task, and say why.",
+              "line": 83
+            },
+            "name": "cancel"
+          },
+          "changes": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 74
+                }
+              },
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 73
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 72
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask for changes to the submission. Name each change and why.",
+              "line": 68
+            },
+            "name": "changes"
+          },
+          "offer": {
+            "fields": {
+              "task": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "Work requested by the lead (H01). The 600-grapheme bound is an authoring choice.",
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "Offer the release-note task: what the note must cover and how it will be checked.",
+              "line": 28
+            },
+            "name": "offer"
+          },
+          "refuse": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Refuse the offer, and say why.",
+              "line": 43
+            },
+            "name": "refuse"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "A reference is a claim; the reviewer must inspect its content (H08).\nThe 600-grapheme bound is an authoring choice.",
+                  "line": 55
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 54
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Submit the release note, or a reference to it, for review.",
+              "line": 50
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 125
+        },
+        "any_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": false,
+            "from": [
+              "lead"
+            ],
+            "id": "rule-11",
+            "kind": "cancel",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 126
+            },
+            "target": "cancelled",
+            "to": [
+              "writer",
+              "reviewer"
+            ]
+          }
+        ],
+        "contract": {
+          "card": {
+            "description": "A three-person release-note assignment derived from a documented chat fixture.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "name": "history-review",
+            "roles": [
+              "lead",
+              "writer",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "36386273a20ae3c2d89111bff436c3f1c34670fdc56c448e20cf1962768dd168",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+            "line": 1
+          },
+          "name": "history-review",
+          "source_digest": "5da180f75c7e1e0834b5dc6d1a271e1b0feb004ee4b7162518a6a8a535da5af4",
+          "timeout": {
+            "after_ms": 1800000,
+            "meta": {
+              "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "You are the writer. Accept or refuse the offer within two minutes, then write the release note\nand submit it within fifteen minutes.",
+            "line": 17
+          },
+          "name": "writer"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "acceptance": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer approved. The lead owes the final acceptance within five minutes.",
+              "line": 119
+            },
+            "name": "acceptance",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-9",
+                "kind": "accept_result",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 123
+                },
+                "target": "complete",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not offered the task yet. Send the offer to the writer and the reviewer.",
+              "line": 89
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "task",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "offer",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 93
+                },
+                "target": "offered",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "offered": {
+            "deadlines": [
+              {
+                "after_ms": 120000,
+                "id": "due-2",
+                "kind": "accept",
+                "meta": {
+                  "doc": "Every assigned writer must accept before work starts (H01).",
+                  "line": 99
+                },
+                "outcome": "unclaimed",
+                "participants": [
+                  "writer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer has the offer and must accept within two minutes, or refuse.",
+              "line": 95
+            },
+            "name": "offered",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-1",
+                "kind": "accept",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": "Every assigned writer must accept before work starts (H01).",
+                  "line": 99
+                },
+                "target": "writing",
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-3",
+                "kind": "refuse",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 103
+                },
+                "target": "refused",
+                "to": [
+                  "lead"
+                ]
+              }
+            ]
+          },
+          "reviewing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer reads the exact submission and owes an approval within five minutes, or asks for\nchanges.",
+              "line": 111
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-6",
+                "kind": "approve",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 116
+                },
+                "target": "acceptance",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-8",
+                "kind": "changes",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 117
+                },
+                "target": "needs_revision",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              }
+            ]
+          },
+          "writing": {
+            "deadlines": [
+              {
+                "after_ms": 900000,
+                "id": "due-5",
+                "kind": "submit",
+                "meta": {
+                  "doc": null,
+                  "line": 109
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "writer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer owes a submission within fifteen minutes.",
+              "line": 105
+            },
+            "name": "writing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "submission",
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-4",
+                "kind": "submit",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 109
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "cancelled": {
+            "meta": {
+              "doc": "The lead cancelled the task. Send nothing more.",
+              "line": 153
+            },
+            "name": "cancelled"
+          },
+          "complete": {
+            "meta": {
+              "doc": "Only the lead's acceptance of the independently reviewed submission completes work (H04).",
+              "line": 128
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The thirty-minute contract clock ran out. Send nothing more.",
+              "line": 158
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "needs_revision": {
+            "meta": {
+              "doc": "The reviewer asked for changes, which ends this session. The lead starts a new one for the revision.",
+              "line": 148
+            },
+            "name": "needs_revision"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "refused": {
+            "meta": {
+              "doc": "The writer refused the task. Send nothing more.",
+              "line": 133
+            },
+            "name": "refused"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "An owed message did not arrive in time. Stop, and report what is missing to the lead.",
+              "line": 143
+            },
+            "name": "stalled"
+          },
+          "unclaimed": {
+            "meta": {
+              "doc": "The writer did not accept within two minutes. The lead may offer the task again.",
+              "line": 138
+            },
+            "name": "unclaimed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "accept": {
+            "fields": {
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the offer. Send this only if you can write the note as asked.",
+              "line": 37
+            },
+            "name": "accept"
+          },
+          "accept_result": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 81
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 80
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the reviewed release note as the result.",
+              "line": 76
+            },
+            "name": "accept_result"
+          },
+          "approve": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 66
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 65
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Approve the exact submission you read.",
+              "line": 61
+            },
+            "name": "approve"
+          },
+          "cancel": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 87
+                }
+              }
+            },
+            "meta": {
+              "doc": "Cancel the task, and say why.",
+              "line": 83
+            },
+            "name": "cancel"
+          },
+          "changes": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 74
+                }
+              },
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 73
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 72
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask for changes to the submission. Name each change and why.",
+              "line": 68
+            },
+            "name": "changes"
+          },
+          "offer": {
+            "fields": {
+              "task": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "Work requested by the lead (H01). The 600-grapheme bound is an authoring choice.",
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "Offer the release-note task: what the note must cover and how it will be checked.",
+              "line": 28
+            },
+            "name": "offer"
+          },
+          "refuse": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Refuse the offer, and say why.",
+              "line": 43
+            },
+            "name": "refuse"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "A reference is a claim; the reviewer must inspect its content (H08).\nThe 600-grapheme bound is an authoring choice.",
+                  "line": 55
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 54
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Submit the release note, or a reference to it, for review.",
+              "line": 50
+            },
+            "name": "submit"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 125
+        },
+        "any_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": false,
+            "from": [
+              "lead"
+            ],
+            "id": "rule-11",
+            "kind": "cancel",
+            "matches": {},
+            "meta": {
+              "doc": null,
+              "line": 126
+            },
+            "target": "cancelled",
+            "to": [
+              "writer",
+              "reviewer"
+            ]
+          }
+        ],
+        "contract": {
+          "card": {
+            "description": "A three-person release-note assignment derived from a documented chat fixture.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": [
+              "seconds",
+              1800
+            ],
+            "name": "history-review",
+            "roles": [
+              "lead",
+              "writer",
+              "reviewer"
+            ],
+            "version": null
+          },
+          "digest": "36386273a20ae3c2d89111bff436c3f1c34670fdc56c448e20cf1962768dd168",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+            "line": 1
+          },
+          "name": "history-review",
+          "source_digest": "5da180f75c7e1e0834b5dc6d1a271e1b0feb004ee4b7162518a6a8a535da5af4",
+          "timeout": {
+            "after_ms": 1800000,
+            "meta": {
+              "doc": "The lead assigns one release note: a writer drafts it, a reviewer inspects it, and the lead\naccepts it.\nEvery message refers to the task, and a submission is only a claim until the reviewer has read it.\nDerived from histories/review-chat.md, messages H01-H09.\nThe historical host selected transition-only inactivity (H07); this profile has no idle timer.\nCurrent runs keep the twenty-message bound and declared contract/work clocks.",
+              "line": 1
+            },
+            "outcome": "expired",
+            "profile": "band-contract/timeout/1"
+          }
+        },
+        "role": {
+          "meta": {
+            "doc": "Inspect the exact artifact independently before approving it (H03, H06, H08).",
+            "line": 23
+          },
+          "name": "reviewer"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "states": {
+          "acceptance": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer approved. The lead owes the final acceptance within five minutes.",
+              "line": 119
+            },
+            "name": "acceptance",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-9",
+                "kind": "accept_result",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 123
+                },
+                "target": "complete",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not offered the task yet. Send the offer to the writer and the reviewer.",
+              "line": 89
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "task",
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "offer",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 93
+                },
+                "target": "offered",
+                "to": [
+                  "writer",
+                  "reviewer"
+                ]
+              }
+            ]
+          },
+          "offered": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer has the offer and must accept within two minutes, or refuse.",
+              "line": 95
+            },
+            "name": "offered",
+            "rules": []
+          },
+          "reviewing": {
+            "deadlines": [
+              {
+                "after_ms": 300000,
+                "id": "due-7",
+                "kind": "approve",
+                "meta": {
+                  "doc": null,
+                  "line": 116
+                },
+                "outcome": "stalled",
+                "participants": [
+                  "reviewer"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "The reviewer reads the exact submission and owes an approval within five minutes, or asks for\nchanges.",
+              "line": 111
+            },
+            "name": "reviewing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-6",
+                "kind": "approve",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 116
+                },
+                "target": "acceptance",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "reviewer"
+                ],
+                "id": "rule-8",
+                "kind": "changes",
+                "matches": {
+                  "submission": "submission",
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 117
+                },
+                "target": "needs_revision",
+                "to": [
+                  "lead",
+                  "writer"
+                ]
+              }
+            ]
+          },
+          "writing": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The writer owes a submission within fifteen minutes.",
+              "line": 105
+            },
+            "name": "writing",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "submission",
+                "each": false,
+                "event": false,
+                "from": [
+                  "writer"
+                ],
+                "id": "rule-4",
+                "kind": "submit",
+                "matches": {
+                  "task": "task"
+                },
+                "meta": {
+                  "doc": null,
+                  "line": 109
+                },
+                "target": "reviewing",
+                "to": [
+                  "lead",
+                  "reviewer"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "cancelled": {
+            "meta": {
+              "doc": "The lead cancelled the task. Send nothing more.",
+              "line": 153
+            },
+            "name": "cancelled"
+          },
+          "complete": {
+            "meta": {
+              "doc": "Only the lead's acceptance of the independently reviewed submission completes work (H04).",
+              "line": 128
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The thirty-minute contract clock ran out. Send nothing more.",
+              "line": 158
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "needs_revision": {
+            "meta": {
+              "doc": "The reviewer asked for changes, which ends this session. The lead starts a new one for the revision.",
+              "line": 148
+            },
+            "name": "needs_revision"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "refused": {
+            "meta": {
+              "doc": "The writer refused the task. Send nothing more.",
+              "line": 133
+            },
+            "name": "refused"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "An owed message did not arrive in time. Stop, and report what is missing to the lead.",
+              "line": 143
+            },
+            "name": "stalled"
+          },
+          "unclaimed": {
+            "meta": {
+              "doc": "The writer did not accept within two minutes. The lead may offer the task again.",
+              "line": 138
+            },
+            "name": "unclaimed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "accept": {
+            "fields": {
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the offer. Send this only if you can write the note as asked.",
+              "line": 37
+            },
+            "name": "accept"
+          },
+          "accept_result": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 81
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 80
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Accept the reviewed release note as the result.",
+              "line": 76
+            },
+            "name": "accept_result"
+          },
+          "approve": {
+            "fields": {
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 66
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 65
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Approve the exact submission you read.",
+              "line": 61
+            },
+            "name": "approve"
+          },
+          "cancel": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 87
+                }
+              }
+            },
+            "meta": {
+              "doc": "Cancel the task, and say why.",
+              "line": 83
+            },
+            "name": "cancel"
+          },
+          "changes": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 74
+                }
+              },
+              "submission": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 73
+                },
+                "values": [
+                  "submit"
+                ]
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 72
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Ask for changes to the submission. Name each change and why.",
+              "line": 68
+            },
+            "name": "changes"
+          },
+          "offer": {
+            "fields": {
+              "task": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "Work requested by the lead (H01). The 600-grapheme bound is an authoring choice.",
+                  "line": 32
+                }
+              }
+            },
+            "meta": {
+              "doc": "Offer the release-note task: what the note must cover and how it will be checked.",
+              "line": 28
+            },
+            "name": "offer"
+          },
+          "refuse": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 4800,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 300,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Refuse the offer, and say why.",
+              "line": 43
+            },
+            "name": "refuse"
+          },
+          "submit": {
+            "fields": {
+              "artifact": {
+                "bytes": {
+                  "max": 9600,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 600,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": "A reference is a claim; the reviewer must inspect its content (H08).\nThe 600-grapheme bound is an authoring choice.",
+                  "line": 55
+                }
+              },
+              "task": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 54
+                },
+                "values": [
+                  "offer"
+                ]
+              }
+            },
+            "meta": {
+              "doc": "Submit the release note, or a reference to it, for review.",
+              "line": 50
+            },
+            "name": "submit"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-body-token-is-not-external",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "body/1",
+        "fields": {
+          "id": "body"
+        }
+      },
+      "transport": {
+        "body": "m"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "error": "transport_fields"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": "transport_fields"
+    }
+  ]
+}

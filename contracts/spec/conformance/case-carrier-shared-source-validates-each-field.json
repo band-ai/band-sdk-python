@@ -1,0 +1,46 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-shared-source-validates-each-field",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"payload\":{}}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "shared/1",
+        "fields": {
+          "id": "header:X",
+          "kind": "header:X"
+        }
+      },
+      "transport": {
+        "header:X": "m"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "ok": {
+          "id": "m",
+          "kind": "m",
+          "payload": {}
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "id": "m",
+        "kind": "m",
+        "payload": {}
+      }
+    }
+  ]
+}

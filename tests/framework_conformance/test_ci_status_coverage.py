@@ -80,4 +80,10 @@ class TestCiStatusCoverage:
             for job, allowed in allowed_results().items()
             if "skipped" not in allowed
         }
-        assert must_pass == {"lint", "test", "test-crewai", "test-parlant"}
+        assert must_pass == {
+            "lint",
+            "test",
+            "contract-qualification",
+            "test-crewai",
+            "test-parlant",
+        }

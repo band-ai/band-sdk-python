@@ -1,0 +1,59 @@
+"""Describe host callbacks without importing their implementations into workers."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from remote_agent.types import JsonObject, SourcePath
+
+if TYPE_CHECKING:
+    from remote_agent.program import Program
+
+
+class ModelProvider(Protocol):
+    def respond(self, bundle: JsonObject) -> JsonObject: ...
+
+    def wake(self, bundle: JsonObject) -> JsonObject: ...
+
+    def repair(self, bundle: JsonObject) -> JsonObject: ...
+
+
+@runtime_checkable
+class PreparedProvider(Protocol):
+    def prepare(self, operation: str, bundle: JsonObject) -> JsonObject: ...
+    def execute(self, request: JsonObject, *, timeout: float) -> JsonObject: ...
+    def decode(self, operation: str, execution: JsonObject) -> JsonObject: ...
+
+
+@runtime_checkable
+class InboxReader(Protocol):
+    def inbox(self, after: int, *, limit: int = 100) -> JsonObject: ...
+
+
+class CandidateValidator(Protocol):
+    def __call__(self, candidate: Program, bundle: JsonObject) -> JsonObject: ...
+
+
+class StructuredInvoker(Protocol):
+    def __call__(
+        self, root: SourcePath, prompt: str, schema: JsonObject, *, timeout: float
+    ) -> JsonObject: ...
+
+
+class RuntimeParticipant(Protocol):
+    durable: bool
+
+    def summary(self) -> JsonObject: ...
+    def task(self, body: JsonObject) -> JsonObject: ...
+    def control(self, actor: str, body: JsonObject) -> JsonObject: ...
+    def journal(self, **page: Any) -> JsonObject: ...
+    def replay(self) -> JsonObject: ...
+    def close(self) -> None: ...
+
+
+class HTTPBackend(Protocol):
+    def ready(self) -> bool: ...
+    def metrics(self) -> JsonObject: ...
+    def dispatch(
+        self, method: str, path: str, grant: JsonObject, data: JsonObject | None
+    ) -> tuple[int, JsonObject]: ...

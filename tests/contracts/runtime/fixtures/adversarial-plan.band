@@ -1,0 +1,242 @@
+---
+name: adversarial-plan
+description: A plan owner gets a blind critique and then an attack from one adversary, then reports a verdict to the lead.
+engine: 0.2.0-lab.1
+version: 0.1.2
+roles: [lead, owner, adversary]
+---
+"""
+Two-round adversarial critique of one plan file (skills-review-20261014).
+Round 1 is blind: the adversary critiques the piece from its brief alone.
+Round 2 is an attack on the owner's updated plan. The adversary has the last
+word: after the attack the owner may only report to the lead. Long content
+lives in files; messages carry short summaries, counts and file references.
+Complete means the process finished, not that the plan is right.
+"""
+contract @12h => expired
+
+"""
+You are the lead (Ada). You do not take part in the rounds. You receive the
+owner's verdict, resolve disputes, and send product or security disputes to
+Eric with both positions quoted. Withdraw the session if the piece is dropped
+or must be reassigned.
+"""
+role lead
+
+"""
+You own one plan file. Write it from the template before round 1. Open round 1
+with the brief only and never point the adversary at your plan in round 1.
+Fold round 1 into the plan and its objections table, then send round 2. After
+the attack you may not reply to the adversary: report to the lead. Keep every
+message short (600 characters or fewer); put long content in files.
+"""
+role owner
+
+"""
+You are the hostile reviewer. Round 1: critique from the brief alone, do not
+read the owner's plan. Round 2: argue for the opposite verdict, name the user
+who loses, propose a cheaper option, and give each prior finding a status
+(agreed, conceded or disputed). Tag every finding [Critical], [Suggestion] or
+[Nit] with evidence and a fix. Write findings to the file the owner names; keep
+the reply to 900 characters or fewer. Acknowledge quickly; report progress if a
+round needs longer.
+"""
+role adversary
+
+"""
+The owner opens round 1: blind critique from the brief alone.
+"""
+type round1
+  """
+  Piece IDs covered by this session, for example S1 or S1,F5.
+  """
+  piece: text(bytes: 2..64, regex: ~r/([SF][1-7](,[SF][1-7])*|ROADMAP|ROOM)/)
+  """
+  Workspace path of the brief the adversary may read.
+  """
+  brief: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  """
+  Path the adversary must write its round-1 findings to.
+  """
+  findings: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  """
+  The round-1 task text, 600 characters or fewer.
+  """
+  text: text(bytes: 1..2400, graphemes: 1..600)
+
+"""
+The adversary acknowledges a round and is working on it.
+"""
+type ack
+  request: ref(round1|round2)
+
+"""
+A short progress note; it renews the current round's reply window.
+"""
+type progress
+  note: text(bytes: 1..800, graphemes: 1..200)
+
+"""
+Round-1 findings: file reference, per-tag counts and a short summary.
+"""
+type critique
+  request: ref(round1)
+  file: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  """
+  SHA-256 of the findings file's exact bytes when sent.
+  """
+  sha256: text(bytes: 64..64, regex: ~r/[0-9a-f]+/)
+  critical: integer(0..500)
+  suggestion: integer(0..500)
+  nit: integer(0..500)
+  text: text(bytes: 1..3600, graphemes: 1..900)
+
+"""
+The owner sends round 2 as a revision of the same session, after folding round 1.
+"""
+type round2
+  critique: ref(critique)
+  """
+  The updated plan the adversary must attack.
+  """
+  plan: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  plan_sha256: text(bytes: 64..64, regex: ~r/[0-9a-f]+/)
+  findings: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  text: text(bytes: 1..2400, graphemes: 1..600)
+
+"""
+Round-2 attack: the adversary's last word.
+"""
+type attack
+  request: ref(round2)
+  file: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  sha256: text(bytes: 64..64, regex: ~r/[0-9a-f]+/)
+  agreed: integer(0..500)
+  conceded: integer(0..500)
+  disputed: integer(0..500)
+  text: text(bytes: 1..3600, graphemes: 1..900)
+
+"""
+The owner's report to the lead after the attack.
+"""
+type verdict
+  attack: ref(attack)
+  """
+  One-line verdict.
+  """
+  line: text(bytes: 1..800, graphemes: 1..200)
+  plan: text(bytes: 1..512, regex: ~r/(~\/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\.md/)
+  plan_sha256: text(bytes: 64..64, regex: ~r/[0-9a-f]+/)
+  agreed: integer(0..500)
+  conceded: integer(0..500)
+  disputed: integer(0..500)
+  """
+  Who must settle the remaining disputes.
+  """
+  escalate: enum(none|ada|eric)
+
+"""
+Why the session stops early.
+"""
+type withdraw
+  reason: text(bytes: 1..800, graphemes: 1..200)
+
+"""
+The owner has written the plan and opens round 1 with the brief only.
+"""
+state new
+  """
+  Round 1 of 2 (blind). Read only the brief; do not open the owner's plan. Write tagged findings to the findings path, then deliver once.
+  """
+  owner -> adversary: round1() as r1 awaits round1
+    """
+    Round-1 findings arrived. Fold them into the plan and its objections table before round 2.
+    """
+    => critique(request=$r1) as c1 & folding
+     """
+     No critique within the hour, or the last progress note's hour.
+     """
+     | @1h & stalled
+
+"""
+Round 1, blind. Acknowledge within 15 minutes; the critique is due in 1 hour, renewable by progress notes up to the 4-hour round cap.
+"""
+state round1 @4h => stalled
+  """
+  Acknowledge the round-1 request within 15 minutes.
+  """
+  event adversary -> owner: ack(request=$r1) @15m => unacknowledged
+  """
+  A progress note extends the critique window by 1 hour from now, never past the 4-hour round cap.
+  """
+  event adversary -> owner: progress() => @self
+
+"""
+The owner folds round 1 into the plan and its objections table, then sends round 2 within 3 hours.
+"""
+state folding
+  """
+  Round 2 of 2. Attack the updated plan: argue the opposite verdict, name the user who loses, propose a cheaper option, and give each round-1 finding a status. You have the last word.
+  """
+  owner -> adversary: round2(critique=$c1) as r2 @3h awaits round2 | stalled
+    """
+    The adversary's last word. Do not reply to it; record each point as agreed, conceded or disputed and report to the lead.
+    """
+    => attack(request=$r2) as a2 & reporting
+     """
+     No attack within the hour, or the last progress note's hour.
+     """
+     | @1h & stalled
+
+"""
+Round 2, attack. Same acknowledgement and reply windows as round 1. The adversary has the last word.
+"""
+state round2 @4h => stalled
+  """
+  Acknowledge the round-2 request within 15 minutes.
+  """
+  event adversary -> owner: ack(request=$r2) @15m => unacknowledged
+  """
+  A progress note extends the attack window by 1 hour from now, never past the 4-hour round cap.
+  """
+  event adversary -> owner: progress() => @self
+
+"""
+The owner reports the verdict and counts to the lead within 1 hour. No reply to the adversary is allowed.
+"""
+state reporting
+  """
+  The owner's verdict: one line, the agreed/conceded/disputed counts and the plan file. Resolve disputes; send product or security disputes to Eric with both positions quoted.
+  """
+  owner -> lead: verdict(attack=$a2) @1h => complete | stalled
+
+anystate
+  """
+  The lead stops the session, for example to reassign the piece.
+  """
+  lead -> {owner,adversary}: withdraw() => withdrawn
+
+"""
+The verdict reached the lead through both rounds.
+"""
+end complete
+
+"""
+A round or the report missed its deadline; the lead decides how to recover.
+"""
+end stalled
+
+"""
+The adversary never acknowledged a round; reassign to a free adversary in a new session, or mark the plan unchallenged.
+"""
+end unacknowledged
+
+"""
+The lead stopped the session.
+"""
+end withdrawn
+
+"""
+The 12-hour whole-run clock ran out.
+"""
+end expired

@@ -1,0 +1,30 @@
+{
+  "unicode": "16.0.0",
+  "sources": [
+    {
+      "path": "GraphemeBreakProperty.txt",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/GraphemeBreakProperty.txt",
+      "sha256": "c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1"
+    },
+    {
+      "path": "GraphemeBreakTest.txt",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/GraphemeBreakTest.txt",
+      "sha256": "ee2b9354d270ac061b29f09662cafea06341d77e704b8cc6bd72aaeeda363cb5"
+    },
+    {
+      "path": "emoji-data.txt",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/emoji/emoji-data.txt",
+      "sha256": "f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a"
+    },
+    {
+      "path": "DerivedCoreProperties.txt",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/DerivedCoreProperties.txt",
+      "sha256": "39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd"
+    },
+    {
+      "path": "LICENSE.txt",
+      "url": "https://www.unicode.org/license.txt",
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96"
+    }
+  ]
+}

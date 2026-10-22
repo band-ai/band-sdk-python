@@ -1,0 +1,875 @@
+{
+  "profile": "band-contract/conformance-case/2",
+  "id": "h7-shared-namespace",
+  "requirements": [
+    "ENG-007",
+    "ENG-012"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: h7-shared-namespace\ndescription: A message ID belongs to one actor in the session-wide namespace.\nengine: 0.2.0-lab.1\nroles: [a, b]\n---\ncontract @infinity => expired\ntype notice\nstate new\n  event b -> a: notice()\n  event a -> b: notice()\nend expired\n",
+        "sha256": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee"
+      }
+    },
+    {
+      "op": "new",
+      "handle": "s",
+      "contract": "c",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "a": "A",
+          "b": "B"
+        },
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "A": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "B": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        },
+        "now": 0,
+        "max_messages": 10
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "B",
+      "now": 0,
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "A": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "B": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      },
+      "message": {
+        "id": "shared:X",
+        "session": "s",
+        "kind": "notice",
+        "payload": {}
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "A",
+      "now": 0,
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "A": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "B": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      },
+      "message": {
+        "id": "shared:X",
+        "session": "s",
+        "kind": "notice",
+        "payload": {}
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "B",
+      "now": 0,
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "A": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "B": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      },
+      "message": {
+        "id": "shared:X",
+        "session": "s",
+        "kind": "notice",
+        "payload": {}
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "A",
+      "now": 0,
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "A": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "B": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      },
+      "message": {
+        "id": "independent:Y",
+        "session": "s",
+        "kind": "notice",
+        "payload": {}
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "A message ID belongs to one actor in the session-wide namespace.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "h7-shared-namespace",
+          "roles": [
+            "a",
+            "b"
+          ],
+          "version": null
+        },
+        "digest": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "meta": {
+          "doc": null,
+          "line": 1
+        },
+        "name": "h7-shared-namespace",
+        "role_metadata": {
+          "a": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "a"
+          },
+          "b": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "b"
+          }
+        },
+        "roles": [
+          "a",
+          "b"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": null,
+              "line": 3
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "b"
+                ],
+                "id": "rule-0",
+                "kind": "notice",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 4
+                },
+                "target": null,
+                "to": [
+                  "a"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "a"
+                ],
+                "id": "rule-1",
+                "kind": "notice",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 5
+                },
+                "target": null,
+                "to": [
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": null,
+              "line": 6
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "notice": {
+            "fields": {},
+            "meta": {
+              "doc": null,
+              "line": 2
+            },
+            "name": "notice"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "profile": "band-contract/state/2",
+        "source": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee",
+        "state": {
+          "bindings": {
+            "a": "A",
+            "b": "B"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 10,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "B",
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "id": "shared:X",
+        "kind": "notice",
+        "metadata": {
+          "doc": null,
+          "line": 4
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "A"
+        ],
+        "role": "b",
+        "session": "s",
+        "state": "new",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "profile": "band-contract/state/2",
+        "source": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee",
+        "state": {
+          "bindings": {
+            "a": "A",
+            "b": "B"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "shared:X": {
+              "actor": "B",
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "payload": {},
+              "recipients": [
+                "A"
+              ],
+              "role": "b",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "role": "b",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 10,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "shared:X": {
+              "decision": {
+                "actor": "B",
+                "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+                "id": "shared:X",
+                "kind": "notice",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "A"
+                ],
+                "role": "b",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "66cf441ed1d9f43c4009ab8393347db8ddc12bff3b49cd45714c4b469bc5c822"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "id_conflict",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "profile": "band-contract/state/2",
+        "source": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee",
+        "state": {
+          "bindings": {
+            "a": "A",
+            "b": "B"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "shared:X": {
+              "actor": "B",
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "payload": {},
+              "recipients": [
+                "A"
+              ],
+              "role": "b",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "role": "b",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 10,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "shared:X": {
+              "decision": {
+                "actor": "B",
+                "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+                "id": "shared:X",
+                "kind": "notice",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "A"
+                ],
+                "role": "b",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "66cf441ed1d9f43c4009ab8393347db8ddc12bff3b49cd45714c4b469bc5c822"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "original": {
+          "actor": "B",
+          "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+          "id": "shared:X",
+          "kind": "notice",
+          "metadata": {
+            "doc": null,
+            "line": 4
+          },
+          "outcome": null,
+          "payload": {},
+          "recipients": [
+            "A"
+          ],
+          "role": "b",
+          "session": "s",
+          "state": "new",
+          "status": "accepted",
+          "version": 1
+        },
+        "status": "duplicate"
+      },
+      "state": {
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "profile": "band-contract/state/2",
+        "source": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee",
+        "state": {
+          "bindings": {
+            "a": "A",
+            "b": "B"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "shared:X": {
+              "actor": "B",
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "payload": {},
+              "recipients": [
+                "A"
+              ],
+              "role": "b",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "role": "b",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 10,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "shared:X": {
+              "decision": {
+                "actor": "B",
+                "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+                "id": "shared:X",
+                "kind": "notice",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "A"
+                ],
+                "role": "b",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "66cf441ed1d9f43c4009ab8393347db8ddc12bff3b49cd45714c4b469bc5c822"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "A",
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "id": "independent:Y",
+        "kind": "notice",
+        "metadata": {
+          "doc": null,
+          "line": 5
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "B"
+        ],
+        "role": "a",
+        "session": "s",
+        "state": "new",
+        "status": "accepted",
+        "version": 2
+      },
+      "state": {
+        "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+        "profile": "band-contract/state/2",
+        "source": "307cce89d7252f67f8a4d106ff0fc2d37c5ce0dbb4fe65362f921d8ab71a19ee",
+        "state": {
+          "bindings": {
+            "a": "A",
+            "b": "B"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "independent:Y": {
+              "actor": "A",
+              "at": 0,
+              "id": "independent:Y",
+              "kind": "notice",
+              "payload": {},
+              "recipients": [
+                "B"
+              ],
+              "role": "a",
+              "rule": "rule-1"
+            },
+            "shared:X": {
+              "actor": "B",
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "payload": {},
+              "recipients": [
+                "A"
+              ],
+              "role": "b",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "shared:X",
+              "kind": "notice",
+              "role": "b",
+              "type": "accepted"
+            },
+            {
+              "at": 0,
+              "id": "independent:Y",
+              "kind": "notice",
+              "role": "a",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": null,
+          "max_bytes": 16384,
+          "max_messages": 10,
+          "mentions_used": 2,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "independent:Y": {
+              "decision": {
+                "actor": "A",
+                "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+                "id": "independent:Y",
+                "kind": "notice",
+                "metadata": {
+                  "doc": null,
+                  "line": 5
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "B"
+                ],
+                "role": "a",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "dc3ce7c5fbdba80c7b9ff59c3a7fa1c8ef7ed579e4074ad22fd9d53c03caeb29"
+            },
+            "shared:X": {
+              "decision": {
+                "actor": "B",
+                "definition": "a714bb1fd1c48109d363acff3943dd716019deff20c3d82a50a7816113aed32b",
+                "id": "shared:X",
+                "kind": "notice",
+                "metadata": {
+                  "doc": null,
+                  "line": 4
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "A"
+                ],
+                "role": "b",
+                "session": "s",
+                "state": "new",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "66cf441ed1d9f43c4009ab8393347db8ddc12bff3b49cd45714c4b469bc5c822"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 2,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "profile": "band-conformance/pin-supersessions/1",
+  "baseline_sha256": "f2f62ddc8ae231d23da58354f32ccb48ceeb6452d2a109232f95117131e27cb0",
+  "authority": {
+    "approver": "Rowan",
+    "protocol": "band.assignment/0.4",
+    "session": "fqfv32o5mrxs2",
+    "operation": "op-st4fwhnd",
+    "attempt": 1,
+    "parent_session": "5643yyhr3xqi2",
+    "decision": "Accept the approved X1 L7 service_tier default changes for only openai-request.json and openai-result.json and their manifest entries; preserve all original baseline bytes and assertions."
+  },
+  "source_commit": "bfe5cc18e8ae14dfe6c9af19f799d20642af54a2",
+  "source_integration_commit": "309015b4dd3e903537564ec50b73afac14dc6624",
+  "reason": "X1 L7 binds provider estimates to the requested and served default service tier. No provider rollback or other baseline fixture change is authorized.",
+  "files": {
+    "openai-request.json": {
+      "old_sha256": "c09868cc3b34ffec491a55b2728148ba944bbbe6ad7a18bde02adc90181b141c",
+      "new_sha256": "76a289b52c005b0debe10c171423df364be4cd0b5b70af312407dd59b944f617"
+    },
+    "openai-result.json": {
+      "old_sha256": "b63aa68013a14e2401981eded6f55dad1c7395bef3c806d9aa22ca57b1135159",
+      "new_sha256": "6766ed903c0a90d231d64d82600b539b22c0726dc91ba8b8e45f8a849a6075fe"
+    }
+  },
+  "manifest": [
+    {
+      "kind": "artifacts",
+      "old": {
+        "path": "openai-request.json",
+        "schema": "openai_request",
+        "requirements": [
+          "LLM-007"
+        ],
+        "sha256": "c09868cc3b34ffec491a55b2728148ba944bbbe6ad7a18bde02adc90181b141c"
+      },
+      "new": {
+        "path": "openai-request.json",
+        "schema": "openai_request",
+        "requirements": [
+          "LLM-007"
+        ],
+        "sha256": "76a289b52c005b0debe10c171423df364be4cd0b5b70af312407dd59b944f617"
+      }
+    },
+    {
+      "kind": "artifacts",
+      "old": {
+        "path": "openai-result.json",
+        "schema": "openai_result",
+        "requirements": [
+          "LLM-007"
+        ],
+        "sha256": "b63aa68013a14e2401981eded6f55dad1c7395bef3c806d9aa22ca57b1135159"
+      },
+      "new": {
+        "path": "openai-result.json",
+        "schema": "openai_result",
+        "requirements": [
+          "LLM-007"
+        ],
+        "sha256": "6766ed903c0a90d231d64d82600b539b22c0726dc91ba8b8e45f8a849a6075fe"
+      }
+    }
+  ]
+}

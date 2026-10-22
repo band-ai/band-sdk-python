@@ -1,0 +1,39 @@
+{
+  "profile": "band-contract/system-requirements/1",
+  "supported_target": {
+    "os": "Linux",
+    "python": ">=3.12,<3.13",
+    "storage": "local filesystem with SQLite WAL/fsync and flock",
+    "isolation": [
+      "bubblewrap namespaces",
+      "libseccomp deny policy"
+    ],
+    "elixir": ">=1.18,<2",
+    "erlang": ">=27.3.4.17,<28",
+    "unicode_graphemes": "16.0.0",
+    "yaml_elixir": [
+      "2.9.0 (Band lockfile)",
+      "2.12.2 (standalone lockfile)"
+    ]
+  },
+  "observed_reference_host": {
+    "distribution": "Ubuntu 24.04.5 LTS",
+    "machine": "x86_64",
+    "kernel": "7.0.0-34-generic",
+    "python": "3.12.3",
+    "sqlite": "3.45.1",
+    "tls": "OpenSSL 3.0.13 30 Jan 2024",
+    "packages": {
+      "bubblewrap": "0.9.0-1ubuntu0.3",
+      "ca-certificates": "20260601~24.04.1",
+      "libc6": "2.39-0ubuntu8.9",
+      "libpython3.12-stdlib": "3.12.3-1ubuntu0.17",
+      "libseccomp2": "2.5.5-1ubuntu3.1",
+      "libsqlite3-0": "3.45.1-1ubuntu2.8",
+      "libssl3t64": "3.0.13-0ubuntu3.16",
+      "openssl": "3.0.13-0ubuntu3.16",
+      "python3.12": "3.12.3-1ubuntu0.17"
+    }
+  },
+  "qualification": "This records the development host, not a completed release/deployment qualification."
+}

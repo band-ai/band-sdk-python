@@ -1,0 +1,552 @@
+{
+  "profile": "band-contract/requirements/2",
+  "engine": "0.2.0-lab.1",
+  "requirements": [
+    {
+      "id": "V2-ID",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "file-identity.md",
+      "statement": "A session MUST pin the exact UTF-8 file hash; author version does not upgrade a session.",
+      "acceptance": [
+        "Compile the same bytes twice and get the same SHA-256 pin; change one byte, including only the author version, and get a different pin.",
+        "Restore a session against a file whose hash differs from its pin and observe rejection; the session is never upgraded in place."
+      ]
+    },
+    {
+      "id": "V2-FAIL-CLOSED",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "README.md",
+      "statement": "Unknown engine identifiers and unsupported state, checkpoint or view profiles MUST be rejected; implementations MUST NOT infer a profile from field shape.",
+      "acceptance": [
+        "Compile a source with an unknown engine identifier and observe rejection.",
+        "Restore a checkpoint or read a view with an unsupported state, checkpoint or view profile and observe rejection.",
+        "Restore a checkpoint labelled state/2 that carries state/4 members and observe rejection, not a profile inferred from field shape."
+      ]
+    },
+    {
+      "id": "V2-TEXT",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "text-v2.md",
+      "statement": "Every text field MUST have a UTF-8 byte bound; grapheme bounds are optional additional constraints.",
+      "acceptance": [
+        "Compile text fields with omitted, infinite, reversed, overflowing and grapheme-only byte bounds and observe each rejected.",
+        "Admit a payload at exactly the byte bound and reject one byte more, including multibyte UTF-8 at the boundary.",
+        "When a grapheme bound is declared, enforce it in addition to the byte bound."
+      ]
+    },
+    {
+      "id": "V2-PATTERN",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "safe-patterns.md",
+      "statement": "Authored patterns MUST use the bounded DFA profile and MUST NOT execute a backtracking matcher.",
+      "acceptance": [
+        "Compile patterns outside the bounded DFA profile or over the compile limits and observe rejection.",
+        "Match admitted and rejected payloads within the documented work limits, with no backtracking matcher on the path."
+      ]
+    },
+    {
+      "id": "V2-PATTERN-LITERAL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "safe-patterns.md",
+      "statement": "Patterns MUST be raw ~r literals that preserve pattern bytes; uppercase ~R and quoted-string patterns are syntax errors.",
+      "acceptance": [
+        "Compile ~r literals with each accepted delimiter and confirm the stored pattern bytes equal the authored bytes; a single backslash stays single.",
+        "Compile an uppercase ~R literal and a quoted-string pattern and observe syntax errors."
+      ]
+    },
+    {
+      "id": "V2-PROMPT",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "multi-agent-skills.md",
+      "statement": "Ordinary one-line and multiline strings MUST attach prompt metadata to the next item, preserve it in agent views, and never become executable admission predicates.",
+      "acceptance": [
+        "Attach one-line and multiline strings to a role, type, state and rule, and find each in queries and the agent view.",
+        "Add or remove prompt strings and confirm the behavior digest and admission decisions do not change."
+      ]
+    },
+    {
+      "id": "V2-DOC-SIGIL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "sigils-v2.md",
+      "statement": "Raw ~s documentation MUST preserve literal contents and query metadata without evaluating expressions or changing existing session pins; uppercase ~S is a syntax error.",
+      "acceptance": [
+        "Query ~s documentation that contains expression-like text and get the literal bytes back unevaluated.",
+        "Change only ~s text: behavior is unchanged, the file pin changes and existing sessions keep their pin.",
+        "Compile an uppercase ~S literal and observe a syntax error."
+      ]
+    },
+    {
+      "id": "V2-WORD-SIGIL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "sigils-v2.md",
+      "statement": "Raw ~w lists MUST preserve ordered names and existing enum, reference and selected-role semantics without creating atoms or changing existing session pins; uppercase ~W is a syntax error.",
+      "acceptance": [
+        "Use ~w for an enum, a reference type list and a role group, and confirm order and semantics equal the plain-list form.",
+        "Confirm ~w names create no atoms or symbols, including on rejected input.",
+        "Compile an uppercase ~W literal and observe a syntax error."
+      ]
+    },
+    {
+      "id": "V2-LOWERCASE",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "lowercase-v2.md",
+      "statement": "Body keywords and rule options MUST be lowercase; uppercase aliases and plus-prefixed declarations are syntax errors, identifiers and literal contents are never rewritten.",
+      "acceptance": [
+        "Compile uppercase body keywords, uppercase rule options and plus-prefixed declarations and observe syntax errors.",
+        "Confirm identifiers and literal contents that contain uppercase characters are preserved byte for byte."
+      ]
+    },
+    {
+      "id": "V2-ENTRY",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "lifecycle-v2.md",
+      "statement": "The compiler MUST reject every transition back to new.",
+      "acceptance": [
+        "Compile every transition form whose target is new and observe rejection."
+      ]
+    },
+    {
+      "id": "V2-DUE",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "lifecycle-v2.md",
+      "statement": "The due ... with ... in form is a syntax error; a duty MUST be written as @duration on the transition or event rule that discharges it.",
+      "acceptance": [
+        "Compile the due ... with ... in form and observe a syntax error.",
+        "Compile a duty written as @duration on the discharging transition or event rule and find the derived duty in the compiled contract."
+      ]
+    },
+    {
+      "id": "V2-TIMED-RULE",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "timeouts-v2.md",
+      "statement": "A state-local timed transition or timed event MUST derive a matching duty; each requires all senders and its absence permits any sender. A timed event never transitions.",
+      "acceptance": [
+        "Compile a state-local timed transition and a timed event and confirm each derives a matching duty that requires all senders.",
+        "Confirm a rule without a duration permits any sender and a timed event never transitions."
+      ]
+    },
+    {
+      "id": "V2-TIMEOUT-SCOPES",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "timeouts-v2.md",
+      "statement": "State caps MUST use saved entry time and whole-run caps MUST use creation time; retries and restore MUST NOT reset either clock.",
+      "acceptance": [
+        "Expire a state cap from its saved entry time and a whole-run cap from creation time, including the initial wait.",
+        "Restart and retry before expiry and confirm neither clock resets."
+      ]
+    },
+    {
+      "id": "V2-TIE-ORDER",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "timeouts-v2.md",
+      "statement": "Timers due at the same instant MUST fire in the equal-time order: work duty, collection deadline, offline grace, state timeout, host trigger, whole-run cap; IDs compare lexicographically within a category, so due-10 fires before due-2.",
+      "acceptance": [
+        "Make duties due-2 and due-10 fall due at the same instant and confirm due-10 fires first, not the lower number or the earlier declaration.",
+        "Make timers of each adjacent category pair fall due together and confirm the category order, with the remaining due timers cascading before any proposal is admitted."
+      ]
+    },
+    {
+      "id": "V2-RENEWAL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "renewable-timeouts.md",
+      "statement": "A renewable contract clock MUST keep its current window max_at apart from its fixed maximum clocks.hard_at: an accepted renewal sets max_at to the earlier of acceptance time plus the window and hard_at, nothing moves hard_at, admission tests new duties against max_at, restore reconstructs both, and an infinite window with a finite maximum fails compilation.",
+      "acceptance": [
+        "Renew a contract @W max @M window and confirm max_at moves to acceptance plus W while clocks.hard_at stays at creation plus M, including after restore.",
+        "Introduce a duty that does not fit before max_at and observe insufficient_time; one that fits is accepted.",
+        "Compile contract @infinity max @M and observe a duration error at the contract line."
+      ]
+    },
+    {
+      "id": "V2-RENEWAL-FIT",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "renewable-timeouts.md",
+      "statement": "Only a sender that still waits MUST be able to renew a rule or collection, and the renewal MUST leave the state it leads to a whole window before max_at; a settled member is refused already_contributed and a renewal that does not fit is refused insufficient_time.",
+      "acceptance": [
+        "Ask a collection member that already replied to renew and observe already_contributed.",
+        "Renew a collection so its close would leave the untimed next state less than a whole window before max_at and observe insufficient_time, with the deadline left at the last renewal that fit."
+      ]
+    },
+    {
+      "id": "V2-TIMER-TARGET",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2"
+      ],
+      "specification": "renewable-timeouts.md",
+      "statement": "A misplaced renewal target MUST fail compilation with timer_target at its rule, including @state in a state without a declared clock and @contract unless the contract line declares a finite window with max.",
+      "acceptance": [
+        "Compile @state in a state without a declared clock and observe timer_target at that rule's line.",
+        "Compile @contract under contract @30m and under contract @infinity and observe timer_target at that rule's line."
+      ]
+    },
+    {
+      "id": "V2-TIMED-RENEWAL",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "renewable-timeouts.md",
+      "statement": "A timed event that ends with @self MUST compile to one rule carrying its own derived duty and an @self renewal of the immediately following timed rule or collect; an accepted event MUST discharge that duty and renew that target, and silence MUST still end the session with the event outcome at its deadline.",
+      "acceptance": [
+        "Compile event x -> y: k() @15m => outcome @self directly before a timed rule and confirm one event rule carries both the derived duty and an @self reset that names the following rule.",
+        "Accept that event before its deadline and confirm the session outlives the event deadline and the following duty falls due one window after the acceptance; send nothing and observe the event outcome at its deadline."
+      ]
+    },
+    {
+      "id": "V2-DEFAULTS",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "defaults-v2.md",
+      "statement": "Every contract MUST declare a whole-run clock, contract @<duration> or the explicit contract @infinity opt-out; a missing clock fails compilation with contract_clock_required. There is no generic idle expiry.",
+      "acceptance": [
+        "Compile a contract without a clock and observe contract_clock_required; compile contract @infinity => expired and observe success.",
+        "Leave a session idle and confirm no generic idle expiry occurs."
+      ]
+    },
+    {
+      "id": "V2-CAPACITY",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "defaults-v2.md",
+      "statement": "Admission MUST preserve known remaining duty message capacity; mention caps apply per message, with no session budget.",
+      "acceptance": [
+        "Refuse new work when the remaining duty message capacity cannot fit the owed answer.",
+        "Apply a contract-level mention cap and a rule override per message and confirm there is no session mention budget."
+      ]
+    },
+    {
+      "id": "V2-HUMAN",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-room/1"
+      ],
+      "specification": "agents-and-extensions.md",
+      "statement": "Humans and agent-human conversation MUST remain outside contract admission.",
+      "acceptance": [
+        "Bind a human to a contract role at creation and on a step and observe refusal.",
+        "Exchange agent-human messages and confirm they never enter contract admission."
+      ]
+    },
+    {
+      "id": "V2-POLICY",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-room/1"
+      ],
+      "specification": "agents-and-extensions.md",
+      "statement": "The host MUST verify agent bindings and current protected room assignments.",
+      "acceptance": [
+        "Omit fresh trusted room policy at creation, on a step, on an exact retry and on a view, and observe refusal.",
+        "Use a revoked member and a mismatched fixed role assignment and observe a refusal that admits nothing.",
+        "Supply empty, mixed and unknown policy evidence and observe a fail-closed refusal."
+      ]
+    },
+    {
+      "id": "V2-EXT",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2"
+      ],
+      "specification": "agents-and-extensions.md",
+      "statement": "Every declared extension MUST be explicitly supported by the host.",
+      "acceptance": [
+        "Declare an extension the host does not support and observe unsupported_extension at creation.",
+        "Send a host event whose kind needs an extension the session did not enable and observe unsupported_extension."
+      ]
+    },
+    {
+      "id": "V2-PRESENCE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "host-signals.md",
+      "statement": "Presence continuity MUST survive restart and MUST be interrupted by unknown or online observations.",
+      "acceptance": [
+        "Restart during an offline dwell and confirm the dwell transition fires at its original time.",
+        "Observe online, and separately unknown, during a dwell; each interrupts continuity and a later offline starts a new period."
+      ]
+    },
+    {
+      "id": "V2-REMOVAL",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "host-signals.md",
+      "statement": "With host.membership/1 enabled, removal of a bound agent MUST terminate the session immediately.",
+      "acceptance": [
+        "With host.membership/1, remove a bound agent and confirm immediate termination, including when only the final control record remains.",
+        "Without host.membership/1, confirm a membership event is refused with unsupported_extension."
+      ]
+    },
+    {
+      "id": "V2-CONTROL",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "host-signals.md",
+      "statement": "Presence and membership host events MUST use independent bounded control accounting (max_controls) with a reserved terminal record; contribution controls never consume it.",
+      "acceptance": [
+        "Create with max_controls outside 0-1024, or below 2 with a signal extension, and observe control_budget_required.",
+        "Spend control records with presence or membership events until only the final record remains; the next non-removal event is rejected with control_capacity and records control_capacity_exhausted.",
+        "Retry an exact host event and confirm it consumes no further record."
+      ]
+    },
+    {
+      "id": "V2-HOST-ORDER",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "host-signals.md",
+      "statement": "Host events MUST pass the documented check order: sequences strictly increase from signal_revision (1 after an initial_presence snapshot, otherwise 0), an older or equal sequence or a reducer time behind the stored now is stale_host_event, and a changed event under an accepted ID is id_conflict. A rejection before the timer step leaves the state unchanged; a terminal rejection returns the state after the elapsed timers, and a control_capacity rejection appends the exhaustion record.",
+      "acceptance": [
+        "With an initial_presence snapshot, send sequence 1 and observe stale_host_event, then sequence 2 accepted; without a snapshot, sequence 1 is accepted.",
+        "Send an equal sequence, an older sequence, and an event whose reducer time is behind the stored now, and observe stale_host_event for each.",
+        "Send a changed event under an accepted ID and observe id_conflict.",
+        "Confirm each rejection before the timer step, such as stale_host_event and id_conflict, leaves the whole state unchanged.",
+        "Send a host event after an elapsed timer ended the session and observe terminal with the state those timers produced; a control_capacity rejection instead appends the exhaustion record."
+      ]
+    },
+    {
+      "id": "V2-RESTORE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1"
+      ],
+      "specification": "host-signals.md",
+      "statement": "Profile 2 checkpoints MUST preserve exact identity, original duties, host sequence and control receipts.",
+      "acceptance": [
+        "Checkpoint and restore mid-session and confirm file identity, original duties, host sequence and control receipts are preserved exactly.",
+        "Retry an exact host event after restore and confirm the original receipt is returned."
+      ]
+    },
+    {
+      "id": "V2-ROSTER",
+      "level": "MUST",
+      "profiles": [
+        "compiler/2",
+        "session-engine/2",
+        "band-contract/roster/1",
+        "band-contract/roster/2"
+      ],
+      "specification": "coordination.md",
+      "statement": "A roster MUST be immutable for its run; actor IDs MUST be unique across all roles and groups, and an empty collection is rejected.",
+      "acceptance": [
+        "Create a session with an actor ID repeated across roles or groups, and one with an empty collection, and observe each rejected.",
+        "Restore a typed roster and confirm attributes are revalidated, the roster is re-instantiated and the binding match is verified."
+      ]
+    },
+    {
+      "id": "V2-COLLECTION",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1",
+        "band-contract/collection/1",
+        "band-contract/collection/2"
+      ],
+      "specification": "coordination.md",
+      "statement": "A collection result MUST record each member's status and closing reason; partial or zero success does not by itself fail the session, and closed results survive later states and portable recovery.",
+      "acceptance": [
+        "Close a collection by settlement, by deadline and by offline grace, and confirm each member status, settlement time and reason.",
+        "Close a collection with zero successes and confirm the session stays active.",
+        "Restore after close and confirm the result is unchanged and a reconnect does not reopen it."
+      ]
+    },
+    {
+      "id": "V2-REPORT-VISIBILITY",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-contract/collection/2"
+      ],
+      "specification": "coordination.md",
+      "statement": "A collection's receivers MUST see every accepted report; a contributor's role view MUST show only its own status and facts, never another contributor's report.",
+      "acceptance": [
+        "Confirm a collection receiver's view shows an accepted report's payload.",
+        "Confirm another contributor's view does not list that report."
+      ]
+    },
+    {
+      "id": "V2-CONTRIBUTION",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "band-contract/contribution/1",
+        "band-contract/collection/2"
+      ],
+      "specification": "contribution-outcomes.md",
+      "statement": "With room.contributions/1 enabled before creation, a member stop or host failure report MUST identify the active collection entry and a pending member; it settles that member as failed with its original cause, never as a business message.",
+      "acceptance": [
+        "Confirm a member can stop its own contribution but not another member's.",
+        "Send reports for a wrong session, a stale round, an unrelated member and an already-settled contribution and observe each rejected.",
+        "At the exact deadline the deadline settles first; whichever of a reply or a terminal failure wins first cannot be replaced.",
+        "Retry an exact control before and after restart and confirm a single receipt with the original cause."
+      ]
+    },
+    {
+      "id": "V2-STATE5",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2",
+        "durable-room/1",
+        "band-contract/contribution/1"
+      ],
+      "specification": "contribution-outcomes.md",
+      "statement": "Sessions with room.contributions/1 MUST persist band-contract/state/5; a reader that does not support the contribution feature or state/5 MUST reject them instead of dropping fields.",
+      "acceptance": [
+        "Export and restore a state/5 checkpoint and confirm member statuses, failure causes and control receipts survive.",
+        "Give contribution compiled data and a state/5 checkpoint to a reader without that support and observe rejection."
+      ]
+    },
+    {
+      "id": "V2-ID-NAMESPACE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "Message IDs MUST share one session-wide namespace: another actor's reuse of an accepted ID is id_conflict, changes no state and cannot claim the original actor's duplicate receipt.",
+      "acceptance": [
+        "After actor B's ID X is accepted, send actor A's proposal with X and observe id_conflict with the state unchanged.",
+        "Retry B's exact envelope and confirm the duplicate returns B's original receipt."
+      ]
+    },
+    {
+      "id": "V2-CONFIG",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "The session config MUST be closed: any member other than the documented config members fails creation with invalid_config before the other creation checks, and a misspelled member is never replaced by a default.",
+      "acceptance": [
+        "Create with a misspelled cap key and observe invalid_config, and confirm the config schema rejects it."
+      ]
+    },
+    {
+      "id": "V2-REFERENCE",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "A field=$binding reference MUST name the currently bound fact, and its sender MUST be that fact's author or an accepted recipient; a bound ID the sender can read but never received is rejected with reference.",
+      "acceptance": [
+        "Reference a bound fact from a participant that neither authored nor received it and observe reference with the version unchanged.",
+        "Reference the same fact from its recipient and observe acceptance."
+      ]
+    },
+    {
+      "id": "V2-VERSION",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "The state version MUST count durable records, not transitions: one per accepted fact, host-control record, collection log row and the expiry; entering a state adds nothing and restore verifies the count.",
+      "acceptance": [
+        "Settle a collection's last member with a reply and confirm the version adds the fact and the round close.",
+        "Accept presence reports and a fired host trigger and confirm each adds one, while entering the paused state adds nothing."
+      ]
+    },
+    {
+      "id": "V2-PREFLIGHT",
+      "level": "MUST",
+      "profiles": [
+        "session-engine/2"
+      ],
+      "specification": "engine.md",
+      "statement": "An agent's optional local check MUST run the reducer on its verified agent-view projection and discard the candidate state; a local acceptance still requires final room admission.",
+      "acceptance": [
+        "Run the optional checker on a contributor's agent-view projection with a legal reply and confirm accepted."
+      ]
+    },
+    {
+      "id": "V2-ROOM-SHARE",
+      "level": "MUST",
+      "profiles": [
+        "room-events/1"
+      ],
+      "specification": "engine.md",
+      "statement": "Optional per-actor room-event shares MUST default to the room-wide limits; a sender past its event or mention share is refused room_budget and one holding its receipt share retention_limit, while the room-wide limits still apply and the event and mention shares reset with the window.",
+      "acceptance": [
+        "With per-actor shares, a sender past its event share gets room_budget while another sender is accepted; after the window resets it may send again, and a sender holding its receipt share gets retention_limit.",
+        "Without per-actor shares, one sender may use the whole room-wide window, and the room-wide limit refuses the next event with room_budget.",
+        "A fan-out past the sender's mention share gets room_budget while another sender's event is accepted."
+      ]
+    }
+  ]
+}

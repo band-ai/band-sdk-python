@@ -1,0 +1,40 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-undeclared-supplied-source",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "email/1",
+        "fields": {
+          "id": "header:Message-ID",
+          "session": "header:X-Band-Session",
+          "kind": "header:X-Band-Kind",
+          "expected_version": "header:X-Band-Version"
+        }
+      },
+      "transport": {
+        "header:Undeclared": "m"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "error": "transport_fields"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": "transport_fields"
+    }
+  ]
+}

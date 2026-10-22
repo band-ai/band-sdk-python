@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+usage() {
+  echo 'Usage: contract-engine CONTRACT_PATH [frontmatter|standard|file-source]' >&2
+  exit 2
+}
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  usage
+fi
+BAND_CONTRACT_SOURCE=$1
+BAND_CONTRACT_FORMAT=${2-frontmatter}
+case "$BAND_CONTRACT_FORMAT" in
+  frontmatter|standard|file-source) ;;
+  *) usage ;;
+esac
+export BAND_CONTRACT_SOURCE BAND_CONTRACT_FORMAT
+export RELEASE_DISTRIBUTION=none
+export ERL_CRASH_DUMP=/dev/null
+release_bin=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$release_bin/contract_engine" eval 'ContractLab.Endpoint.run_from_env()'

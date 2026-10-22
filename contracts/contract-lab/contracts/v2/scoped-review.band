@@ -1,0 +1,96 @@
+---
+name: scoped-review
+description: Collect a review, then decide whether to accept it or request another round.
+engine: 0.2.0-lab.1
+roles: [lead, reviewer]
+---
+"""
+Every run has thirty minutes, including all review rounds.
+"""
+contract @30m => expired
+
+"""
+Scope the review clearly. After each report, accept it or ask for one more
+round with a specific reason; at most three rounds fit.
+"""
+role lead
+
+"""
+Review what the request scopes. In a later round, address the lead's reason
+and say what changed since your last report.
+"""
+role reviewer
+
+"""
+The change to review, its scope and the question to answer.
+"""
+type request
+  text: text(1..2000)
+
+"""
+Findings with evidence, the scope checked and remaining uncertainty. Set request to the request
+this reviews; a review of an earlier round is refused.
+"""
+type review
+  request: ref(request)
+  text: text(1..4000)
+
+"""
+The lead accepts the latest report. This ends the review; it does not approve the change.
+"""
+type accept
+
+"""
+The lead opens the review.
+"""
+state new
+  """
+  Send the scoped request. The reviewer then owes one report on it.
+  """
+  lead -> reviewer: request() awaits reviewing
+    """
+    Report within five minutes of the request.
+    """
+    => review() & deciding
+     """
+     No report arrived within five minutes of the request.
+     """
+     | @5m & review_missing
+
+"""
+The reviewer reports within five minutes. A fourth entry ends the run as exhausted.
+"""
+state reviewing max_entries 3 => exhausted
+
+"""
+The lead may accept or request another round; either exit must happen in two minutes.
+"""
+state deciding @2m => undecided
+  """
+  Accept the latest report.
+  """
+  lead -> reviewer: accept() => collected
+  """
+  Ask for another round: resend the request with the reason and what to look at again.
+  """
+  lead -> reviewer: request() => reviewing
+
+"""
+The lead accepted a report. Acting on it is a separate decision.
+"""
+end collected
+
+"""
+The reviewer missed the five-minute window.
+"""
+end review_missing
+
+"""
+The lead did not decide within two minutes of a report.
+"""
+end undecided
+
+"""
+Three rounds were used without acceptance; keep the last report for recovery.
+"""
+end exhausted

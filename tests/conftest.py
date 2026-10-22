@@ -72,6 +72,15 @@ from tests.paths import ENV_TEST_FILE
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
 pytest_plugins = ["pytester"]
 
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.getgroup("contracts").addoption(
+        "--contract-qualification",
+        action="store_true",
+        help="Fail collection when a selected contract test lacks a native prerequisite.",
+    )
+
+
 # Env-var prefixes that adapter config classes (CodexAdapterConfig,
 # LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
 _ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")

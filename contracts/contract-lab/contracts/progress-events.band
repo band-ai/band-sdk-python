@@ -1,0 +1,82 @@
+---
+name: progress-events
+description: Test progress events with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+"""
+The lead starts one piece of work. The worker may report progress, and must finish within ten
+minutes of starting.
+"""
+contract @4h mentions 1 => expired
+
+"""
+You are the lead. Start the work, read the progress reports, and wait for the finish.
+"""
+role lead
+
+"""
+You are the worker. Report progress as a percentage while you work, and send finish within ten
+minutes. Progress does not give you more time.
+"""
+role worker
+
+"""
+Start the work.
+"""
+type start
+
+"""
+Report how far along the work is, as a whole percentage.
+"""
+type progress
+  percent: integer(0..100)
+
+"""
+The work is finished. Set start to the start this finishes.
+"""
+type finish
+  start: ref(start)
+
+"""
+The lead has not started the work yet. Send start.
+"""
+state new
+  """
+  Start the work. The worker then owes one finish.
+  """
+  lead -> worker: start() awaits working
+    """
+    The worker finishes within ten minutes of the start.
+    """
+    => finish() & complete
+     """
+     No finish arrived within ten minutes of the start.
+     """
+     | @10m & stalled
+
+"""
+The worker is working and owes finish within ten minutes; progress reports are optional.
+"""
+state working
+
+"""
+Progress can be reported in any active state; it never extends a state deadline.
+"""
+anystate
+  event worker -> lead: progress()
+
+"""
+The worker finished. Send nothing more.
+"""
+end complete
+
+"""
+The worker did not finish within ten minutes. Stop, and report where the work stands.
+"""
+end stalled
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

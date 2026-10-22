@@ -1,0 +1,25 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "wire-6",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"id\":\"m\",\"kind\":\"k\",\"payload\":{}} trailing"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error",
+      "equals": "json"
+    }
+  ],
+  "expected": [
+    {
+      "error": "json"
+    }
+  ]
+}

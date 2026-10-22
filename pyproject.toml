@@ -29,6 +29,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
     "pydantic-settings>=2.0.0",
+    "httpx>=0.24.0",
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
     "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
@@ -37,6 +38,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+contracts = ["jsonschema==4.26.0"]
 logging = [
     # 3.1.0 moved pythonjsonlogger.jsonlogger to pythonjsonlogger.json, which is
     # the module the JSON formatter is configured against.
@@ -269,6 +271,7 @@ dev = [
     "pre-commit>=3.0.0",
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
+    "types-jsonschema==4.26.0.20260408",
     "commitizen>=3.13.0",
     "pytest-markdown-docs>=0.9.2",
 ]
@@ -306,6 +309,7 @@ dev-crewai = [
     # Development tools
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
+    "types-jsonschema==4.26.0.20260408",
 ]
 
 # Parlant-only dev extra for testing the parlant adapter in isolation. Declared
@@ -340,6 +344,7 @@ dev-parlant = [
     # Development tools
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
+    "types-jsonschema==4.26.0.20260408",
 ]
 
 # OpenAI-2 frameworks share test tooling and retain separate E2E lanes.
@@ -379,6 +384,7 @@ dev-strands-nooa = [
     # Development tools
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
+    "types-jsonschema==4.26.0.20260408",
 ]
 
 [project.scripts]
@@ -386,10 +392,15 @@ band-acp = "band.integrations.acp.cli:entry_point"
 band-kit = "band.docker.provision:main"
 band-room-view = "band.integrations.desktop_app.cli:entry_point"
 band-trigger = "band.cli.trigger:main"
+band-contracts = "band.contracts.cli:main"
+contract-service = "remote_agent.cli:main"
+contract-band-programs = "remote_agent.band.serve_programs:main"
+contract-band-author = "remote_agent.band.author_service:main"
+contract-band-openai = "remote_agent.band.openai_model:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["band", "band.*"]
+include = ["band", "band.*", "remote_agent", "remote_agent.*"]
 namespaces = false
 
 [tool.setuptools]
@@ -400,6 +411,8 @@ include-package-data = true
 "band" = ["py.typed"]
 "band.integrations.slack" = ["templates/*.yaml"]
 "band.integrations.desktop_app" = ["assets/*"]
+"remote_agent" = ["sidecar_prompt.md", "unicode16.json", "unicode16-LICENSE.txt"]
+"remote_agent.band" = ["assets/*.md", "assets/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -419,6 +432,14 @@ filterwarnings = [
     "ignore:alru_cache detected event loop change:async_lru.AlruCacheLoopResetWarning",
 ]
 markers = [
+    "contract_posix: requires an actual POSIX process or filesystem boundary",
+    "contract_linux: requires Linux process identity, locking, or private storage",
+    "contract_runtime: requires the local Linux Python 3.12 runtime",
+    "contract_system_runtime: requires Linux Python 3.12 with its base interpreter under /usr",
+    "contract_isolation: executes real isolated callbacks with Linux Python 3.12 under /usr, bubblewrap, and libseccomp",
+    "contract_elixir: executes Elixir without requiring compiled contract projects",
+    "contract_engine('current'): requires a compiled current or band contract engine in MIX_ENV=dev; 'band' selects the pinned engine",
+    "contract_node: executes the JavaScript parity check with Node.js",
     "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
     "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
@@ -561,8 +582,11 @@ ignore = ["TRY004"]
 "examples/**" = ["N999"]
 
 [tool.pyrefly]
+search-path = ["src", "."]
 project_includes = [
     "src/**/*.py",              # Only check source files
+    "contracts/deploy/**/*.py", # Installed-release and engine qualification tooling
+    "contracts/spec/tools/**/*.py", # Executable conformance checkers
     # Skill scripts are checked-in tooling with real process/subprocess logic and
     # no other type gate. Narrow glob on purpose: a bare `.claude/**` would drag
     # in `.claude/worktrees/` checkouts, which the excludes heuristic below no

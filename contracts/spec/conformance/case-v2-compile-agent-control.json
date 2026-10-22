@@ -1,0 +1,861 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-compile-agent-control",
+  "requirements": [
+    "DSL-004",
+    "DSL-005",
+    "DSL-008",
+    "DSL-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: agent-control\ndescription: A counter with a typed sessionless request to wake its repair sidecar.\nengine: 0.2.0-lab.1\nroles: [requester, counter]\n---\n\"\"\"\nA counter continues ordinary work in a program; its requester can explicitly wake the sidecar.\n\"\"\"\ncontract @infinity mentions 1 => expired\n\n\"\"\"\nYou ask the counter to add to its total, read the totals it reports, and stop it when you are\ndone. Wake the repair sidecar only when the counter needs repair, and say why.\n\"\"\"\nrole requester\n\n\"\"\"\nYou keep a running total. Add each increment you receive, report the new total, and stop when\nthe requester tells you to.\n\"\"\"\nrole counter\n\n\"\"\"\nAdd this amount to the running total.\n\"\"\"\ntype increment\n  by: integer(1..100)\n\n\"\"\"\nReport the running total after every increment so far.\n\"\"\"\ntype total\n  value: integer(0..1000000)\n\n\"\"\"\nStop counting. No increments follow this message.\n\"\"\"\ntype stop\n\n\"\"\"\nWake the repair sidecar. Say in a sentence or two what needs repair.\n\"\"\"\ntype activate\n  reason: text(bytes: 1..64000, graphemes: 1..4000)\n\n\"\"\"\nCounting is open. The requester sends increments, the counter reports totals, and the requester\nends the session with stop.\n\"\"\"\nstate new\n  event requester -> counter: increment()\n  event counter -> requester: total()\n  requester -> counter: stop() => complete\n\nroom\n  \"\"\"\n  Wake the sidecar once for this accepted control event. A repeated delivery must not wake it again.\n  The host must separately grant control authority; this documentation grants no tool permissions.\n  \"\"\"\n  event requester -> counter: activate()\n\n\"\"\"\nThe requester stopped the counter. Send nothing more in this session.\n\"\"\"\nend complete\n\n\"\"\"\nThe session's clock ran out before the requester stopped the counter. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "0776b6e49cbe1f6f2c2ca46610b11abed19e99332e01249d5ee65d5fb1b2fe55"
+      }
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "requester"
+    },
+    {
+      "op": "query",
+      "contract": "c",
+      "selector": "role",
+      "name": "counter"
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "agent-control"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "A counter with a typed sessionless request to wake its repair sidecar.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": "infinite",
+          "name": "agent-control",
+          "roles": [
+            "requester",
+            "counter"
+          ],
+          "version": null
+        },
+        "digest": "31833813b900780c284ecbe7baca7b7569a52261bc48461a26a5f1018d65c0fd",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "A counter continues ordinary work in a program; its requester can explicitly wake the sidecar.",
+          "line": 1
+        },
+        "name": "agent-control",
+        "role_metadata": {
+          "counter": {
+            "meta": {
+              "doc": "You keep a running total. Add each increment you receive, report the new total, and stop when\nthe requester tells you to.",
+              "line": 12
+            },
+            "name": "counter"
+          },
+          "requester": {
+            "meta": {
+              "doc": "You ask the counter to add to its total, read the totals it reports, and stop it when you are\ndone. Wake the repair sidecar only when the counter needs repair, and say why.",
+              "line": 6
+            },
+            "name": "requester"
+          }
+        },
+        "roles": [
+          "requester",
+          "counter"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 50
+        },
+        "room_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "requester"
+            ],
+            "id": "rule-3",
+            "kind": "activate",
+            "matches": {},
+            "meta": {
+              "doc": "Wake the sidecar once for this accepted control event. A repeated delivery must not wake it again.\nThe host must separately grant control authority; this documentation grants no tool permissions.",
+              "line": 51
+            },
+            "target": null,
+            "to": [
+              "counter"
+            ]
+          }
+        ],
+        "source_digest": "0776b6e49cbe1f6f2c2ca46610b11abed19e99332e01249d5ee65d5fb1b2fe55",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Counting is open. The requester sends increments, the counter reports totals, and the requester\nends the session with stop.",
+              "line": 41
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "increment",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 46
+                },
+                "target": null,
+                "to": [
+                  "counter"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "counter"
+                ],
+                "id": "rule-1",
+                "kind": "total",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-2",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                },
+                "target": "complete",
+                "to": [
+                  "counter"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the counter. Send nothing more in this session.",
+              "line": 57
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session's clock ran out before the requester stopped the counter. Send nothing more.",
+              "line": 62
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "activate": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 64000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 4000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 39
+                }
+              }
+            },
+            "meta": {
+              "doc": "Wake the repair sidecar. Say in a sentence or two what needs repair.",
+              "line": 35
+            },
+            "name": "activate"
+          },
+          "increment": {
+            "fields": {
+              "by": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "min": 1
+              }
+            },
+            "meta": {
+              "doc": "Add this amount to the running total.",
+              "line": 18
+            },
+            "name": "increment"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "Stop counting. No increments follow this message.",
+              "line": 30
+            },
+            "name": "stop"
+          },
+          "total": {
+            "fields": {
+              "value": {
+                "kind": "integer",
+                "max": 1000000,
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report the running total after every increment so far.",
+              "line": 24
+            },
+            "name": "total"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "A counter with a typed sessionless request to wake its repair sidecar.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": "infinite",
+            "name": "agent-control",
+            "roles": [
+              "requester",
+              "counter"
+            ],
+            "version": null
+          },
+          "digest": "31833813b900780c284ecbe7baca7b7569a52261bc48461a26a5f1018d65c0fd",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "A counter continues ordinary work in a program; its requester can explicitly wake the sidecar.",
+            "line": 1
+          },
+          "name": "agent-control",
+          "source_digest": "0776b6e49cbe1f6f2c2ca46610b11abed19e99332e01249d5ee65d5fb1b2fe55"
+        },
+        "role": {
+          "meta": {
+            "doc": "You ask the counter to add to its total, read the totals it reports, and stop it when you are\ndone. Wake the repair sidecar only when the counter needs repair, and say why.",
+            "line": 6
+          },
+          "name": "requester"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 50
+        },
+        "room_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "requester"
+            ],
+            "id": "rule-3",
+            "kind": "activate",
+            "matches": {},
+            "meta": {
+              "doc": "Wake the sidecar once for this accepted control event. A repeated delivery must not wake it again.\nThe host must separately grant control authority; this documentation grants no tool permissions.",
+              "line": 51
+            },
+            "target": null,
+            "to": [
+              "counter"
+            ]
+          }
+        ],
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Counting is open. The requester sends increments, the counter reports totals, and the requester\nends the session with stop.",
+              "line": 41
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "increment",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 46
+                },
+                "target": null,
+                "to": [
+                  "counter"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "counter"
+                ],
+                "id": "rule-1",
+                "kind": "total",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-2",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                },
+                "target": "complete",
+                "to": [
+                  "counter"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the counter. Send nothing more in this session.",
+              "line": 57
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session's clock ran out before the requester stopped the counter. Send nothing more.",
+              "line": 62
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "activate": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 64000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 4000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 39
+                }
+              }
+            },
+            "meta": {
+              "doc": "Wake the repair sidecar. Say in a sentence or two what needs repair.",
+              "line": 35
+            },
+            "name": "activate"
+          },
+          "increment": {
+            "fields": {
+              "by": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "min": 1
+              }
+            },
+            "meta": {
+              "doc": "Add this amount to the running total.",
+              "line": 18
+            },
+            "name": "increment"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "Stop counting. No increments follow this message.",
+              "line": 30
+            },
+            "name": "stop"
+          },
+          "total": {
+            "fields": {
+              "value": {
+                "kind": "integer",
+                "max": 1000000,
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report the running total after every increment so far.",
+              "line": 24
+            },
+            "name": "total"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "contract": {
+          "card": {
+            "description": "A counter with a typed sessionless request to wake its repair sidecar.",
+            "encoding": "utf-8",
+            "engine": "0.2.0-lab.1",
+            "extensions": [],
+            "inactivity_timeout": "infinite",
+            "lifetime": "infinite",
+            "name": "agent-control",
+            "roles": [
+              "requester",
+              "counter"
+            ],
+            "version": null
+          },
+          "digest": "31833813b900780c284ecbe7baca7b7569a52261bc48461a26a5f1018d65c0fd",
+          "engine": "0.2.0-lab.1",
+          "extensions": {
+            "permission_meta": {},
+            "permissions": {},
+            "triggers": [],
+            "watch_meta": {},
+            "watches": []
+          },
+          "meta": {
+            "doc": "A counter continues ordinary work in a program; its requester can explicitly wake the sidecar.",
+            "line": 1
+          },
+          "name": "agent-control",
+          "source_digest": "0776b6e49cbe1f6f2c2ca46610b11abed19e99332e01249d5ee65d5fb1b2fe55"
+        },
+        "role": {
+          "meta": {
+            "doc": "You keep a running total. Add each increment you receive, report the new total, and stop when\nthe requester tells you to.",
+            "line": 12
+          },
+          "name": "counter"
+        },
+        "room_meta": {
+          "doc": null,
+          "line": 50
+        },
+        "room_rules": [
+          {
+            "activity": false,
+            "bind": null,
+            "each": false,
+            "event": true,
+            "from": [
+              "requester"
+            ],
+            "id": "rule-3",
+            "kind": "activate",
+            "matches": {},
+            "meta": {
+              "doc": "Wake the sidecar once for this accepted control event. A repeated delivery must not wake it again.\nThe host must separately grant control authority; this documentation grants no tool permissions.",
+              "line": 51
+            },
+            "target": null,
+            "to": [
+              "counter"
+            ]
+          }
+        ],
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "Counting is open. The requester sends increments, the counter reports totals, and the requester\nends the session with stop.",
+              "line": 41
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "increment",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 46
+                },
+                "target": null,
+                "to": [
+                  "counter"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "counter"
+                ],
+                "id": "rule-1",
+                "kind": "total",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 47
+                },
+                "target": null,
+                "to": [
+                  "requester"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-2",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                },
+                "target": "complete",
+                "to": [
+                  "counter"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the counter. Send nothing more in this session.",
+              "line": 57
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The session's clock ran out before the requester stopped the counter. Send nothing more.",
+              "line": 62
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "types": {
+          "activate": {
+            "fields": {
+              "reason": {
+                "bytes": {
+                  "max": 64000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 4000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 39
+                }
+              }
+            },
+            "meta": {
+              "doc": "Wake the repair sidecar. Say in a sentence or two what needs repair.",
+              "line": 35
+            },
+            "name": "activate"
+          },
+          "increment": {
+            "fields": {
+              "by": {
+                "kind": "integer",
+                "max": 100,
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                },
+                "min": 1
+              }
+            },
+            "meta": {
+              "doc": "Add this amount to the running total.",
+              "line": 18
+            },
+            "name": "increment"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "Stop counting. No increments follow this message.",
+              "line": 30
+            },
+            "name": "stop"
+          },
+          "total": {
+            "fields": {
+              "value": {
+                "kind": "integer",
+                "max": 1000000,
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "min": 0
+              }
+            },
+            "meta": {
+              "doc": "Report the running total after every increment so far.",
+              "line": 24
+            },
+            "name": "total"
+          }
+        }
+      }
+    }
+  ]
+}

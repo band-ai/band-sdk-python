@@ -1,0 +1,246 @@
+---
+name: assignment
+description: Test assignment with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [lead, worker, reviewer]
+---
+"""
+Assign work with explicit acceptance, independent review, and requester acceptance.
+Reported artifacts are claims until the named reviewer and lead accept them.
+"""
+contract @4h mentions 2 => expired
+
+"""
+Own the task, constraints, and final acceptance decision.
+"""
+role lead
+
+"""
+Accept or refuse the offer before performing work.
+"""
+role worker
+
+"""
+Check the exact submission independently of its author.
+"""
+role reviewer
+
+"""
+An offer describes what the worker must deliver and how to verify it.
+"""
+type offer
+  """
+  A self-contained task including constraints and verification instructions.
+  """
+  task: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Accept the offer. Send this only if you can do the task as described, before you start work.
+"""
+type accept
+  task: ref(offer|revise)
+
+"""
+Refuse the offer, and say why in a sentence or two.
+"""
+type refuse
+  task: ref(offer|revise)
+  reason: text(bytes: 1..3200, graphemes: 1..200)
+
+"""
+Submit the finished artifact, or a reference to it, for the reviewer to check.
+"""
+type submit
+  task: ref(offer|revise)
+  artifact: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Approve the exact submission you checked. Approve only what you inspected yourself.
+"""
+type approve
+  task: ref(offer|revise)
+  submission: ref(submit)
+
+"""
+Accept the reviewed submission as the result of the task.
+"""
+type accept_result
+  task: ref(offer|revise)
+  submission: ref(submit)
+
+"""
+Ask for changes to the submission. Name each change and why it is needed.
+"""
+type changes
+  task: ref(offer|revise)
+  submission: ref(submit)
+  reason: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Revise the task for another pass. Give the worker the new instruction in full.
+"""
+type revise
+  task: ref(offer|revise)
+  instruction: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Ask the lead one question that blocks your work on the task.
+"""
+type question
+  task: ref(offer|revise)
+  question: text(bytes: 1..4800, graphemes: 1..300)
+
+"""
+Answer the worker's question so the work can continue. Set question to the question you answer.
+"""
+type answer
+  task: ref(offer|revise)
+  question: ref(question)
+  answer: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Report briefly how the task is going. It doesn't extend any deadline.
+"""
+type progress
+  task: ref(offer|revise)
+  note: text(bytes: 1..3200, graphemes: 1..200)
+
+"""
+Cancel the task, and say why.
+"""
+type cancel
+  reason: text(bytes: 1..3200, graphemes: 1..200)
+
+"""
+Confirm the cancellation and list every effect your work left behind, finished or not. Set cancel
+to the cancel you confirm.
+"""
+type cancel_ack
+  cancel: ref(cancel)
+  effects: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+The lead has not offered the task yet. Send the offer to the worker and the reviewer together.
+"""
+state new
+  """
+  Both the worker and reviewer receive the original offer.
+  """
+  lead -> {worker,reviewer}: offer() as task => offered
+
+"""
+The offer is pending; work has not been accepted yet.
+"""
+state offered
+  """
+  The worker must accept within two minutes or the task is unclaimed.
+  """
+  worker -> lead: accept(task=$task) @2m => working | unclaimed
+  worker -> lead: refuse(task=$task) => refused
+
+"""
+The worker is doing the task and owes a submission within thirty minutes. Ask the lead if
+something blocks you; progress notes are optional.
+"""
+state working
+  worker -> {lead,reviewer}: submit(task=$task) as submission @30m => reviewing | stalled
+  """
+  Ask the lead a question that blocks you. The lead then owes one answer to it.
+  """
+  worker -> lead: question(task=$task) awaits blocked
+    """
+    Answer within thirty minutes so the work can continue.
+    """
+    => answer(task=$task) & working
+     """
+     No answer arrived within thirty minutes of the question.
+     """
+     | @30m & stalled
+  event worker -> lead: progress(task=$task)
+
+"""
+The worker asked a question. The lead owes an answer within thirty minutes. A sixth question
+ends the run.
+"""
+state blocked max_entries 5 => too_many_questions
+
+"""
+The reviewer checks the exact submission and owes approval within ten minutes, or asks for
+changes. At most three reviews.
+"""
+state reviewing max_entries 3 => exhausted
+  reviewer -> {lead,worker}: approve(task=$task,submission=$submission) @10m => acceptance | stalled
+  reviewer -> {lead,worker}: changes(task=$task,submission=$submission) => revising
+
+"""
+The reviewer asked for changes. The lead owes a revised task within ten minutes.
+"""
+state revising
+  lead -> {worker,reviewer}: revise(task=$task) as task @10m => offered | stalled
+
+"""
+The reviewer approved. The lead owes the final acceptance within ten minutes.
+"""
+state acceptance
+  lead -> {worker,reviewer}: accept_result(task=$task,submission=$submission) @10m => complete | stalled
+
+"""
+The lead cancelled. The worker owes a cancellation report within two minutes, listing every effect.
+"""
+state cancelling
+
+anystate
+  """
+  Stop the task from any state, a pending question included. The worker then owes one
+  cancellation report. Until group replies (RULE.md §3) land, the reviewer is not told of a cancel
+  and gets no cancel_ack.
+  """
+  lead -> worker: cancel() awaits cancelling
+    => cancel_ack() & cancelled
+     | @2m & effects_unknown
+
+"""
+The lead accepted the exact reviewed submission.
+"""
+end complete
+
+"""
+The worker refused the offer. Send nothing more; the lead decides what happens next.
+"""
+end refused
+
+"""
+The worker did not accept within two minutes. The lead may offer the task again in a new session.
+"""
+end unclaimed
+
+"""
+An owed message did not arrive in time. Stop, and report what was missing to the lead.
+"""
+end stalled
+
+"""
+Three reviews did not produce an approved submission. Stop, and report the open changes to the lead.
+"""
+end exhausted
+
+"""
+The worker needed more than five answers to do the task. Stop, and agree a clearer task with the
+lead in a new session.
+"""
+end too_many_questions
+
+"""
+The lead cancelled the task and the worker confirmed its effects. Send nothing more.
+"""
+end cancelled
+
+"""
+The worker did not confirm cancellation; external effects remain unresolved.
+"""
+end effects_unknown
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

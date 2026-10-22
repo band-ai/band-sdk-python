@@ -1,0 +1,83 @@
+---
+name: team-review
+description: Test team review with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [lead, alpha, beta, reviewer]
+---
+"""
+Collect two independent submissions before review.
+"""
+contract @4h mentions 3 => expired
+
+"""
+You are the lead. State the goal once, then wait for both submissions and the reviewer's
+approval.
+"""
+role lead
+
+"""
+You are Alpha. Work on the goal on your own, without copying Beta, and submit within ten minutes.
+"""
+role alpha
+
+"""
+You are Beta. Work on the goal on your own, without copying Alpha, and submit within ten minutes.
+"""
+role beta
+
+"""
+You are the reviewer. Wait for both submissions, compare them against the goal, and approve
+within two minutes.
+"""
+role reviewer
+
+"""
+The goal for both members, with what a good submission must contain.
+"""
+type start
+  goal: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Your submission for the goal: the artifact itself or a reference to it.
+"""
+type submit
+  artifact: text(bytes: 1..9600, graphemes: 1..600)
+
+"""
+Approve both submissions.
+"""
+type approve
+
+"""
+The lead has not stated the goal yet. Send start to both members and the reviewer.
+"""
+state new
+  lead -> {alpha,beta,reviewer}: start() => collecting
+
+"""
+Alpha and Beta each owe one submission within ten minutes. Review starts when both have arrived.
+"""
+state collecting
+  {alpha,beta} -> {lead,reviewer}: submit() each @10m => reviewing | stalled
+
+"""
+Both submissions are in. The reviewer owes an approval within two minutes.
+"""
+state reviewing
+  reviewer -> {lead,alpha,beta}: approve() @2m => complete | stalled
+
+"""
+The reviewer approved both submissions. Send nothing more.
+"""
+end complete
+
+"""
+A submission or the approval did not arrive in time. Stop, and report what is missing to the
+lead.
+"""
+end stalled
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

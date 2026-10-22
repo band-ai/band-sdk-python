@@ -1,0 +1,28 @@
+[
+  {
+    "command": [
+      "mix",
+      "compile",
+      "--warnings-as-errors"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "mix",
+      "format",
+      "--check-formatted"
+    ],
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "mix",
+      "test",
+      "--seed",
+      "0",
+      "--warnings-as-errors"
+    ],
+    "exit_code": 0
+  }
+]

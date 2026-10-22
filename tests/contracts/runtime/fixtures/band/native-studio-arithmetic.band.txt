@@ -1,0 +1,195 @@
+---
+name: live-bounded-arithmetic-cancellable
+description: Sequential bounded arithmetic with exact request correlation, cancellation, and finite deadlines.
+engine: 0.2.0-lab.1
+roles: [requester, calculator]
+---
+
+"""
+This workflow obtains addition or multiplication results for one bounded question
+at a time. The engine enforces roles, direction, schemas, references, transitions,
+and deadlines. It does not prove arithmetic truth or any external effect.
+The whole session lasts ten minutes, including idle time and every question.
+There are no extensions or deadline resets through rejected proposals.
+This source is a separate revision; existing sessions retain their source and
+receipts. It grants no tools, services, participant access, or unrestricted channel.
+Compilation and installation are host responsibilities. This artifact has no
+observed compilation result; installation remains a separate human UI action.
+"""
+contract @10m mentions 1 => expired
+
+"""
+Own the arithmetic requests and independently assess their answers. Your inputs
+are the intended operation, two operands, accepted message identifiers, and the
+current session state. Validate op and inclusive operand bounds before sending.
+Send only one question, retain its accepted identifier, and wait for its answer
+or cancel that exact question while answering. Do not substitute a local proposal
+identifier, an earlier question, or a question from another session.
+After an accepted answer, independently recompute addition or multiplication and
+compare the result. Structural acceptance is not evidence of arithmetic truth.
+If a result is wrong or uncertain, do not report it as verified. In ready you may
+ask a fresh question with a fresh identifier; there is no correction or dispute
+message for the closed request. Stop explicitly when finished in ready.
+Use rejection diagnostics and current accepted state to repair schema, reference,
+or direction errors only while the intended transition remains available. A
+rejected proposal does not establish cancellation, an answer, or completion.
+Never send another question while answering, stop while answering, or fabricate
+an accepted receipt. Do not use another channel to bypass these restrictions.
+Agents may settle arithmetic and legal proposal repair themselves. Ask the human
+through an already authorized interface when the intended task is ambiguous,
+verification cannot be resolved, or a policy change is needed; this contract
+provides no human-message type and no additional access. Human consultation does
+not pause clocks. Completion evidence is an accepted stop and complete outcome;
+report arithmetic verification separately from that structural outcome.
+"""
+role requester
+
+"""
+Compute the exact operation for the sole accepted outstanding question. Your
+inputs are its op, a, b, accepted identifier, and current state. Read the operands
+from that request, compute a+b for add or a*b for multiply, and check the result
+before proposing an answer. Copy the exact outstanding identifier into request.
+Return an integer within 0..1000000 before the thirty-second answer deadline.
+Do not guess, clamp a result, reuse an old answer, claim that acceptance proves
+truth, or invent an uncertainty field or message. If uncertain, recheck using
+only capabilities already authorized by the host; this protocol grants none.
+If you cannot determine the result, do not fabricate one. The requester may
+cancel, or the obligation may time out; silence is never successful work.
+After rejection, inspect the diagnostic and accepted state. Correct a proposal
+only if answering still permits it and the original deadline has not elapsed.
+Do not answer after accepted cancellation or any terminal outcome. Acceptance of
+your correlated answer discharges the reply obligation and enters ready; it does
+not finish the session or establish independent arithmetic verification.
+"""
+role calculator
+
+"""
+Requester sends this only in new or ready. op selects ordinary integer addition
+or multiplication. a and b are inclusive integers from 0 through 1000. All three
+fields are required; no prose or extra fields substitute for them. Acceptance
+binds this exact question identifier as request and enters answering. Calculator
+then owes one correlated answer within thirty seconds, unless requester cancels
+first or the whole session expires.
+"""
+type question
+  op: enum(add|multiply)
+  a: integer(0..1000)
+  b: integer(0..1000)
+
+"""
+Calculator sends this only while answering. request is the accepted identifier of
+the sole outstanding question in this session. value is the computed integer,
+inclusively 0..1000000; it means a+b for add or a*b for multiply. The reference
+must equal the bound request. Acceptance enters ready, where requester independently
+checks the arithmetic. There is no in-place answer amendment or truth guard.
+"""
+type answer
+  request: ref(question)
+  value: integer(0..1000000)
+
+"""
+Requester sends this only while answering to withdraw obsolete outstanding work.
+request must name the exact accepted open question, not an earlier request.
+Acceptance ends cancelled immediately. Calculator must cease protocol replies;
+a later answer cannot revive the session. A rejected cancellation does not
+withdraw work. This correlated schema replaces the earlier empty-cancel proposal.
+"""
+type cancel
+  request: ref(question)
+
+"""
+Requester sends the empty payload only in ready when no question is outstanding.
+There are no fields and no request reference. Acceptance enters complete; both
+roles cease sending. An answer or silence cannot substitute for this explicit stop.
+"""
+type stop
+
+"""
+Initial state. No question or reply obligation exists. Requester prepares the first
+bounded question; calculator waits. Only question is permitted here, so neither
+stop nor cancel is available. The ten-minute whole-session clock is running.
+Rejected proposals require legal repair without changing the accepted state.
+An accepted first question exits to answering. No transition returns to new.
+"""
+state new
+  """
+Accept the first requester question and bind its accepted identifier as request.
+This opens the sole outstanding calculation and its thirty-second obligation.
+"""
+  requester -> calculator: question() as request => answering
+
+"""
+Exactly one accepted question is open. Calculator computes and owes a correlated
+answer within thirty seconds of entering this state. Requester may instead cancel
+the same request. No second question or stop is permitted. An accepted answer
+enters ready; accepted cancellation ends cancelled; a missed answer deadline
+ends timed_out. The ten-minute whole-session limit can also end expired.
+There is no extension message. Rejection does not satisfy an obligation or restart
+its clock. Recover only by a legal proposal before termination. If answer and
+cancel compete, act on the host's accepted state and receipt, never on an assumed
+ordering; neither transition remains available after the other has closed it.
+"""
+state answering
+  """
+Only calculator may answer. Require the exact bound question reference. Acceptance
+discharges the pending obligation and enters ready. Missing the thirty-second
+deadline ends timed_out. This rule is unavailable after accepted cancellation.
+"""
+  calculator -> requester: answer(request=$request) @30s => ready | timed_out
+  """
+Only requester may withdraw the exact bound outstanding question. Acceptance
+terminates immediately as cancelled, removing every subsequent answer path.
+"""
+  requester -> calculator: cancel(request=$request) => cancelled
+
+"""
+The last question has an accepted answer and no question is open. Requester
+independently checks its value, then sends a fresh question or explicitly stops.
+Calculator has no pending reply and waits. Cancel and unsolicited answers are
+unavailable. There is no per-answer verification message or ready-state deadline;
+the original whole-session clock continues. Rejected proposals may be repaired
+only while their transition remains available. A new question enters answering
+with its own identifier and thirty-second deadline; stop ends complete.
+"""
+state ready
+  """
+Open one subsequent question and bind its own exact accepted identifier as request.
+Earlier question references cannot discharge or cancel this new obligation.
+"""
+  requester -> calculator: question() as request => answering
+  """
+Explicitly close the session with an empty stop and no outstanding question.
+This is the sole transition to complete.
+"""
+  requester -> calculator: stop() => complete
+
+"""
+Requester explicitly stopped from ready. The session is terminal; send nothing
+more. This records explicit closure, not proof that every value was correct or
+that an external effect occurred. Keep independent verification evidence separate.
+"""
+end complete
+
+"""
+Requester cancelled the exact outstanding question. The session is terminal;
+send nothing more. Later answers, stop, and questions cannot lead to ready or
+complete. Cancellation records withdrawal, not arithmetic success or a guarantee
+that computation outside this protocol was physically interrupted.
+"""
+end cancelled
+
+"""
+No correlated answer was accepted within the thirty-second answer deadline.
+The session is terminal; send nothing more. This is failure to receive a timely
+answer, not successful computation, verified arithmetic, or explicit completion.
+A late answer cannot recover this session.
+"""
+end timed_out
+
+"""
+The ten-minute whole-session lifetime elapsed. The session is terminal; send
+nothing more. Expiry may occur while idle or while a calculation is pending.
+It proves neither a successful answer nor explicit completion. No proposal can
+extend or revive the expired session.
+"""
+end expired

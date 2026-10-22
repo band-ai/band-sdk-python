@@ -1,0 +1,35 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-forbidden-map-payload",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"expected_version\":0,\"id\":\"m\",\"kind\":\"ping\",\"payload\":{},\"session\":\"s\"}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "forbidden/1",
+        "fields": {
+          "payload": "header:X"
+        }
+      },
+      "transport": {}
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "error": "transport_fields"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": "transport_fields"
+    }
+  ]
+}

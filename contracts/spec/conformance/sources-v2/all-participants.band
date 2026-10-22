@@ -1,0 +1,53 @@
+---
+name: all-participants
+description: Test all participants with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [alice, bob, carol]
+---
+"""
+Every participant acknowledges before proceeding.
+"""
+contract @4h mentions 2 => expired
+
+"""
+You are Alice. Send your acknowledgement to Bob and Carol within five minutes.
+"""
+role alice
+
+"""
+You are Bob. Send your acknowledgement to Alice and Carol within five minutes.
+"""
+role bob
+
+"""
+You are Carol. Send your acknowledgement to Alice and Bob within five minutes.
+"""
+role carol
+
+"""
+Confirm that you are present and ready. The message carries no content.
+"""
+type ack
+
+"""
+Each of the three participants owes one acknowledgement within five minutes. The session
+completes when all three have sent theirs.
+"""
+state new
+  * -> *: ack() each @5m => complete | stalled
+
+"""
+All three participants acknowledged. Proceed with the work outside this session.
+"""
+end complete
+
+"""
+At least one participant did not acknowledge within five minutes. Do not proceed; report who is
+missing to whoever started the session.
+"""
+end stalled
+
+"""
+The four-hour contract clock ran out. Send nothing more.
+"""
+end expired

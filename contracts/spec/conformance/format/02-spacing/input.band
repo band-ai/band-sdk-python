@@ -1,0 +1,19 @@
+---
+name: fmt-spacing
+description: Formatter vector fmt-spacing.
+engine: 0.2.0-lab.1
+roles: [lead, a, b]
+---
+contract @1h => expired
+type request
+  label: text(bytes:1..32,graphemes:1..10, regex: ~r/[A-Z][A-Z0-9 :|_-]*/)
+  kind : enum(new|redo)
+type review
+  source:ref(request)
+  decision: enum(~w[approve  revise])
+state new
+  lead -> ~w[a  b]: request() as task=>reviewing
+state reviewing
+  {a,b} -> lead: review(source=$task) each @5m => collected | stalled
+end collected
+end stalled

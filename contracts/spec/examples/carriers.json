@@ -1,0 +1,32 @@
+[
+  {
+    "profile": "band-contract/carrier/1",
+    "name": "band-room/1",
+    "fields": {
+      "id": "body",
+      "session": "path:id",
+      "kind": "body",
+      "expected_version": "body"
+    }
+  },
+  {
+    "profile": "band-contract/carrier/1",
+    "name": "http-path/1",
+    "fields": {
+      "id": "body",
+      "session": "path:id",
+      "kind": "path:kind",
+      "expected_version": "header:X-Band-Expected-Version"
+    }
+  },
+  {
+    "profile": "band-contract/carrier/1",
+    "name": "email/1",
+    "fields": {
+      "id": "header:Message-ID",
+      "session": "header:X-Band-Session",
+      "kind": "body",
+      "expected_version": "body"
+    }
+  }
+]

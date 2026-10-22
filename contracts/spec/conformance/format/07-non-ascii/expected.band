@@ -1,0 +1,33 @@
+---
+name: fmt-non-ascii
+description: Café, naïve, résumé — “quoted” ✓ 日本語.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+%% Ünïcödé comment: «ça va» — ✓.
+contract @1h => expired
+
+role lead
+
+role worker
+
+%% Second comment, naïve: 日本語.
+type offer
+  """
+  Docs with naïve accents shift as a whole — ✓ 日本語.
+  """
+  task: text(1..200)
+
+type memo
+  """
+    →	No-break spaces lead this line; the tab after the arrow is not leading whitespace.
+  """
+  text: text(1..200)
+
+state new
+  lead -> worker: offer() => done
+
+"""
+L’offre est arrivée.
+"""
+end done

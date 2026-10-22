@@ -1,0 +1,1789 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-worked-session",
+  "requirements": [
+    "ENG-005",
+    "ENG-006",
+    "ENG-007",
+    "ENG-010",
+    "ENG-012"
+  ],
+  "schema_profile": 6,
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: hybrid-assistant\ndescription: A remote assistant answers known cases in Python and delegates judgment to an LLM.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\n\"\"\"\nThe room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.\n\"\"\"\ncontract @30m mentions 1 => expired\n\n\"\"\"\nAsk one question at a time and evaluate the answer.\n\"\"\"\nrole requester\n\n\"\"\"\nAnswer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.\n\"\"\"\nrole assistant\n\n\"\"\"\nAsk one self-contained question in plain language.\n\"\"\"\ntype question\n  text: text(bytes: 1..32000, graphemes: 1..2000)\n\n\"\"\"\nAnswer the question it names. Say so when you are not sure.\n\"\"\"\ntype answer\n  request: ref(question)\n  text: text(bytes: 1..64000, graphemes: 1..4000)\n\n\"\"\"\nEnd the conversation. No questions follow.\n\"\"\"\ntype stop\n\n\"\"\"\nNo question is open. Ask one, or stop.\n\"\"\"\nstate new\n  \"\"\"\n  Ask a question. The assistant then owes one answer to it.\n  \"\"\"\n  requester -> assistant: question() as request awaits answering\n    \"\"\"\n    The assistant owns the deadline regardless of which implementation answers.\n    \"\"\"\n    => answer(request=$request) & ready\n     \"\"\"\n     No answer arrived within five minutes of the question.\n     \"\"\"\n     | @5m & stalled\n  requester -> assistant: stop() => complete\n\n\"\"\"\nA question is open. The assistant owes an answer within five minutes. At most ten\nquestions are asked.\n\"\"\"\nstate answering max_entries 10 => exhausted\n\n\"\"\"\nThe last question was answered. Ask the next one, or stop.\n\"\"\"\nstate ready\n  requester -> assistant: question() as request => answering\n  requester -> assistant: stop() => complete\n\n\"\"\"\nThe requester stopped the conversation. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nThe assistant did not answer within five minutes. Stop, and tell the requester no answer came.\n\"\"\"\nend stalled\n\n\"\"\"\nAn eleventh question was asked. Start a new session for more.\n\"\"\"\nend exhausted\n\n\"\"\"\nThe thirty-minute contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "requester": "requester",
+          "assistant": "assistant"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "capabilities": [
+          "contract.replies/1"
+        ],
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "requester": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "assistant": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "requester",
+      "now": 0,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "requester": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "assistant": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "assistant",
+      "now": 1000,
+      "message": {
+        "id": "bad",
+        "session": "s",
+        "kind": "answer",
+        "payload": {
+          "request": "other",
+          "text": "pong"
+        },
+        "expected_version": 1
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "requester": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "assistant": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "assistant",
+      "now": 2000,
+      "message": {
+        "id": "a",
+        "session": "s",
+        "kind": "answer",
+        "payload": {
+          "request": "q",
+          "text": "pong"
+        },
+        "expected_version": 1
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "requester": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "assistant": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "requester",
+      "now": 3000,
+      "message": {
+        "id": "stop",
+        "session": "s",
+        "kind": "stop",
+        "payload": {},
+        "expected_version": 2
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "requester": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "assistant": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "requester",
+      "now": 4000,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 0
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "requester": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "assistant": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "requester",
+      "now": 5000,
+      "message": {
+        "id": "q",
+        "session": "s",
+        "kind": "question",
+        "payload": {
+          "text": "ping"
+        },
+        "expected_version": 3
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "requester": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "assistant": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "answering"
+    },
+    {
+      "response": 2,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "ready"
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    {
+      "response": 5,
+      "pointer": "/state/state/outcome",
+      "equals": "complete"
+    },
+    {
+      "response": 5,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    {
+      "response": 6,
+      "pointer": "/decision/original/version",
+      "equals": 1
+    },
+    {
+      "response": 6,
+      "pointer": "/decision/original/state",
+      "equals": "answering"
+    },
+    {
+      "response": 6,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    {
+      "response": 6,
+      "pointer": "/state/state/last_activity",
+      "equals": 3000
+    },
+    {
+      "response": 7,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "A remote assistant answers known cases in Python and delegates judgment to an LLM.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [
+            "contract.replies/1"
+          ],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            1800
+          ],
+          "name": "hybrid-assistant",
+          "roles": [
+            "requester",
+            "assistant"
+          ],
+          "version": null
+        },
+        "digest": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 1
+        },
+        "meta": {
+          "doc": "The room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.",
+          "line": 1
+        },
+        "name": "hybrid-assistant",
+        "role_metadata": {
+          "assistant": {
+            "meta": {
+              "doc": "Answer exact common cases with the program. Delegate open-ended language and\njudgment to the LLM; never guess that a fixed rule handles arbitrary English.",
+              "line": 12
+            },
+            "name": "assistant"
+          },
+          "requester": {
+            "meta": {
+              "doc": "Ask one question at a time and evaluate the answer.",
+              "line": 7
+            },
+            "name": "requester"
+          }
+        },
+        "roles": [
+          "requester",
+          "assistant"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "states": {
+          "answering": {
+            "deadlines": [],
+            "max_entries": {
+              "limit": 10,
+              "outcome": "exhausted"
+            },
+            "meta": {
+              "doc": "A question is open. The assistant owes an answer within five minutes. At most ten\nquestions are asked.",
+              "line": 54
+            },
+            "name": "answering",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "assistant"
+                ],
+                "id": "rule-1",
+                "kind": "answer",
+                "literals": {},
+                "matches": {
+                  "request": "request"
+                },
+                "meta": {
+                  "doc": "The assistant owns the deadline regardless of which implementation answers.",
+                  "line": 44
+                },
+                "target": "ready",
+                "to": [
+                  "requester"
+                ],
+                "wait": "due-2"
+              }
+            ],
+            "wait": {
+              "after_ms": 300000,
+              "alternatives": [
+                "rule-1"
+              ],
+              "from": [
+                "assistant"
+              ],
+              "heads": [
+                "rule-0",
+                "rule-4"
+              ],
+              "id": "due-2",
+              "kinds": [
+                "answer"
+              ],
+              "meta": {
+                "doc": "No answer arrived within five minutes of the question.",
+                "line": 48
+              },
+              "outcome": "stalled",
+              "to": [
+                "requester"
+              ]
+            }
+          },
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "No question is open. Ask one, or stop.",
+              "line": 36
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "request",
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-0",
+                "kind": "question",
+                "matches": {},
+                "meta": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "target": "answering",
+                "to": [
+                  "assistant"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-3",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 52
+                },
+                "target": "complete",
+                "to": [
+                  "assistant"
+                ]
+              }
+            ]
+          },
+          "ready": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The last question was answered. Ask the next one, or stop.",
+              "line": 60
+            },
+            "name": "ready",
+            "rules": [
+              {
+                "activity": false,
+                "bind": "request",
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-4",
+                "kind": "question",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 64
+                },
+                "target": "answering",
+                "to": [
+                  "assistant"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "requester"
+                ],
+                "id": "rule-5",
+                "kind": "stop",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 65
+                },
+                "target": "complete",
+                "to": [
+                  "assistant"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "complete": {
+            "meta": {
+              "doc": "The requester stopped the conversation. Send nothing more.",
+              "line": 67
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "exhausted": {
+            "meta": {
+              "doc": "An eleventh question was asked. Start a new session for more.",
+              "line": 77
+            },
+            "name": "exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The thirty-minute contract clock ran out. Send nothing more.",
+              "line": 82
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "stalled": {
+            "meta": {
+              "doc": "The assistant did not answer within five minutes. Stop, and tell the requester no answer came.",
+              "line": 72
+            },
+            "name": "stalled"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 1800000,
+          "meta": {
+            "doc": "The room enforces the conversation. A separate remote controller chooses whether\nthe Python program or LLM answers. Protocol validity does not prove answer quality.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "answer": {
+            "fields": {
+              "request": {
+                "kind": "ref",
+                "meta": {
+                  "doc": null,
+                  "line": 28
+                },
+                "values": [
+                  "question"
+                ]
+              },
+              "text": {
+                "bytes": {
+                  "max": 64000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 4000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 29
+                }
+              }
+            },
+            "meta": {
+              "doc": "Answer the question it names. Say so when you are not sure.",
+              "line": 24
+            },
+            "name": "answer"
+          },
+          "question": {
+            "fields": {
+              "text": {
+                "bytes": {
+                  "max": 32000,
+                  "min": 1
+                },
+                "encoding": "utf-8",
+                "graphemes": {
+                  "max": 2000,
+                  "min": 1
+                },
+                "kind": "text",
+                "meta": {
+                  "doc": null,
+                  "line": 22
+                }
+              }
+            },
+            "meta": {
+              "doc": "Ask one self-contained question in plain language.",
+              "line": 18
+            },
+            "name": "question"
+          },
+          "stop": {
+            "fields": {},
+            "meta": {
+              "doc": "End the conversation. No questions follow.",
+              "line": 31
+            },
+            "name": "stop"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "requester",
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "id": "q",
+        "kind": "question",
+        "metadata": {
+          "doc": "Ask a question. The assistant then owes one answer to it.",
+          "line": 40
+        },
+        "outcome": null,
+        "payload": {
+          "text": "ping"
+        },
+        "recipients": [
+          "assistant"
+        ],
+        "role": "requester",
+        "session": "s",
+        "state": "answering",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "answering": 1,
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "q": {
+              "actor": "requester",
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "payload": {
+                "text": "ping"
+              },
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "role": "requester",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "q": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "q",
+                "kind": "question",
+                "metadata": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "ping"
+                },
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "answering",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "0c6bdb2bfef15ab36ddf8890bb2f11e4bcef724340221a6b2b3829efebfdb73b"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "answering",
+          "status": "active",
+          "variables": {
+            "request": "q"
+          },
+          "version": 1,
+          "wait": {
+            "due_at": 300000,
+            "head": "q",
+            "id": "due-2",
+            "remaining": [
+              "assistant"
+            ]
+          },
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "reference",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "answering": 1,
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "q": {
+              "actor": "requester",
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "payload": {
+                "text": "ping"
+              },
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "role": "requester",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 1,
+          "now": 1000,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "q": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "q",
+                "kind": "question",
+                "metadata": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "ping"
+                },
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "answering",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "0c6bdb2bfef15ab36ddf8890bb2f11e4bcef724340221a6b2b3829efebfdb73b"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "answering",
+          "status": "active",
+          "variables": {
+            "request": "q"
+          },
+          "version": 1,
+          "wait": {
+            "due_at": 300000,
+            "head": "q",
+            "id": "due-2",
+            "remaining": [
+              "assistant"
+            ]
+          },
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "assistant",
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "id": "a",
+        "kind": "answer",
+        "metadata": {
+          "doc": "The assistant owns the deadline regardless of which implementation answers.",
+          "line": 44
+        },
+        "outcome": null,
+        "payload": {
+          "request": "q",
+          "text": "pong"
+        },
+        "recipients": [
+          "requester"
+        ],
+        "role": "assistant",
+        "session": "s",
+        "state": "ready",
+        "status": "accepted",
+        "version": 2
+      },
+      "state": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 2000,
+          "entries": {
+            "answering": 1,
+            "new": 1,
+            "ready": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "assistant",
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "payload": {
+                "request": "q",
+                "text": "pong"
+              },
+              "recipients": [
+                "requester"
+              ],
+              "role": "assistant",
+              "rule": "rule-1"
+            },
+            "q": {
+              "actor": "requester",
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "payload": {
+                "text": "ping"
+              },
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "role": "requester",
+              "type": "accepted"
+            },
+            {
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "role": "assistant",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 2000,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 2000,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "assistant",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "a",
+                "kind": "answer",
+                "metadata": {
+                  "doc": "The assistant owns the deadline regardless of which implementation answers.",
+                  "line": 44
+                },
+                "outcome": null,
+                "payload": {
+                  "request": "q",
+                  "text": "pong"
+                },
+                "recipients": [
+                  "requester"
+                ],
+                "role": "assistant",
+                "session": "s",
+                "state": "ready",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "e8db81d97d7ad5597e73299dbc9eb878d6dfdf04672d9ceec6237d40da7c31f7"
+            },
+            "q": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "q",
+                "kind": "question",
+                "metadata": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "ping"
+                },
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "answering",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "0c6bdb2bfef15ab36ddf8890bb2f11e4bcef724340221a6b2b3829efebfdb73b"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "ready",
+          "status": "active",
+          "variables": {
+            "request": "q"
+          },
+          "version": 2,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "requester",
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "id": "stop",
+        "kind": "stop",
+        "metadata": {
+          "doc": null,
+          "line": 65
+        },
+        "outcome": "complete",
+        "payload": {},
+        "recipients": [
+          "assistant"
+        ],
+        "role": "requester",
+        "session": "s",
+        "state": "complete",
+        "status": "accepted",
+        "version": 3
+      },
+      "state": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 3000,
+          "entries": {
+            "answering": 1,
+            "complete": 1,
+            "new": 1,
+            "ready": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "assistant",
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "payload": {
+                "request": "q",
+                "text": "pong"
+              },
+              "recipients": [
+                "requester"
+              ],
+              "role": "assistant",
+              "rule": "rule-1"
+            },
+            "q": {
+              "actor": "requester",
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "payload": {
+                "text": "ping"
+              },
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-0"
+            },
+            "stop": {
+              "actor": "requester",
+              "at": 3000,
+              "id": "stop",
+              "kind": "stop",
+              "payload": {},
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-5"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "role": "requester",
+              "type": "accepted"
+            },
+            {
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "role": "assistant",
+              "type": "accepted"
+            },
+            {
+              "at": 3000,
+              "id": "stop",
+              "kind": "stop",
+              "role": "requester",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 3000,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 3000,
+          "obligations": [],
+          "outcome": "complete",
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "assistant",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "a",
+                "kind": "answer",
+                "metadata": {
+                  "doc": "The assistant owns the deadline regardless of which implementation answers.",
+                  "line": 44
+                },
+                "outcome": null,
+                "payload": {
+                  "request": "q",
+                  "text": "pong"
+                },
+                "recipients": [
+                  "requester"
+                ],
+                "role": "assistant",
+                "session": "s",
+                "state": "ready",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "e8db81d97d7ad5597e73299dbc9eb878d6dfdf04672d9ceec6237d40da7c31f7"
+            },
+            "q": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "q",
+                "kind": "question",
+                "metadata": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "ping"
+                },
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "answering",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "0c6bdb2bfef15ab36ddf8890bb2f11e4bcef724340221a6b2b3829efebfdb73b"
+            },
+            "stop": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "stop",
+                "kind": "stop",
+                "metadata": {
+                  "doc": null,
+                  "line": 65
+                },
+                "outcome": "complete",
+                "payload": {},
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "complete",
+                "status": "accepted",
+                "version": 3
+              },
+              "fingerprint": "2475a6d02d437d91783b95484d953b761ee6472facde4cbd95b242318fc5a586"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "complete",
+          "status": "terminal",
+          "variables": {
+            "request": "q"
+          },
+          "version": 3,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "original": {
+          "actor": "requester",
+          "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+          "id": "q",
+          "kind": "question",
+          "metadata": {
+            "doc": "Ask a question. The assistant then owes one answer to it.",
+            "line": 40
+          },
+          "outcome": null,
+          "payload": {
+            "text": "ping"
+          },
+          "recipients": [
+            "assistant"
+          ],
+          "role": "requester",
+          "session": "s",
+          "state": "answering",
+          "status": "accepted",
+          "version": 1
+        },
+        "status": "duplicate"
+      },
+      "state": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 3000,
+          "entries": {
+            "answering": 1,
+            "complete": 1,
+            "new": 1,
+            "ready": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "assistant",
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "payload": {
+                "request": "q",
+                "text": "pong"
+              },
+              "recipients": [
+                "requester"
+              ],
+              "role": "assistant",
+              "rule": "rule-1"
+            },
+            "q": {
+              "actor": "requester",
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "payload": {
+                "text": "ping"
+              },
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-0"
+            },
+            "stop": {
+              "actor": "requester",
+              "at": 3000,
+              "id": "stop",
+              "kind": "stop",
+              "payload": {},
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-5"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "role": "requester",
+              "type": "accepted"
+            },
+            {
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "role": "assistant",
+              "type": "accepted"
+            },
+            {
+              "at": 3000,
+              "id": "stop",
+              "kind": "stop",
+              "role": "requester",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 3000,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 4000,
+          "obligations": [],
+          "outcome": "complete",
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "assistant",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "a",
+                "kind": "answer",
+                "metadata": {
+                  "doc": "The assistant owns the deadline regardless of which implementation answers.",
+                  "line": 44
+                },
+                "outcome": null,
+                "payload": {
+                  "request": "q",
+                  "text": "pong"
+                },
+                "recipients": [
+                  "requester"
+                ],
+                "role": "assistant",
+                "session": "s",
+                "state": "ready",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "e8db81d97d7ad5597e73299dbc9eb878d6dfdf04672d9ceec6237d40da7c31f7"
+            },
+            "q": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "q",
+                "kind": "question",
+                "metadata": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "ping"
+                },
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "answering",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "0c6bdb2bfef15ab36ddf8890bb2f11e4bcef724340221a6b2b3829efebfdb73b"
+            },
+            "stop": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "stop",
+                "kind": "stop",
+                "metadata": {
+                  "doc": null,
+                  "line": 65
+                },
+                "outcome": "complete",
+                "payload": {},
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "complete",
+                "status": "accepted",
+                "version": 3
+              },
+              "fingerprint": "2475a6d02d437d91783b95484d953b761ee6472facde4cbd95b242318fc5a586"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "complete",
+          "status": "terminal",
+          "variables": {
+            "request": "q"
+          },
+          "version": 3,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "id_conflict",
+        "status": "rejected"
+      },
+      "state": {
+        "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+        "profile": "band-contract/state/6",
+        "source": "16e64e3b943f39cde478e5fbf647e0696bbbe38aba2431168a17d40aeef13f28",
+        "state": {
+          "bindings": {
+            "assistant": "assistant",
+            "requester": "requester"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 3000,
+          "entries": {
+            "answering": 1,
+            "complete": 1,
+            "new": 1,
+            "ready": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "assistant",
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "payload": {
+                "request": "q",
+                "text": "pong"
+              },
+              "recipients": [
+                "requester"
+              ],
+              "role": "assistant",
+              "rule": "rule-1"
+            },
+            "q": {
+              "actor": "requester",
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "payload": {
+                "text": "ping"
+              },
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-0"
+            },
+            "stop": {
+              "actor": "requester",
+              "at": 3000,
+              "id": "stop",
+              "kind": "stop",
+              "payload": {},
+              "recipients": [
+                "assistant"
+              ],
+              "role": "requester",
+              "rule": "rule-5"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "q",
+              "kind": "question",
+              "role": "requester",
+              "type": "accepted"
+            },
+            {
+              "at": 2000,
+              "id": "a",
+              "kind": "answer",
+              "role": "assistant",
+              "type": "accepted"
+            },
+            {
+              "at": 3000,
+              "id": "stop",
+              "kind": "stop",
+              "role": "requester",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 3000,
+          "max_at": 1800000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 5000,
+          "obligations": [],
+          "outcome": "complete",
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "assistant",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "a",
+                "kind": "answer",
+                "metadata": {
+                  "doc": "The assistant owns the deadline regardless of which implementation answers.",
+                  "line": 44
+                },
+                "outcome": null,
+                "payload": {
+                  "request": "q",
+                  "text": "pong"
+                },
+                "recipients": [
+                  "requester"
+                ],
+                "role": "assistant",
+                "session": "s",
+                "state": "ready",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "e8db81d97d7ad5597e73299dbc9eb878d6dfdf04672d9ceec6237d40da7c31f7"
+            },
+            "q": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "q",
+                "kind": "question",
+                "metadata": {
+                  "doc": "Ask a question. The assistant then owes one answer to it.",
+                  "line": 40
+                },
+                "outcome": null,
+                "payload": {
+                  "text": "ping"
+                },
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "answering",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "0c6bdb2bfef15ab36ddf8890bb2f11e4bcef724340221a6b2b3829efebfdb73b"
+            },
+            "stop": {
+              "decision": {
+                "actor": "requester",
+                "definition": "f018ffafb05211eb732547950384fcafd509f42dea1052bf576aaf28d8d76cee",
+                "id": "stop",
+                "kind": "stop",
+                "metadata": {
+                  "doc": null,
+                  "line": 65
+                },
+                "outcome": "complete",
+                "payload": {},
+                "recipients": [
+                  "assistant"
+                ],
+                "role": "requester",
+                "session": "s",
+                "state": "complete",
+                "status": "accepted",
+                "version": 3
+              },
+              "fingerprint": "2475a6d02d437d91783b95484d953b761ee6472facde4cbd95b242318fc5a586"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "complete",
+          "status": "terminal",
+          "variables": {
+            "request": "q"
+          },
+          "version": 3,
+          "wait": null,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

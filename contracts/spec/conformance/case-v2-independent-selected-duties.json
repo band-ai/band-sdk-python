@@ -1,0 +1,1227 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-independent-selected-duties",
+  "requirements": [
+    "ENG-008",
+    "ENG-009"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: selected-deadlines\ndescription: Test selected deadlines with explicit roles and outcomes.\nengine: 0.2.0-lab.1\nroles: [lead, alpha, beta]\n---\n\"\"\"\nThe lead starts work with two members, who each acknowledge on their own deadline: Alpha within\ntwo minutes, Beta within five. The lead then finishes it.\n\"\"\"\ncontract @4h mentions 2 => expired\n\n\"\"\"\nYou are the lead. Start the work, wait for both acknowledgements, then send finish.\n\"\"\"\nrole lead\n\n\"\"\"\nYou are Alpha. Acknowledge the start within two minutes.\n\"\"\"\nrole alpha\n\n\"\"\"\nYou are Beta. Acknowledge the start within five minutes.\n\"\"\"\nrole beta\n\n\"\"\"\nStart the work with both members.\n\"\"\"\ntype start\n\n\"\"\"\nConfirm that you received the start. The message carries no content.\n\"\"\"\ntype ack\n\n\"\"\"\nFinish the work. Nothing follows.\n\"\"\"\ntype finish\n\n\"\"\"\nThe lead has not started yet. Send start to Alpha and Beta.\n\"\"\"\nstate new\n  lead -> {alpha,beta}: start() => waiting\n\n\"\"\"\nAlpha owes an acknowledgement within two minutes and Beta within five. The lead finishes when\nready.\n\"\"\"\nstate waiting\n  event alpha -> lead: ack() @2m => alpha_late\n  event beta -> lead: ack() @5m => beta_late\n  lead -> {alpha,beta}: finish() => complete\n\n\"\"\"\nThe lead finished the work. Send nothing more.\n\"\"\"\nend complete\n\n\"\"\"\nAlpha did not acknowledge within two minutes. Stop, and tell the lead Alpha is missing.\n\"\"\"\nend alpha_late\n\n\"\"\"\nBeta did not acknowledge within five minutes. Stop, and tell the lead Beta is missing.\n\"\"\"\nend beta_late\n\n\"\"\"\nThe four-hour contract clock ran out. Send nothing more.\n\"\"\"\nend expired\n",
+        "sha256": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1"
+      }
+    },
+    {
+      "op": "new",
+      "contract": "c",
+      "handle": "s",
+      "config": {
+        "session": "s",
+        "bindings": {
+          "lead": "lead",
+          "alpha": "alpha",
+          "beta": "beta"
+        },
+        "now": 0,
+        "inactivity": "accepted",
+        "max_messages": 100,
+        "max_bytes": 16384,
+        "room_policy": {
+          "revision": "conformance-1",
+          "fixed_roles": {},
+          "principals": {
+            "lead": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "alpha": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            },
+            "beta": {
+              "kind": "agent",
+              "active": true,
+              "permission": "owner"
+            }
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "lead",
+      "now": 0,
+      "message": {
+        "id": "start",
+        "session": "s",
+        "kind": "start",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "lead": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "alpha": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "beta": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "step",
+      "handle": "s",
+      "actor": "alpha",
+      "now": 119999,
+      "message": {
+        "id": "a",
+        "session": "s",
+        "kind": "ack",
+        "payload": {}
+      },
+      "room_policy": {
+        "revision": "conformance-1",
+        "fixed_roles": {},
+        "principals": {
+          "lead": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "alpha": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          },
+          "beta": {
+            "kind": "agent",
+            "active": true,
+            "permission": "owner"
+          }
+        }
+      }
+    },
+    {
+      "op": "tick",
+      "handle": "s",
+      "now": 120000
+    },
+    {
+      "op": "tick",
+      "handle": "s",
+      "now": 300000
+    }
+  ],
+  "assertions": [
+    {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "beta_late"
+    },
+    {
+      "response": 5,
+      "pointer": "/state/state/expired_at",
+      "equals": 300000
+    }
+  ],
+  "expected": [
+    {
+      "ok": {
+        "any_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "any_rules": [],
+        "card": {
+          "description": "Test selected deadlines with explicit roles and outcomes.",
+          "encoding": "utf-8",
+          "engine": "0.2.0-lab.1",
+          "extensions": [],
+          "inactivity_timeout": "infinite",
+          "lifetime": [
+            "seconds",
+            14400
+          ],
+          "name": "selected-deadlines",
+          "roles": [
+            "lead",
+            "alpha",
+            "beta"
+          ],
+          "version": null
+        },
+        "digest": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "engine": "0.2.0-lab.1",
+        "extensions": {
+          "permission_meta": {},
+          "permissions": {},
+          "triggers": [],
+          "watch_meta": {},
+          "watches": []
+        },
+        "mentions": {
+          "max": 2
+        },
+        "meta": {
+          "doc": "The lead starts work with two members, who each acknowledge on their own deadline: Alpha within\ntwo minutes, Beta within five. The lead then finishes it.",
+          "line": 1
+        },
+        "name": "selected-deadlines",
+        "role_metadata": {
+          "alpha": {
+            "meta": {
+              "doc": "You are Alpha. Acknowledge the start within two minutes.",
+              "line": 12
+            },
+            "name": "alpha"
+          },
+          "beta": {
+            "meta": {
+              "doc": "You are Beta. Acknowledge the start within five minutes.",
+              "line": 17
+            },
+            "name": "beta"
+          },
+          "lead": {
+            "meta": {
+              "doc": "You are the lead. Start the work, wait for both acknowledgements, then send finish.",
+              "line": 7
+            },
+            "name": "lead"
+          }
+        },
+        "roles": [
+          "lead",
+          "alpha",
+          "beta"
+        ],
+        "room_meta": {
+          "doc": null,
+          "line": 1
+        },
+        "room_rules": [],
+        "source_digest": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1",
+        "states": {
+          "new": {
+            "deadlines": [],
+            "max_entries": null,
+            "meta": {
+              "doc": "The lead has not started yet. Send start to Alpha and Beta.",
+              "line": 37
+            },
+            "name": "new",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-0",
+                "kind": "start",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 41
+                },
+                "target": "waiting",
+                "to": [
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          },
+          "waiting": {
+            "deadlines": [
+              {
+                "after_ms": 120000,
+                "id": "due-2",
+                "kind": "ack",
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                },
+                "outcome": "alpha_late",
+                "participants": [
+                  "alpha"
+                ],
+                "quantifier": "all"
+              },
+              {
+                "after_ms": 300000,
+                "id": "due-4",
+                "kind": "ack",
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "outcome": "beta_late",
+                "participants": [
+                  "beta"
+                ],
+                "quantifier": "all"
+              }
+            ],
+            "max_entries": null,
+            "meta": {
+              "doc": "Alpha owes an acknowledgement within two minutes and Beta within five. The lead finishes when\nready.",
+              "line": 43
+            },
+            "name": "waiting",
+            "rules": [
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "alpha"
+                ],
+                "id": "rule-1",
+                "kind": "ack",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 48
+                },
+                "target": null,
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": true,
+                "from": [
+                  "beta"
+                ],
+                "id": "rule-3",
+                "kind": "ack",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 49
+                },
+                "target": null,
+                "to": [
+                  "lead"
+                ]
+              },
+              {
+                "activity": false,
+                "bind": null,
+                "each": false,
+                "event": false,
+                "from": [
+                  "lead"
+                ],
+                "id": "rule-5",
+                "kind": "finish",
+                "matches": {},
+                "meta": {
+                  "doc": null,
+                  "line": 50
+                },
+                "target": "complete",
+                "to": [
+                  "alpha",
+                  "beta"
+                ]
+              }
+            ]
+          }
+        },
+        "terminals": {
+          "alpha_late": {
+            "meta": {
+              "doc": "Alpha did not acknowledge within two minutes. Stop, and tell the lead Alpha is missing.",
+              "line": 57
+            },
+            "name": "alpha_late"
+          },
+          "beta_late": {
+            "meta": {
+              "doc": "Beta did not acknowledge within five minutes. Stop, and tell the lead Beta is missing.",
+              "line": 62
+            },
+            "name": "beta_late"
+          },
+          "complete": {
+            "meta": {
+              "doc": "The lead finished the work. Send nothing more.",
+              "line": 52
+            },
+            "name": "complete"
+          },
+          "completion_capacity": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "completion_capacity"
+          },
+          "control_capacity_exhausted": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "control_capacity_exhausted"
+          },
+          "expired": {
+            "meta": {
+              "doc": "The four-hour contract clock ran out. Send nothing more.",
+              "line": 67
+            },
+            "name": "expired"
+          },
+          "insufficient_time": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "insufficient_time"
+          },
+          "participant_removed": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "participant_removed"
+          },
+          "unserviceable_obligation": {
+            "meta": {
+              "doc": null,
+              "line": 1
+            },
+            "name": "unserviceable_obligation"
+          }
+        },
+        "timeout": {
+          "after_ms": 14400000,
+          "meta": {
+            "doc": "The lead starts work with two members, who each acknowledge on their own deadline: Alpha within\ntwo minutes, Beta within five. The lead then finishes it.",
+            "line": 1
+          },
+          "outcome": "expired",
+          "profile": "band-contract/timeout/1"
+        },
+        "types": {
+          "ack": {
+            "fields": {},
+            "meta": {
+              "doc": "Confirm that you received the start. The message carries no content.",
+              "line": 27
+            },
+            "name": "ack"
+          },
+          "finish": {
+            "fields": {},
+            "meta": {
+              "doc": "Finish the work. Nothing follows.",
+              "line": 32
+            },
+            "name": "finish"
+          },
+          "start": {
+            "fields": {},
+            "meta": {
+              "doc": "Start the work with both members.",
+              "line": 22
+            },
+            "name": "start"
+          }
+        }
+      }
+    },
+    {
+      "ok": {
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "profile": "band-contract/state/2",
+        "source": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1",
+        "state": {
+          "bindings": {
+            "alpha": "alpha",
+            "beta": "beta",
+            "lead": "lead"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {},
+          "fired_signals": {},
+          "history": [],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 0,
+          "now": 0,
+          "obligations": [],
+          "outcome": null,
+          "receipts": {},
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "new",
+          "status": "active",
+          "variables": {},
+          "version": 0,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "lead",
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "id": "start",
+        "kind": "start",
+        "metadata": {
+          "doc": null,
+          "line": 41
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "alpha",
+          "beta"
+        ],
+        "role": "lead",
+        "session": "s",
+        "state": "waiting",
+        "status": "accepted",
+        "version": 1
+      },
+      "state": {
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "profile": "band-contract/state/2",
+        "source": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1",
+        "state": {
+          "bindings": {
+            "alpha": "alpha",
+            "beta": "beta",
+            "lead": "lead"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "waiting": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "alpha",
+                "beta"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 0,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 2,
+          "now": 0,
+          "obligations": [
+            {
+              "after_ms": 120000,
+              "due_at": 120000,
+              "id": "due-2",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 48
+              },
+              "outcome": "alpha_late",
+              "participants": [
+                "alpha"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "alpha"
+              ]
+            },
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-4",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 49
+              },
+              "outcome": "beta_late",
+              "participants": [
+                "beta"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "beta"
+              ]
+            }
+          ],
+          "outcome": null,
+          "receipts": {
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": null,
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "alpha",
+                  "beta"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "waiting",
+          "status": "active",
+          "variables": {},
+          "version": 1,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "actor": "alpha",
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "id": "a",
+        "kind": "ack",
+        "metadata": {
+          "doc": null,
+          "line": 48
+        },
+        "outcome": null,
+        "payload": {},
+        "recipients": [
+          "lead"
+        ],
+        "role": "alpha",
+        "session": "s",
+        "state": "waiting",
+        "status": "accepted",
+        "version": 2
+      },
+      "state": {
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "profile": "band-contract/state/2",
+        "source": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1",
+        "state": {
+          "bindings": {
+            "alpha": "alpha",
+            "beta": "beta",
+            "lead": "lead"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "waiting": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "alpha",
+              "at": 119999,
+              "id": "a",
+              "kind": "ack",
+              "payload": {},
+              "recipients": [
+                "lead"
+              ],
+              "role": "alpha",
+              "rule": "rule-1"
+            },
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "alpha",
+                "beta"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            },
+            {
+              "at": 119999,
+              "id": "a",
+              "kind": "ack",
+              "role": "alpha",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 119999,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 119999,
+          "obligations": [
+            {
+              "after_ms": 120000,
+              "due_at": 120000,
+              "id": "due-2",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 48
+              },
+              "outcome": "alpha_late",
+              "participants": [
+                "alpha"
+              ],
+              "quantifier": "all",
+              "remaining": []
+            },
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-4",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 49
+              },
+              "outcome": "beta_late",
+              "participants": [
+                "beta"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "beta"
+              ]
+            }
+          ],
+          "outcome": null,
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "alpha",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "a",
+                "kind": "ack",
+                "metadata": {
+                  "doc": null,
+                  "line": 48
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "lead"
+                ],
+                "role": "alpha",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "72892ad7dd6365f0089b08cfc3891b313399a77c66a0122f96ce5d6c52dce7de"
+            },
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": null,
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "alpha",
+                  "beta"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "waiting",
+          "status": "active",
+          "variables": {},
+          "version": 2,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "status": "ticked"
+      },
+      "state": {
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "profile": "band-contract/state/2",
+        "source": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1",
+        "state": {
+          "bindings": {
+            "alpha": "alpha",
+            "beta": "beta",
+            "lead": "lead"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "waiting": 1
+          },
+          "expired_at": null,
+          "expiry": null,
+          "facts": {
+            "a": {
+              "actor": "alpha",
+              "at": 119999,
+              "id": "a",
+              "kind": "ack",
+              "payload": {},
+              "recipients": [
+                "lead"
+              ],
+              "role": "alpha",
+              "rule": "rule-1"
+            },
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "alpha",
+                "beta"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            },
+            {
+              "at": 119999,
+              "id": "a",
+              "kind": "ack",
+              "role": "alpha",
+              "type": "accepted"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 119999,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 120000,
+          "obligations": [
+            {
+              "after_ms": 120000,
+              "due_at": 120000,
+              "id": "due-2",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 48
+              },
+              "outcome": "alpha_late",
+              "participants": [
+                "alpha"
+              ],
+              "quantifier": "all",
+              "remaining": []
+            },
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-4",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 49
+              },
+              "outcome": "beta_late",
+              "participants": [
+                "beta"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "beta"
+              ]
+            }
+          ],
+          "outcome": null,
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "alpha",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "a",
+                "kind": "ack",
+                "metadata": {
+                  "doc": null,
+                  "line": 48
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "lead"
+                ],
+                "role": "alpha",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "72892ad7dd6365f0089b08cfc3891b313399a77c66a0122f96ce5d6c52dce7de"
+            },
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": null,
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "alpha",
+                  "beta"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "waiting",
+          "status": "active",
+          "variables": {},
+          "version": 2,
+          "watch_bindings": {}
+        }
+      }
+    },
+    {
+      "decision": {
+        "status": "ticked"
+      },
+      "state": {
+        "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+        "profile": "band-contract/state/2",
+        "source": "eabccbf7bf6cce6a744b2dc4d86544d94b58f97b1ea84cd545c5cb80eb525ed1",
+        "state": {
+          "bindings": {
+            "alpha": "alpha",
+            "beta": "beta",
+            "lead": "lead"
+          },
+          "contributions": {},
+          "control_limit": 0,
+          "control_log": [],
+          "created_at": 0,
+          "entered_at": 0,
+          "entries": {
+            "new": 1,
+            "waiting": 1
+          },
+          "expired_at": 300000,
+          "expiry": {
+            "at": 300000,
+            "id": "due-4",
+            "missing": [
+              "beta"
+            ],
+            "outcome": "beta_late",
+            "reason": "deadline"
+          },
+          "facts": {
+            "a": {
+              "actor": "alpha",
+              "at": 119999,
+              "id": "a",
+              "kind": "ack",
+              "payload": {},
+              "recipients": [
+                "lead"
+              ],
+              "role": "alpha",
+              "rule": "rule-1"
+            },
+            "start": {
+              "actor": "lead",
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "payload": {},
+              "recipients": [
+                "alpha",
+                "beta"
+              ],
+              "role": "lead",
+              "rule": "rule-0"
+            }
+          },
+          "fired_signals": {},
+          "history": [
+            {
+              "at": 0,
+              "id": "start",
+              "kind": "start",
+              "role": "lead",
+              "type": "accepted"
+            },
+            {
+              "at": 119999,
+              "id": "a",
+              "kind": "ack",
+              "role": "alpha",
+              "type": "accepted"
+            },
+            {
+              "at": 300000,
+              "outcome": "beta_late",
+              "reason": "deadline",
+              "type": "expiry"
+            }
+          ],
+          "id": "s",
+          "idle_ms": null,
+          "inactivity": "accepted",
+          "last_activity": 119999,
+          "max_at": 14400000,
+          "max_bytes": 16384,
+          "max_messages": 100,
+          "mentions_used": 3,
+          "now": 300000,
+          "obligations": [
+            {
+              "after_ms": 120000,
+              "due_at": 120000,
+              "id": "due-2",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 48
+              },
+              "outcome": "alpha_late",
+              "participants": [
+                "alpha"
+              ],
+              "quantifier": "all",
+              "remaining": []
+            },
+            {
+              "after_ms": 300000,
+              "due_at": 300000,
+              "id": "due-4",
+              "kind": "ack",
+              "meta": {
+                "doc": null,
+                "line": 49
+              },
+              "outcome": "beta_late",
+              "participants": [
+                "beta"
+              ],
+              "quantifier": "all",
+              "remaining": [
+                "beta"
+              ]
+            }
+          ],
+          "outcome": "beta_late",
+          "receipts": {
+            "a": {
+              "decision": {
+                "actor": "alpha",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "a",
+                "kind": "ack",
+                "metadata": {
+                  "doc": null,
+                  "line": 48
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "lead"
+                ],
+                "role": "alpha",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 2
+              },
+              "fingerprint": "72892ad7dd6365f0089b08cfc3891b313399a77c66a0122f96ce5d6c52dce7de"
+            },
+            "start": {
+              "decision": {
+                "actor": "lead",
+                "definition": "0250a45f22ee6e3bdf367fe3fa51baeebb49c3a5e659ccb1e71e90da3529c5fb",
+                "id": "start",
+                "kind": "start",
+                "metadata": {
+                  "doc": null,
+                  "line": 41
+                },
+                "outcome": null,
+                "payload": {},
+                "recipients": [
+                  "alpha",
+                  "beta"
+                ],
+                "role": "lead",
+                "session": "s",
+                "state": "waiting",
+                "status": "accepted",
+                "version": 1
+              },
+              "fingerprint": "4b614695f3f5fb58305dc84c6b292ec5a6607ba1cfecebc5488f4cb32e8165c9"
+            }
+          },
+          "signal_receipts": {},
+          "signal_revision": 0,
+          "signals": {},
+          "state": "beta_late",
+          "status": "terminal",
+          "variables": {},
+          "version": 3,
+          "watch_bindings": {}
+        }
+      }
+    }
+  ]
+}

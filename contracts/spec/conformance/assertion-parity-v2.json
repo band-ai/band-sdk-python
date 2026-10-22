@@ -1,0 +1,4256 @@
+{
+  "band-session:A000": {
+    "target_case": "v2-band-session",
+    "target_index": 0,
+    "assertion": {
+      "response": 1,
+      "pointer": "/ok/state/bindings",
+      "equals": {
+        "requester": "Agent:33333333-3333-4333-8333-333333333333",
+        "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+      }
+    },
+    "baseline_assertion": {
+      "response": 1,
+      "pointer": "/ok/state/bindings",
+      "equals": {
+        "requester": "User:33333333-3333-4333-8333-333333333333",
+        "assistant": "Agent:44444444-4444-4444-8444-444444444444"
+      }
+    },
+    "authority": "V2-HUMAN / D-15 / D-6 / band-transport.md / timeouts-v2.md",
+    "reason": "Current bindings are agent-only (human binding remains a negative schema pin); without idle expiry the owed answer duty expires as stalled at its scheduled time. Outsider rejection and retries are retained.",
+    "disposition": "changed-current-semantics"
+  },
+  "band-session:A001": {
+    "target_case": "v2-band-session",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/ok/actor",
+      "equals": "Agent:44444444-4444-4444-8444-444444444444"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/ok/actor",
+      "equals": "Agent:44444444-4444-4444-8444-444444444444"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A002": {
+    "target_case": "v2-band-session",
+    "target_index": 2,
+    "assertion": {
+      "response": 2,
+      "pointer": "/ok/view/facts",
+      "equals": {}
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/ok/view/facts",
+      "equals": {}
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A003": {
+    "target_case": "v2-band-session",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A004": {
+    "target_case": "v2-band-session",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A005": {
+    "target_case": "v2-band-session",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/actor",
+      "equals": "Agent:33333333-3333-4333-8333-333333333333"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/actor",
+      "equals": "User:33333333-3333-4333-8333-333333333333"
+    },
+    "authority": "V2-HUMAN / D-15 / D-6 / band-transport.md / timeouts-v2.md",
+    "reason": "Current bindings are agent-only (human binding remains a negative schema pin); without idle expiry the owed answer duty expires as stalled at its scheduled time. Outsider rejection and retries are retained.",
+    "disposition": "changed-current-semantics"
+  },
+  "band-session:A006": {
+    "target_case": "v2-band-session",
+    "target_index": 6,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/recipients",
+      "equals": [
+        "Agent:44444444-4444-4444-8444-444444444444"
+      ]
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/recipients",
+      "equals": [
+        "Agent:44444444-4444-4444-8444-444444444444"
+      ]
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A007": {
+    "target_case": "v2-band-session",
+    "target_index": 7,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A008": {
+    "target_case": "v2-band-session",
+    "target_index": 8,
+    "assertion": {
+      "response": 5,
+      "pointer": "/ok/view/facts/q/payload/text",
+      "equals": "ping"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/ok/view/facts/q/payload/text",
+      "equals": "ping"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A009": {
+    "target_case": "v2-band-session",
+    "target_index": 9,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A010": {
+    "target_case": "v2-band-session",
+    "target_index": 10,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A011": {
+    "target_case": "v2-band-session",
+    "target_index": 11,
+    "assertion": {
+      "response": 7,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A012": {
+    "target_case": "v2-band-session",
+    "target_index": 12,
+    "assertion": {
+      "response": 7,
+      "pointer": "/decision/recipients",
+      "equals": [
+        "Agent:33333333-3333-4333-8333-333333333333"
+      ]
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/decision/recipients",
+      "equals": [
+        "User:33333333-3333-4333-8333-333333333333"
+      ]
+    },
+    "authority": "V2-HUMAN / D-15 / D-6 / band-transport.md / timeouts-v2.md",
+    "reason": "Current bindings are agent-only (human binding remains a negative schema pin); without idle expiry the owed answer duty expires as stalled at its scheduled time. Outsider rejection and retries are retained.",
+    "disposition": "changed-current-semantics"
+  },
+  "band-session:A013": {
+    "target_case": "v2-band-session",
+    "target_index": 13,
+    "assertion": {
+      "response": 7,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A014": {
+    "target_case": "v2-band-session",
+    "target_index": 14,
+    "assertion": {
+      "response": 8,
+      "pointer": "/ok/view/facts/a/payload/request",
+      "equals": "q"
+    },
+    "baseline_assertion": {
+      "response": 8,
+      "pointer": "/ok/view/facts/a/payload/request",
+      "equals": "q"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A015": {
+    "target_case": "v2-band-session",
+    "target_index": 15,
+    "assertion": {
+      "response": 9,
+      "pointer": "/state/state/outcome",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 9,
+      "pointer": "/state/state/outcome",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A016": {
+    "target_case": "v2-band-session",
+    "target_index": 16,
+    "assertion": {
+      "response": 10,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 10,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A017": {
+    "target_case": "v2-band-session",
+    "target_index": 17,
+    "assertion": {
+      "response": 10,
+      "pointer": "/decision/original/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 10,
+      "pointer": "/decision/original/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A018": {
+    "target_case": "v2-band-session",
+    "target_index": 18,
+    "assertion": {
+      "response": 10,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    "baseline_assertion": {
+      "response": 10,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A019": {
+    "target_case": "v2-band-session",
+    "target_index": 19,
+    "assertion": {
+      "response": 11,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "baseline_assertion": {
+      "response": 11,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A020": {
+    "target_case": "v2-band-session",
+    "target_index": 20,
+    "assertion": {
+      "response": 12,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "baseline_assertion": {
+      "response": 12,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A021": {
+    "target_case": "v2-band-session",
+    "target_index": 21,
+    "assertion": {
+      "response": 13,
+      "pointer": "/ok/view/outcome",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 13,
+      "pointer": "/ok/view/outcome",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A022": {
+    "target_case": "v2-band-session",
+    "target_index": 22,
+    "assertion": {
+      "response": 16,
+      "pointer": "/ok/view/outcome",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 16,
+      "pointer": "/ok/view/outcome",
+      "equals": "expired"
+    },
+    "authority": "V2-HUMAN / D-15 / D-6 / band-transport.md / timeouts-v2.md",
+    "reason": "Current bindings are agent-only (human binding remains a negative schema pin); without idle expiry the owed answer duty expires as stalled at its scheduled time. Outsider rejection and retries are retained.",
+    "disposition": "changed-current-semantics"
+  },
+  "band-session:A023": {
+    "target_case": "v2-band-session",
+    "target_index": 23,
+    "assertion": {
+      "response": 16,
+      "pointer": "/ok/checkpoint/state/expired_at",
+      "equals": 300000
+    },
+    "baseline_assertion": {
+      "response": 16,
+      "pointer": "/ok/checkpoint/state/expired_at",
+      "equals": 300000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A024": {
+    "target_case": "v2-band-session",
+    "target_index": 24,
+    "assertion": {
+      "response": 17,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    "baseline_assertion": {
+      "response": 17,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A025": {
+    "target_case": "v2-band-session",
+    "target_index": 25,
+    "assertion": {
+      "response": 18,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 18,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "band-session:A026": {
+    "target_case": "v2-band-session",
+    "target_index": 26,
+    "assertion": {
+      "response": 18,
+      "pointer": "/state/state/outcome",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 18,
+      "pointer": "/state/state/outcome",
+      "equals": "expired"
+    },
+    "authority": "V2-HUMAN / D-15 / D-6 / band-transport.md / timeouts-v2.md",
+    "reason": "Current bindings are agent-only (human binding remains a negative schema pin); without idle expiry the owed answer duty expires as stalled at its scheduled time. Outsider rejection and retries are retained.",
+    "disposition": "changed-current-semantics"
+  },
+  "band-session:A027": {
+    "target_case": "v2-band-session",
+    "target_index": 27,
+    "assertion": {
+      "response": 19,
+      "pointer": "/error",
+      "equals": "unauthorized"
+    },
+    "baseline_assertion": {
+      "response": 19,
+      "pointer": "/error",
+      "equals": "unauthorized"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "checkpoint-corruption:A000": {
+    "target_case": "v2-checkpoint-corruption",
+    "target_index": 0,
+    "assertion": {
+      "response": 1,
+      "pointer": "/error",
+      "equals": "invalid_checkpoint"
+    },
+    "baseline_assertion": {
+      "response": 1,
+      "pointer": "/error",
+      "equals": "invalid_checkpoint"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "checkpoint-restore:A000": {
+    "target_case": "v2-checkpoint-restore",
+    "target_index": 0,
+    "assertion": {
+      "response": 1,
+      "pointer": "/ok/state/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 1,
+      "pointer": "/ok/state/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "checkpoint-restore:A001": {
+    "target_case": "v2-checkpoint-restore",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/ok",
+      "equals": {
+        "data": {
+          "definition": "76b5805bee2ea03ae160e8e1981248388bf487a62147815b00e583a7a43ac291",
+          "profile": "band-contract/state/6",
+          "source": "0a17bd1e8c490ecc20e238f9836f42e005c231e8dc3e5f0ac73ba2863e055f83",
+          "state": {
+            "bindings": {
+              "lead": "lead",
+              "reviewer": "reviewer",
+              "worker": "worker"
+            },
+            "contributions": {},
+            "control_limit": 0,
+            "control_log": [],
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1,
+              "offered": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {
+              "offer": {
+                "actor": "lead",
+                "at": 0,
+                "id": "offer",
+                "kind": "offer",
+                "payload": {
+                  "task": "Portable task"
+                },
+                "recipients": [
+                  "worker",
+                  "reviewer"
+                ],
+                "role": "lead",
+                "rule": "rule-0"
+              }
+            },
+            "fired_signals": {},
+            "history": [
+              {
+                "at": 0,
+                "id": "offer",
+                "kind": "offer",
+                "role": "lead",
+                "type": "accepted"
+              }
+            ],
+            "id": "s",
+            "idle_ms": null,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": 14400000,
+            "max_bytes": 16384,
+            "max_messages": 100,
+            "mentions_used": 2,
+            "now": 0,
+            "obligations": [
+              {
+                "after_ms": 120000,
+                "due_at": 120000,
+                "id": "due-2",
+                "kind": "accept",
+                "meta": {
+                  "doc": "The worker must accept within two minutes or the task is unclaimed.",
+                  "line": 129
+                },
+                "outcome": "unclaimed",
+                "participants": [
+                  "worker"
+                ],
+                "quantifier": "all",
+                "remaining": [
+                  "worker"
+                ]
+              }
+            ],
+            "outcome": null,
+            "receipts": {
+              "offer": {
+                "decision": {
+                  "actor": "lead",
+                  "definition": "76b5805bee2ea03ae160e8e1981248388bf487a62147815b00e583a7a43ac291",
+                  "id": "offer",
+                  "kind": "offer",
+                  "metadata": {
+                    "doc": "Both the worker and reviewer receive the original offer.",
+                    "line": 120
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "task": "Portable task"
+                  },
+                  "recipients": [
+                    "worker",
+                    "reviewer"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "offered",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "fingerprint": "6d506b10fe272ac2b28339843156263a4a4dc32788922b650e4db0d4e7d8dbd0"
+              }
+            },
+            "signal_receipts": {},
+            "signal_revision": 0,
+            "signals": {},
+            "state": "offered",
+            "status": "active",
+            "variables": {
+              "task": "offer"
+            },
+            "version": 1,
+            "wait": null,
+            "watch_bindings": {}
+          }
+        },
+        "hash": "243c38dd645d71560b58f074cc8fb04a1e44f20194222a2744c25b4f212bedc7",
+        "profile": "band-contract/room-checkpoint/1"
+      }
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/ok",
+      "equals": {
+        "data": {
+          "definition": "b4bd9360f9078ad83bafa8e24a4b28aae830d85aa2c2fabc2854ffda133bcd92",
+          "profile": "band-contract/state/1",
+          "source": "81f540f36e873f01af4dd0ddf810d8ca20288dae47eef5b37b7de84a3f68ed2f",
+          "state": {
+            "bindings": {
+              "lead": "lead",
+              "reviewer": "reviewer",
+              "worker": "worker"
+            },
+            "contributions": {},
+            "created_at": 0,
+            "entered_at": 0,
+            "entries": {
+              "new": 1,
+              "offered": 1
+            },
+            "expired_at": null,
+            "expiry": null,
+            "facts": {
+              "offer": {
+                "actor": "lead",
+                "at": 0,
+                "id": "offer",
+                "kind": "offer",
+                "payload": {
+                  "task": "Portable task"
+                },
+                "recipients": [
+                  "worker",
+                  "reviewer"
+                ],
+                "role": "lead",
+                "rule": "rule-0"
+              }
+            },
+            "history": [
+              {
+                "at": 0,
+                "id": "offer",
+                "kind": "offer",
+                "role": "lead",
+                "type": "accepted"
+              }
+            ],
+            "id": "s",
+            "idle_ms": 1800000,
+            "inactivity": "accepted",
+            "last_activity": 0,
+            "max_at": 14400000,
+            "max_bytes": 16384,
+            "max_messages": 100,
+            "mentions_used": 2,
+            "now": 0,
+            "obligations": [
+              {
+                "after_ms": 120000,
+                "due_at": 120000,
+                "id": "due-1",
+                "kind": "accept",
+                "meta": {
+                  "doc": "The worker must accept within two minutes or the task is unclaimed.\n",
+                  "line": 69
+                },
+                "outcome": "unclaimed",
+                "participants": [
+                  "worker"
+                ],
+                "quantifier": "all",
+                "remaining": [
+                  "worker"
+                ]
+              }
+            ],
+            "outcome": null,
+            "receipts": {
+              "offer": {
+                "decision": {
+                  "actor": "lead",
+                  "definition": "b4bd9360f9078ad83bafa8e24a4b28aae830d85aa2c2fabc2854ffda133bcd92",
+                  "id": "offer",
+                  "kind": "offer",
+                  "metadata": {
+                    "doc": "Both the worker and reviewer receive the original offer.\n",
+                    "line": 61
+                  },
+                  "outcome": null,
+                  "payload": {
+                    "task": "Portable task"
+                  },
+                  "recipients": [
+                    "worker",
+                    "reviewer"
+                  ],
+                  "role": "lead",
+                  "session": "s",
+                  "state": "offered",
+                  "status": "accepted",
+                  "version": 1
+                },
+                "fingerprint": "6d506b10fe272ac2b28339843156263a4a4dc32788922b650e4db0d4e7d8dbd0"
+              }
+            },
+            "state": "offered",
+            "status": "active",
+            "variables": {
+              "task": "offer"
+            },
+            "version": 1
+          }
+        },
+        "hash": "bd56fe1fcb9706db6cd073de9ab6bb7fea49766edef3c78d0a7f26470093ce45",
+        "profile": "band-contract/room-checkpoint/1"
+      }
+    },
+    "authority": "D-7 / engine.md",
+    "reason": "Roundtrip equality uses the current compiled/source identity and profile-2 packet; version and recovery expectations remain unchanged. The checkpoint definition hash follows the compiled documentation text (choice A). Source re-pinned forward 2026-10-15 for prompt blocks (Eric; definition digest unchanged). Re-pinned forward 2026-10-15: the source waits for replies (old send-then-answer form converted, Eric; op-p4o2fa6d), so the packet profile is band-contract/state/6. Re-pinned forward 2026-10-16 for the no-group landing: the source waits for replies (old send-then-answer form converted, Eric; op-uyux3xf3). Re-pinned forward 2026-10-16: assignment cancel prose gains the temporary-narrowing marker (op-yqwswp23; definition digest unchanged).",
+    "disposition": "changed-current-semantics"
+  },
+  "checkpoint-restore:A002": {
+    "target_case": "v2-checkpoint-restore",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "checkpoint-restore:A003": {
+    "target_case": "v2-checkpoint-restore",
+    "target_index": 3,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/status",
+      "equals": "terminal"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/status",
+      "equals": "terminal"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "clock-regression:A000": {
+    "target_case": "v2-clock-regression",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "clock_regression"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "clock_regression"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "clock-regression:A001": {
+    "target_case": "v2-clock-regression",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 0
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 0
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-agent-control:A000": {
+    "target_case": "v2-compile-agent-control",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "agent-control"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "agent-control"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-all-participants:A000": {
+    "target_case": "v2-compile-all-participants",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "all-participants"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "all-participants"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-assignment:A000": {
+    "target_case": "v2-compile-assignment",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "assignment"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "assignment"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-bounded-review:A000": {
+    "target_case": "v2-compile-bounded-review",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "bounded-review"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "bounded-review"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-explicit-infinity:A000": {
+    "target_case": "v2-compile-explicit-infinity",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "explicit-infinity"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "explicit-infinity"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-first-responder:A000": {
+    "target_case": "v2-compile-first-responder",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "first-responder"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "first-responder"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-history-review-v2:A000": {
+    "target_case": "v2-compile-history-review-v2",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "history-review-v2"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "history-review-v2"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-history-review:A000": {
+    "target_case": "v2-compile-history-review",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "history-review"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "history-review"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-hybrid-assistant:A000": {
+    "target_case": "v2-compile-hybrid-assistant",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "hybrid-assistant"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "hybrid-assistant"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-program-counter:A000": {
+    "target_case": "v2-compile-program-counter",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "program-counter"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "program-counter"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-progress-events:A000": {
+    "target_case": "v2-compile-progress-events",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "progress-events"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "progress-events"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-room-events:A000": {
+    "target_case": "v2-compile-room-events",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "room-events"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "room-events"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-selected-deadlines:A000": {
+    "target_case": "v2-compile-selected-deadlines",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "selected-deadlines"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "selected-deadlines"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "compile-team-review:A000": {
+    "target_case": "v2-compile-team-review",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "team-review"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/name",
+      "equals": "team-review"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "documentation-basic:A000": {
+    "target_case": "v2-documentation-basic",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "A \"quote\" and \\ slash."
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "A \"quote\" and \\ slash.\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "documentation-continuation:A000": {
+    "target_case": "v2-documentation-continuation",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "ab"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "ab\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "documentation-crlf:A000": {
+    "target_case": "v2-documentation-crlf",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "X"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "X\r\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "documentation-escaped-interpolation:A000": {
+    "target_case": "v2-documentation-escaped-interpolation",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "#{literal}"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "#{literal}\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "documentation-indent:A000": {
+    "target_case": "v2-documentation-indent",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "first\n  second"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "first\n  second\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "documentation-unicode:A000": {
+    "target_case": "v2-documentation-unicode",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "😀 A A \u0000"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/ok/meta/doc",
+      "equals": "😀 A A \u0000\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "each-all-participants:A000": {
+    "target_case": "v2-each-all-participants",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-all-participants:A001": {
+    "target_case": "v2-each-all-participants",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "new"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "new"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-all-participants:A002": {
+    "target_case": "v2-each-all-participants",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "already_contributed"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "already_contributed"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-all-participants:A003": {
+    "target_case": "v2-each-all-participants",
+    "target_index": 3,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-all-participants:A004": {
+    "target_case": "v2-each-all-participants",
+    "target_index": 4,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-all-participants:A005": {
+    "target_case": "v2-each-all-participants",
+    "target_index": 5,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/mentions_used",
+      "equals": 6
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/mentions_used",
+      "equals": 6
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-deadline-boundary:A000": {
+    "target_case": "v2-each-deadline-boundary",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-deadline-boundary:A001": {
+    "target_case": "v2-each-deadline-boundary",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-deadline-boundary:A002": {
+    "target_case": "v2-each-deadline-boundary",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/expired_at",
+      "equals": 300000
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/expired_at",
+      "equals": 300000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-deadline-boundary:A003": {
+    "target_case": "v2-each-deadline-boundary",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "due-1",
+        "outcome": "stalled",
+        "reason": "deadline",
+        "missing": [
+          "bob",
+          "carol"
+        ]
+      }
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "due-0",
+        "outcome": "stalled",
+        "reason": "deadline",
+        "missing": [
+          "bob",
+          "carol"
+        ]
+      }
+    },
+    "authority": "D-6 / timeouts-v2.md",
+    "reason": "Timed rule allocates rule before duty, so the equivalent all-participant obligation is due-1.",
+    "disposition": "changed-current-semantics"
+  },
+  "each-deadline-boundary:A004": {
+    "target_case": "v2-each-deadline-boundary",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "each-deadline-boundary:A005": {
+    "target_case": "v2-each-deadline-boundary",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "entry-cap:A000": {
+    "target_case": "v2-entry-cap",
+    "target_index": 0,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "entry-cap:A001": {
+    "target_case": "v2-entry-cap",
+    "target_index": 1,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "exhausted"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "exhausted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "entry-cap:A002": {
+    "target_case": "v2-entry-cap",
+    "target_index": 2,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/entries",
+      "equals": {
+        "new": 1,
+        "awaiting": 2,
+        "reviewing": 3
+      }
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/entries",
+      "equals": {
+        "new": 3,
+        "reviewing": 3
+      }
+    },
+    "authority": "profile-v2.md / engine.md",
+    "reason": "The initial new state cannot be re-entered; subsequent submit rounds use awaiting, preserving all three attempted review entries.",
+    "disposition": "changed-current-semantics"
+  },
+  "first-responder:A000": {
+    "target_case": "v2-first-responder",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "first-responder:A001": {
+    "target_case": "v2-first-responder",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "first-responder:A002": {
+    "target_case": "v2-first-responder",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/reason",
+      "equals": "terminal"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A000": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A001": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A002": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 2,
+    "assertion": {
+      "response": 5,
+      "pointer": "/decision/reason",
+      "equals": "stale_version"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/decision/reason",
+      "equals": "stale_version"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A003": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 3,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A004": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 4,
+    "assertion": {
+      "response": 7,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A005": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 5,
+    "assertion": {
+      "response": 8,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "baseline_assertion": {
+      "response": 8,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "identity-version-envelope:A006": {
+    "target_case": "v2-identity-version-envelope",
+    "target_index": 6,
+    "assertion": {
+      "response": 8,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 8,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-accepted:A000": {
+    "target_case": "v2-inactivity-accepted",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 1000
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 1000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-accepted:A001": {
+    "target_case": "v2-inactivity-accepted",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-accepted:A002": {
+    "target_case": "v2-inactivity-accepted",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-marked:A000": {
+    "target_case": "v2-inactivity-marked",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 1000
+    },
+    "authority": "D-6 / defaults-v2.md",
+    "reason": "Removed activity marker means this event does not update the legacy marked-policy bookkeeping field; no idle timer is introduced.",
+    "disposition": "changed-current-semantics"
+  },
+  "inactivity-marked:A001": {
+    "target_case": "v2-inactivity-marked",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-marked:A002": {
+    "target_case": "v2-inactivity-marked",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-transition:A000": {
+    "target_case": "v2-inactivity-transition",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-transition:A001": {
+    "target_case": "v2-inactivity-transition",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "inactivity-transition:A002": {
+    "target_case": "v2-inactivity-transition",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/expired_at",
+      "equals": 600000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "independent-selected-duties:A000": {
+    "target_case": "v2-independent-selected-duties",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "independent-selected-duties:A001": {
+    "target_case": "v2-independent-selected-duties",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "waiting"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "independent-selected-duties:A002": {
+    "target_case": "v2-independent-selected-duties",
+    "target_index": 2,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "beta_late"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "beta_late"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "independent-selected-duties:A003": {
+    "target_case": "v2-independent-selected-duties",
+    "target_index": 3,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/expired_at",
+      "equals": 300000
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/expired_at",
+      "equals": 300000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-bad-doc-unicode:A000": {
+    "target_case": "v2-invalid-bad-doc-unicode",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "documentation"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "documentation"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-duplicate-ref-kind:A000": {
+    "target_case": "v2-invalid-duplicate-ref-kind",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "type"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "type"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-duplicate-type:A000": {
+    "target_case": "v2-invalid-duplicate-type",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-interpolation:A000": {
+    "target_case": "v2-invalid-interpolation",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "documentation"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "documentation"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-reference:A000": {
+    "target_case": "v2-invalid-reference",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unmatched_reference"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unmatched_reference"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-reversed-bounds:A000": {
+    "target_case": "v2-invalid-reversed-bounds",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "type"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "type"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-unknown-directive:A000": {
+    "target_case": "v2-invalid-unknown-directive",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "syntax"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "syntax"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-unknown-ref-kind:A000": {
+    "target_case": "v2-invalid-unknown-ref-kind",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unknown_type"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unknown_type"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-unknown-role:A000": {
+    "target_case": "v2-invalid-unknown-role",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unknown_role"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "unknown_role"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "invalid-unsafe-bound:A000": {
+    "target_case": "v2-invalid-unsafe-bound",
+    "target_index": 0,
+    "assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "type"
+    },
+    "baseline_assertion": {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "type"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "message-budget:A000": {
+    "target_case": "v2-message-budget",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "message-budget:A001": {
+    "target_case": "v2-message-budget",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "completion_capacity"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "message_budget"
+    },
+    "authority": "M9 closing reserve (Rafael 0635ffb) / Ada set N decision B2, 2026-10-14",
+    "reason": "Under M9 an event must leave the closing stop() inside max_messages, so with every non-terminal program-counter message an event, message_budget is unreachable; at max_messages 2 the second event is refused with completion_capacity.",
+    "disposition": "changed-current-semantics"
+  },
+  "message-budget:A002": {
+    "target_case": "v2-message-budget",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "message-budget:A003": {
+    "target_case": "v2-message-budget",
+    "target_index": 3,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/mentions_used",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/mentions_used",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "portable-local-preflight:A000": {
+    "target_case": "v2-portable-local-preflight",
+    "target_index": 0,
+    "assertion": {
+      "response": 1,
+      "pointer": "/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 1,
+      "pointer": "/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "private-receipt-projection:A000": {
+    "target_case": "v2-private-receipt-projection",
+    "target_index": 0,
+    "assertion": {
+      "response": 4,
+      "pointer": "/ok/checkpoint/state/receipts/answer/fingerprint",
+      "equals": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/ok/checkpoint/state/receipts/answer/fingerprint",
+      "equals": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "private-receipt-projection:A001": {
+    "target_case": "v2-private-receipt-projection",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/ok/view/facts",
+      "equals": {
+        "start": {
+          "id": "start",
+          "kind": "start",
+          "payload": {},
+          "actor": "lead",
+          "role": "lead",
+          "recipients": [
+            "alpha",
+            "beta"
+          ],
+          "at": 0,
+          "rule": "rule-0"
+        }
+      }
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/ok/view/facts",
+      "equals": {
+        "start": {
+          "id": "start",
+          "kind": "start",
+          "payload": {},
+          "actor": "lead",
+          "role": "lead",
+          "recipients": [
+            "alpha",
+            "beta"
+          ],
+          "at": 0,
+          "rule": "rule-0"
+        }
+      }
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "private-receipt-projection:A002": {
+    "target_case": "v2-private-receipt-projection",
+    "target_index": 2,
+    "assertion": {
+      "response": 5,
+      "pointer": "/ok/checkpoint/state/receipts/answer/fingerprint",
+      "equals": "472252116ba653a04f4a5ac0d6f8d03953f816f9f854011fb937e3a26708a963"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/ok/checkpoint/state/receipts/answer/fingerprint",
+      "equals": "472252116ba653a04f4a5ac0d6f8d03953f816f9f854011fb937e3a26708a963"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A000": {
+    "target_case": "v2-query-selectors",
+    "target_index": 0,
+    "assertion": {
+      "response": 1,
+      "pointer": "/ok/name",
+      "equals": "assignment"
+    },
+    "baseline_assertion": {
+      "response": 1,
+      "pointer": "/ok/name",
+      "equals": "assignment"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A001": {
+    "target_case": "v2-query-selectors",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/ok/role/meta/doc",
+      "equals": "Accept or refuse the offer before performing work."
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/ok/role/meta/doc",
+      "equals": "Accept or refuse the offer before performing work.\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "query-selectors:A002": {
+    "target_case": "v2-query-selectors",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/ok/fields/task/meta/doc",
+      "equals": "A self-contained task including constraints and verification instructions."
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/ok/fields/task/meta/doc",
+      "equals": "A self-contained task including constraints and verification instructions.\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "query-selectors:A003": {
+    "target_case": "v2-query-selectors",
+    "target_index": 3,
+    "assertion": {
+      "response": 4,
+      "pointer": "/ok/deadlines/0/meta/doc",
+      "equals": "The worker must accept within two minutes or the task is unclaimed."
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/ok/deadlines/0/meta/doc",
+      "equals": "The worker must accept within two minutes or the task is unclaimed.\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "query-selectors:A004": {
+    "target_case": "v2-query-selectors",
+    "target_index": 4,
+    "assertion": {
+      "response": 5,
+      "pointer": "/ok/meta/doc",
+      "equals": "The lead accepted the exact reviewed submission."
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/ok/meta/doc",
+      "equals": "The lead accepted the exact reviewed submission.\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "query-selectors:A005": {
+    "target_case": "v2-query-selectors",
+    "target_index": 5,
+    "assertion": {
+      "response": 6,
+      "pointer": "/ok",
+      "equals": {
+        "rules": [],
+        "meta": {
+          "doc": null,
+          "line": 1
+        }
+      }
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/ok",
+      "equals": {
+        "rules": [],
+        "meta": {
+          "doc": null,
+          "line": 1
+        }
+      }
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A006": {
+    "target_case": "v2-query-selectors",
+    "target_index": 6,
+    "assertion": {
+      "response": 7,
+      "pointer": "/ok/rules/0/kind",
+      "equals": "cancel"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/ok/rules/0/kind",
+      "equals": "cancel"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A007": {
+    "target_case": "v2-query-selectors",
+    "target_index": 7,
+    "assertion": {
+      "response": 8,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "baseline_assertion": {
+      "response": 8,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A008": {
+    "target_case": "v2-query-selectors",
+    "target_index": 8,
+    "assertion": {
+      "response": 9,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "baseline_assertion": {
+      "response": 9,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A009": {
+    "target_case": "v2-query-selectors",
+    "target_index": 9,
+    "assertion": {
+      "response": 10,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "baseline_assertion": {
+      "response": 10,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A010": {
+    "target_case": "v2-query-selectors",
+    "target_index": 10,
+    "assertion": {
+      "response": 12,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "baseline_assertion": {
+      "response": 12,
+      "pointer": "/error",
+      "equals": "not_found"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A011": {
+    "target_case": "v2-query-selectors",
+    "target_index": 11,
+    "assertion": {
+      "response": 11,
+      "pointer": "/error",
+      "equals": "unknown_role"
+    },
+    "baseline_assertion": {
+      "response": 11,
+      "pointer": "/error",
+      "equals": "unknown_role"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "query-selectors:A012": {
+    "target_case": "v2-query-selectors",
+    "target_index": 12,
+    "assertion": {
+      "response": 14,
+      "pointer": "/ok/meta/doc",
+      "equals": "The host applies its own windowed room-event quota."
+    },
+    "baseline_assertion": {
+      "response": 14,
+      "pointer": "/ok/meta/doc",
+      "equals": "The host applies its own windowed room-event quota.\n"
+    },
+    "authority": "choice A (Ada, 2026-10-15) / contract-dsl.md",
+    "reason": "A block's text ends at its last content line: the line break before the closing delimiter is layout, so the decoded documentation no longer ends with it. Everything else is unchanged.",
+    "disposition": "changed-current-semantics"
+  },
+  "query-selectors:A013": {
+    "target_case": "v2-query-selectors",
+    "target_index": 13,
+    "assertion": {
+      "response": 14,
+      "pointer": "/ok/rules/0/kind",
+      "equals": "notice"
+    },
+    "baseline_assertion": {
+      "response": 14,
+      "pointer": "/ok/rules/0/kind",
+      "equals": "notice"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "role-visibility:A000": {
+    "target_case": "v2-role-visibility",
+    "target_index": 0,
+    "assertion": {
+      "response": 4,
+      "pointer": "/ok/view/facts/o/payload/task",
+      "equals": "private task"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/ok/view/facts/o/payload/task",
+      "equals": "private task"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "role-visibility:A001": {
+    "target_case": "v2-role-visibility",
+    "target_index": 1,
+    "assertion": {
+      "response": 4,
+      "pointer": "/ok/checkpoint/state/facts/a",
+      "equals": {
+        "kind": "accept"
+      }
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/ok/checkpoint/state/facts/a",
+      "equals": {
+        "kind": "accept"
+      }
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "role-visibility:A002": {
+    "target_case": "v2-role-visibility",
+    "target_index": 2,
+    "assertion": {
+      "response": 5,
+      "pointer": "/error",
+      "equals": "unauthorized"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/error",
+      "equals": "unauthorized"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "room-quota-retention:A000": {
+    "target_case": "v2-room-quota-retention",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "room-quota-retention:A001": {
+    "target_case": "v2-room-quota-retention",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "room_budget"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "room_budget"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "room-quota-retention:A002": {
+    "target_case": "v2-room-quota-retention",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "room-quota-retention:A003": {
+    "target_case": "v2-room-quota-retention",
+    "target_index": 3,
+    "assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "room-quota-retention:A004": {
+    "target_case": "v2-room-quota-retention",
+    "target_index": 4,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/reason",
+      "equals": "retention_limit"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/reason",
+      "equals": "retention_limit"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A000": {
+    "target_case": "v2-session-configuration",
+    "target_index": 0,
+    "assertion": {
+      "response": 1,
+      "pointer": "/error",
+      "equals": "inactivity_policy_required"
+    },
+    "baseline_assertion": {
+      "response": 1,
+      "pointer": "/error",
+      "equals": "inactivity_policy_required"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A001": {
+    "target_case": "v2-session-configuration",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/error",
+      "equals": "invalid_bindings"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/error",
+      "equals": "invalid_bindings"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A002": {
+    "target_case": "v2-session-configuration",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A003": {
+    "target_case": "v2-session-configuration",
+    "target_index": 3,
+    "assertion": {
+      "response": 4,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A004": {
+    "target_case": "v2-session-configuration",
+    "target_index": 4,
+    "assertion": {
+      "response": 5,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/error",
+      "equals": "invalid_config"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A005": {
+    "target_case": "v2-session-configuration",
+    "target_index": 5,
+    "assertion": {
+      "response": 6,
+      "pointer": "/error",
+      "equals": "invalid_time_range"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/error",
+      "equals": "invalid_time_range"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A006": {
+    "target_case": "v2-session-configuration",
+    "target_index": 6,
+    "assertion": {
+      "response": 7,
+      "pointer": "/ok/state/max_bytes",
+      "equals": 16384
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/ok/state/max_bytes",
+      "equals": 16384
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "session-configuration:A007": {
+    "target_case": "v2-session-configuration",
+    "target_index": 7,
+    "assertion": {
+      "response": 7,
+      "pointer": "/ok/state/version",
+      "equals": 0
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/ok/state/version",
+      "equals": 0
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "timer-tie-duty-id:A000": {
+    "target_case": "v2-timer-tie-duty-id",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 1000,
+        "id": "due-11",
+        "reason": "deadline",
+        "outcome": "late",
+        "missing": [
+          "assistant"
+        ]
+      }
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 1000,
+        "id": "due-10",
+        "reason": "deadline",
+        "outcome": "late",
+        "missing": [
+          "assistant"
+        ]
+      }
+    },
+    "authority": "D-6 / timeouts-v2.md",
+    "reason": "Ten distinct timed events replace duplicate old duties; source-order rule/duty pairs select lexical due-11 among equal-time duties.",
+    "disposition": "changed-current-semantics"
+  },
+  "timer-tie-duty-id:A001": {
+    "target_case": "v2-timer-tie-duty-id",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "timer-tie-inactivity:A000": {
+    "target_case": "v2-timer-tie-inactivity",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "due-2",
+        "reason": "deadline",
+        "outcome": "stalled",
+        "missing": [
+          "assistant"
+        ]
+      }
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "inactivity",
+        "reason": "inactivity",
+        "outcome": "expired"
+      }
+    },
+    "authority": "D-6 and D-12 / timeouts-v2.md",
+    "reason": "Removed idle timer is replaced by an explicit equal-time phase cap; owed work wins the tie at 300000. Re-pinned forward 2026-10-16 for the no-group landing: the source waits for replies (old send-then-answer form converted, Eric; op-uyux3xf3).",
+    "disposition": "changed-current-semantics"
+  },
+  "timer-tie-inactivity:A001": {
+    "target_case": "v2-timer-tie-inactivity",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "timer-tie-lifetime:A000": {
+    "target_case": "v2-timer-tie-lifetime",
+    "target_index": 0,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "due-2",
+        "reason": "deadline",
+        "outcome": "stalled",
+        "missing": [
+          "assistant"
+        ]
+      }
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/expiry",
+      "equals": {
+        "at": 300000,
+        "id": "maximum",
+        "reason": "lifetime",
+        "outcome": "expired"
+      }
+    },
+    "authority": "D-12 / timeouts-v2.md",
+    "reason": "Owed work now precedes the equal-time contract cap, selecting stalled/due-3 rather than expired/maximum. Re-pinned forward 2026-10-16 for the no-group landing: the source waits for replies (old send-then-answer form converted, Eric; op-uyux3xf3).",
+    "disposition": "changed-current-semantics"
+  },
+  "timer-tie-lifetime:A001": {
+    "target_case": "v2-timer-tie-lifetime",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-cancel:A000": {
+    "target_case": "v2-trace-history-review-cancel",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-cancel:A001": {
+    "target_case": "v2-trace-history-review-cancel",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-cancel:A002": {
+    "target_case": "v2-trace-history-review-cancel",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-cancel:A003": {
+    "target_case": "v2-trace-history-review-cancel",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-cancel:A004": {
+    "target_case": "v2-trace-history-review-cancel",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-cancel:A005": {
+    "target_case": "v2-trace-history-review-cancel",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "cancelled"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "cancelled"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A000": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A001": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A002": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A003": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A004": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A005": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A006": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 6,
+    "assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-changes:A007": {
+    "target_case": "v2-trace-history-review-changes",
+    "target_index": 7,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "needs_revision"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "needs_revision"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-idle:A000": {
+    "target_case": "v2-trace-history-review-idle",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-idle:A001": {
+    "target_case": "v2-trace-history-review-idle",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-idle:A002": {
+    "target_case": "v2-trace-history-review-idle",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-idle:A003": {
+    "target_case": "v2-trace-history-review-idle",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-idle:A004": {
+    "target_case": "v2-trace-history-review-idle",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "expired"
+    },
+    "authority": "D-6 / defaults-v2.md",
+    "reason": "Removed idle expiry: at 300000 the writing duty is still pending; state writing/outcome null replaces expired/expired.",
+    "disposition": "changed-current-semantics"
+  },
+  "trace-history-review-idle:A005": {
+    "target_case": "v2-trace-history-review-idle",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/outcome",
+      "equals": null
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/outcome",
+      "equals": "expired"
+    },
+    "authority": "D-6 / defaults-v2.md",
+    "reason": "Removed idle expiry: at 300000 the writing duty is still pending; state writing/outcome null replaces expired/expired.",
+    "disposition": "changed-current-semantics"
+  },
+  "trace-history-review-rejections:A000": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A001": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A002": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A003": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A004": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A005": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A006": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 6,
+    "assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "rejected"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "rejected"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A007": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 7,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A008": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 8,
+    "assertion": {
+      "response": 5,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A009": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 9,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "rejected"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "rejected"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A010": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 10,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A011": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 11,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/reason",
+      "equals": "illegal_message"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A012": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 12,
+    "assertion": {
+      "response": 7,
+      "pointer": "/decision/status",
+      "equals": "rejected"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/decision/status",
+      "equals": "rejected"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A013": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 13,
+    "assertion": {
+      "response": 7,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A014": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 14,
+    "assertion": {
+      "response": 7,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A015": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 15,
+    "assertion": {
+      "response": 8,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 8,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A016": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 16,
+    "assertion": {
+      "response": 8,
+      "pointer": "/state/state/state",
+      "equals": "acceptance"
+    },
+    "baseline_assertion": {
+      "response": 8,
+      "pointer": "/state/state/state",
+      "equals": "acceptance"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A017": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 17,
+    "assertion": {
+      "response": 9,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 9,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A018": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 18,
+    "assertion": {
+      "response": 9,
+      "pointer": "/state/state/state",
+      "equals": "acceptance"
+    },
+    "baseline_assertion": {
+      "response": 9,
+      "pointer": "/state/state/state",
+      "equals": "acceptance"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A019": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 19,
+    "assertion": {
+      "response": 10,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 10,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-rejections:A020": {
+    "target_case": "v2-trace-history-review-rejections",
+    "target_index": 20,
+    "assertion": {
+      "response": 10,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 10,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A000": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A001": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A002": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A003": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A004": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A005": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "reviewing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A006": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 6,
+    "assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A007": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 7,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "acceptance"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "acceptance"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A008": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 8,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-success:A009": {
+    "target_case": "v2-trace-history-review-success",
+    "target_index": 9,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/state",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-unclaimed:A000": {
+    "target_case": "v2-trace-history-review-unclaimed",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-unclaimed:A001": {
+    "target_case": "v2-trace-history-review-unclaimed",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-unclaimed:A002": {
+    "target_case": "v2-trace-history-review-unclaimed",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "unclaimed"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "unclaimed"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-unclaimed:A003": {
+    "target_case": "v2-trace-history-review-unclaimed",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/outcome",
+      "equals": "unclaimed"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/outcome",
+      "equals": "unclaimed"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A000": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A001": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "offered"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A002": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 2,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A003": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A004": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 4,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "writing"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A005": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 5,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/outcome",
+      "equals": null
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/outcome",
+      "equals": null
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A006": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 6,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/state",
+      "equals": "stalled"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "trace-history-review-v2-deadline:A007": {
+    "target_case": "v2-trace-history-review-v2-deadline",
+    "target_index": 7,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/outcome",
+      "equals": "stalled"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/outcome",
+      "equals": "stalled"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "unicode16-graphemes:A000": {
+    "target_case": "v2-unicode16-graphemes",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/reason",
+      "equals": "payload"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/reason",
+      "equals": "payload"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "unicode16-graphemes:A001": {
+    "target_case": "v2-unicode16-graphemes",
+    "target_index": 1,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "payload"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "payload"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "unicode16-graphemes:A002": {
+    "target_case": "v2-unicode16-graphemes",
+    "target_index": 2,
+    "assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A000": {
+    "target_case": "v2-worked-session",
+    "target_index": 0,
+    "assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/decision/status",
+      "equals": "accepted"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A001": {
+    "target_case": "v2-worked-session",
+    "target_index": 1,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "answering"
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/state",
+      "equals": "answering"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A002": {
+    "target_case": "v2-worked-session",
+    "target_index": 2,
+    "assertion": {
+      "response": 2,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 2,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A003": {
+    "target_case": "v2-worked-session",
+    "target_index": 3,
+    "assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/decision/reason",
+      "equals": "reference"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A004": {
+    "target_case": "v2-worked-session",
+    "target_index": 4,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A005": {
+    "target_case": "v2-worked-session",
+    "target_index": 5,
+    "assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    "baseline_assertion": {
+      "response": 3,
+      "pointer": "/state/state/last_activity",
+      "equals": 0
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A006": {
+    "target_case": "v2-worked-session",
+    "target_index": 6,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "ready"
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/state",
+      "equals": "new"
+    },
+    "authority": "profile-v2.md / engine.md",
+    "reason": "After an answer the next-question state is ready, not the non-reentrant initial new state.",
+    "disposition": "changed-current-semantics"
+  },
+  "worked-session:A007": {
+    "target_case": "v2-worked-session",
+    "target_index": 7,
+    "assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "baseline_assertion": {
+      "response": 4,
+      "pointer": "/state/state/version",
+      "equals": 2
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A008": {
+    "target_case": "v2-worked-session",
+    "target_index": 8,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/outcome",
+      "equals": "complete"
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/outcome",
+      "equals": "complete"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A009": {
+    "target_case": "v2-worked-session",
+    "target_index": 9,
+    "assertion": {
+      "response": 5,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    "baseline_assertion": {
+      "response": 5,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A010": {
+    "target_case": "v2-worked-session",
+    "target_index": 10,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/status",
+      "equals": "duplicate"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A011": {
+    "target_case": "v2-worked-session",
+    "target_index": 11,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/original/version",
+      "equals": 1
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/original/version",
+      "equals": 1
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A012": {
+    "target_case": "v2-worked-session",
+    "target_index": 12,
+    "assertion": {
+      "response": 6,
+      "pointer": "/decision/original/state",
+      "equals": "answering"
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/decision/original/state",
+      "equals": "answering"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A013": {
+    "target_case": "v2-worked-session",
+    "target_index": 13,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/version",
+      "equals": 3
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A014": {
+    "target_case": "v2-worked-session",
+    "target_index": 14,
+    "assertion": {
+      "response": 6,
+      "pointer": "/state/state/last_activity",
+      "equals": 3000
+    },
+    "baseline_assertion": {
+      "response": 6,
+      "pointer": "/state/state/last_activity",
+      "equals": 3000
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  },
+  "worked-session:A015": {
+    "target_case": "v2-worked-session",
+    "target_index": 15,
+    "assertion": {
+      "response": 7,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "baseline_assertion": {
+      "response": 7,
+      "pointer": "/decision/reason",
+      "equals": "id_conflict"
+    },
+    "authority": "D-7 / profile-v2.md",
+    "reason": "Identical independently authored expectation on a distinct current file source; required finite byte bounds supplement preserved grapheme bounds.",
+    "disposition": "unchanged"
+  }
+}

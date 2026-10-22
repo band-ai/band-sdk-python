@@ -1,0 +1,57 @@
+---
+name: program-counter
+description: Test program counter with explicit roles and outcomes.
+engine: 0.2.0-lab.1
+roles: [requester, counter]
+---
+"""
+You run a deterministic counter: the requester sends increments, the counter reports totals, and
+the requester stops it when done. The counter is used to exercise journal and snapshot recovery.
+"""
+contract @infinity mentions 1 => expired
+
+"""
+You ask the counter to add to its total and stop it when you are done.
+"""
+role requester
+
+"""
+You keep a running total. Add each increment you receive and report the new total. The same
+inputs must always give the same totals.
+"""
+role counter
+
+"""
+Add this amount to the running total.
+"""
+type increment
+  by: integer(1..100)
+
+"""
+Report the running total after every increment so far.
+"""
+type total
+  value: integer(0..1000000)
+
+"""
+Stop counting. No increments follow this message.
+"""
+type stop
+
+"""
+Counting is open until the requester sends stop.
+"""
+state new
+  event requester -> counter: increment()
+  event counter -> requester: total()
+  requester -> counter: stop() => complete
+
+"""
+The requester stopped the counter. Send nothing more.
+"""
+end complete
+
+"""
+The session expired before the requester stopped the counter. Send nothing more.
+"""
+end expired

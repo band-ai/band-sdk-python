@@ -1,0 +1,32 @@
+[
+  {
+    "check": "format",
+    "command": [
+      "mix",
+      "format"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.68
+  },
+  {
+    "check": "green",
+    "command": [
+      "mix",
+      "test",
+      "--seed",
+      "0"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.97
+  },
+  {
+    "check": "demo",
+    "command": [
+      "mix",
+      "run",
+      "examples/review_and_recover.exs"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 1.595
+  }
+]

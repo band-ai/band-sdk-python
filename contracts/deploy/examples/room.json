@@ -1,0 +1,31 @@
+{
+  "profile": "band-contract/service/1",
+  "kind": "room",
+  "store": {
+    "path": "/var/lib/contract-room/session.sqlite3"
+  },
+  "engine": {
+    "command": [
+      "/opt/contract/current/engine/bin/contract-engine"
+    ],
+    "contract": "/etc/contract-room/session.band",
+    "format": "frontmatter"
+  },
+  "http": {
+    "host": "127.0.0.1",
+    "port": 8087,
+    "tokens_file": "/etc/contract-room/tokens.json"
+  },
+  "poll_interval_ms": 1000,
+  "room": {
+    "session": "session-1",
+    "bindings": {
+      "requester": "user-1",
+      "assistant": "agent-1"
+    },
+    "inactivity": "accepted",
+    "max_messages": 100,
+    "max_bytes": 16384,
+    "snapshot_every": 20
+  }
+}

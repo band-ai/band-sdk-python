@@ -1,0 +1,30 @@
+---
+name: fmt-docs
+description: Formatter vector fmt-docs.
+engine: 0.2.0-lab.1
+roles: [lead, worker]
+---
+"""
+The run's purpose, documented on the contract line.
+"""
+contract @1h => expired
+   "Coordinates the work."   
+role lead
+type offer
+      """
+      Shifted left as a whole.
+        Relative indentation stays.
+      """
+  task: text(1..200)
+type note
+      """
+  Kept byte for byte: this line has too few spaces to shift.
+  """
+  text: text(1..200)
+state new
+~s"""
+Raw docs keep C:\work and #{x} exactly.
+"""
+  lead -> worker: offer() => done
+  "The work arrived."
+end done

@@ -1,0 +1,42 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "v2-m22-pattern-syntax",
+  "requirements": [
+    "DSL-004",
+    "DSL-006",
+    "ENG-001"
+  ],
+  "requests": [
+    {
+      "op": "compile",
+      "handle": "c",
+      "source": {
+        "profile": "band-contract/file-source/1",
+        "format": "frontmatter",
+        "content": "---\nname: safety-oracle\ndescription: Portable compiler safety checks.\nengine: 0.2.0-lab.1\nroles: [requester, assistant]\n---\ncontract @infinity => expired\ntype question\n text: text(100, regex: ~r/(?=a)a/)\nstate new\n requester -> assistant: question() => complete\nend complete\n",
+        "sha256": "6bcc33d68a56ee1c31e0c9ba8eb342b66afbb8d030b845b4d72c5767a5c6dae8"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "/error/code",
+      "equals": "pattern_syntax"
+    },
+    {
+      "response": 0,
+      "pointer": "/error/line",
+      "equals": 3
+    }
+  ],
+  "expected": [
+    {
+      "error": {
+        "code": "pattern_syntax",
+        "detail": "Pattern is outside the safe pattern subset",
+        "line": 3
+      }
+    }
+  ]
+}

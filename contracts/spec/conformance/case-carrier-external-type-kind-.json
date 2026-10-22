@@ -1,0 +1,43 @@
+{
+  "profile": "band-contract/conformance-case/1",
+  "id": "carrier-external-type-kind-",
+  "requirements": [
+    "ENG-002"
+  ],
+  "requests": [
+    {
+      "op": "wire",
+      "bytes": "{\"payload\":{}}",
+      "carrier": {
+        "profile": "band-contract/carrier/1",
+        "name": "email/1",
+        "fields": {
+          "id": "header:Message-ID",
+          "session": "header:X-Band-Session",
+          "kind": "header:X-Band-Kind",
+          "expected_version": "header:X-Band-Version"
+        }
+      },
+      "transport": {
+        "header:Message-ID": "m",
+        "header:X-Band-Session": "s",
+        "header:X-Band-Kind": "",
+        "header:X-Band-Version": 0
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "response": 0,
+      "pointer": "",
+      "equals": {
+        "error": "envelope"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "error": "envelope"
+    }
+  ]
+}

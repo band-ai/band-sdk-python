@@ -1,0 +1,10 @@
+{
+  "profile": "remote-agent/openai-result/1",
+  "status": 200,
+  "request_id": "req_fixture",
+  "body": "eyJpZCI6InJlc3BfZml4dHVyZSIsIm1vZGVsIjoiZ3B0LTQuMS1taW5pLTIwMjUtMDQtMTQiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJ0ZW1wZXJhdHVyZSI6MS4wLCJvdXRwdXQiOlt7InR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsImNvbnRlbnQiOlt7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiJ7XCJzdGF0ZVwiOntcImNvdW50XCI6MX0sXCJtZXNzYWdlXCI6bnVsbCxcInNjb3BlXCI6XCJ0dXJuXCJ9In1dfV0sInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MTIwLCJpbnB1dF90b2tlbnNfZGV0YWlscyI6eyJjYWNoZWRfdG9rZW5zIjoyMH0sIm91dHB1dF90b2tlbnMiOjEwLCJ0b3RhbF90b2tlbnMiOjEzMH0sInNlcnZpY2VfdGllciI6ImRlZmF1bHQifQ==",
+  "complete": true,
+  "failure": null,
+  "uncertain": false,
+  "redacted": false
+}

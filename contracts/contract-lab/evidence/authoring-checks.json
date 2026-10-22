@@ -1,0 +1,100 @@
+[
+  {
+    "name": "compile",
+    "command": [
+      "mix",
+      "compile",
+      "--warnings-as-errors"
+    ],
+    "cwd": "contract-lab",
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "name": "format",
+    "command": [
+      "mix",
+      "format",
+      "--check-formatted"
+    ],
+    "cwd": "contract-lab",
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "name": "green",
+    "command": [
+      "mix",
+      "test",
+      "--seed",
+      "0",
+      "--warnings-as-errors"
+    ],
+    "cwd": "contract-lab",
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "name": "corpus",
+    "command": [
+      "mix",
+      "contract.check",
+      "contracts/agent-control.band",
+      "contracts/all-participants.band",
+      "contracts/assignment.band",
+      "contracts/bounded-review.band",
+      "contracts/explicit-infinity.band",
+      "contracts/first-responder.band",
+      "contracts/history-review-v2.band",
+      "contracts/history-review.band",
+      "contracts/program-counter.band",
+      "contracts/progress-events.band",
+      "contracts/room-events.band",
+      "contracts/selected-deadlines.band",
+      "contracts/team-review.band"
+    ],
+    "cwd": "contract-lab",
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "name": "wrapper-query",
+    "command": [
+      "python3",
+      "skills/multi-agent-contracts/scripts/contract",
+      "query",
+      "contract-lab/contracts/history-review.band",
+      "--role",
+      "reviewer"
+    ],
+    "cwd": "/tmp",
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "name": "wrapper-replay",
+    "command": [
+      "python3",
+      "skills/multi-agent-contracts/scripts/contract",
+      "replay",
+      "contract-lab/contracts/history-review.band",
+      "contract-lab/scenarios/history-review-success.json"
+    ],
+    "cwd": "/tmp",
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "name": "wrapper-reject",
+    "command": [
+      "python3",
+      "skills/multi-agent-contracts/scripts/contract",
+      "replay",
+      "contract-lab/contracts/history-review.band",
+      "/tmp/contract-negative-7p0y6qg6/wrong-expectation.json"
+    ],
+    "cwd": "/tmp",
+    "exit_code": 1,
+    "expected_exit_code": 1
+  }
+]
