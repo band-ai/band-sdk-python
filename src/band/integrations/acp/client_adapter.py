@@ -1330,6 +1330,8 @@ class ACPClientAdapter(
                 return joined.session_id
             setup = None
         if setup is None or setup.done():
+            if room.setup_observer is not None:
+                room.setup_observer.abandon()
             setup = room.retained.start_owned(
                 partial(self._initialize_session, room, runtime, history, mcp)
             )

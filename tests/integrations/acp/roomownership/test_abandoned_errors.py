@@ -21,16 +21,21 @@ class TestAbandonedErrors:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         failure = LookupError("resolution refused")
+        calls: list[str] = []
 
         async def resolver(workspace: str) -> list[Any]:
-            raise failure
+            calls.append(workspace)
+            if len(calls) == 1:
+                raise failure
+            return []
 
         async with acp_adapter(
-            FakeACPAgent(http=True), resolve_mcp_servers=resolver
+            FakeACPAgent(http=True).will_say("recovered"), resolve_mcp_servers=resolver
         ) as acp:
             with pytest.raises(LookupError) as caught:
                 await acp.send("live")
             assert caught.value is failure
+            assert (await acp.send("retry")).thoughts == ["recovered"]
         assert "Abandoned ACP session setup failed" not in caplog.text
 
     @pytest.mark.parametrize("successor", [False, True])
@@ -92,29 +97,46 @@ class TestAbandonedErrors:
         finally:
             loop.set_exception_handler(previous)
 
-    async def test_completion_racing_last_waiter_cancellation_is_reported(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("successor", [False, True])
+    async def test_completion_racing_caller_cancellation_is_reported(
+        self, successor: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         gate = Hold()
+        calls: list[str] = []
 
         async def resolver(workspace: str) -> list[Any]:
+            calls.append(workspace)
+            if len(calls) > 1:
+                return []
             await gate.wait()
+            asyncio.get_running_loop().call_soon(turn.cancel)
             raise LookupError(SECRET)
 
         async with acp_adapter(
-            FakeACPAgent(http=True), resolve_mcp_servers=resolver
+            FakeACPAgent(http=True).will_say("recovered"), resolve_mcp_servers=resolver
         ) as acp:
             turn = asyncio.create_task(acp.send("racing"))
+            tasks = [turn]
             try:
                 await gate.arrived()
-                setup = acp.room().session_setup
-                assert setup is not None
-                setup.add_done_callback(lambda task: turn.cancel())
+                if successor:
+                    following = asyncio.create_task(acp.send("next"))
+                    tasks.append(following)
+                    await until(
+                        lambda: acp.room().session_waiters == 2,
+                        failure="successor not queued",
+                    )
                 gate.released.set()
                 with pytest.raises(asyncio.CancelledError):
                     await turn
+                if successor:
+                    assert (await following).thoughts == ["recovered"]
             finally:
                 gate.released.set()
-                await asyncio.gather(turn, return_exceptions=True)
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+        assert len(calls) == (2 if successor else 1)
         assert caplog.text.count("Abandoned ACP session setup failed") == 1
         assert SECRET not in caplog.text
