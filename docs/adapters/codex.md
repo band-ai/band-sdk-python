@@ -35,6 +35,9 @@ For existing integrations, follow the [SDK 4.x to 5.x migration](../acp.md#upgra
   close errors and close timeouts retain the claim for retry. A timed-out or
   cancelled caller does not abandon subprocess cleanup; retry room cleanup to
   finish releasing ownership. Shutdown attempts every room and reports failures.
+  On POSIX, close sends stdin EOF and gives the session a bounded chance to
+  exit before reaping remaining descendants. Windows shutdown does not promise
+  session-visible stdin EOF.
   On Windows, the client owns the helper and its process-tree job from startup
   through cleanup. It starts the interpreter image directly so a virtual-environment
   launcher cannot hide another helper process. Cleanup confirms the helper has

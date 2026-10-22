@@ -223,8 +223,7 @@ class TestSubprocessCleanup:
     async def test_close_reaps_a_worker_when_its_launcher_exits_on_stdin_eof(
         self, tmp_path: Path
     ) -> None:
-        """A launcher gets to exit on stdin EOF, but its child still holding
-        the workdir is reaped by the tree kill that follows."""
+        """POSIX launchers observe stdin EOF; every platform reaps their worker."""
         workdir = tmp_path / "room"
         workdir.mkdir()
         client = CodexStdioClient(
@@ -237,7 +236,8 @@ class TestSubprocessCleanup:
             await asyncio.wait_for(wait_for_heartbeat(heartbeat), timeout=CLOSE_BOUND_S)
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
             await assert_heartbeat_stopped(heartbeat)
-            assert (workdir / STDIN_EOF_MARKER).exists()
+            if sys.platform != "win32":
+                assert (workdir / STDIN_EOF_MARKER).exists()
             shutil.rmtree(workdir)
         finally:
             await asyncio.wait_for(client.close(), timeout=CLOSE_BOUND_S)
