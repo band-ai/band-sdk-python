@@ -7,7 +7,12 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpPromptError, OmpRpcError
-from band.integrations.ompwire import OMP_NATIVE_PROTOCOL_VERSION, OmpEvent, OmpState
+from band.integrations.ompwire import (
+    OMP_NATIVE_PROTOCOL_VERSION,
+    OmpEvent,
+    OmpEventType,
+    OmpState,
+)
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -27,11 +32,11 @@ class TestPromptNarrationAndResults:
         async with asyncio.timeout(5):
             await prompt_task(client, observer)
         assert [event.type for event in observer.events] == [
-            "agent_start",
-            "tool_execution_start",
-            "tool_execution_end",
-            "message_end",
-            "agent_end",
+            OmpEventType.AGENT_START,
+            OmpEventType.TOOL_START,
+            OmpEventType.TOOL_END,
+            OmpEventType.MESSAGE_END,
+            OmpEventType.AGENT_END,
         ]
         tool_start, tool_end, message_end = observer.events[1:4]
         assert (tool_start.toolCallId, tool_start.toolName, tool_start.args) == (
@@ -127,7 +132,9 @@ class TestPromptNarrationAndResults:
         async with asyncio.timeout(5):
             await prompt_task(client, observer)
         message = next(
-            event.message for event in observer.events if event.type == "message_end"
+            event.message
+            for event in observer.events
+            if event.type == OmpEventType.MESSAGE_END
         )
         assert message is not None and isinstance(message.content, list)
         image = next(content for content in message.content if content.type == "image")

@@ -8,6 +8,7 @@ import pytest
 
 from band.integrations.ompwire import (
     OmpContent,
+    OmpFrameType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -66,7 +67,7 @@ class TestHostToolAndUICallbacks:
         frames = await checkpoint_frames(client)
         result = next(frame for frame in frames if frame.get("id") == "host-2")
         assert result == {
-            "type": "host_tool_result",
+            "type": OmpFrameType.HOST_TOOL_RESULT,
             "id": "host-2",
             "result": {
                 "content": [
@@ -79,7 +80,7 @@ class TestHostToolAndUICallbacks:
         }
         ui_response = next(frame for frame in frames if frame.get("id") == "approval-1")
         assert ui_response == {
-            "type": "extension_ui_response",
+            "type": OmpFrameType.UI_RESPONSE,
             "id": "approval-1",
             "value": "Approve",
         }

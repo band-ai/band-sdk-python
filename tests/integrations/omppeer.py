@@ -16,9 +16,14 @@ from typing import cast
 import psutil
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from band.integrations.ompwire import (
+    OMP_CHUNK_BYTES,
+    OMP_FRAME_BYTES,
+    OMP_NATIVE_PROTOCOL_VERSION,
+    OMP_REASSEMBLED_BYTES,
+)
+
 PROTOCOL_VERSION = 1
-FRAME_BYTES = 1024 * 1024
-CHUNK_BYTES = 256 * 1024
 
 
 class Frame(BaseModel):
@@ -107,8 +112,11 @@ def hold_process_gate(
 
 def send(frame: dict[str, JsonValue]) -> None:
     payload = json.dumps(frame, separators=(",", ":")).encode("utf-8")
-    if PROTOCOL_VERSION == 2 and len(payload) + 1 > FRAME_BYTES:
-        count = (len(payload) + CHUNK_BYTES - 1) // CHUNK_BYTES
+    if (
+        PROTOCOL_VERSION == OMP_NATIVE_PROTOCOL_VERSION
+        and len(payload) + 1 > OMP_FRAME_BYTES
+    ):
+        count = (len(payload) + OMP_CHUNK_BYTES - 1) // OMP_CHUNK_BYTES
         for index in range(count):
             chunk: dict[str, JsonValue] = {
                 "type": "rpc_chunk",
@@ -117,7 +125,7 @@ def send(frame: dict[str, JsonValue]) -> None:
                 "count": count,
                 "byteLength": len(payload),
                 "data": base64.b64encode(
-                    payload[index * CHUNK_BYTES : (index + 1) * CHUNK_BYTES]
+                    payload[index * OMP_CHUNK_BYTES : (index + 1) * OMP_CHUNK_BYTES]
                 ).decode("ascii"),
             }
             sys.stdout.write(json.dumps(chunk, separators=(",", ":")) + "\n")
@@ -229,12 +237,12 @@ class Peer:
             "chunkId": "invalid-frame",
             "index": 0,
             "count": 2,
-            "byteLength": 1024 * 1024,
+            "byteLength": OMP_FRAME_BYTES,
             "data": "e30=",
         }
         match self.scenario:
             case "chunk-overflow":
-                chunk["byteLength"] = 64 * 1024 * 1024 + 1
+                chunk["byteLength"] = OMP_REASSEMBLED_BYTES + 1
                 send(chunk)
             case "chunk-order":
                 chunk["index"] = 1
@@ -482,9 +490,13 @@ class Peer:
                     return
                 self.respond(
                     frame,
-                    {"protocolVersion": 1 if self.scenario == "bad-negotiation" else 2},
+                    {
+                        "protocolVersion": 1
+                        if self.scenario == "bad-negotiation"
+                        else OMP_NATIVE_PROTOCOL_VERSION
+                    },
                 )
-                PROTOCOL_VERSION = 2
+                PROTOCOL_VERSION = OMP_NATIVE_PROTOCOL_VERSION
             case "prompt":
                 self.prompt(frame)
             case "get_state":
@@ -746,9 +758,9 @@ def main() -> None:
                 "protocolVersion": 1,
                 "supportedProtocolVersions": [1]
                 if args.scenario == "no-v2"
-                else [1, 2],
-                "maxFrameBytes": 1024 * 1024,
-                "maxReassembledFrameBytes": 64 * 1024 * 1024,
+                else [1, OMP_NATIVE_PROTOCOL_VERSION],
+                "maxFrameBytes": OMP_FRAME_BYTES,
+                "maxReassembledFrameBytes": OMP_REASSEMBLED_BYTES,
             }
         )
     for line in sys.stdin:

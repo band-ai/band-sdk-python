@@ -10,7 +10,7 @@ import time
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TypeVar, cast
 from uuid import uuid4
 
 import psutil
@@ -48,7 +48,10 @@ from band.integrations.ompwire import (
     OmpToolResult,
     OmpUIRequest,
     OmpUIResponse,
+    OmpWireModel,
 )
+
+TModel = TypeVar("TModel", bound=OmpWireModel)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,14 @@ class OmpPromptError(RuntimeError):
     def __init__(self, status: str, message: str) -> None:
         self.status = status
         super().__init__(message)
+
+
+def _command_error(response: OmpResponse) -> OmpRpcError:
+    return OmpRpcError(
+        response.command,
+        response.error or "Command failed",
+        code=response.code,
+    )
 
 
 @dataclass
@@ -154,17 +165,20 @@ class PromptRun:
             self.fail(OmpProcessError("OMP event callback backlog exceeded"))
             return
         self.last_activity_sequence = sequence
-        if (
-            event.type == OmpEventType.MESSAGE_END
-            and event.message is not None
-            and event.message.role == "assistant"
-        ):
-            self.last_assistant = event.message
-        if event.type == OmpEventType.AGENT_END:
-            for message in reversed(event.messages):
-                if message.role == "assistant":
-                    self.last_assistant = message
-                    break
+        match event.type:
+            case OmpEventType.MESSAGE_END if (
+                event.message is not None and event.message.role == "assistant"
+            ):
+                self.last_assistant = event.message
+            case OmpEventType.AGENT_END:
+                self.last_assistant = next(
+                    (
+                        message
+                        for message in reversed(event.messages)
+                        if message.role == "assistant"
+                    ),
+                    self.last_assistant,
+                )
         self.changed.set()
 
 
@@ -190,6 +204,7 @@ class OmpProcessScope:
     def capture(self, root: asyncio.subprocess.Process) -> None:
         group_visible = not session_pid_reused(root)
         group_members: list[psutil.Process] = []
+        getpgid = getattr(os, "getpgid", None)
         for pid in psutil.pids():
             # asyncio's child watcher remains the sole waiter for the root.
             if pid == 0 or pid == root.pid:
@@ -203,7 +218,6 @@ class OmpProcessScope:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
                 in_group = False
-                getpgid = getattr(os, "getpgid", None)
                 if group_visible and getpgid is not None:
                     try:
                         in_group = getpgid(pid) == root.pid
@@ -325,12 +339,11 @@ class OmpRpcClient:
                     "negotiate_protocol",
                     {"protocolVersion": OMP_NATIVE_PROTOCOL_VERSION},
                 )
-                try:
-                    OmpNegotiation.model_validate(self._response_data(negotiated.frame))
-                except ValidationError as cause:
-                    raise OmpProtocolError(
-                        "OMP RPC protocol v2 negotiation failed"
-                    ) from cause
+                self._parse_response(
+                    negotiated.frame,
+                    OmpNegotiation,
+                    "OMP RPC protocol v2 negotiation failed",
+                )
             except (OSError, SpawnFailure) as cause:
                 await self.close()
                 raise OmpProcessError("Unable to start OMP RPC process") from cause
@@ -453,6 +466,14 @@ class OmpRpcClient:
             raise error
         return response.data
 
+    def _parse_response(
+        self, response: OmpResponse, model: type[TModel], error: str
+    ) -> TModel:
+        try:
+            return model.model_validate(self._response_data(response))
+        except ValidationError as cause:
+            raise OmpProtocolError(error) from cause
+
     async def _execute_prompt(
         self,
         message: str,
@@ -491,14 +512,11 @@ class OmpRpcClient:
         except OmpRpcError:
             turn.rejected = True
             raise
-        try:
-            acceptance = OmpPromptAcceptance.model_validate(
-                self._response_data(accepted.frame)
-            )
-        except ValidationError as cause:
-            raise OmpProtocolError(
-                "Invalid OMP prompt acceptance protocol data"
-            ) from cause
+        acceptance = self._parse_response(
+            accepted.frame,
+            OmpPromptAcceptance,
+            "Invalid OMP prompt acceptance protocol data",
+        )
         outcome: OmpPromptResult | None = None
         # A synchronous local command explicitly owes no prompt_result.
         if acceptance.agentInvoked is not False:
@@ -512,25 +530,24 @@ class OmpRpcClient:
             if pending:
                 raise OmpProcessError("OMP callbacks did not finish after settlement")
         if outcome is not None and outcome.status != "completed":
-            message = (
+            raise OmpPromptError(
+                outcome.status,
                 outcome.error.message
                 if outcome.error is not None
-                else f"OMP prompt {outcome.status}"
+                else f"OMP prompt {outcome.status}",
             )
-            raise OmpPromptError(outcome.status, message)
         assistant = turn.last_assistant
         if assistant is not None and assistant.stopReason in {"error", "aborted"}:
-            message = (
-                assistant.errorMessage or f"OMP continuation {assistant.stopReason}"
+            raise OmpPromptError(
+                assistant.stopReason,
+                assistant.errorMessage or f"OMP continuation {assistant.stopReason}",
             )
-            raise OmpPromptError(assistant.stopReason, message)
 
     async def _wait_for_settlement(self, turn: PromptRun) -> None:
         snapshot = await self._request_frame("get_state", {})
-        try:
-            state = OmpState.model_validate(self._response_data(snapshot.frame))
-        except ValidationError as cause:
-            raise OmpProtocolError("Invalid OMP settlement protocol data") from cause
+        state = self._parse_response(
+            snapshot.frame, OmpState, "Invalid OMP settlement protocol data"
+        )
         if state.isSettled and snapshot.sequence >= turn.last_activity_sequence:
             return
         # An old, uncorrelated session_settled cannot overrule a newer busy snapshot.
@@ -646,13 +663,9 @@ class OmpRpcClient:
                 await self._dispatch_payload(payload, self._sequence)
         except asyncio.CancelledError:
             raise
-        except ValidationError as cause:
-            error = OmpProtocolError("Invalid OMP RPC protocol frame")
-            error.__cause__ = cause
-            self._record_failure(error)
         except OmpProcessError as error:
             self._record_failure(error)
-        except (ValueError, Base64Error) as cause:
+        except (ValidationError, ValueError, Base64Error) as cause:
             error = OmpProtocolError("Invalid OMP RPC protocol frame")
             error.__cause__ = cause
             self._record_failure(error)
@@ -740,13 +753,7 @@ class OmpRpcClient:
                 and self._turn is not None
                 and response.id == self._turn.id
             ):
-                self._turn.fail(
-                    OmpRpcError(
-                        response.command,
-                        response.error or "Command failed",
-                        code=response.code,
-                    )
-                )
+                self._turn.fail(_command_error(response))
             return
         if response.command != pending.command:
             raise OmpProtocolError("OMP response command does not match its request")
@@ -755,13 +762,7 @@ class OmpRpcClient:
         if response.success:
             pending.future.set_result(ReceivedResponse(response, sequence))
         else:
-            pending.future.set_result(
-                OmpRpcError(
-                    response.command,
-                    response.error or "Command failed",
-                    code=response.code,
-                )
-            )
+            pending.future.set_result(_command_error(response))
 
     def _start_callback(
         self,
@@ -778,6 +779,14 @@ class OmpRpcClient:
         turn.callbacks[key] = task
         turn.callback_tasks.add(task)
         task.add_done_callback(lambda done: self._callback_finished(turn, key, done))
+
+    def _callback_still_active(
+        self, turn: PromptRun, kind: str, request_id: str
+    ) -> bool:
+        return (
+            not self._closing
+            and turn.callbacks.get((kind, request_id)) is asyncio.current_task()
+        )
 
     @staticmethod
     def _cancel_callback(turn: PromptRun, kind: str, request_id: str) -> None:
@@ -797,10 +806,7 @@ class OmpRpcClient:
 
     async def _handle_tool(self, turn: PromptRun, call: OmpHostToolCall) -> None:
         result = await turn.on_tool(call)
-        if (
-            self._closing
-            or turn.callbacks.get(("tool", call.id)) is not asyncio.current_task()
-        ):
+        if not self._callback_still_active(turn, "tool", call.id):
             return
         await self._write_frame(
             {
@@ -818,10 +824,7 @@ class OmpRpcClient:
 
     async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
         response = await turn.on_ui(request)
-        if (
-            self._closing
-            or turn.callbacks.get(("ui", request.id)) is not asyncio.current_task()
-        ):
+        if not self._callback_still_active(turn, "ui", request.id):
             return
         frame: dict[str, JsonValue] = {
             "type": OmpFrameType.UI_RESPONSE,

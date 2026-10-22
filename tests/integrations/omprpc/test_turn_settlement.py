@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpPromptError
-from band.integrations.ompwire import OmpState
+from band.integrations.ompwire import OmpEventType, OmpState
 from tests.integrations.omprpc.kit import ClientFactory, Observer, prompt_task
 
 
@@ -20,23 +20,14 @@ class TestTurnSettlement:
         observer = Observer()
         running = prompt_task(client, observer)
         try:
-            first_end = await observer.wait_for("agent_end")
+            first_end = await observer.wait_for(OmpEventType.AGENT_END)
             assert first_end.awaitingAsyncWork is True
             await client.request("checkpoint")
             assert not running.done()
             await client.request("release")
             async with asyncio.timeout(5):
                 await running
-            messages = [
-                content.text
-                for event in observer.events
-                if event.type == "message_end"
-                and event.message is not None
-                and isinstance(event.message.content, list)
-                for content in event.message.content
-                if content.type == "text"
-            ]
-            assert messages == ["yielded", "background complete"]
+            assert observer.assistant_texts == ["yielded", "background complete"]
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
@@ -51,7 +42,7 @@ class TestTurnSettlement:
         observer = Observer()
         running = prompt_task(client, observer)
         try:
-            await observer.wait_for("agent_end")
+            await observer.wait_for(OmpEventType.AGENT_END)
             await client.request("release")
             expected = (
                 "Resumed provider failed" if scenario != "resume-aborted" else "aborted"
@@ -59,7 +50,10 @@ class TestTurnSettlement:
             async with asyncio.timeout(5):
                 with pytest.raises(OmpPromptError, match=expected):
                     await running
-            assert sum(event.type == "agent_end" for event in observer.events) == 2
+            assert (
+                sum(event.type == OmpEventType.AGENT_END for event in observer.events)
+                == 2
+            )
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
@@ -72,7 +66,7 @@ class TestTurnSettlement:
         observer = Observer()
         running = prompt_task(client, observer)
         try:
-            await observer.wait_for("agent_end")
+            await observer.wait_for(OmpEventType.AGENT_END)
             await client.request("checkpoint")
             assert not running.done()
             await client.request("release")

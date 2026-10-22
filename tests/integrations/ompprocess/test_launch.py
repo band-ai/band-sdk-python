@@ -5,6 +5,7 @@ from __future__ import annotations
 from band.integrations.omp import (
     OMP_APPROVAL_MODE_ALWAYS_ASK,
     OMP_APPROVAL_MODE_FLAG,
+    OMP_CWD_FLAG,
     finalize_omp_command,
 )
 from band.integrations.ompprocess import (
@@ -28,7 +29,7 @@ class TestNativeLaunchSettings:
             "bunx",
             *DEFAULT_OMP_COMMAND,
             "-v",
-            "--cwd=/w",
+            f"{OMP_CWD_FLAG}=/w",
         ]
 
     def test_runtime_env_routes_the_selected_provider_key(self) -> None:

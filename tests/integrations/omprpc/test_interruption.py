@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.integrations.ompwire import OmpHostToolCall, OmpToolResult
+from band.integrations.ompwire import OmpEventType, OmpHostToolCall, OmpToolResult
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
     ClientFactory,
@@ -29,7 +29,7 @@ class TestInterruptionAndReaping:
         active = prompt_task(client, observer)
         queued: asyncio.Task[None] | None = None
         try:
-            await observer.wait_for("agent_end")
+            await observer.wait_for(OmpEventType.AGENT_END)
             queued = await queue_prompt(client)
             queued.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -62,7 +62,7 @@ class TestInterruptionAndReaping:
         observer = Observer()
         running = prompt_task(client, observer)
         try:
-            await observer.wait_for("agent_end")
+            await observer.wait_for(OmpEventType.AGENT_END)
             if interruption == "cancel":
                 running.cancel()
                 async with asyncio.timeout(6):

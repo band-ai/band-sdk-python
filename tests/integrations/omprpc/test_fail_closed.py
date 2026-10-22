@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpProtocolError
-from band.integrations.ompwire import OmpUIRequest, OmpUIResponse
+from band.integrations.ompwire import OmpFrameType, OmpUIRequest, OmpUIResponse
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -33,7 +33,7 @@ class TestFailClosedDispatch:
             await client.request("orphan-ui")
             frames = await checkpoint_frames(client)
         assert any(
-            frame.get("type") == "extension_ui_response"
+            frame.get("type") == OmpFrameType.UI_RESPONSE
             and frame.get("id") == "ui-orphan"
             and frame.get("cancelled") is True
             for frame in frames
