@@ -11,6 +11,7 @@ from tests.contracts.spec.checkerfailures.kit import ROOT
 from tests.contracts.spec.workspace import isolated_root, run_tool
 
 
+@pytest.mark.timeout(120)
 class TestConformanceCheckersPass(unittest.TestCase):
     """checkv2 and checkcoordination compiled old send-then-answer sources that reply_required
     refuses, and no test ran them end to end (op-kgf6fc3z)."""
