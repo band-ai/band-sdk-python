@@ -1,545 +1,481 @@
-name: CI
+# Local proof branch only: the SDK checkout stays pinned independently of this workflow.
+name: Current-root Windows native proof
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
-  # Run on the merge queue's temporary branch so the required ci-status reports
-  # against the queued merge result. Without this the queue would wait forever.
-  merge_group:
-  schedule:
-    - cron: '17 3 * * 1'
   workflow_dispatch:
 
-# Every job here only reads the repo; nothing uses GITHUB_TOKEN for writes.
 permissions:
   contents: read
 
-# A new push to a pull request supersedes its running CI. Merge-queue runs are
-# never cancelled: each one is the verdict for the commit that lands. They each
-# get their own group, since a requeue on the same base reuses the queue ref.
-concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-
-  lint:
-    # Drafts get no CI; ready_for_review above fires the first real run.
-    if: &not-draft github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Configure git to use HTTPS for GitHub
-      uses: ./.github/actions/git-https-auth
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: '3.12'
-
-    - name: Verify uv.lock is in sync with pyproject
-      # Catches lock drift on every PR (including release-please's version-bump
-      # PR), so a stale lock can never silently reach a release and break the
-      # kit image build's `uv sync --locked`.
-      run: uv lock --check
-
-    - name: Verify the echo-agent starter lock is in sync with its pyproject
-      # The starter ships a committed uv.lock that the kit launcher installs
-      # verbatim (`uv sync --locked`), so a lock that no longer satisfies the
-      # starter's constraints (e.g. a band-sdk floor bump without a relock)
-      # would break every fresh kit workspace.
-      run: uv lock --check --directory docker/band_python_kit/echo-agent
-
-    - name: Install dependencies
-      # --all-packages: a plain `uv sync` installs only the root project, not
-      # workspace members that aren't a root dependency (packages/band-mcp) --
-      # every uv command in this workflow needs it, or tests/mcp/*.py (which
-      # import band_mcp) fail to collect and pyrefly misses packages/band-mcp/src.
-      run: uv sync --all-packages --locked --extra dev
-
-    - name: Run pre-commit hooks
-      run: uv run --all-packages pre-commit run --all-files
-
-
-  test:
-    if: *not-draft
-    runs-on: ${{ matrix.os }}
-    strategy: &suite-strategy
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
-        # The queue validates the merged result on one Ubuntu leg.
-        run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
-        # Older Windows interpreters run weekly, manually, and before releases.
-        full-windows: ["${{ github.event_name != 'pull_request' || github.head_ref == 'release-please--branches--main' }}"]
-        exclude:
-        - {run-for: queue, os: windows-latest}
-        - {run-for: queue, python-version: '3.11'}
-        - {run-for: queue, python-version: '3.13'}
-        - {full-windows: false, os: windows-latest, python-version: '3.11'}
-        - {full-windows: false, os: windows-latest, python-version: '3.12'}
-      fail-fast: false
-
-    # Use bash on every OS so these steps stay identical (Git Bash ships on the
-    # windows-latest runner). Keeps command substitution / quoting portable.
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
+        working-directory: sdk
+    env:
+      PYTHONPATH: '${{ github.workspace }}/sdk/src;${{ github.workspace }}/sdk'
+      E2E_TESTS_ENABLED: 'false'
+      DOCKER_TESTS_ENABLED: 'false'
+      SDK_REF: '0720167358abccceb65be410378e871783089c6d'
+    steps:
+      - name: Check out immutable SDK root
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.SDK_REF }}
+          path: sdk
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+
+      - name: Install Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+
+      - name: Install locked dev environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          uv sync --all-packages --locked --extra dev --python 3.13
+          if ($LASTEXITCODE -ne 0) { throw 'Locked dependency installation failed' }
+
+      - name: Attribute source and environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:SDK_REF) { throw 'Unexpected SDK source' }
+          Write-Host "Workflow commit: $env:GITHUB_SHA; SDK commit: $head"
+          @'
+          from __future__ import annotations
+
+          import logging
+          import sys
+          from pathlib import Path
+
+          import band.integrations.codex.winspawn as spawn
+          import band.integrations.ompprocess as process
+          import band.integrations.omprpc.client as client
+          import band.integrations.omprpc.scope as scope
+          import band.integrations.ompwire as wire
+          import tests.integrations.omprpc.kit as kit
+
+          logger = logging.getLogger(__name__)
+          logging.basicConfig(level=logging.INFO)
+          root = Path.cwd().resolve()
+          paths = [Path(module.__file__).resolve() for module in (process, client, scope, spawn, wire)]
+          kit_path = Path(kit.__file__).resolve()
+          logger.info('Python=%s; executable=%s; source paths=%s; testkit=%s', sys.version, sys.executable, paths, kit_path)
+          assert all(path.is_relative_to(root / 'src') for path in paths)
+          assert kit_path.is_relative_to(root / 'tests')
+          '@ | .venv/Scripts/python.exe -
+          if ($LASTEXITCODE -ne 0) { throw 'Source attribution failed' }
+          Get-FileHash -Algorithm SHA256 -Path uv.lock, src/band/integrations/ompprocess.py, src/band/integrations/omprpc/client.py, src/band/integrations/omprpc/scope.py, src/band/integrations/codex/winspawn.py, tests/integrations/omprpc/test_lifecycle_model.py
+
+      - name: Run full native and Codex scope without budget overrides
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The immutable model keeps 20 generated examples, 15 steps and its 600s whole-case budget.
+          .venv/Scripts/python.exe -m pytest tests/integrations/codex tests/integrations/omprpc tests/integrations/ompprocess tests/integrations/test_ompwire.py tests/converters/test_omp.py -v --no-cov --hypothesis-show-statistics
+          if ($LASTEXITCODE -ne 0) { throw 'Full native/Codex suite failed' }
+
+      - name: Install released OMP with the existing setup script
         shell: bash
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Configure git to use HTTPS for GitHub
-      uses: ./.github/actions/git-https-auth
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      run: uv sync --all-packages --locked --extra dev
-
-    - name: Collect baseline E2E in the core environment
-      run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
-
-    - name: Run tests
-      run: uv run --all-packages pytest
-
-    - name: Run markdown doc tests
-      # Linux-only: doc snippets are OS-independent, and this step relies on
-      # git ls-files globbing that we don't need to re-run per platform.
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      # NOOA snippets run in test-strands-nooa; examples/ READMEs are illustrative.
-      run: |
-        # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
-        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*' ':!:docs/adapters/nooa.md') --no-cov
-
-
-  test-crewai:
-    if: *not-draft
-    runs-on: ${{ matrix.os }}
-    strategy: *suite-strategy
-
-    # Use bash on every OS so the multiline pytest and pyrefly commands stay
-    # identical across Linux and Windows.
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Configure git to use HTTPS for GitHub
-      uses: ./.github/actions/git-https-auth
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install crewai dependencies
-      run: uv sync --all-packages --locked --extra dev-crewai
-
-    - name: Collect baseline E2E in the CrewAI environment
-      env:
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-      run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
-
-    - name: Run crewai tests
-      env:
-        # dev-crewai venv lacks langgraph/anthropic/parlant/pydantic-ai/etc.;
-        # tolerate missing framework configs instead of failing fast.
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-      # Only the tests that *need* this venv. Every other crewai test fakes the
-      # package through sys.modules, so the `test` job above already runs it and
-      # a second pass here would add no signal — just a path to forget.
-      # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
-      run: |
-        uv run --all-packages pytest \
-          tests/adapters/test_crewai_flow_phase3.py \
-          tests/adapters/crewaiworker/test_native_settlement.py \
-          tests/adapters/crewaiworker/test_flow_admission.py \
-          tests/adapters/crewaiworker/test_parallel_settlement.py \
-          tests/integrations/test_crewai_flow_real_sdk.py \
-          tests/integrations/test_crewai_real_tools.py \
-          tests/integrations/test_crewai_completion.py \
-          tests/integrations/crewai/activity/test_execution.py \
-          tests/integrations/crewai/activity/test_send_event.py \
-          tests/test_capability_gating_e2e.py \
-          tests/framework_conformance/test_files_image_passthrough_matrix.py \
-          tests/framework_conformance/ -k crewai
-
-    - name: Pyrefly check (crewai sources)
-      run: |
-        uv run --all-packages pyrefly check \
-          src/band/adapters/crewai.py \
-          src/band/adapters/crewai_flow.py \
-          src/band/converters/crewai.py \
-          src/band/converters/crewai_flow.py \
-          src/band/integrations/crewai/
-
-
-  test-strands-nooa:
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ${{ matrix.os }}
-    strategy: *suite-strategy
-
-    # Use bash on every OS so the multiline pytest and pyrefly commands stay
-    # identical across Linux and Windows.
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Configure git to use HTTPS for GitHub
-      uses: ./.github/actions/git-https-auth
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install Strands and NOOA dependencies
-      run: uv sync --all-packages --locked --extra dev-strands-nooa
-
-    - name: Collect baseline E2E in the Strands and NOOA environment
-      env:
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-        BAND_TEST_EXTRA: "dev-strands-nooa"
-      run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
-
-    - name: Run Strands and NOOA tests
-      env:
-        # dev-strands-nooa lacks modern framework packages;
-        # tolerate missing framework configs instead of failing fast.
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-        BAND_TEST_EXTRA: "dev-strands-nooa"
-      run: |
-        uv run --all-packages pytest \
-          tests/adapters/strands/ \
-          tests/adapters/nooa/ \
-          tests/converters/test_strands.py \
-          tests/framework_conformance/ -k 'strands or nooa or legacy or probe_registry'
-
-    - name: Verify selected Strands and NOOA coverage
-      env:
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-        BAND_TEST_EXTRA: "dev-strands-nooa"
-      run: uv run --all-packages pytest tests/framework_conformance/test_strands_nooa_job_coverage.py
-
-    - name: Run NOOA markdown examples
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      run: uv run --all-packages pytest --markdown-docs docs/adapters/nooa.md --no-cov
-
-    - name: Pyrefly check (Strands and NOOA sources)
-      run: |
-        uv run --all-packages pyrefly check \
-          src/band/adapters/strands.py \
-          src/band/converters/strands.py \
-          src/band/adapters/nooa/ \
-          src/band/converters/nooa.py
-
-
-  test-parlant:
-    if: *not-draft
-    runs-on: ${{ matrix.os }}
-    strategy: *suite-strategy
-
-    # Use bash on every OS so the multiline pytest and pyrefly commands stay
-    # identical across Linux and Windows.
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Configure git to use HTTPS for GitHub
-      uses: ./.github/actions/git-https-auth
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install parlant dependencies
-      run: uv sync --all-packages --locked --extra dev-parlant
-
-    - name: Collect baseline E2E in the Parlant environment
-      env:
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-      run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
-
-    - name: Run parlant tests
-      env:
-        # dev-parlant venv lacks langgraph/anthropic-adapter/pydantic-ai/etc.;
-        # tolerate missing framework configs instead of failing fast.
-        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
-      # Only the tests that *need* this venv. Every other parlant test fakes the
-      # package through sys.modules, so the `test` job above already runs it and
-      # a second pass here would add no signal — just a path to forget.
-      # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
-      run: |
-        uv run --all-packages pytest \
-          tests/integrations/parlant/test_catalog.py \
-          tests/integrations/parlant/test_chattools.py \
-          tests/integrations/parlant/test_contacttools.py \
-          tests/integrations/parlant/test_customtools.py \
-          tests/integrations/parlant/test_filetools.py \
-          tests/integrations/parlant/test_guard.py \
-          tests/integrations/parlant/activity/test_execution.py \
-          tests/integrations/parlant/activity/test_send_event.py \
-          tests/integrations/parlant/test_preambletask.py \
-          tests/integrations/parlant/test_selection.py \
-          tests/integrations/parlant/test_server.py \
-          tests/integrations/parlant/test_tasktools.py \
-          tests/integrations/parlant/test_vocabulary.py \
-          tests/framework_conformance/ -k parlant
-
-    - name: Pyrefly check (parlant sources)
-      run: |
-        uv run --all-packages pyrefly check \
-          src/band/adapters/parlant/ \
-          src/band/converters/parlant.py \
-          src/band/integrations/parlant/
-
-
-  packaging:
-    if: &pr-only github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-    - name: Configure git to use HTTPS for GitHub
-      uses: ./.github/actions/git-https-auth
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-
-    - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: '3.12'
-
-    - name: Build wheel
-      run: uv build --wheel
-
-    - name: Install from wheel (isolated, no extras)
-      run: |
-        uv venv /tmp/test-install
-        uv pip install dist/*.whl --python /tmp/test-install/bin/python
-
-    - name: Smoke-test the isolated wheel (no extras)
-      run: /tmp/test-install/bin/python .github/scripts/wheel-smoke.py
-
-    - name: Start the Desktop room view from a fresh resolve
-      # The lockfile says nothing about what a user's `uv tool install` picks:
-      # a released mcp that broke our API resolved fine here and killed the
-      # server at startup. Resolve the declared range afresh and prove the
-      # console script still comes up.
-      run: |
-        WHEEL=$(ls dist/*.whl)
-        uv venv /tmp/desktop-install
-        uv pip install "${WHEEL}[desktop]" --python /tmp/desktop-install/bin/python
-        /tmp/desktop-install/bin/python <<'PYEOF'
-        from band.integrations.desktop_app.server import create_server, room_view_tools
-        from band.integrations.desktop_app.service import RoomTranscriptService
-        create_server(RoomTranscriptService(object()))
-        print(f'room view starts with {len(room_view_tools())} tools')
-        PYEOF
-
-    - name: Start the OpenCode Band-tools server from a fresh resolve
-      # Same lesson as the room view above, and the extra that learned it late:
-      # an unbounded mcp resolved to a major release whose lowlevel Server has
-      # no decorator registration, so this path died on any fresh install while
-      # the locked environment stayed green. Runs a real start/stop cycle (not
-      # just an app build) so a fresh mcp's FastMCP mount + uvicorn serve/
-      # shutdown recipe is actually exercised.
-      run: |
-        WHEEL=$(ls dist/*.whl)
-        uv venv /tmp/opencode-install
-        uv pip install "${WHEEL}[opencode]" --python /tmp/opencode-install/bin/python
-        /tmp/opencode-install/bin/python <<'PYEOF'
-        import asyncio
-        from band.integrations.mcp.local_server import LocalMCPServer
-
-        async def main() -> None:
-            async with LocalMCPServer('smoke', [], port_min=0, port_max=0):
-                pass
-
-        asyncio.run(main())
-        print('opencode band tools server starts and stops')
-        PYEOF
-
-    - name: Verify gateway extras install independently
-      run: |
-        uv venv /tmp/test-a2a-gateway
-        WHEEL=$(ls dist/*.whl)
-        uv pip install "${WHEEL}[a2a_gateway]" --python /tmp/test-a2a-gateway/bin/python
-        /tmp/test-a2a-gateway/bin/python <<'PYEOF'
-        from band.adapters.a2a_gateway import A2AGatewayAdapter
-        print('Gateway extra import successful')
-        PYEOF
-        uv venv /tmp/test-a2a-gateway-demo
-        uv pip install "${WHEEL}[a2a_gateway_demo]" --python /tmp/test-a2a-gateway-demo/bin/python
-        /tmp/test-a2a-gateway-demo/bin/python <<'PYEOF'
-        from a2a.server.routes.rest_routes import create_rest_routes
-        print('Gateway demo extra route import successful')
-        PYEOF
-
-    - name: Install with all extras
-      run: |
-        WHEEL=$(ls dist/*.whl)
-        uv pip install "${WHEEL}[dev]" --python /tmp/test-install/bin/python
-
-    - name: Verify all imports (with extras)
-      run: |
-        /tmp/test-install/bin/python <<'PYEOF'
-        from band import Agent, BandLink, AgentRuntime
-        from band.adapters import LangGraphAdapter, AnthropicAdapter, PydanticAIAdapter, ClaudeSDKAdapter
-        from band.converters import LangChainHistoryConverter, AnthropicHistoryConverter, PydanticAIHistoryConverter
-        from band.config import load_agent_config
-        print('All imports successful')
-        PYEOF
-
-    - name: Build the band-mcp wheel
-      run: uv build --package band-mcp --wheel -o dist-band-mcp
-
-    - name: Install band-mcp from wheel (workspace band-sdk, isolated venv)
-      # band-mcp's published floor (band-sdk>=1.6.0) predates this repo's
-      # in-flight MCP engine migration, so a PyPI-only install can't exercise
-      # today's code yet -- install both freshly-built wheels together
-      # instead. band-mcp-publish.yml is the workflow that waits for the
-      # matching band-sdk release and checks the real PyPI floor.
-      run: |
-        uv venv /tmp/band-mcp-install
-        uv pip install dist/*.whl dist-band-mcp/*.whl --python /tmp/band-mcp-install/bin/python
-
-    - name: Verify band-mcp imports
-      run: |
-        /tmp/band-mcp-install/bin/python <<'PYEOF'
-        from band_mcp import __version__
-        from band_mcp.server import run, standalone_spec
-        from band_mcp.shared import StandaloneResolver, build_standalone_resolver
-        print(f'band-mcp {__version__} imports successful')
-        PYEOF
-
-    - name: Verify band-mcp CLI entry point
-      run: /tmp/band-mcp-install/bin/band-mcp --version
-
-
-  wheel-extra-cases:
-    if: *pr-only
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.cases.outputs.matrix }}
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-    - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: '3.12'
-    - name: Resolve wheel consumer cases
-      id: cases
-      run: echo "matrix=$(python3 .github/scripts/wheelchecks.py)" >> "$GITHUB_OUTPUT"
-
-  wheel-extras:
-    needs: wheel-extra-cases
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.wheel-extra-cases.outputs.matrix) }}
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-    - name: Install uv
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-    - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-      with:
-        python-version: '3.12'
-    - name: Build wheel
-      run: uv build --wheel
-    - name: Check published extras and provider startup
-      run: python3 .github/scripts/check-wheel-extras.py dist/band_sdk-*.whl --case ${{ matrix.case }}
-
-  ci-status:
-    # The one required CI check. Every other job in this file is in needs and in
-    # the loop below with the results it may end in
-    # (tests/framework_conformance/test_ci_status_coverage.py enforces both).
-    # lint must succeed, so a draft run, which skips every job, is red. The jobs
-    # allowed to skip are the ones omitted from the merge queue.
-    # always(), not !cancelled(): a skipped required check counts as passing.
-    if: always()
-    needs: [lint, test, test-crewai, test-strands-nooa, test-parlant, packaging, wheel-extra-cases, wheel-extras]
-    runs-on: ubuntu-latest
-    steps:
-    - name: Verify every CI job passed or was skipped
-      run: |
-        set -euo pipefail
-        failed=0
-        for entry in \
-          "lint:${{ needs.lint.result }}:success" \
-          "test:${{ needs.test.result }}:success" \
-          "test-crewai:${{ needs.test-crewai.result }}:success" \
-          "test-strands-nooa:${{ needs.test-strands-nooa.result }}:success|skipped" \
-          "test-parlant:${{ needs.test-parlant.result }}:success" \
-          "packaging:${{ needs.packaging.result }}:success|skipped" \
-          "wheel-extra-cases:${{ needs.wheel-extra-cases.result }}:success|skipped" \
-          "wheel-extras:${{ needs.wheel-extras.result }}:success|skipped"; do
-          job="${entry%%:*}"
-          remainder="${entry#*:}"
-          result="${remainder%%:*}"
-          allowed="${remainder#*:}"
-          case "|$allowed|" in
-            *"|$result|"*) printf 'ok      %-18s %s\n' "$job" "$result" ;;
-            *) printf 'FAILED  %-18s %s (expected %s)\n' "$job" "$result" "$allowed"; failed=1 ;;
-          esac
-        done
-        if [ "$failed" -ne 0 ]; then
-          echo "::error::one or more CI jobs did not pass"
-          exit 1
-        fi
-        echo "All CI jobs passed or were skipped."
+        env:
+          OMP_PACKAGE: '@oh-my-pi/pi-coding-agent@18.8.9'
+        run: |
+          set -euo pipefail
+          export BUN_INSTALL="$RUNNER_TEMP/band-omp-runtime"
+          export BUN_INSTALL_GLOBAL_DIR="$BUN_INSTALL/install/global"
+          export BUN_INSTALL_BIN="$BUN_INSTALL/bin"
+          export PATH="$BUN_INSTALL/bin:$PATH"
+          bash .github/scripts/setup-omp.sh
+          bun_exe="$(command -v bun)"
+          if [[ -f "$bun_exe.exe" ]]; then bun_exe="$bun_exe.exe"; fi
+          cli="$BUN_INSTALL/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"
+          test -f "$cli"
+          printf 'OMP_PROOF_BUN=%s\n' "$(cygpath -w "$bun_exe")" >> "$GITHUB_ENV"
+          printf 'OMP_PROOF_CLI=%s\n' "$(cygpath -w "$cli")" >> "$GITHUB_ENV"
+
+      - name: Prove active native MCP receipt privacy with signed AccessChk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = Join-Path $env:RUNNER_TEMP ('band-native-proof-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $directory | Out-Null
+          try {
+            $archive = Join-Path $directory 'AccessChk.zip'
+            Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/AccessChk.zip' -OutFile $archive -TimeoutSec 60
+            $expected = '8ef5e3cf235bcf4ecdcf8b4da1c0016a75f104b8591a65cc083ae3a82d496e07'
+            $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
+            if ($actual -ne $expected) { throw "AccessChk archive hash mismatch: $actual" }
+            Expand-Archive -Path $archive -DestinationPath $directory
+            $exe = Join-Path $directory 'accesschk64.exe'
+            $signature = Get-AuthenticodeSignature $exe
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+              throw 'AccessChk must have a valid Microsoft signature'
+            }
+            Write-Host "AccessChk archive SHA256: $actual"
+            Write-Host "AccessChk binary SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash)"
+            Write-Host "AccessChk signer: $($signature.SignerCertificate.Subject)"
+            $inspect = Join-Path $directory 'inspect.ps1'
+            @'
+          param([string]$Exe, [string]$Manifest, [string]$Controls)
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+          $sids = @('S-1-5-19', 'S-1-5-32-545', 'S-1-5-11', 'S-1-1-0')
+          $accounts = foreach ($sid in $sids) {
+            $identity = [System.Security.Principal.SecurityIdentifier]::new($sid)
+            [pscustomobject]@{ Sid = $identity; Name = $identity.Translate([System.Security.Principal.NTAccount]).Value }
+          }
+          function Assert-Rights([string]$Account, [string]$Path, [string]$Expected, [bool]$Directory) {
+            $flags = @('-accepteula', '-nobanner', '-v')
+            if ($Directory) { $flags += '-d' }
+            $lines = @(& $Exe @flags $Account $Path 2>&1)
+            $code = $LASTEXITCODE
+            Write-Host "Effective access: account=$Account path=$Path exit=$code"
+            foreach ($line in $lines) { Write-Host ([string]$line) }
+            if ($code -ne 0) { throw "AccessChk query failed: $Account $Path ($code)" }
+            # Do not Trim(): no-access has THREE leading spaces; read-only has TWO after R.
+            $headers = @($lines | Where-Object { [string]$_ -cmatch '^[R ][W ] \S' })
+            $pattern = '^(?<rights>[R ][W ]) ' + [regex]::Escape($Path) + '$'
+            if ($headers.Count -ne 1 -or [string]$headers[0] -cnotmatch $pattern) {
+              throw "Expected exactly one exact-path rights header: $Account $Path"
+            }
+            $rights = ([string]$headers[0]).Substring(0, 2)
+            if ($rights -cne $Expected) { throw "Unexpected rights '$rights', expected '$Expected': $Account $Path" }
+          }
+          function Show-Descriptor([string]$Path, [bool]$Directory) {
+            $flags = @('-accepteula', '-nobanner', '-l')
+            if ($Directory) { $flags += '-d' }
+            & $Exe @flags $Path
+            if ($LASTEXITCODE -ne 0) { throw "AccessChk descriptor query failed: $Path" }
+          }
+          # Only these two dummy controls receive ACL changes, never the real plugin or receipt.
+          foreach ($isDirectory in @($false, $true)) {
+            $path = Join-Path $Controls $(if ($isDirectory) { 'public-directory' } else { 'public-file.txt' })
+            if ($isDirectory) {
+              New-Item -ItemType Directory -Path $path | Out-Null
+              $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+            } else {
+              Set-Content -LiteralPath $path -Value 'dummy-only-no-credentials'
+              $acl = [System.Security.AccessControl.FileSecurity]::new()
+            }
+            $acl.SetOwner($owner.User)
+            $acl.SetAccessRuleProtection($true, $false)
+            $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($owner.User, 'FullControl', 'Allow'))
+            foreach ($account in $accounts) {
+              # AuthUsers queries do not infer Everyone membership: grant EACH SID Read directly.
+              $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($account.Sid, 'Read', 'Allow'))
+            }
+            Set-Acl -LiteralPath $path -AclObject $acl
+            Show-Descriptor $path $isDirectory
+            Assert-Rights $owner.Name $path 'RW' $isDirectory
+            foreach ($account in $accounts) { Assert-Rights $account.Name $path 'R ' $isDirectory }
+          }
+          $items = @(Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json)
+          $trusted = @($owner.User.Value, 'S-1-5-18', 'S-1-5-32-544')
+          foreach ($item in $items) {
+            $path = [string]$item.path
+            $isDirectory = [bool]$item.directory
+            $acl = Get-Acl -LiteralPath $path
+            $actualOwner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+            $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+            Write-Host "Native object: $($item.kind); owner=$actualOwner; protected=$($acl.AreAccessRulesProtected)"
+            Write-Host $acl.Sddl
+            foreach ($rule in $rules) {
+              Write-Host "ACE sid=$($rule.IdentityReference.Value) type=$($rule.AccessControlType) rights=$($rule.FileSystemRights) inherited=$($rule.IsInherited) inheritance=$($rule.InheritanceFlags) propagation=$($rule.PropagationFlags)"
+              if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $trusted) {
+                throw "Untrusted allow ACE on $path"
+              }
+            }
+            if ($actualOwner -notin $trusted -or $rules.Count -eq 0) { throw "Untrusted owner or missing DACL: $path" }
+            if ($isDirectory -and -not $acl.AreAccessRulesProtected) { throw "SDK directory is not protected: $path" }
+            Show-Descriptor $path $isDirectory
+            Assert-Rights $owner.Name $path 'RW' $isDirectory
+            foreach ($account in $accounts) { Assert-Rights $account.Name $path '  ' $isDirectory }
+            # Exercise owner I/O without altering any real file or its ACL.
+            if ($isDirectory) {
+              $null = @(Get-ChildItem -LiteralPath $path -Force)
+              $probe = Join-Path $path ('owner-control-' + [guid]::NewGuid() + '.txt')
+              try { [System.IO.File]::WriteAllText($probe, 'dummy-owner-write') }
+              finally { if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath $probe -Force } }
+            } else {
+              $handle = [System.IO.File]::Open($path, 'Open', 'ReadWrite', 'ReadWrite')
+              $handle.Dispose()
+              $null = [System.IO.File]::ReadAllBytes($path)
+            }
+          }
+          '@ | Set-Content -LiteralPath $inspect -Encoding utf8
+            $smoke = Join-Path $directory 'native-proof.py'
+            @'
+          from __future__ import annotations
+
+          import asyncio
+          import json
+          import logging
+          import os
+          import shutil
+          import subprocess
+          import sys
+          from collections.abc import Iterable
+          from pathlib import Path
+
+          import psutil
+          from mcp.server.fastmcp import FastMCP
+          from pydantic import BaseModel
+          from pydantic_settings import BaseSettings, SettingsConfigDict
+
+          from band.core.defaultmodels import ANTHROPIC_SMALL_MODEL
+          from band.integrations.codex.winspawn import HELPER_PATH
+          from band.integrations.ompprocess import (
+              OMP_MCP_RECEIPT,
+              OMP_MCP_SERVERS_CONFIG,
+              OMP_MCP_STARTUP_CONFIG,
+              OMP_MCP_STARTUP_JS,
+              OMP_MODE_FLAG,
+              OMP_NATIVE_PINNED_PACKAGE,
+              OMP_PLUGIN_ROOT,
+              OMP_RPC_MODE,
+              McpConnectionStatus,
+              McpStartupReceipt,
+              OmpMcpServer,
+              omp_mcp_arguments,
+              omp_mcp_plugin,
+              omp_mcp_ready,
+              omp_rpc_command_in_workspace,
+          )
+          from band.integrations.omprpc import OmpRpcClient
+          from band.integrations.ompwire import OmpCommandName
+
+          logger = logging.getLogger(__name__)
+          DUMMY_CREDENTIAL = 'dummy-not-a-real-secret'
+          MCP_SERVER_NAME = 'privacy'
+          SCRIPT = Path(__file__).resolve()
+
+          class NativeSettings(BaseSettings):
+              model_config = SettingsConfigDict(extra='ignore', case_sensitive=False, env_ignore_empty=True)
+              OMP_PROOF_BUN: Path
+              OMP_PROOF_CLI: Path
+              SystemRoot: Path
+              PYTHONPATH: str
+
+          class McpSettings(BaseSettings):
+              model_config = SettingsConfigDict(extra='ignore', case_sensitive=False, env_ignore_empty=True)
+              BAND_DUMMY_MCP_CREDENTIAL: str
+
+          class NativePackage(BaseModel):
+              name: str
+              version: str
+
+          class ProjectedServers(BaseModel):
+              mcpServers: dict[str, OmpMcpServer]
+
+          class NativeObject(BaseModel):
+              kind: str
+              path: Path
+              directory: bool
+
+          def track_processes(
+              processes: Iterable[psutil.Process],
+              tracked: dict[tuple[int, float], psutil.Process],
+          ) -> None:
+              for process in processes:
+                  try:
+                      created = process.create_time()
+                  except psutil.NoSuchProcess:
+                      logger.info('Observed descendant already retired: pid=%s', process.pid)
+                  else:
+                      tracked[(process.pid, created)] = process
+
+          def capture_tree(
+              helper: psutil.Process,
+              tracked: dict[tuple[int, float], psutil.Process],
+          ) -> list[psutil.Process]:
+              track_processes([helper], tracked)
+              try:
+                  descendants = helper.children(recursive=True)
+              except psutil.NoSuchProcess:
+                  logger.info('Owned helper already retired: pid=%s', helper.pid)
+                  return []
+              track_processes(descendants, tracked)
+              return descendants
+
+          def assert_retired(tracked: dict[tuple[int, float], psutil.Process]) -> None:
+              # psutil.Process.is_running also checks creation time, so recycled PIDs are not targets.
+              survivors = [
+                  process for (_, created), process in tracked.items()
+                  if process.is_running() and process.create_time() == created
+              ]
+              if not survivors:
+                  return
+              for process in survivors:
+                  try:
+                      process.kill()
+                  except psutil.NoSuchProcess:
+                      logger.info('Survivor retired before fallback kill: pid=%s', process.pid)
+              _, alive = psutil.wait_procs(survivors, timeout=5)
+              assert not alive, 'Fallback cleanup could not reap owned processes'
+              raise AssertionError('SDK close left identity-pinned helper/native/MCP processes alive')
+
+          def local_control() -> str:
+              raise AssertionError('Readiness must not invoke MCP tools')
+
+          async def main() -> None:
+              directory = Path(sys.argv[1]).resolve()
+              exe, inspect = sys.argv[2:4]
+              settings = NativeSettings()
+              bun = settings.OMP_PROOF_BUN.resolve()
+              cli = settings.OMP_PROOF_CLI.resolve()
+              package = NativePackage.model_validate_json((cli.parent.parent / 'package.json').read_text(encoding='utf-8'))
+              assert f'{package.name}@{package.version}' == OMP_NATIVE_PINNED_PACKAGE
+              logger.info('Native package=%s; bun=%s; cli=%s', OMP_NATIVE_PINNED_PACKAGE, bun, cli)
+              home = directory / 'home'
+              workspace = directory / 'workspace'
+              for path in (home, workspace, home / 'AppData/Roaming', home / 'AppData/Local'):
+                  path.mkdir(parents=True, exist_ok=True)
+              system_root = settings.SystemRoot
+              pwsh = shutil.which('pwsh')
+              assert pwsh is not None
+              # OmpRpcClient merges parent env, so replace it before constructing the client.
+              # No GitHub token, provider key, Band URL, proxy, profile or user configuration survives.
+              environment = {
+                  'SystemRoot': str(system_root), 'WINDIR': str(system_root),
+                  'COMSPEC': str(system_root / 'System32/cmd.exe'),
+                  'PATH': os.pathsep.join((str(bun.parent), str(Path(sys.executable).parent), str(system_root / 'System32'))),
+                  'PATHEXT': '.COM;.EXE;.BAT;.CMD',
+                  'HOME': str(home), 'USERPROFILE': str(home),
+                  'APPDATA': str(home / 'AppData/Roaming'), 'LOCALAPPDATA': str(home / 'AppData/Local'),
+                  'PI_CODING_AGENT_DIR': str(home / '.omp/agent'),
+                  'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache'),
+                  'XDG_DATA_HOME': str(home / '.local/share'),
+                  'TEMP': str(directory), 'TMP': str(directory),
+                  'CI': 'true', 'NO_COLOR': '1', 'TERM': 'dumb',
+                  'PYTHONPATH': settings.PYTHONPATH,
+              }
+              os.environ.clear()
+              os.environ.update(environment)
+              os.chdir(workspace)
+              servers = {MCP_SERVER_NAME: OmpMcpServer(
+                  command=sys.executable, args=('-u', str(SCRIPT), 'mcp'),
+                  env={'BAND_DUMMY_MCP_CREDENTIAL': DUMMY_CREDENTIAL},
+                  headers={'Authorization': f'Bearer {DUMMY_CREDENTIAL}'},
+              )}
+              plugin_parent: Path | None = None
+              try:
+                  with omp_mcp_plugin(servers, workspace=str(workspace), system_prompt='  Local privacy smoke: do not invoke a model.  ') as plugin:
+                      assert plugin is not None
+                      root = Path(plugin)
+                      plugin_parent = root.parent
+                      receipt = root / OMP_MCP_RECEIPT
+                      assert not receipt.exists(), 'Receipt must not exist before native startup'
+                      config = ProjectedServers.model_validate_json((root / OMP_MCP_SERVERS_CONFIG).read_text(encoding='utf-8'))
+                      projected = config.mcpServers[MCP_SERVER_NAME]
+                      assert projected.env['BAND_DUMMY_MCP_CREDENTIAL'] == DUMMY_CREDENTIAL
+                      assert projected.headers['Authorization'] == f'Bearer {DUMMY_CREDENTIAL}'
+                      command = omp_rpc_command_in_workspace([
+                          str(bun), str(cli), OMP_MODE_FLAG, OMP_RPC_MODE,
+                          '--model', f'anthropic/{ANTHROPIC_SMALL_MODEL}',
+                          '--no-session', '--no-extensions',
+                          *omp_mcp_arguments(plugin),
+                      ], str(workspace))
+                      runtime = OmpRpcClient(command, env=environment)
+                      helper: psutil.Process | None = None
+                      tracked: dict[tuple[int, float], psutil.Process] = {}
+                      try:
+                          async with asyncio.timeout(60):
+                              await runtime.start()
+                              assert runtime._proc is not None
+                              candidate = psutil.Process(runtime._proc.pid)
+                              owner_process = psutil.Process()
+                              owner = runtime._windows_process
+                              assert owner is not None and owner.process is runtime._proc and owner.job is not None
+                              assert candidate.is_running() and candidate.ppid() == owner_process.pid
+                              assert Path(candidate.exe()).resolve() == Path(owner_process.exe()).resolve()
+                              arguments = candidate.cmdline()
+                              assert str(HELPER_PATH.resolve()) in arguments and owner.job.name in arguments
+                              helper = candidate
+                              descendants = capture_tree(helper, tracked)
+                              candidates = [
+                                  process for process in descendants
+                                  if Path(process.exe()).resolve() == bun and str(cli) in process.cmdline()
+                              ]
+                              assert len(candidates) == 1, 'Expected one contained native Bun CLI'
+                              native = candidates[0]
+                              assert helper.pid != native.pid
+                              assert helper.username() == native.username() == owner_process.username()
+                              logger.info('Helper pid=%s created=%s; native pid=%s created=%s owner=%s', helper.pid, helper.create_time(), native.pid, native.create_time(), native.username())
+                              # The SDK guard rejects agent_start, host tools or UI; only its local slash command runs.
+                              await omp_mcp_ready(runtime, plugin, servers)
+                              assert receipt.is_file(), 'Only real native startup may create the receipt'
+                              payload = McpStartupReceipt.model_validate_json(receipt.read_text(encoding='utf-8'))
+                              assert payload.systemPromptReady is True
+                              assert len(payload.servers) == 1
+                              assert payload.servers[0].type == McpConnectionStatus.CONNECTED
+                              assert payload.servers[0].serverName == f'{OMP_PLUGIN_ROOT}:{MCP_SERVER_NAME}'
+                              capture_tree(helper, tracked)
+                              mcp_processes = [
+                                  process for process in native.children(recursive=True)
+                                  if str(SCRIPT) in process.cmdline() and 'mcp' in process.cmdline()
+                              ]
+                              assert mcp_processes, 'Real stdio MCP child was not active'
+                              track_processes(mcp_processes, tracked)
+                              for process in mcp_processes:
+                                  assert process.username() == owner_process.username()
+                                  logger.info('Active MCP pid=%s created=%s', process.pid, process.create_time())
+                              rules = list((root / 'rules').glob('*.md'))
+                              assert len(rules) == 1
+                              items = [
+                                  NativeObject(kind=kind, path=path, directory=is_dir)
+                                  for kind, path, is_dir in [
+                                      ('temporary-parent', root.parent, True), ('plugin', root, True),
+                                      ('mcp-dummy-config', root / OMP_MCP_SERVERS_CONFIG, False),
+                                      ('startup-config', root / OMP_MCP_STARTUP_CONFIG, False),
+                                      ('startup-js', root / OMP_MCP_STARTUP_JS, False),
+                                      ('rules-directory', root / 'rules', True), ('rule', rules[0], False),
+                                      ('native-receipt', receipt, False),
+                                  ]
+                              ]
+                              manifest = directory / 'manifest.json'
+                              manifest.write_text(json.dumps([item.model_dump(mode='json') for item in items]), encoding='utf-8')
+                              await asyncio.to_thread(subprocess.run, [pwsh, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', inspect, '-Exe', exe, '-Manifest', str(manifest), '-Controls', str(directory)], check=True, timeout=45)
+                              assert helper.is_running() and native.is_running() and runtime._proc.returncode is None
+                              assert all(process.is_running() for process in mcp_processes)
+                              await runtime.request(OmpCommandName.GET_AVAILABLE_COMMANDS)
+                      finally:
+                          try:
+                              if helper is not None:
+                                  capture_tree(helper, tracked)
+                          finally:
+                              try:
+                                  await runtime.close()
+                              finally:
+                                  assert_retired(tracked)
+                                  assert runtime._proc is None or runtime._proc.returncode is not None, 'Owned helper was not reaped'
+              finally:
+                  if plugin_parent is not None:
+                      assert not plugin_parent.exists(), 'SDK plugin scope was not released'
+              logger.info('Real %s startup, native receipt privacy, runner I/O, helper/native/MCP retirement and plugin release proved; no inference', OMP_NATIVE_PINNED_PACKAGE)
+
+          if __name__ == '__main__':
+              logging.basicConfig(level=logging.INFO)
+              if sys.argv[1:] == ['mcp']:
+                  assert McpSettings().BAND_DUMMY_MCP_CREDENTIAL == DUMMY_CREDENTIAL
+                  server = FastMCP('local-privacy-control')
+                  server.tool()(local_control)
+                  server.run(transport='stdio')
+              else:
+                  asyncio.run(main())
+          '@ | Set-Content -LiteralPath $smoke -Encoding utf8
+            .venv/Scripts/python.exe $smoke $directory $exe $inspect
+            if ($LASTEXITCODE -ne 0) { throw 'Real native privacy smoke failed' }
+          } finally {
+            Remove-Item -LiteralPath $directory -Recurse -Force
+          }
