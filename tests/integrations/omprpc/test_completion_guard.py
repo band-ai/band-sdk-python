@@ -163,6 +163,7 @@ class TestCompletionGuard:
                 finally:
                     await observer.release()
 
+            await observer.retired.wait()
             await session.clock.run_io(client.close())
             await session.clock.run_io(client.start())
             replacement = await peer_process(client)
@@ -229,6 +230,7 @@ class TestCompletionGuard:
                 finally:
                     await observer.release()
 
+            await observer.retired.wait()
             await session.clock.run_io(client.close())
             await session.clock.run_io(client.start())
             await session.clock.run_io(second_prompt(client))

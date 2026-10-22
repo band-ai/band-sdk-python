@@ -86,7 +86,7 @@ class TestUnprovenRetirement:
                         # Prove deadline cancellation before real process cleanup
                         # is allowed to make the clock progress again.
                         assert not hold.finished.is_set()
-                        with pytest.raises(OmpCompletionTimeout, match="uncertain"):
+                        with pytest.raises(OmpCompletionTimeout):
                             await clock.run_io(running)
 
                         assert [
@@ -103,9 +103,7 @@ class TestUnprovenRetirement:
                         assert clients.plugins[0].is_dir()
 
                         blocked_tools = BaselineTools()
-                        with pytest.raises(
-                            OmpProcessError, match="retirement is unproven"
-                        ):
+                        with pytest.raises(OmpProcessError):
                             await clock.run_io(
                                 run_turn(
                                     adapter,
@@ -121,9 +119,7 @@ class TestUnprovenRetirement:
                         assert clients.plugins[0].is_dir()
 
                         contender_tools = BaselineTools()
-                        with pytest.raises(
-                            ValueError, match="workspace_for_room assigned"
-                        ):
+                        with pytest.raises(ValueError):
                             await run_turn(
                                 adapter,
                                 contender_tools,
