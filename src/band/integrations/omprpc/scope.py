@@ -40,9 +40,9 @@ class OmpProcessScope:
         }
 
     def capture(self, root: asyncio.subprocess.Process) -> None:
-        group_visible = not session_pid_reused(root)
-        group_members: list[psutil.Process] = []
         getpgid = getattr(os, "getpgid", None)
+        group_visible = getpgid is not None and not session_pid_reused(root)
+        group_members: list[psutil.Process] = []
         for pid in psutil.pids():
             # asyncio's child watcher remains the sole waiter for the root.
             if pid == KERNEL_IDLE_PID or pid == root.pid:
@@ -77,7 +77,8 @@ class OmpProcessScope:
                     group_members.append(member)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        if group_visible:
+        # A reaped leader's id can be reused while membership is enumerated.
+        if group_visible and not session_pid_reused(root):
             self.processes.update(group_members)
 
     @staticmethod

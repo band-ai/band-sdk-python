@@ -9,10 +9,13 @@ import pytest
 
 from band.integrations.omprpc import OmpProcessError
 from band.integrations.omprpc.client import PROCESS_EXIT_TIMEOUT_S
+from band.integrations.omprpc.scope import OmpProcessScope
 from tests.integrations.omprpc.kit import (
+    ClientFactory,
     DeferredSessionSignal,
     ProcessGate,
     RecycledEnvironment,
+    RecycledGroup,
     connect_descendant_tree,
     crash_rpc_root,
     descendant_client,
@@ -29,6 +32,29 @@ from tests.ostable import skip_unless_os
 
 
 class TestProcessTreeCleanup:
+    @pytest.mark.parametrize("accepted_on", [("posix",)])
+    async def test_reused_group_during_capture_cannot_adopt_an_unrelated_process(
+        self,
+        client_factory: ClientFactory,
+        process_gate: ProcessGate,
+        monkeypatch: pytest.MonkeyPatch,
+        accepted_on: tuple[str, ...],
+    ) -> None:
+        skip_unless_os(accepted_on)
+        client = await client_factory("basic")
+        root = owned_rpc_process(client)
+        await client.close()
+        assert root.returncode is not None
+        scope = OmpProcessScope()
+        async with unrelated_gate_child(process_gate) as unrelated:
+            boundary = RecycledGroup(root, unrelated)
+            with monkeypatch.context() as patch:
+                boundary.install(patch)
+                scope.capture(root)
+            assert boundary.reused
+            assert unrelated.process not in scope.processes
+            assert await asyncio.to_thread(process_is_alive, unrelated.process)
+
     async def test_close_reaps_detached_descendants_without_affecting_other_owners(
         self, process_gate: ProcessGate
     ) -> None:
