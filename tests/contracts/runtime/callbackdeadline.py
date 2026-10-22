@@ -15,9 +15,9 @@ CALLBACK_LOOP = f"import os; os.write(1, {READY_MARKER!r})\n    while True: pass
 
 
 class CallbackDeadline:
-    def __init__(self) -> None:
+    def __init__(self, expected_timeout: float) -> None:
         self.now = 0.0
-        self.expected_timeout = 10.0
+        self.expected_timeout = expected_timeout
         self.observed_timeout: float | None = None
         self.output = b""
         self.entered = False
@@ -50,7 +50,8 @@ class CallbackSelector(selectors.DefaultSelector):
             remaining = self.clock.expected_timeout - self.clock.now
             if not isclose(timeout, remaining, rel_tol=0.0, abs_tol=1e-9):
                 raise AssertionError(
-                    f"Expected the configured 10-second deadline; received {timeout!r} seconds"
+                    f"Expected the configured {self.clock.expected_timeout:g}-second deadline; "
+                    f"received {timeout!r} seconds"
                 )
             self.clock.observed_timeout = timeout
             self.clock.now = self.clock.expected_timeout
@@ -63,8 +64,10 @@ class CallbackSelector(selectors.DefaultSelector):
 
 
 @contextmanager
-def callback_deadline() -> Generator[CallbackDeadline, None, None]:
-    clock = CallbackDeadline()
+def callback_deadline(
+    *, expected_timeout: float = 10.0
+) -> Generator[CallbackDeadline, None, None]:
+    clock = CallbackDeadline(expected_timeout)
     observed_os = SimpleNamespace(**{**vars(os), "read": clock.read})
     with (
         patch("remote_agent.commands.os", observed_os),

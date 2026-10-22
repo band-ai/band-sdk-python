@@ -290,7 +290,7 @@ class TestHybrid(HybridFixture):
                     self.addCleanup(self.store.close)
                 agent = self.start(source, max_repairs=0)
                 with (
-                    callback_deadline()
+                    callback_deadline(expected_timeout=0.4)
                     if body == CALLBACK_LOOP
                     else nullcontext() as deadline
                 ):
