@@ -9,7 +9,7 @@ from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -20,7 +20,6 @@ from band.integrations.omp import (
     omp_cwd_argument,
     omp_provider_env,
 )
-from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpEvent,
     OmpEventType,
@@ -29,6 +28,9 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+
+if TYPE_CHECKING:
+    from band.integrations.omprpc import OmpRpcClient
 
 DEFAULT_OMP_COMMAND: tuple[str, ...] = ("omp", "--mode", "rpc")
 

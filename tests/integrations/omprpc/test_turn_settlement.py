@@ -14,7 +14,12 @@ from band.integrations.ompwire import (
     OmpState,
     OmpToolResult,
 )
-from tests.integrations.omprpc.kit import ClientFactory, Observer, prompt_task
+from tests.integrations.omprpc.kit import (
+    ClientFactory,
+    Observer,
+    prompt_task,
+    second_prompt,
+)
 
 
 class TestTurnSettlement:
@@ -99,6 +104,8 @@ class TestTurnSettlement:
     ) -> None:
         monkeypatch.setattr(omprpc, "_CALLBACK_EXIT_TIMEOUT_S", 0)
         client = await client_factory("settled-during-callback")
+        process = client._proc
+        assert process is not None
         held = asyncio.Event()
 
         async def on_tool(_call: OmpHostToolCall) -> OmpToolResult:
@@ -115,3 +122,6 @@ class TestTurnSettlement:
                     on_ui=observer.on_ui,
                 )
         held.set()
+        assert process.returncode is not None
+        await client.start()
+        await second_prompt(client)
