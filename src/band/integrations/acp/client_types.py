@@ -11,6 +11,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.retention import RetainedRoom
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.collecting import ACPCollectingClient
+from band.integrations.acp.sessioninit import SessionSetupObserver
 
 # An agent's refusal of a prompt while its session runs another one.
 SESSION_BUSY_CODE = -32003
@@ -89,6 +90,7 @@ class ACPRoom:
     reservation: asyncio.Lock = field(default_factory=asyncio.Lock)
     session_closes: set[asyncio.Task[None]] = field(default_factory=set)
     session_setup: asyncio.Task[str] | None = None
+    setup_observer: SessionSetupObserver | None = None
     abandoned_setup: asyncio.Task[str] | None = None
     session_waiters: int = 0
 

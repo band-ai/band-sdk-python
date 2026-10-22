@@ -157,14 +157,15 @@ assert slow.retention.transition_timeout_s == 120
   selection fails that turn only and reverts to the configured one; the room keeps
   its session, and when that refusal follows a reload, the room's process is
   recovered too, so the next turn reloads the session on a new process rather
-  than twice on the same one. Only a bootstrap resume candidate is closed when its configuration
-  is refused.
+  than twice on the same one. Only a bootstrap resume candidate is closed when
+  its configuration is refused.
 - **Closure is confirmed, not assumed.** The process handle stays on the room until
   `__aexit__` succeeds, its child is reaped and the agent's stdout reaches EOF.
   A child left running by a successful context exit is killed and waited for;
-  a descendant that inherited stdout keeps the room closing until it exits, with a warning naming the
-  agent's pid. A failed or cancelled exit leaves the room owned, and a retry kills
-  and waits for the same process. `cleanup_all()` and its alias `stop()` share one
+  a descendant that inherited stdout keeps the room closing until it exits, with
+  a warning naming the agent's pid. A failed or cancelled exit leaves the room
+  owned, and a retry kills and waits for the same process. `cleanup_all()` and
+  its alias `stop()` share one
   `transition_timeout_s` budget across the rooms and the shared Band MCP server,
   and keep that server open while any room is still held. A cancelled, failed or
   overdue server close stays owned and a retry joins it. A stop is final: later
@@ -203,6 +204,9 @@ external servers. Callback failure never falls back to configured external serve
   The initializer's retained lease holds the process and workspace until it settles.
   A callback that swallows cancellation or requests teardown cannot publish a session
   or pass its late result to the agent.
+- An abandoned initializer's failure is observed even without a successor. Its
+  diagnostic names only the exception type; a successor waits for settlement
+  before resolving again and does not inherit the abandoned failure.
 - A callback requesting `on_cleanup`, `cleanup_all` or `stop` gets
   `CleanupIncompleteError` rather than waiting on itself. The retained owner continues
   teardown after the callback unwinds, preserving the process, workspace and Band
@@ -218,9 +222,12 @@ selection is validated against (choosing a model can change the reasoning levels
 failure fails that room turn visibly instead of falling back.
 
 A configuration callback for an accepted prompt on an acquired process may request
-cleanup. It receives `CleanupIncompleteError` without cancelling that prompt or
-its shared session setup; teardown waits for the accepted work to finish. Later
-work is refused. MCP resolution still cannot start a new session scope after cleanup.
+cleanup. It receives `CleanupIncompleteError` without cancelling its shared session
+setup or the accepted prompt currently waiting for it. That prompt may finish
+through native prompting beyond the cleanup grace; unrelated queued work is
+cancelled normally. Teardown retains resources until the accepted work finishes.
+Later work is refused. MCP resolution still cannot start a new session scope after
+cleanup. Explicit caller cancellation and provider timeouts remain effective.
 
 ## Backends
 

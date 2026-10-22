@@ -114,6 +114,7 @@ from band.integrations.acp.session_config import (
     SessionConfigSetter,
     apply_session_config_selections,
 )
+from band.integrations.acp.sessioninit import SessionSetupObserver
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp import (
     BandMCPBackend,
@@ -797,6 +798,8 @@ class ACPClientAdapter(
         finally:
             room.session_waiters -= 1
             setup = room.session_setup
+            if not room.session_waiters and room.setup_observer is not None:
+                room.setup_observer.abandon()
             if (
                 not room.session_waiters
                 and not room.retained.closing
@@ -1316,7 +1319,7 @@ class ACPClientAdapter(
         if setup is not None and (setup is room.abandoned_setup or setup.cancelling()):
             # A callback may still be settling an abandoned setup. Its lease
             # holds the process, and no successor resolves beside it.
-            await asyncio.wait((setup,))
+            await room.retained.wait_owned(setup)
             if room.abandoned_setup is setup:
                 room.abandoned_setup = None
             self._require_current_runtime(room, runtime)
@@ -1331,7 +1334,11 @@ class ACPClientAdapter(
                 partial(self._initialize_session, room, runtime, history, mcp)
             )
             room.session_setup = setup
-        return await asyncio.shield(setup)
+            room.setup_observer = SessionSetupObserver(setup)
+        await room.retained.wait_owned(setup)
+        observer = room.setup_observer
+        assert observer is not None and observer.task is setup
+        return observer.consume()
 
     def _require_current_runtime(
         self, room: ACPRoom, runtime: ACPRuntime, *, finishing: bool = False

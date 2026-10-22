@@ -116,3 +116,13 @@ class HeldResolver(Resolver):
             raise
         self.log.append("settled")
         return self.servers
+
+
+class FailingResolver(HeldResolver):
+    """Fail the first abandoned resolution after its cancellation settles."""
+
+    async def __call__(self, workspace: str) -> Sequence[Any]:
+        result = await super().__call__(workspace)
+        if len(self.workspaces) == 1:
+            raise LookupError(SECRET)
+        return result
