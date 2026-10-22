@@ -108,21 +108,76 @@ class ContractRoom:
         identity = await self.connect()
         async with self._definition_lock:
             if self._definition is None:
-                body = await self._transport.request(
-                    "GET", self._path + "/v1/definition"
-                )
-                if (
-                    body.get("profile") != "contract-room/definition/1"
-                    or body.get("session") != self.session
-                    or body.get("actor") != self.actor
-                    or body.get("identity") != identity.identity
-                    or not isinstance(body.get("definition"), dict)
-                ):
-                    raise ContractIdentityError(
-                        "Definition differs from the bound room identity"
+                if self._path:
+                    body = await self._transport.request(
+                        "POST", self._path + "/v1/view", body=b"{}"
                     )
-                self._definition = deepcopy(body["definition"])
+                    definition = self._native_definition(body, identity)
+                else:
+                    body = await self._transport.request("GET", "/v1/definition")
+                    if (
+                        body.get("profile") != "contract-room/definition/1"
+                        or body.get("session") != self.session
+                        or body.get("actor") != self.actor
+                        or body.get("identity") != identity.identity
+                        or not isinstance(body.get("definition"), dict)
+                    ):
+                        raise ContractIdentityError(
+                            "Definition differs from the bound room identity"
+                        )
+                    definition = body["definition"]
+                self._definition = deepcopy(definition)
             return deepcopy(self._definition)
+
+    def _native_definition(
+        self, body: JsonObject, identity: ContractIdentity
+    ) -> JsonObject:
+        view = body.get("view")
+        checkpoint = body.get("checkpoint")
+        if not isinstance(view, dict) or not isinstance(checkpoint, dict):
+            raise ContractIdentityError(
+                "Native view is missing its projection or checkpoint"
+            )
+        definition = view.get("definition")
+        state = checkpoint.get("state")
+        if not isinstance(definition, dict) or not isinstance(state, dict):
+            raise ContractIdentityError(
+                "Native view is missing its definition or saved state"
+            )
+        contract = definition.get("contract")
+        role = definition.get("role")
+        bindings = state.get("bindings")
+        if (
+            not isinstance(contract, dict)
+            or not isinstance(role, dict)
+            or not isinstance(bindings, dict)
+        ):
+            raise ContractIdentityError(
+                "Native definition is missing its contract, role, or bindings"
+            )
+        digest = contract.get("digest")
+        source = contract.get("source_digest")
+        role_name = role.get("name")
+        if (
+            body.get("profile") != "band-contract/agent-view/1"
+            or body.get("actor") != self.actor
+            or view.get("id") != self.session
+            or state.get("id") != self.session
+            or not isinstance(digest, str)
+            or not digest
+            or digest != checkpoint.get("definition")
+            or digest != identity.identity.get("definition")
+            or not isinstance(source, str)
+            or not source
+            or source != checkpoint.get("source")
+            or source != identity.identity.get("source")
+            or not isinstance(role_name, str)
+            or bindings.get(role_name) != self.actor
+        ):
+            raise ContractIdentityError(
+                "Definition differs from the bound room identity"
+            )
+        return definition
 
     async def view(self, *, hydrate: bool = False) -> JsonObject:
         await self.connect()

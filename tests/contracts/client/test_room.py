@@ -61,7 +61,7 @@ class TestRoom:
             peer.client() as http,
             ContractClient(peer.connection(), http=http) as client,
         ):
-            room = await client.room("room", "session", actor=peer.actor)
+            room = await client.gateway(session="session", actor=peer.actor)
             first = await room.view(hydrate=True)
             hydrated_rules(first).append("caller edit")
             second = await room.view(hydrate=True)
@@ -83,6 +83,6 @@ class TestRoom:
             peer.client() as http,
             ContractClient(peer.connection(), http=http) as client,
         ):
-            room = await client.room("room", "session", actor=peer.actor)
+            room = await client.gateway(session="session", actor=peer.actor)
             with pytest.raises(ContractIdentityError):
                 await room.definition()
