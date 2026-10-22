@@ -12,6 +12,7 @@ from band.contracts.errors import ContractProtocolError
 from band.contracts.models import ContractConnection, FrozenModel, Identifier
 from band.contracts.transport import ContractTransport
 from band.contracts.wire import MAX_AUTHOR_BYTES, JsonObject, decode_json, encode_json
+from remote_agent.band.authorack import acknowledges_completion
 
 
 class AuthorCompletion(FrozenModel):
@@ -91,13 +92,7 @@ class ContractAuthorClient(ContractTransport):
             body=completion.encoded,
             limit=MAX_AUTHOR_BYTES,
         )
-        if result.get("id") != completion.job or result.get("status") not in (
-            "ready",
-            "needs_input",
-            "queued",
-            "failed",
-            "held",
-        ):
+        if not acknowledges_completion(result, completion.job, completion.attempt):
             raise ContractProtocolError(
                 "Author response did not acknowledge the submitted completion"
             )

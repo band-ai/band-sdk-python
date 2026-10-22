@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from remote_agent.band.authorack import acknowledges_completion
 from remote_agent.band.authoring import bounded_text, canonical, validate_result
 from remote_agent.band.authortransport import AuthorCapacityError
 from remote_agent.types import JsonObject
@@ -122,12 +123,8 @@ class StudioAgent:
                 notify=not held,
             )
             return False
-        if (
-            not isinstance(response, dict)
-            or response.get("id") != identifier
-            or response.get("status")
-            not in ("ready", "needs_input", "queued", "failed", "held")
-            or (rejected_claim is not None and response.get("attempt") != attempt)
+        if not acknowledges_completion(response, identifier, attempt) or (
+            rejected_claim is not None and response.get("attempt") != attempt
         ):
             raise ValueError("Invalid author completion acknowledgement")
         with self.db:
