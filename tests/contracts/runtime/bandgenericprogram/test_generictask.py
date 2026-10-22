@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from band.contracts.programs import ProgramTask
 from remote_agent.band.generic import GenericRuntimeDriver
 from remote_agent.service import Service
 from remote_agent.store import Store
@@ -62,3 +63,51 @@ class TestGenericTask(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "sending_role_not_granted"):
                 driver.task(dict(body, sender_role="normalizer"))
             self.assertFalse(store.records())
+
+    def test_public_task_selects_one_of_two_roles_and_keeps_it_through_unknown_ack(
+        self,
+    ) -> None:
+        requester = UnknownAckRoom("session")
+        reviewer = UnknownAckRoom("session")
+        reviewer.actor = "Agent:reviewer"
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            Store(Path(directory) / "journal") as store,
+        ):
+            driver = GenericRuntimeDriver.__new__(GenericRuntimeDriver)
+            driver.task_rooms = {"requester": requester, "reviewer": reviewer}
+            driver.service = cast(Service, SimpleNamespace(store=store))
+            task = ProgramTask(
+                id="selected-input",
+                sender_role="reviewer",
+                kind="normalize",
+                payload={"text": "Band"},
+            )
+            with self.assertRaisesRegex(ValueError, "lost acknowledgement"):
+                driver.task(task.body())
+            self.assertEqual(requester.requests, [])
+            self.assertEqual(reviewer.actors, ["Agent:reviewer"])
+            self.assertEqual(
+                store.get("effect:selected-input")["request"]["sender_role"],
+                "reviewer",
+            )
+            changed = ProgramTask(
+                id="selected-input",
+                sender_role="requester",
+                kind="normalize",
+                payload={"text": "Band"},
+            )
+            with self.assertRaisesRegex(ValueError, "effect_identity_conflict"):
+                driver.task(changed.body())
+            self.assertEqual(
+                driver.task(task.body())["decision"]["status"], "duplicate"
+            )
+            self.assertEqual(
+                driver.task(task.body())["decision"]["status"], "duplicate"
+            )
+            self.assertEqual(requester.requests, [])
+            self.assertEqual(len(reviewer.requests), 2)
+            self.assertEqual(reviewer.requests[0], reviewer.requests[1])
+            self.assertEqual(reviewer.actors, ["Agent:reviewer", "Agent:reviewer"])
+            self.assertEqual(reviewer.requests[0]["expected_version"], 0)
+            self.assertEqual(reviewer.requests[0]["payload"], {"text": "Band"})

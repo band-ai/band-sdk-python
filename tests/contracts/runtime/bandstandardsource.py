@@ -80,14 +80,16 @@ class GenericStandardSourceFixture(unittest.TestCase):
             view=lambda actor, now=None: room.view(actor, 0),
         )
 
-    def start(self) -> Any:
+    def start(self, request: dict[str, Any] | None = None) -> Any:
         quality = policy()
         quality["source_sha256"] = self.source["sha256"]
         value = {
             "room": "room",
             "session": self.room.session,
             "actor": "User:owner",
-            "request": {
+            "request": request
+            if request is not None
+            else {
                 "journal": True,
                 "mode": "program",
                 "target_bytes": 100_000_000,
