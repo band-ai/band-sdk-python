@@ -168,7 +168,6 @@ class Peer:
         self.tool_results: set[str] = set()
         self.ui_answered = False
         self.held: Frame | None = None
-        self.probe_children: list[subprocess.Popen[bytes]] = []
 
     def respond(self, frame: Frame, data: dict[str, JsonValue] | None = None) -> None:
         result: dict[str, JsonValue] = {
@@ -623,20 +622,6 @@ class Peer:
                     self.settle()
             case "checkpoint":
                 self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
-            case "probe-spawn-child":
-                try:
-                    child = start_descendant("gated-child", frame.count, "discard")
-                except OSError as error:
-                    self.respond(
-                        frame,
-                        {
-                            "started": False,
-                            "winerror": getattr(error, "winerror", None),
-                        },
-                    )
-                else:
-                    self.probe_children.append(child)
-                    self.respond(frame, {"started": True, "pid": child.pid})
             case "abort":
                 if self.scenario != "stubborn":
                     self.respond(frame)
