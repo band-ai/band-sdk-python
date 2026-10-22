@@ -22,6 +22,7 @@ from band.integrations.omp import (
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -183,7 +184,7 @@ async def omp_mcp_ready(
         raise OmpStartupError("OMP did not load the required SDK startup extension")
 
     async def on_event(event: OmpEvent) -> None:
-        if event.type == "agent_start":
+        if event.type == OmpEventType.AGENT_START:
             raise OmpStartupError(
                 "OMP unexpectedly invoked an agent during SDK startup"
             )
