@@ -10,6 +10,7 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from tests.adapters.omp.askkit import room_ask_adapter
+from tests.adapters.omp.kit import RefreshClients
 from tests.adapters.omp.selectionkit import (
     MODEL_PROVIDER,
     ORIGINAL_MODEL,
@@ -55,3 +56,10 @@ async def overlapping_selections(
 def ask_adapter(tmp_path: Path) -> OmpAdapter:
     """An adapter whose native peer raises a structured ask dialog."""
     return room_ask_adapter(tmp_path)
+
+
+@pytest.fixture
+def refresh_clients(monkeypatch: pytest.MonkeyPatch) -> RefreshClients:
+    clients = RefreshClients()
+    monkeypatch.setattr("band.adapters.omp.OmpRpcClient", clients)
+    return clients
