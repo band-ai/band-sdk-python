@@ -12,6 +12,22 @@ Before implementation, form a plan proportional to the work: scope, approach,
 important scenarios, and validation. Prefer focused, clear solutions that reuse
 existing patterns.
 
+Every implementation plan must assess the owning layer and whether relevant
+behavior exists in sibling repositories. For shared behavior or mechanisms used
+across adapters or SDKs, inspect affected consumers and relevant sibling source
+before choosing the design. Consider `band-sdk-core` for policy shared across
+SDKs, while distinguishing it from this repository's `src/band/core` and from
+adapter or runtime mechanics. Record the sources and a brief placement rationale
+in the plan. For clearly local changes, a brief explanation of why sibling
+comparison is unnecessary is enough. Choose the smallest boundary that owns the
+behavior; do not move code to core or expand adapter support solely for possible
+future reuse.
+When source comparison reveals a relevant sibling gap, propose a scoped followup
+with evidence rather than silently expanding the current work. For workflow rule
+changes, also consider whether a counterpart skill needs the same correction and
+suggest it where relevant. Feature differences alone do not establish a defect
+or make sibling work a prerequisite.
+
 Assess whether existing tests meaningfully cover the affected behavior. Close
 material coverage gaps and validate realistic flows, including complex
 interactions and failure paths where relevant. Passing tests or high coverage
