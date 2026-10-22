@@ -4,6 +4,7 @@ stops everything the launched process spawned."""
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
 import os
 import shutil
@@ -313,27 +314,19 @@ class TestSubprocessCleanup:
     async def test_idle_wait_preserves_ownership_until_explicit_release(
         self, active: int | None, drained: bool
     ) -> None:
-        job = Job.__new__(Job)
-        job._handle = object()  # type: ignore[assignment]
-        job.name = "test"
-        closed = False
+        handle = ctypes.c_void_p(1)
+        job = Job(handle, "test")
 
         def active_processes() -> int | None:
             return active
 
-        def close() -> None:
-            nonlocal closed
-            closed = True
-            job._handle = None
-
         job.active_processes = active_processes  # type: ignore[method-assign]
-        job.close = close  # type: ignore[method-assign]
         if drained:
             await job.wait_until_idle(0)
         else:
             with pytest.raises(JobNotDrained):
                 await job.wait_until_idle(0)
-        assert not closed
+        assert job._handle is handle
 
     def test_windows_helper_does_not_import_a_room_package(
         self, tmp_path: Path

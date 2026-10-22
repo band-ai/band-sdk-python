@@ -12,8 +12,20 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import stdio_client, winspawn
+from tests.integrations.codex.job import JobKernel
 from tests.integrations.codex.lifecycle import WindowsLifecycle
 from tests.integrations.codex.lookup import WindowsLookup
+
+
+@pytest.fixture
+def job_kernel(monkeypatch: pytest.MonkeyPatch) -> JobKernel:
+    kernel = JobKernel()
+    monkeypatch.setattr(winspawn, "_kernel32", lambda: kernel)
+    monkeypatch.setattr(winspawn, "_last_error", lambda: kernel.last_error)
+    monkeypatch.setattr(
+        winspawn, "_win_os_error", lambda code: OSError(code, "native Job failure")
+    )
+    return kernel
 
 
 @pytest.fixture
