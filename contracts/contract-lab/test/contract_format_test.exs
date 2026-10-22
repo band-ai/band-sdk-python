@@ -227,6 +227,30 @@ defmodule ContractLab.ContractFormatTest do
     assert {:ok, "contract @1h => expired\n"} = Format.format("contract @1h => expired\n\n\n")
   end
 
+  test "the first blank ends collect-option adjacency and further blanks coalesce" do
+    collect = "collect reports from reviewers -> lead @5m => done\n"
+
+    for option <- ["reply review()", "offline continue", "quorum 1", "failure stalled"],
+        {gap, rendered_gap, indent} <- [
+          {"", "", "    "},
+          {"\n", "\n", "  "},
+          {"\n\n\n\n\n", "\n", "  "}
+        ] do
+      source = "state reviewing\n" <> collect <> gap <> option <> "\nend done\n"
+
+      expected =
+        "state reviewing\n  " <>
+          collect <>
+          rendered_gap <>
+          indent <>
+          option <>
+          "\n\nend done\n"
+
+      assert {:ok, ^expected} = Format.format(source)
+      assert {:ok, ^expected} = Format.format(expected)
+    end
+  end
+
   test "a body without frontmatter is formatted as a body" do
     assert {:ok, "contract @infinity => expired\n\ntype offer\n  task: text(600)\n"} =
              Format.format("contract @infinity => expired\ntype offer\n task: text(600)\n")

@@ -195,7 +195,9 @@ defmodule ContractLab.Format do
 
     cond do
       text == "" ->
-        scan(rest, [{:blank} | acc])
+        if match?([{:blank} | _], acc),
+          do: scan(rest, acc),
+          else: scan(rest, [{:blank} | acc])
 
       String.starts_with?(text, "%%") ->
         scan(rest, [{:comment, text} | acc])
