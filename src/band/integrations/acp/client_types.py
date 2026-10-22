@@ -11,6 +11,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.retention import RetainedRoom
 from band.integrations.acp.client_runtime import ACPRuntime
 from band.integrations.acp.collecting import ACPCollectingClient
+from band.integrations.acp.sessioninit import SessionSetupObserver
 
 # An agent's refusal of a prompt while its session runs another one.
 SESSION_BUSY_CODE = -32003
@@ -72,6 +73,12 @@ class ACPRoom:
     from session setup through their actual end. ``session_closes`` are
     best-effort closes of retired sessions, which finish before the process
     is released.
+    ``session_setup`` is the shared, room-owned initializer; its lease keeps
+    cancellation settlement ahead of process closure. ``abandoned_setup`` is
+    the initializer its last waiter left: a callback can clear its task's
+    cancellation with ``uncancel()``, so abandonment is recorded here, not
+    read back from the task. ``session_waiters`` counts prompts running or
+    queued on the room's reservation.
     """
 
     room_id: str
@@ -82,6 +89,10 @@ class ACPRoom:
     tools: AgentToolsProtocol | None = None
     reservation: asyncio.Lock = field(default_factory=asyncio.Lock)
     session_closes: set[asyncio.Task[None]] = field(default_factory=set)
+    session_setup: asyncio.Task[str] | None = None
+    setup_observer: SessionSetupObserver | None = None
+    abandoned_setup: asyncio.Task[str] | None = None
+    session_waiters: int = 0
 
     @property
     def generation(self) -> int:

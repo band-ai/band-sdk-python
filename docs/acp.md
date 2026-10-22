@@ -157,13 +157,15 @@ assert slow.retention.transition_timeout_s == 120
   selection fails that turn only and reverts to the configured one; the room keeps
   its session, and when that refusal follows a reload, the room's process is
   recovered too, so the next turn reloads the session on a new process rather
-  than twice on the same one. Only a bootstrap resume candidate is closed when its configuration
-  is refused.
+  than twice on the same one. Only a bootstrap resume candidate is closed when
+  its configuration is refused.
 - **Closure is confirmed, not assumed.** The process handle stays on the room until
-  `__aexit__` succeeds and the agent's stdout reaches EOF, so a descendant that
-  inherited it keeps the room closing until it exits, with a warning naming the
-  agent's pid. A failed or cancelled exit leaves the room owned, and a retry kills
-  and waits for the same process. `cleanup_all()` and its alias `stop()` share one
+  `__aexit__` succeeds, its child is reaped and the agent's stdout reaches EOF.
+  A child left running by a successful context exit is killed and waited for;
+  a descendant that inherited stdout keeps the room closing until it exits, with
+  a warning naming the agent's pid. A failed or cancelled exit leaves the room
+  owned, and a retry kills and waits for the same process. `cleanup_all()` and
+  its alias `stop()` share one
   `transition_timeout_s` budget across the rooms and the shared Band MCP server,
   and keep that server open while any room is still held. A cancelled, failed or
   overdue server close stays owned and a retry joins it. A stop is final: later
@@ -176,12 +178,56 @@ assert slow.retention.transition_timeout_s == 120
   permission or extension requests carry no prompt id, so a call arriving after its
   turn is served with the room's current tools.
 
+## Per-room MCP servers
+
+`resolve_mcp_servers(workspace)`, a keyword-only constructor argument of
+`ACPClientAdapter`, `CopilotACPAdapter` and `CursorACPAdapter`, returns native
+`acp.schema` descriptors for that room's workspace.
+It runs once per session setup after the agent initializes. A reused live session
+keeps its servers; a restored session and its fresh-session fallback share one
+deep-copied snapshot. Recovery and a deliberate wake resolve anew on the new
+connection, as does a new session replacing a stale Band MCP endpoint.
+
+The result replaces `config.mcp_servers`, including when empty, except Band routing:
+a configured `band` entry and the injected Band server remain after the resolved
+external servers. Callback failure never falls back to configured external servers.
+
+- `McpServerStdio` is always accepted. `HttpMcpServer` and `SseMcpServer` require the
+  agent to explicitly advertise that transport in `initialize`. `AcpMcpServer` is
+  refused. Names must be unique and may not be `band`.
+- A refused descriptor fails the turn with `ACPMcpServerResolutionError`, naming
+  only its server and transport, never its URL, headers, command or environment.
+  Resolution failures recover the room's process through its retained owner; the
+  next turn resolves again on a fresh connection.
+- Queued turns share the room's initializer. One cancelled waiter leaves it for
+  another; the last waiter cancels it once without waiting for callback settlement.
+  The initializer's retained lease holds the process and workspace until it settles.
+  A callback that swallows cancellation or requests teardown cannot publish a session
+  or pass its late result to the agent.
+- An abandoned initializer's failure is observed even without a successor. Its
+  diagnostic names only the exception type; a successor waits for settlement
+  before resolving again and does not inherit the abandoned failure.
+- A callback requesting `on_cleanup`, `cleanup_all` or `stop` gets
+  `CleanupIncompleteError` rather than waiting on itself. The retained owner continues
+  teardown after the callback unwinds, preserving the process, workspace and Band
+  MCP server until closure is confirmed.
+- There is no resolver timeout: a callback that never returns holds that room's
+  setup, while other rooms continue independently.
+
 ## Session config
 
 `resolve_session_config` runs after each new or restored session and before its first
 prompt. Each successful `session/set_config_option` response replaces the catalog the next
 selection is validated against (choosing a model can change the reasoning levels). Any
 failure fails that room turn visibly instead of falling back.
+
+A configuration callback for an accepted prompt on an acquired process may request
+cleanup. It receives `CleanupIncompleteError` without cancelling its shared session
+setup or the accepted prompt currently waiting for it. That prompt may finish
+through native prompting beyond the cleanup grace; unrelated queued work is
+cancelled normally. Teardown retains resources until the accepted work finishes.
+Later work is refused. MCP resolution still cannot start a new session scope after
+cleanup. Explicit caller cancellation and provider timeouts remain effective.
 
 ## Backends
 
