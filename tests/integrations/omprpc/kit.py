@@ -87,12 +87,7 @@ async def second_prompt(client: OmpRpcClient) -> Observer:
     observer = Observer()
     async with asyncio.timeout(5):
         await prompt_task(client, observer, "second")
-    assert any(
-        event.message is not None
-        and isinstance(event.message.content, list)
-        and any(content.text == "complete" for content in event.message.content)
-        for event in observer.events
-    )
+    assert "complete" in observer.assistant_texts
     return observer
 
 

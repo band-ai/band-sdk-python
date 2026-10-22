@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("psutil", reason="psutil not installed (band-sdk[omp])")
+
 from band.integrations.ompprocess import (
     OmpMcpServer,
     OmpStartupError,
