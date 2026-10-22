@@ -70,7 +70,7 @@ def check_depth(value: object, *, max_depth: int = 128) -> None:
             pending.extend((child, depth) for child in children)
 
 
-def decode(encoded: str | bytes, *, max_depth: int = 128) -> Any:
+def _decode(encoded: str | bytes, *, max_depth: int | None) -> Any:
     def pairs(items: list[tuple[str, Any]]) -> JsonObject:
         result = {}
         for key, value in items:
@@ -80,8 +80,20 @@ def decode(encoded: str | bytes, *, max_depth: int = 128) -> Any:
         return result
 
     value = json.loads(encoded, object_pairs_hook=pairs)
-    # Leave ample stack headroom for later store envelopes and canonical encoding.
-    # Check iteratively so accepted callback depth is independent of host frames.
-    check_depth(value, max_depth=max_depth)
+    if max_depth is not None:
+        # Keep callback admission independent of host frames and leave room for
+        # the journal envelopes that retain accepted values.
+        check_depth(value, max_depth=max_depth)
     _validate(value)
     return value
+
+
+def decode(encoded: str | bytes, *, max_depth: int = 128) -> Any:
+    return _decode(encoded, max_depth=max_depth)
+
+
+def decode_journal(encoded: str | bytes) -> Any:
+    """Read private journal JSON within the parser and validator recursion limits."""
+    # Private records include runtime envelopes and retained history; callback
+    # admission depth is not a journal-format limit. Callers bound input bytes.
+    return _decode(encoded, max_depth=None)

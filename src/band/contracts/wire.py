@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import JsonValue
 
 from band.contracts.errors import ContractCapacityError, ContractProtocolError
+from remote_agent.protocol import decode_journal as decode_native_journal
 
 JsonObject = dict[str, JsonValue]
 MAX_WIRE_BYTES = 4_194_304
@@ -71,6 +72,19 @@ def decode_json(encoded: bytes) -> JsonObject:
     except (ValueError, UnicodeError, RecursionError):
         raise ContractProtocolError(
             "Contract response is not valid protocol JSON"
+        ) from None
+    if not isinstance(value, dict):
+        raise ContractProtocolError("Contract response must be an object")
+    return value
+
+
+def decode_journal(encoded: bytes) -> JsonObject:
+    """Decode a bounded private journal response with the native value policy."""
+    try:
+        value = decode_native_journal(encoded)
+    except (ValueError, UnicodeError, RecursionError):
+        raise ContractProtocolError(
+            "Contract response is not valid journal JSON"
         ) from None
     if not isinstance(value, dict):
         raise ContractProtocolError("Contract response must be an object")

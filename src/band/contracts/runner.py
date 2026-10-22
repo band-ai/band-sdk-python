@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Callable
 
 from band.contracts.errors import ContractRuntimeUnsupported
 from band.contracts.models import RuntimeConfig
@@ -66,7 +67,8 @@ class QualifiedRunner:
         arguments: tuple[str, ...],
         *,
         allowed: tuple[int, ...] = (0,),
+        decoder: Callable[[bytes], JsonObject] = decode_json,
     ) -> JsonObject:
         owner = self.process(self.command(module, arguments), qualify=True)
         result = await owner.run(allowed=allowed)
-        return decode_json(result.stdout)
+        return decoder(result.stdout)

@@ -62,7 +62,7 @@ class ContractTransport:
                     if len(content) + len(chunk) > limit:
                         raise ContractCapacityError("response")
                     content.extend(chunk)
-                result = decode_json(bytes(content))
+                result = self._decode_response(bytes(content))
                 if response.status_code != 200:
                     code = result.get("code")
                     code = code if isinstance(code, str) and len(code) <= 100 else None
@@ -79,6 +79,9 @@ class ContractTransport:
             raise ContractTransportError(
                 "Contract delivery is unknown; retry only the same request identity and body"
             ) from None
+
+    def _decode_response(self, content: bytes) -> JsonObject:
+        return decode_json(content)
 
     async def aclose(self) -> None:
         if self._owned:

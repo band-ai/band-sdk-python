@@ -18,7 +18,7 @@ from remote_agent.commands import CommandError, result_from_capture
 from remote_agent.diagnostics import agent_summary
 from remote_agent.hostkey import HostKey
 from remote_agent.program import Program, ProgramError
-from remote_agent.protocol import decode
+from remote_agent.protocol import decode_journal
 from remote_agent.publication import publish_file
 from remote_agent.retention import validate_anchor
 from remote_agent.storage import StoreError, canonical, digest
@@ -191,7 +191,7 @@ def recorded(
         encoded = source.readline(16_777_217)
         if len(encoded) > 16_777_216 or not encoded.endswith(b"\n"):
             raise StoreError("Invalid journal export header framing")
-        header = decode(encoded)
+        header = decode_journal(encoded)
         anchored = (
             isinstance(header, dict)
             and header.get("profile") == "remote-agent/journal-export/2"
@@ -230,10 +230,7 @@ def recorded(
                 or expected > header["records"]
             ):
                 raise StoreError("Invalid journal export framing")
-            # Journal records wrap accepted callback state in up to four
-            # containers (frame, updates/data, request/staged, state). Keep
-            # callback/wire decoding at 128; this allowance is export-only.
-            frame = decode(encoded, max_depth=132)
+            frame = decode_journal(encoded)
             if (
                 not isinstance(frame, dict)
                 or set(frame)

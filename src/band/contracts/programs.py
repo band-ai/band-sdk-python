@@ -15,7 +15,7 @@ from band.contracts.models import (
     WireRequest,
 )
 from band.contracts.transport import ContractTransport
-from band.contracts.wire import JsonObject, encode_json
+from band.contracts.wire import JsonObject, decode_journal, encode_json
 
 
 class ProgramScope(WireRequest):
@@ -93,6 +93,9 @@ class ContractProgramHostClient(ContractTransport):
             )
         super().__init__(connection, http=http)
         self._scope = scope
+
+    def _decode_response(self, content: bytes) -> JsonObject:
+        return decode_journal(content)
 
     async def _operation(self, operation: str, request: JsonObject) -> JsonObject:
         scope = self._scope.body()

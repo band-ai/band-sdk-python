@@ -7,7 +7,7 @@ from typing import Literal
 
 from band.contracts.models import JournalQuery, RuntimeConfig
 from band.contracts.runner import QualifiedRunner
-from band.contracts.wire import JsonObject
+from band.contracts.wire import JsonObject, decode_journal
 
 
 class ContractJournal:
@@ -22,6 +22,7 @@ class ContractJournal:
             "remote_agent.cli",
             arguments,
             allowed=(0, 3) if arguments[0] == "replay" else (0,),
+            decoder=decode_journal,
         )
 
     async def inspect(self) -> JsonObject:
