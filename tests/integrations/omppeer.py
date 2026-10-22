@@ -988,6 +988,20 @@ class Peer:
                 )
             case "checkpoint":
                 self.checkpoint(frame)
+            case "probe-spawn-child":
+                # Exercise real Job admission from a member, not the observer.
+                try:
+                    child = start_descendant("gated-child", frame.count, "discard")
+                except OSError as error:
+                    self.respond(
+                        frame,
+                        {
+                            "started": False,
+                            "winerror": getattr(error, "winerror", None),
+                        },
+                    )
+                else:
+                    self.respond(frame, {"started": True, "pid": child.pid})
             case OmpCommandName.ABORT:
                 if self.scenario != "stubborn":
                     self.respond(frame)
