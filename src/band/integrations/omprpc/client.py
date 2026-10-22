@@ -118,6 +118,7 @@ class OmpRpcClient:
         self.after_stdin_closed: Callable[[], None] = _noop
         self.callback_exit_timeout_s = CALLBACK_EXIT_TIMEOUT_S
         self.process_exit_timeout_s = PROCESS_EXIT_TIMEOUT_S
+        self.completion_timeout_s = COMPLETION_TIMEOUT_S
         self._proc: asyncio.subprocess.Process | None = None
         self._windows_process: WindowsProcess | None = None
         self._process_scope: OmpProcessScope | None = None
@@ -351,7 +352,7 @@ class OmpRpcClient:
                 await self._write_frames(preceding_frame, frame.root)
             if completion:
                 try:
-                    async with asyncio.timeout(COMPLETION_TIMEOUT_S):
+                    async with asyncio.timeout(self.completion_timeout_s):
                         response = await future
                 except TimeoutError as cause:
                     raise OmpCompletionTimeout(
@@ -491,7 +492,7 @@ class OmpRpcClient:
                 if armed_since is None:
                     armed_since = now
                     continue
-                remaining = COMPLETION_TIMEOUT_S - (now - armed_since)
+                remaining = self.completion_timeout_s - (now - armed_since)
                 if remaining <= 0:
                     turn.fail(
                         OmpCompletionTimeout(

@@ -147,5 +147,3 @@ def idle_flags(state: OmpState) -> bool:
         and not state.isCompacting
         and state.queuedMessageCount == 0
     )
-
-
