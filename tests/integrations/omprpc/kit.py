@@ -27,7 +27,7 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from tests.integrations import omppeer
-from tests.integrations.omppeer import ProcessReceipt
+from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT, ProcessReceipt
 
 ClientFactory = Callable[[str], Awaitable[OmpRpcClient]]
 
@@ -50,6 +50,18 @@ class Observer:
             and isinstance(event.message.content, list)
             for part in event.message.content
             if part.text is not None
+        ]
+
+    @property
+    def outline(self) -> list[OmpEventType]:
+        return [event.type for event in self.events]
+
+    @property
+    def update_ids(self) -> list[str | None]:
+        return [
+            event.messageId
+            for event in self.events
+            if event.type == OmpEventType.MESSAGE_UPDATE
         ]
 
     async def on_event(self, event: OmpEvent) -> None:
@@ -83,11 +95,17 @@ def prompt_task(
     )
 
 
+def owned_rpc_process(client: OmpRpcClient) -> asyncio.subprocess.Process:
+    process = client._proc
+    assert process is not None
+    return process
+
+
 async def second_prompt(client: OmpRpcClient) -> Observer:
     observer = Observer()
     async with asyncio.timeout(5):
-        await prompt_task(client, observer, "second")
-    assert "complete" in observer.assistant_texts
+        await prompt_task(client, observer, FOLLOW_UP_PROMPT)
+    assert COMPLETE in observer.assistant_texts
     return observer
 
 

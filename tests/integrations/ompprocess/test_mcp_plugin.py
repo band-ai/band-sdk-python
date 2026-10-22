@@ -20,6 +20,12 @@ from band.integrations.ompprocess import (
 )
 
 
+def plugin_privacy(root: Path, files: tuple[Path, ...]) -> tuple[int, int | None]:
+    file_modes = {stat.S_IMODE(path.stat().st_mode) for path in files}
+    file_mode = next(iter(file_modes)) if len(file_modes) == 1 else None
+    return (stat.S_IMODE(root.stat().st_mode), file_mode)
+
+
 class TestMcpPluginProjection:
     def test_nothing_to_project_yields_no_plugin(self, tmp_path: Path) -> None:
         with omp_mcp_plugin({}, workspace=str(tmp_path)) as plugin:
@@ -78,19 +84,9 @@ class TestMcpPluginProjection:
         assert str(Path(plugin) / OMP_MCP_STARTUP_JS) in arguments
         assert str(Path(plugin) / OMP_MCP_STARTUP_CONFIG) in arguments
 
-    @pytest.mark.parametrize(
-        "accepted_on, file_mode, dir_mode",
-        [
-            (("posix",), 0o600, 0o700),
-            (("nt",), None, None),
-        ],
-    )
+    @pytest.mark.parametrize("accepted_on", [("posix",)])
     def test_projected_plugin_files_are_owner_only(
-        self,
-        tmp_path: Path,
-        accepted_on: tuple[str, ...],
-        file_mode: int | None,
-        dir_mode: int | None,
+        self, tmp_path: Path, accepted_on: tuple[str, ...]
     ) -> None:
         servers = {"local": OmpMcpServer(command="./server")}
         with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
@@ -103,10 +99,9 @@ class TestMcpPluginProjection:
             )
             assert root.is_dir()
             assert all(path.is_file() for path in files)
-            if os.name not in accepted_on or file_mode is None or dir_mode is None:
-                return
-            assert stat.S_IMODE(root.stat().st_mode) == dir_mode
-            assert all(stat.S_IMODE(path.stat().st_mode) == file_mode for path in files)
+            assert (plugin_privacy(root, files) == (0o700, 0o600)) is (
+                os.name in accepted_on
+            )
 
     @pytest.mark.parametrize(
         "fields",

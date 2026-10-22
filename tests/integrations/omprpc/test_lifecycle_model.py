@@ -7,7 +7,21 @@ import asyncio
 import pytest
 from hypothesis import Phase, example, given, settings
 
-from tests.integrations.omprpc.lifecycle import Step, play, sequences
+from tests.integrations.omprpc.lifecycle import (
+    STEP_GUARD_S,
+    Step,
+    rpc_lifecycle,
+    sequences,
+)
+
+
+async def play(steps: list[Step], *, detached: bool) -> None:
+    async with rpc_lifecycle(detached=detached) as session:
+        for step in steps:
+            async with asyncio.timeout(STEP_GUARD_S):
+                await session.take(step)
+        async with asyncio.timeout(STEP_GUARD_S):
+            await session.assert_custody_survives()
 
 
 class TestRpcLifecycleModel:
