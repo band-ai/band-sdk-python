@@ -1757,10 +1757,10 @@
       "adaptation_pending": false
     },
     "deploy/band_probes.py": {
-      "target": "contracts/deploy/band_probes.py",
+      "target": "contracts/deploy/bandprobes.py",
       "sha256": "f4bbb24bae0595dcba60f5c26512a4dec387e568839fbccdab119d1d6331d012",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/band_socket.mjs": {
       "target": "contracts/deploy/band_socket.mjs",
@@ -1769,34 +1769,34 @@
       "adaptation_pending": false
     },
     "deploy/build_release.py": {
-      "target": "contracts/deploy/build_release.py",
+      "target": "contracts/deploy/buildrelease.py",
       "sha256": "b70e20824fc1a9bf718511851b56d926da26ec0d9c9a7ab5706c1d7f91b102a4",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/check_band_engine.py": {
-      "target": "contracts/deploy/check_band_engine.py",
+      "target": "contracts/deploy/checkbandengine.py",
       "sha256": "c3a315484089dd3234f3df7bfcfe7663d007deff9af8d922f91cf9deccd1eac6",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/check_isolation.py": {
-      "target": "contracts/deploy/check_isolation.py",
+      "target": "contracts/deploy/checkisolation.py",
       "sha256": "6d980664df9e8f8b7219e525149ed57d6161eab5baa22ae62632f7d37c079377",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/ci.py": {
       "target": "contracts/deploy/ci.py",
       "sha256": "0a3010c3264757615451e35d7892b6f0bb01385079d67b597c20e7b80f644f79",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/coordination_gate.py": {
-      "target": "contracts/deploy/coordination_gate.py",
+      "target": "contracts/deploy/coordinationgate.py",
       "sha256": "070ad0dc11428b2bf8ae3fd689930ce871a26130e6d94b14289dfc917884cc96",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/examples/agent.json": {
       "target": "contracts/deploy/examples/agent.json",
@@ -1823,40 +1823,40 @@
       "adaptation_pending": false
     },
     "deploy/qualification_process.py": {
-      "target": "contracts/deploy/qualification_process.py",
+      "target": "contracts/deploy/qualificationprocess.py",
       "sha256": "66d082d1f63fa89bf19be33f414128a8bddc60225b9ff12ce95dac76dcbbb7bc",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/qualify_band.py": {
-      "target": "contracts/deploy/qualify_band.py",
+      "target": "contracts/deploy/qualifyband.py",
       "sha256": "7034f596699ae43a6990d362173725382c817a3e3b65a1fe255d317863b11925",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/qualify_lifecycle.py": {
-      "target": "contracts/deploy/qualify_lifecycle.py",
+      "target": "contracts/deploy/qualifylifecycle.py",
       "sha256": "99217a404d7dfecdf9fca9e5cb9097a5d29c316d585713da267594df8108c072",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/qualify_systemd.py": {
-      "target": "contracts/deploy/qualify_systemd.py",
+      "target": "contracts/deploy/qualifysystemd.py",
       "sha256": "c43b6a8097ca506e98098a1c48d1a404b86a7a8f76752715f18027a0320ee31f",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/release_contract.py": {
-      "target": "contracts/deploy/release_contract.py",
+      "target": "contracts/deploy/releasecontract.py",
       "sha256": "1ab3d5cb19ea93c8a0ea13d9558188b3c3770adcdc65575e890245434d35f6ae",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/release_verification.py": {
-      "target": "contracts/deploy/release_verification.py",
+      "target": "contracts/deploy/releaseverification.py",
       "sha256": "3e7b14cbee75431b046fd8328715d1e1658b01779b76744a15a6bf88e368851b",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/requirements-qualification.lock": {
       "target": "contracts/deploy/requirements-qualification.lock",
@@ -1865,10 +1865,10 @@
       "adaptation_pending": false
     },
     "deploy/smoke_release.py": {
-      "target": "contracts/deploy/smoke_release.py",
+      "target": "contracts/deploy/smokerelease.py",
       "sha256": "415d49d4491548d04ed390dbf85f6d9aadd54b1f754d528004341a679cdc099d",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/systemd/contract-agent.service": {
       "target": "contracts/deploy/systemd/contract-agent.service",
@@ -1898,73 +1898,73 @@
       "target": "tests/contracts/release/test_band_command.py",
       "sha256": "ed6f697593311138457d858a14431b97bd81964b2f6503a1c4e4c882d73dd990",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_band_probes.py": {
       "target": "tests/contracts/release/test_band_probes.py",
       "sha256": "7684a03029108e3bd0db3ea5e99cbd54b90f228c0dfa2c0789449aba57ba1753",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_build_release.py": {
       "target": "tests/contracts/release/test_build_release.py",
       "sha256": "aea8f5da9038e34a73cb75671da759f20ace8f8b36c1385219d8168b19d76713",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_callback_cleanup.py": {
       "target": "tests/contracts/release/test_callback_cleanup.py",
       "sha256": "80e0ae721437cd42843e291db75e7cecadd2da5392ac3232d552dd1ccdc84c95",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_ci.py": {
       "target": "tests/contracts/release/test_ci.py",
       "sha256": "ced5799fe7040200441424e942d2077ef0d352537c37195a450fa1769448ed41",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_current_profile.py": {
       "target": "tests/contracts/release/test_current_profile.py",
       "sha256": "b3965a0940cb7826c93ac91d851ba81106d556016666055c69e5176d4507c4bc",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_isolation_preflight.py": {
       "target": "tests/contracts/release/test_isolation_preflight.py",
       "sha256": "186324229888b1ad97ee8b1c9fb1739e01488c54c5d01161ae86a0a75096fd69",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_qualification_process.py": {
       "target": "tests/contracts/release/test_qualification_process.py",
       "sha256": "27a346f080a8a1f2147cb7b1e2ba3511bfc142d85d19e61e48c016b8e42d3a5c",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_qualify_systemd.py": {
       "target": "tests/contracts/release/test_qualify_systemd.py",
       "sha256": "85e02a22114df1675fbaecb513990555c06f8bb10149bdcb7d2136f5d009788e",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_release_verification.py": {
       "target": "tests/contracts/release/test_release_verification.py",
       "sha256": "0bd3838cd6ccf1e832e4b4978295aa7d5404371db0c39b58772d36afff4238f3",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/test_setp_14.py": {
       "target": "tests/contracts/release/test_setp_14.py",
       "sha256": "985cbb8a3175bb23b21448bbd1a122d0c99e96b6b7beb7c3cca1998c676f4634",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "deploy/toolchain.py": {
       "target": "contracts/deploy/toolchain.py",
       "sha256": "550f161654047e83ec28c562c31489d72ad9653bab9870aad3d342a30f9a8685",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "engines/band-v1/.gitignore": {
       "target": "contracts/engines/band-v1/.gitignore",
@@ -4043,7 +4043,7 @@
       "adaptation_pending": false
     },
     "spec/conformance/replies-adversarial/run_replies_adversarial.py": {
-      "target": "contracts/spec/conformance/replies-adversarial/run_replies_adversarial.py",
+      "target": "contracts/spec/tools/repliesadversarial.py",
       "sha256": "28fbfe2bb326f1d881a26039f19a223a697f967d7659028b1426be14610fcabe",
       "mode": "0o664",
       "adaptation_pending": false
@@ -4397,10 +4397,10 @@
       "adaptation_pending": false
     },
     "spec/tools/adapter_driver.py": {
-      "target": "contracts/spec/tools/adapter_driver.py",
+      "target": "contracts/spec/tools/adapterdriver.py",
       "sha256": "e2e6a6c7a778f21906d060afe5fd189012fde0aac9aad515314d637df1ea6570",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/band-keywords-probe.band": {
       "target": "contracts/spec/tools/band-keywords-probe.band",
@@ -4415,16 +4415,16 @@
       "adaptation_pending": false
     },
     "spec/tools/band_examples.py": {
-      "target": "contracts/spec/tools/band_examples.py",
+      "target": "contracts/spec/tools/bandexamples.py",
       "sha256": "392adb894af52c940bbf2817525fe1548f97af52e3ab7f79adf184b57a6a3aaf",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/band_highlight.py": {
-      "target": "contracts/spec/tools/band_highlight.py",
+      "target": "contracts/spec/tools/bandhighlight.py",
       "sha256": "13db9fab9144bb92fa0853001972ba64cf89020bf3a522da564802485955b11d",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/band_highlight_deck.js": {
       "target": "contracts/spec/tools/band_highlight_deck.js",
@@ -4433,100 +4433,100 @@
       "adaptation_pending": false
     },
     "spec/tools/build_contribution_schemas.py": {
-      "target": "contracts/spec/tools/build_contribution_schemas.py",
+      "target": "contracts/spec/tools/buildcontributionschemas.py",
       "sha256": "0631ae9fe66a9b35e1c3cffa6a7a222e0af4d30b7ab383484804adea660059e6",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_coordination_schemas.py": {
-      "target": "contracts/spec/tools/build_coordination_schemas.py",
+      "target": "contracts/spec/tools/buildcoordinationschemas.py",
       "sha256": "ab587e08f41b58f717c8d800bdb1f4b37b85ef0c5b419a1e6de20a0fbf39b89f",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_coverage.py": {
-      "target": "contracts/spec/tools/build_coverage.py",
+      "target": "contracts/spec/tools/buildcoverage.py",
       "sha256": "4913d967a9d5e7488270acde533a281ce40ced68cb7b7065e7778b3ee2f8cc76",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_participant_schemas.py": {
-      "target": "contracts/spec/tools/build_participant_schemas.py",
+      "target": "contracts/spec/tools/buildparticipantschemas.py",
       "sha256": "afc7b4c7c18b3cf5bd835d9ead95b07b7b26ac7cd97cc7fea16ee4aed2bb1307",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_replies_schemas.py": {
-      "target": "contracts/spec/tools/build_replies_schemas.py",
+      "target": "contracts/spec/tools/buildrepliesschemas.py",
       "sha256": "eb94a5552f9ce52a78adba4b1bf247a74c78ca5bc974426c61621af586c60839",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_schemas.py": {
-      "target": "contracts/spec/tools/build_schemas.py",
+      "target": "contracts/spec/tools/buildschemas.py",
       "sha256": "6d8fd0e50e2726c1148c1aadb88e07916496c6b60bfd863998f979d01500584f",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_service_schema.py": {
-      "target": "contracts/spec/tools/build_service_schema.py",
+      "target": "contracts/spec/tools/buildserviceschema.py",
       "sha256": "b7198511dd51ebcea23cf5e5909dbeacfe02eb2091ec6958456f6ae12cef846a",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/build_v2_schemas.py": {
-      "target": "contracts/spec/tools/build_v2_schemas.py",
+      "target": "contracts/spec/tools/buildv2schemas.py",
       "sha256": "749c16225edc61fac2945e10fea12ca57dd7dbeaa0c8edc53428cd3ad63587cb",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/carrier_vectors.py": {
-      "target": "contracts/spec/tools/carrier_vectors.py",
+      "target": "contracts/spec/tools/carriervectors.py",
       "sha256": "0a0d7c0309dfbee3fb90b4cb2d8291892f8dc96f80447d2252ffc04f0d38c814",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_band_binding.py": {
-      "target": "contracts/spec/tools/check_band_binding.py",
+      "target": "contracts/spec/tools/checkbandbinding.py",
       "sha256": "f98056bd585cbf27dd3ca1b0103b4c5ce69ad0d2f63b7fbc2110826e3e7ce6b6",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_carrier_examples.py": {
-      "target": "contracts/spec/tools/check_carrier_examples.py",
+      "target": "contracts/spec/tools/checkcarrierexamples.py",
       "sha256": "04c63d44afb8a05b534850a2e1ca67ed8a4074703a356c529934f03ca516f33d",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_coordination.py": {
-      "target": "contracts/spec/tools/check_coordination.py",
+      "target": "contracts/spec/tools/checkcoordination.py",
       "sha256": "be9bb958028d12edabdeb947c0eb310fbe0a68c659f9b8961e77aa41509897c1",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_http.py": {
-      "target": "contracts/spec/tools/check_http.py",
+      "target": "contracts/spec/tools/checkhttp.py",
       "sha256": "481982edf990137db629d63b2731e9402f78ebc8cb1ba4d0c4d6924870fff54c",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_inbox.py": {
-      "target": "contracts/spec/tools/check_inbox.py",
+      "target": "contracts/spec/tools/checkinbox.py",
       "sha256": "4cd87b0fba9acf41a5f3e555cf65eaafb69d53a46b380c673e5e48880ae031eb",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_spec.py": {
-      "target": "contracts/spec/tools/check_spec.py",
+      "target": "contracts/spec/tools/checkspec.py",
       "sha256": "bd469e6fca69c41819995021d8dc6812370bf31cc074fc0bcc8bae8e97b20246",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/check_v2.py": {
-      "target": "contracts/spec/tools/check_v2.py",
+      "target": "contracts/spec/tools/checkv2.py",
       "sha256": "801cbee40bede8aade8c582b842fb897679a0e44b77edf9ea24aea6840552bcb",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/fixtures/replies-engine-sample.json": {
       "target": "contracts/spec/tools/fixtures/replies-engine-sample.json",
@@ -4535,46 +4535,46 @@
       "adaptation_pending": false
     },
     "spec/tools/generate_io_vector.py": {
-      "target": "contracts/spec/tools/generate_io_vector.py",
+      "target": "contracts/spec/tools/generateiovector.py",
       "sha256": "4cff2b7269b070626889c3381ffb21d6fcea60f9659f364134addc0a4fe6900c",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/generate_vectors.py": {
-      "target": "contracts/spec/tools/generate_vectors.py",
+      "target": "contracts/spec/tools/generatevectors.py",
       "sha256": "d1ddb26ad68d917e06d47237d9741869b8e083d3536fe638220e2550336d35aa",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/h7_shared_namespace.py": {
-      "target": "contracts/spec/tools/h7_shared_namespace.py",
+      "target": "contracts/spec/tools/h7sharednamespace.py",
       "sha256": "777eb486627bf7a9a0d488654c65132f06db734ff2f30b84987445011000438b",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/lock_python.py": {
-      "target": "contracts/spec/tools/lock_python.py",
+      "target": "contracts/spec/tools/lockpython.py",
       "sha256": "f64909ccd75fd39166a4985aa2967c806ba36c89b383a8472a5db8ced60b4b86",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/negative_vectors_m21.py": {
-      "target": "contracts/spec/tools/negative_vectors_m21.py",
+      "target": "contracts/spec/tools/negativevectorsm21.py",
       "sha256": "fe8952bf69ccb801e3e3145d130efae01a7ffd1709860f85038f5a73b0eb3be1",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/negative_vectors_m22.py": {
-      "target": "contracts/spec/tools/negative_vectors_m22.py",
+      "target": "contracts/spec/tools/negativevectorsm22.py",
       "sha256": "a0648247f2f7e52879dff4c30d1ef2f4360656783154078cc63e1b113d4fa34b",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/old_form_guard.py": {
-      "target": "contracts/spec/tools/old_form_guard.py",
+      "target": "contracts/spec/tools/oldformguard.py",
       "sha256": "606716f0edff62b7fff132638f9253b45c6a825e06d299ca9e95bf6f7d902185",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/old_form_inventory.json": {
       "target": "contracts/spec/tools/old_form_inventory.json",
@@ -4589,268 +4589,308 @@
       "adaptation_pending": false
     },
     "spec/tools/reply_vectors.py": {
-      "target": "contracts/spec/tools/reply_vectors.py",
+      "target": "contracts/spec/tools/replyvectors.py",
       "sha256": "6be9ebe3b93c3db4bf8a481b1661538110804ad86686b6d4489dcdd005be05bc",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/run_reply_vectors.py": {
-      "target": "contracts/spec/tools/run_reply_vectors.py",
+      "target": "contracts/spec/tools/runreplyvectors.py",
       "sha256": "e56697a136ecc182f1d9b2ca4b9be16a444af0537938820777f00ee3375b1351",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/schema_common.py": {
-      "target": "contracts/spec/tools/schema_common.py",
+      "target": "contracts/spec/tools/schemacommon.py",
       "sha256": "b9c96fadd852108fb0395355fcbaa1353c82ae0dd5c06b17b98340683ef5d38b",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/spec_version.py": {
-      "target": "contracts/spec/tools/spec_version.py",
+      "target": "contracts/spec/tools/specversion.py",
       "sha256": "24d21baab12d7f8c07dba2acb1b2782ef141764844d15c9f10dfdf10ffead4fe",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_adapter_selection.py": {
       "target": "tests/contracts/spec/test_adapter_selection.py",
       "sha256": "53f6e595cc1822f13ef2246711f0b1039ffa0e871ed56f9030b72b887b99f967",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_band_binding.py": {
-      "target": "tests/contracts/spec/test_band_binding.py",
+      "target": "tests/contracts/spec/bandbinding/test_n1_schema.py",
       "sha256": "91d42c80013fa4f8cbda6e38b426a114e94a0f01746a3958cd2758fe7a93c75d",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/bandbinding/test_n1_target.py",
+        "tests/contracts/spec/bandbinding/test_n3_target.py",
+        "tests/contracts/spec/bandbinding/test_l1_target.py"
+      ]
     },
     "spec/tools/test_band_highlight.py": {
-      "target": "tests/contracts/spec/test_band_highlight.py",
+      "target": "tests/contracts/spec/bandhighlight/test_deck_parity.py",
       "sha256": "1638d1246cda534912e8c81ca3be4fb57afd6f2626c0d4a56c8d4174df4df4cf",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/bandhighlight/test_current_grammar.py",
+        "tests/contracts/spec/bandhighlight/test_site_blocks.py"
+      ]
     },
     "spec/tools/test_band_spec.py": {
       "target": "tests/contracts/spec/test_band_spec.py",
       "sha256": "1803ed72d1f5b2c196992451794ebf164588253aadae3763153cf3334c5f2850",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_carrier_vectors.py": {
       "target": "tests/contracts/spec/test_carrier_vectors.py",
       "sha256": "7d4aabf65d106a2aae7eee7815a561199daec5882b532d396def23a3542f9e39",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_check_http_current.py": {
       "target": "tests/contracts/spec/test_check_http_current.py",
       "sha256": "8152790ad9fcee2ec9765d4fcd082c0434287398184c8ec1e39d1bd79c896931",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_check_spec.py": {
-      "target": "tests/contracts/spec/test_check_spec.py",
+      "target": "tests/contracts/spec/checkspec/test_compiler_diagnostic.py",
       "sha256": "019d86e5e8714a2c0cee0c5601ee37ea9afb9e661c336289b5a46bc136ceaed3",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/checkspec/test_generated_artifact.py",
+        "tests/contracts/spec/checkspec/test_specification_report.py",
+        "tests/contracts/spec/checkspec/test_adapter_wire.py"
+      ]
     },
     "spec/tools/test_checker_failures.py": {
-      "target": "tests/contracts/spec/test_checker_failures.py",
+      "target": "tests/contracts/spec/checkerfailures/test_vector_prefix.py",
       "sha256": "5dcdac5e28c159eeb079da2c6116beff09df97929f8a53145f8e30c34b5758d6",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/checkerfailures/test_adapter_config.py",
+        "tests/contracts/spec/checkerfailures/test_optimized_run.py",
+        "tests/contracts/spec/checkerfailures/test_mutation_guard.py",
+        "tests/contracts/spec/checkerfailures/test_unknown_config_key.py",
+        "tests/contracts/spec/checkerfailures/test_unknown_room_config_key.py",
+        "tests/contracts/spec/checkerfailures/test_lock_inputs.py",
+        "tests/contracts/spec/checkerfailures/test_coordination_race.py",
+        "tests/contracts/spec/checkerfailures/test_conformance_checkers_pass.py"
+      ]
     },
     "spec/tools/test_checker_optimization_guards.py": {
       "target": "tests/contracts/spec/test_checker_optimization_guards.py",
       "sha256": "86afbbf652c6c5a38d4c8296fc32caf76f48ceafdb95f3c85faed65752ea6352",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_current_source_format.py": {
       "target": "tests/contracts/spec/test_current_source_format.py",
       "sha256": "2621998edbd3f6f7bee5d2fa112f3c3f735253289b4131cc720c5d49d5795365",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_doc_claims.py": {
-      "target": "tests/contracts/spec/test_doc_claims.py",
+      "target": "tests/contracts/spec/docclaims/test_mention_default.py",
       "sha256": "9b83d8fdb899f878579eb227e1a3243ac1db17d9f69f95d98777fcd89df70441",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/docclaims/test_authoring_docs.py",
+        "tests/contracts/spec/docclaims/test_room_cli_state_dir.py"
+      ]
     },
     "spec/tools/test_fail_closed_vectors.py": {
       "target": "tests/contracts/spec/test_fail_closed_vectors.py",
       "sha256": "3274e70c921ea4780bf13ce7947c58765e2585ad184de618d938fffc0722551b",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_generator_write.py": {
       "target": "tests/contracts/spec/test_generator_write.py",
       "sha256": "823e4171cffad0ee983bf7703dfc248813482ba2833f598c40afd2bb0e146610",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_h7_shared_namespace.py": {
       "target": "tests/contracts/spec/test_h7_shared_namespace.py",
       "sha256": "3963aef6e92ffe42d197176da3af823abed46ab6000cdb876d1e37d1172c314e",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_inbox_binding_schema.py": {
       "target": "tests/contracts/spec/test_inbox_binding_schema.py",
       "sha256": "61488cc0efd547fe86b891efa60c31b4b83d70806c6ef035e06136ca7899231a",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_inbox_vectors.py": {
       "target": "tests/contracts/spec/test_inbox_vectors.py",
       "sha256": "85904a6188c1c6c797554910952171c115c12f324a413cec14b9a5c6c266d645",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_legacy_removal.py": {
       "target": "tests/contracts/spec/test_legacy_removal.py",
       "sha256": "490dcbf32c8c2d59f4f1106b462129c4f4278a506e28abf3e4d7f0187ac818aa",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_old_form_guard.py": {
-      "target": "tests/contracts/spec/test_old_form_guard.py",
+      "target": "tests/contracts/spec/oldformguard/test_rule.py",
       "sha256": "9442fae82cd2b0c3a3dba4883a66ef8dda14d0bca0a6d5f0a4e17c29acd6a8ad",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/oldformguard/test_snippet.py",
+        "tests/contracts/spec/oldformguard/test_repo.py"
+      ]
     },
     "spec/tools/test_release_source_format.py": {
       "target": "tests/contracts/spec/test_release_source_format.py",
       "sha256": "c067a2b51ca46a33dc0e80fc891886d09b8d82cde32f1cbe45eb7e67eb2c94ad",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_replies_evidence_paths.py": {
       "target": "tests/contracts/spec/test_replies_evidence_paths.py",
       "sha256": "eaf0d5454f99b65803edac08d69ba5b863da05610d0b27113a7999a75cc9a64e",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_replies_restore.py": {
       "target": "tests/contracts/spec/test_replies_restore.py",
       "sha256": "4b9bbc3fa69d2eaea81f797c62b56aa8c0380f2fb718c5e19ad5b41ccda8e172",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_replies_schema.py": {
       "target": "tests/contracts/spec/test_replies_schema.py",
       "sha256": "192363d23a583837df87ac83eb995c19c332989a732041e910b79672488d2e7c",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_reply_form_examples.py": {
-      "target": "tests/contracts/spec/test_reply_form_examples.py",
+      "target": "tests/contracts/spec/replyformexamples/test_reply_form_examples.py",
       "sha256": "1a614aade3beab1aca9c471e46cfd485967235d0967edcb3f9082ea019cbc50f",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/replyformexamples/test_reply_required_doc.py"
+      ]
     },
     "spec/tools/test_reply_form_sources.py": {
       "target": "tests/contracts/spec/test_reply_form_sources.py",
       "sha256": "38f586b00c0eb84dc43a46d2a3bf2ad9daf69d6b24fe869b62e22f6d4737278a",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_reply_form_teaching.py": {
       "target": "tests/contracts/spec/test_reply_form_teaching.py",
       "sha256": "cca22cabf1d8854688acc6d7c6991702d7bb383d5ac384128a93e097383cb9ea",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_requirements_forward_only.py": {
       "target": "tests/contracts/spec/test_requirements_forward_only.py",
       "sha256": "b83e7099fa09fceb074316da64581929f6766e03d1689466d0c25b523994abc6",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_safety_vectors.py": {
       "target": "tests/contracts/spec/test_safety_vectors.py",
       "sha256": "42523cc6ffb9b1ed420a24bc884e7df80ceb48e4ae2430a91ddc35ea49d11260",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_schema_independence.py": {
       "target": "tests/contracts/spec/test_schema_independence.py",
       "sha256": "08c4467920e50e223f1f33e941745d1cc69c040db705f42df8ba59c6dd9c9c13",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_service_schema.py": {
       "target": "tests/contracts/spec/test_service_schema.py",
       "sha256": "d2ec2bea71e23598c07cff7f3b137ad9d8aa1bd644280255653c05aec93f909a",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_setq_inbox_codes.py": {
       "target": "tests/contracts/spec/test_setq_inbox_codes.py",
       "sha256": "28442d3fbef4d0f9f0f48c5560353dd41586be9a4c8979902dba3d47c861a26f",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_unchecked_markers.py": {
       "target": "tests/contracts/spec/test_unchecked_markers.py",
       "sha256": "6df0a34aa3ccc828bc5981de6fcf2e9c4e4aa0fe7b50d1222dcb4ec88958ae2c",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_v2_error_codes.py": {
-      "target": "tests/contracts/spec/test_v2_error_codes.py",
+      "target": "tests/contracts/spec/v2errorcodes/test_error_code_table.py",
       "sha256": "88f2cc50ce1077fc89adc0708de74e0f08bba4b7e5351fdc4300eb2ec6f84923",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false,
+      "additional_targets": [
+        "tests/contracts/spec/v2errorcodes/test_typed_error.py",
+        "tests/contracts/spec/v2errorcodes/test_control_budget_schema.py",
+        "tests/contracts/spec/v2errorcodes/test_inactivity_timeout_schema.py"
+      ]
     },
     "spec/tools/test_v2_trace.py": {
       "target": "tests/contracts/spec/test_v2_trace.py",
       "sha256": "71036ce3cfaf9b0216611e5f8bf2a55b2f3e33c8c3e5c6fb40bb701dbb5b3b8c",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_v2_unknown_engine.py": {
       "target": "tests/contracts/spec/test_v2_unknown_engine.py",
       "sha256": "684dfe6f17b602873c0405825ce34dd9c08a1575ac04313e1601ad17c6855361",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/test_vectors_v2_port.py": {
       "target": "tests/contracts/spec/test_vectors_v2_port.py",
       "sha256": "9118ea580a677d4d19accebc0101dd6b7768c49d5dfdf3b95295330ae531db77",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/unchecked_markers.py": {
-      "target": "contracts/spec/tools/unchecked_markers.py",
+      "target": "contracts/spec/tools/uncheckedmarkers.py",
       "sha256": "69a58b9426faf6112abd7ca714e4703a5d3594198f63da8307b8f1ae613cb016",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/v2_trace.py": {
-      "target": "contracts/spec/tools/v2_trace.py",
+      "target": "contracts/spec/tools/v2trace.py",
       "sha256": "8274f08b3dc1187280b769ee2236d1f45acb0ac5afa1d2109c65c9c97aa76d64",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/v2_unknown_engine.py": {
-      "target": "contracts/spec/tools/v2_unknown_engine.py",
+      "target": "contracts/spec/tools/v2unknownengine.py",
       "sha256": "e1c719a246d97f66b9a85a034caafd120d39b238b07686cf17b4a5f77129ea0a",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/vectors_v2_extras.py": {
-      "target": "contracts/spec/tools/vectors_v2_extras.py",
+      "target": "contracts/spec/tools/vectorsv2extras.py",
       "sha256": "6b79318609df6b9002022b403217f5a24e0a073359ce733f21af1b5cfd1d8a06",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/tools/write_requirements.py": {
-      "target": "contracts/spec/tools/write_requirements.py",
+      "target": "contracts/spec/tools/writerequirements.py",
       "sha256": "e7d22e5651c09c194dd556f0d3b82aeb846ef1f20a3dceb18791a02aa972feab",
       "mode": "0o664",
-      "adaptation_pending": true
+      "adaptation_pending": false
     },
     "spec/transport.md": {
       "target": "contracts/spec/transport.md",
@@ -4871,5 +4911,7 @@
       "deploy/band_database_test.exs"
     ],
     "note": "A fixture credential was replaced with a placeholder; the listed entries' sha256 records the published bytes instead of the original bytes."
-  }
+  },
+  "source_hash_scope": "Each sha256 records original source bytes at revision; target files may contain the canonical SDK adaptations.",
+  "migration_status": "Source mappings are integrated. Runtime, package and release qualification are separate checks."
 }
