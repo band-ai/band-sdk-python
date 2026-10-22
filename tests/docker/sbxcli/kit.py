@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import os
+import select
+import socket
+import subprocess
+import sys
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+import pytest
+
+from tests.docker.toolkit.sbx_cli import (
+    _CERT_PROBE,
+)
+
+
+@contextmanager
+def connect_proxy(status: bytes) -> Iterator[tuple[str, dict[str, object]]]:
+    """Serve one deliberately split CONNECT response and capture client timing.
+
+    ``observed`` doubles as a positive control: ``received_connect`` records that
+    the probe actually reached the proxy with a well-formed CONNECT, and ``error``
+    surfaces a server-thread failure (e.g. ``accept()`` timing out because the
+    probe never connected) that would otherwise be swallowed on the daemon thread
+    — without both, the timing assertion could pass vacuously over a probe that
+    never ran.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(5)
+    port = listener.getsockname()[1]
+    observed: dict[str, object] = {
+        "received_connect": False,
+        "sent_tls_before_response_completed": False,
+        "error": None,
+    }
+
+    def serve() -> None:
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    request += chunk
+                observed["received_connect"] = request.startswith(b"CONNECT ")
+                connection.sendall(b"HTTP/1.1 " + status[:3])
+                readable, _, _ = select.select([connection], [], [], 0.5)
+                observed["sent_tls_before_response_completed"] = bool(readable)
+                connection.sendall(status[3:] + b"\r\n\r\n")
+        except OSError as exc:  # accept()/recv() timeout or reset: probe never arrived
+            observed["error"] = exc
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{port}", observed
+    finally:
+        thread.join(timeout=5)
+        listener.close()
+
+
+def run_probe(proxy_url: str) -> subprocess.CompletedProcess[str]:
+    # Drop any casing of the proxy var first: on Windows os.environ keys are
+    # normalized to uppercase, so merging in both "HTTPS_PROXY" and
+    # "https_proxy" produces two distinct keys in the plain dict `|` yields,
+    # and the child process can end up reading the empty lowercase one.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "HTTPS_PROXY"}
+    env["HTTPS_PROXY"] = proxy_url
+    return subprocess.run(
+        [sys.executable, "-c", _CERT_PROBE, "band.example.test"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=5,
+    )
+
+
+def _open_fd_count() -> int:
+    """Number of this process's open file descriptors, POSIX-portable
+    (procfs on Linux, fdescfs on macOS)."""
+    return len(os.listdir("/dev/fd"))
+
+
+def _assert_stopped_and_fd_closed(
+    process: subprocess.Popen[bytes], controller_fd: int
+) -> int:
+    """Assert `process` actually exited and `controller_fd` was closed by
+    `_stop_pty_process`; return the exit code for callers that care how."""
+    process.wait(timeout=5)  # raises TimeoutExpired if it wasn't actually stopped
+    with pytest.raises(OSError):
+        os.close(controller_fd)  # already closed by _stop_pty_process
+    return process.returncode

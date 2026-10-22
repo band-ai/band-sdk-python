@@ -10,8 +10,8 @@ CLI, and run only under the ``sandbox``-marked proof
 (``SANDBOX_TESTS_ENABLED=true``). The module itself imports cleanly (stdlib +
 yaml), so its pure helpers are unit-tested in CI: scoped secret commands and
 the absence-search command in ``tests/docker/test_nevervm_contracts.py``, and
-the proxy cert probe and the pty-attached process lifecycle in
-``tests/docker/test_sbx_cli.py``.
+the proxy cert probe in ``tests/docker/test_sbx_cli.py`` and the pty-attached
+process lifecycle in ``tests/docker/sbxcli/``.
 """
 
 from __future__ import annotations
