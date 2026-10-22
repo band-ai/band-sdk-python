@@ -35,14 +35,14 @@ jobs:
       - name: Install the locked CI environment
         run: uv sync --all-packages --locked --extra dev
 
-      - name: Observe one gated root-exit cleanup
-        run: uv run --all-packages --no-sync python -m tests.integrations.omprpc.wincustody
+      - name: Probe populated Job admission sealing
+        run: uv run --all-packages --no-sync python -m tests.integrations.omprpc.winseal
 
       - name: Preserve pre-teardown evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-custody
-          path: windows-custody.jsonl
+          name: windows-seal
+          path: windows-seal.jsonl
           if-no-files-found: error
           retention-days: 3
