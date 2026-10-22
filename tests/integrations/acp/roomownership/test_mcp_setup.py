@@ -64,11 +64,10 @@ class TestMcpSetup:
     async def test_one_waiter_leaving_does_not_cancel_the_shared_setup(self) -> None:
         agent = FakeACPAgent(http=True)
         entered, release = asyncio.Event(), asyncio.Event()
-        calls = 0
+        workspaces: list[str] = []
 
         async def resolver(workspace: str) -> list[Any]:
-            nonlocal calls
-            calls += 1
+            workspaces.append(workspace)
             entered.set()
             await release.wait()
             return [http_server()]
@@ -86,7 +85,7 @@ class TestMcpSetup:
                 release.set()
                 await staying
 
-        assert calls == 1
+        assert len(workspaces) == 1
         assert len(agent.sessions) == 1
 
     @pytest.mark.asyncio
