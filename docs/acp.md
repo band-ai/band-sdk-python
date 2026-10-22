@@ -310,6 +310,8 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   shared cleanup, and cleanup failures propagate. A failed close retains the
   room, startup files and exclusive workspace claim; cleanup or the next turn
   retries that same close before releasing resources or starting a fresh process.
+  A model or reasoning selection accepted while close is blocked is kept for the
+  replacement process, whether cleanup is retried explicitly or by the next turn.
 - **Isolation and state.** Each room owns a native process, persistent session
   and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
   starts without a supplied cwd. Session state carries `omp_session_id`,
