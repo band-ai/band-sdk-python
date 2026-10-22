@@ -176,6 +176,7 @@ class OmpTurn:
     tools: AgentToolsProtocol
     calls: dict[str, tuple[str, dict[str, JsonValue]]] = field(default_factory=dict)
     closing_text: list[str] = field(default_factory=list)
+    pending_permission_waits: int = 0
 
 
 @dataclass
@@ -613,7 +614,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         if request.method == "ask":
                             return await self._ask_room(request, msg, tools, room_id)
                         return await self._permission(
-                            request, room_id, room.session_id, tools
+                            request, room_id, room.session_id, turn
                         )
 
                     await room.runtime.prompt(
@@ -866,15 +867,17 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         request: OmpUIRequest,
         room_id: str,
         session_id: str,
-        tools: AgentToolsProtocol,
+        turn: OmpTurn,
     ) -> OmpUIResponse:
         if request.method != "select":
             return OmpUIResponse(cancelled=True)
+        tools = turn.tools
         options = tuple(request.options or ())
         choice = None
         if self._resolve_permission is not None:
-            await set_permission_wait(tools, True)
+            turn.pending_permission_waits += 1
             try:
+                await set_permission_wait(tools, True)
                 choice = await self._resolve_permission(
                     OmpPermissionRequest(
                         room_id=room_id,
@@ -884,7 +887,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
                 )
             finally:
-                await set_permission_wait(tools, False)
+                turn.pending_permission_waits -= 1
+                await set_permission_wait(tools, bool(turn.pending_permission_waits))
         elif options == ("Approve", "Deny"):
             choice = "Approve"
         response = (
@@ -970,7 +974,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     return
                 name, _arguments = call
                 if Emit.TOOL_CALLS in self.features.emit:
-                    await end_tool_activity(turn.tools)
+                    if turn.calls:
+                        remaining_name = next(reversed(turn.calls.values()))[0]
+                        await report_tool_activity(turn.tools, remaining_name)
+                    else:
+                        await end_tool_activity(turn.tools)
                 if not self.config.inject_band_tools and not event.isError:
                     turn.tools.turn.record(turn_effect(name))
                 if Emit.TOOL_CALLS in self.features.emit:
