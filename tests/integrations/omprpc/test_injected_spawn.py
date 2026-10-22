@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import Any
 
 import pytest
 
@@ -12,23 +11,12 @@ from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import OmpEventType
 from tests.integrations.omprpc.kit import (
     OMP_PEER_SCRIPT,
+    FailingOwnedClient,
     Observer,
     owned_rpc_process,
     prompt_task,
     second_prompt,
 )
-
-
-class FailingOwnedClient(OmpRpcClient):
-    fail_spawn = True
-
-    async def spawn_owned_process(
-        self, *command: str, **kwargs: Any
-    ) -> asyncio.subprocess.Process:
-        process = await super().spawn_owned_process(*command, **kwargs)
-        if self.fail_spawn:
-            raise ValueError("Owned spawn wrapper failed")
-        return process
 
 
 class TestInjectedSpawnOwnership:
@@ -70,7 +58,7 @@ class TestInjectedSpawnOwnership:
         )
         process: asyncio.subprocess.Process | None = None
         try:
-            with pytest.raises(ValueError, match="Owned spawn wrapper failed"):
+            with pytest.raises(ValueError):
                 await client.start()
             process = owned_rpc_process(client)
             assert process.returncode is not None

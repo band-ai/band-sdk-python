@@ -11,7 +11,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 import psutil
 import pytest
@@ -37,6 +37,18 @@ ClientFactory = Callable[[str], Awaitable[OmpRpcClient]]
 
 # The fake OMP peer every RPC test launches as its subprocess.
 OMP_PEER_SCRIPT = omppeer.__file__
+
+
+class FailingOwnedClient(OmpRpcClient):
+    fail_spawn = True
+
+    async def spawn_owned_process(
+        self, *command: str, **kwargs: Any
+    ) -> asyncio.subprocess.Process:
+        process = await super().spawn_owned_process(*command, **kwargs)
+        if self.fail_spawn:
+            raise ValueError("Owned spawn wrapper failed")
+        return process
 
 
 class SpawnBarrier:
