@@ -409,39 +409,39 @@ class OmpRpcClient:
             await work
         except OmpRpcError:
             if not turn.rejected:
-                await self._close_preserving(cause_of_failure=True)
+                await self._close_preserving()
             raise
         except OmpPromptError:
             raise
         except BaseException:
-            await self._close_preserving(cause_of_failure=True)
+            await self._close_preserving()
             raise
         finally:
+            workers = [work, event_worker, guard, *turn.callback_tasks]
+            if turn.stop_task is not None:
+                workers.append(turn.stop_task)
+            self._survivors.update(turn.callback_tasks)
+            self._survivors.add(event_worker)
             self._turn = None
-            await self._cancel_tasks(
-                [
-                    work,
-                    event_worker,
-                    guard,
-                    *turn.callback_tasks,
-                    *([turn.stop_task] if turn.stop_task is not None else []),
-                ],
-                timeout=self.callback_exit_timeout_s,
-                label="callback",
-            )
+            try:
+                await self._cancel_tasks(
+                    workers,
+                    timeout=self.callback_exit_timeout_s,
+                    label="callback",
+                )
+            finally:
+                if error := self._retire_survivors():
+                    self._record_failure(error)
 
-    async def _close_preserving(self, *, cause_of_failure: bool) -> None:
+    async def _close_preserving(self) -> None:
         # A retirement failure must not replace the honest completion failure;
         # it stays recorded so retirement-dependent restarts fail closed.
         try:
             await self.close()
         except asyncio.CancelledError:
             raise
-        except Exception as cleanup:  # retirement outcome recorded
-            if cause_of_failure:
-                logger.error("OMP retirement failed after prompt error: %s", cleanup)
-            else:
-                raise
+        except Exception as cleanup:  # noqa: BLE001 -- preserve the turn error
+            logger.error("OMP retirement failed after prompt error: %s", cleanup)
 
     async def _guard_completion(self, turn: PromptRun) -> None:
         """Arm the completion budget only on positively proven idle evidence.
@@ -477,7 +477,7 @@ class OmpRpcClient:
                 )
                 if stale:
                     received = await self._request_frame(
-                        "get_state", {}, completion=True
+                        OmpCommandName.GET_STATE, {}, completion=True
                     )
                     turn.record_snapshot(
                         received.sequence,
