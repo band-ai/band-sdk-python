@@ -105,6 +105,7 @@ class TestProcessTreeCleanup:
     async def test_detached_descendants_are_job_members(
         self, process_gate: ProcessGate, accepted_on: tuple[str, ...]
     ) -> None:
+        """Windows identity complementary to POSIX session ids, not a nested-job claim."""
         skip_unless_os(accepted_on)
         client = descendant_client(process_gate, detached=True)
         try:

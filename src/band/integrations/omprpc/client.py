@@ -195,6 +195,10 @@ class OmpRpcClient:
         scope = self._process_scope
         assert scope is not None
         env = scope.environment(self.env)
+        # Windows has no process group. The job is the whole tree (membership
+        # at create, no breakaway). A create_process factory skips it, so that
+        # path is not a job test. Nested jobs belong here only if close()
+        # still leaves live members.
         if os.name == "nt" and self.create_process is None:
             self._windows_process = WindowsProcess()
             process = await self._windows_process.start_command(

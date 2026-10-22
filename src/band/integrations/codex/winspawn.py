@@ -3,6 +3,11 @@
 The parent retains the job handle. The isolated helper creates the real
 command in that job before it can run, then waits. Close terminates the
 job so descendants die even after their launcher exits.
+
+This is a single kill-on-close job with no breakaway and no nested jobs.
+Children inherit membership at create; they must not inherit the handle
+(or kill-on-close never fires). Nested jobs or BREAKAWAY_OK belong here
+only when close still leaves members alive.
 """
 
 from __future__ import annotations
@@ -583,6 +588,7 @@ def create_job() -> Job:
         _kernel32().CloseHandle(handle)
         _fail("CreateJobObject", _ERROR_ALREADY_EXISTS)
     limits = ExtendedLimitInformation()
+    # Breakaway flags stay unset so descendants cannot leave this job.
     limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if not _kernel32().SetInformationJobObject(
         handle,

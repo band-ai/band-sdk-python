@@ -24,7 +24,9 @@ class OmpProcessScope:
     The private PI_ marker survives native helper filters. Explicit environment
     replacement and restricted process inspection can hide detached children.
     Windows job membership is the primary containment; this marker catches
-    descendants the job does not observe.
+    descendants the job does not observe. The job does not allow breakaway or
+    nest other jobs — a second job is not a substitute for this scan unless
+    close() still reports live members.
     """
 
     def __init__(self) -> None:
