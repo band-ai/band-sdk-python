@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.adapters.omp import OmpAdapter
+from band.core.model_catalog import ModelSelection
+from band.integrations.omprpc import OmpProcessError
 from band.testing import FakeAgentTools
 from tests.adapters.omp.kit import Launches, launches, run_turn
 
@@ -63,4 +65,36 @@ class TestCloseCustody:
             assert launches.plugins[-1].exists()
         finally:
             retiring.close = close
+            await adapter.cleanup_all()
+
+    @pytest.mark.asyncio
+    async def test_selection_after_failed_close_is_retained_for_the_next_turn(
+        self, launches: Launches, tmp_path: Path
+    ) -> None:
+        adapter = OmpAdapter(workspace_for_room=lambda _room: str(tmp_path), emit=())
+        await run_turn(adapter, FakeAgentTools())
+        (retiring,) = launches.runtimes
+        close, request = retiring.close, retiring.request
+        retiring.close = AsyncMock(side_effect=OSError("process still alive"))
+        selection = ModelSelection(
+            model="provider/replacement", reasoning_effort="auto"
+        )
+        try:
+            with pytest.raises(OSError, match="still alive"):
+                await adapter.on_cleanup("room-123")
+            retiring.request = AsyncMock(
+                side_effect=OmpProcessError("client is closing")
+            )
+
+            await adapter.apply_model_selection(selection, room_id="room-123")
+            retiring.close = close
+            tools = FakeAgentTools()
+            await run_turn(adapter, tools)
+
+            assert tools.turn.replied
+            assert retiring.closed
+            assert adapter._rooms["room-123"].runtime is not retiring
+            assert adapter._room_selections["room-123"] == selection
+        finally:
+            retiring.close, retiring.request = close, request
             await adapter.cleanup_all()
