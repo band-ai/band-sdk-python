@@ -108,7 +108,7 @@ class InboxPage(FrozenModel):
 
     cursor: Nonnegative
     events: list[JsonObject]
-    head: JsonObject
+    head: JsonObject | None = None
 
 
 class JournalQuery(WireRequest):

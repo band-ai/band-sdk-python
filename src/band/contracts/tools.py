@@ -49,7 +49,7 @@ class BoundContractTools:
     async def inbox(self, request: ContractInboxInput) -> JsonObject:
         return (
             await self.room.inbox(after=request.after, limit=request.limit)
-        ).model_dump(mode="json")
+        ).model_dump(mode="json", exclude_none=True)
 
     @declares_turn_effect(TurnEffect.ACT)
     async def propose(self, request: ContractProposeInput) -> JsonObject:

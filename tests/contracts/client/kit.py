@@ -32,6 +32,7 @@ class RoomPeer:
         self.reject = False
         self.accepted: dict[str, dict] = {}
         self.definition_actor: str | None = None
+        self.inbox_head: JsonObject | None = {"sequence": 2, "hash": "native"}
 
     def connection(self) -> ContractConnection:
         return ContractConnection(
@@ -88,9 +89,10 @@ class RoomPeer:
                     )
                 body = {
                     "cursor": 2,
-                    "head": {"sequence": 2, "hash": "native"},
                     "events": [{"id": "acceptance", "kind": "question"}],
                 }
+                if self.inbox_head is not None:
+                    body["head"] = self.inbox_head
             case _:
                 return httpx.Response(404, json={"error": "not_found"})
         return httpx.Response(200, json=body)

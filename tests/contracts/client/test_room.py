@@ -39,6 +39,7 @@ class TestRoom:
                 assert peer.proposals[0] == peer.proposals[1]
                 assert b"original" in peer.proposals[1]
                 assert page.cursor == 2
+                assert page.head is not None
                 assert page.head["hash"] == "native"
                 assert page.events[0]["id"] == "acceptance"
             assert not http.is_closed

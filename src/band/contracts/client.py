@@ -250,6 +250,10 @@ class ContractRoom:
             raise ContractProtocolError(
                 "Authority returned an invalid native inbox page"
             ) from None
+        if not self._path and page.head is None:
+            raise ContractProtocolError(
+                "Gateway inbox page is missing its journal head"
+            )
         if page.cursor < after:
             raise ContractProtocolError(
                 "Authority returned a native cursor behind the requested cursor"

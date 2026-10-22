@@ -19,6 +19,7 @@ class PlatformRoomPeer:
         self.actor = "Agent:7386ba04-2699-44bd-bbc3-8747df269b2b"
         self.path = f"/api/v1/agent/chats/{self.room}/contracts/{self.session}"
         self.requests: list[httpx.Request] = []
+        self.inbox: JsonObject = {"cursor": 7, "events": []}
         self.identity: JsonObject = {
             "profile": "contract-room/http/1",
             "idempotent": True,
@@ -117,4 +118,7 @@ class PlatformRoomPeer:
         if request.method == "POST" and request.url.path == self.path + "/v1/view":
             assert json.loads(request.content) == {}
             return httpx.Response(200, json=self.observation)
+        if request.method == "POST" and request.url.path == self.path + "/v1/inbox":
+            assert json.loads(request.content) == {"after": 3, "limit": 5}
+            return httpx.Response(200, json=self.inbox)
         return httpx.Response(404, json={"error": "not_found"})
