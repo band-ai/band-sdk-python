@@ -56,7 +56,7 @@ def omp_runtime_env(
     return {**credentials, **(env or {})} or None
 
 
-def omp_command_in_workspace(command: Sequence[str], workspace: str) -> list[str]:
+def omp_rpc_command_in_workspace(command: Sequence[str], workspace: str) -> list[str]:
     """Select OMP's room workspace without changing the subprocess launch cwd."""
     return [*command, f"{OMP_CWD_FLAG}={workspace}"]
 
@@ -192,7 +192,7 @@ async def omp_mcp_ready(
         raise OmpStartupError("OMP unexpectedly invoked a host tool during SDK startup")
 
     async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:
-        return OmpUIResponse(cancelled=True)
+        raise OmpStartupError("OMP unexpectedly requested UI during SDK startup")
 
     await runtime.prompt(
         f"/{command}",

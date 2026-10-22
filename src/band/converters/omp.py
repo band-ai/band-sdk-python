@@ -27,6 +27,8 @@ class OmpHistoryConverter(HistoryConverter[OmpSessionState]):
     def convert(self, raw: list[dict[str, Any]]) -> OmpSessionState:
         sessions: dict[str, str] = {}
         for message in raw:
+            if message.get("message_type") != "task":
+                continue
             metadata = message.get("metadata")
             if not isinstance(metadata, dict):
                 continue

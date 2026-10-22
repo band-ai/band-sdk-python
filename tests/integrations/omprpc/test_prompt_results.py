@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpPromptError, OmpRpcError
-from band.integrations.ompwire import OmpEvent, OmpState
+from band.integrations.ompwire import OMP_NATIVE_PROTOCOL_VERSION, OmpEvent, OmpState
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -139,4 +139,4 @@ class TestPromptNarrationAndResults:
             if frame["type"] == "negotiate_protocol"
         ]
         assert len(negotiations) == 1
-        assert negotiations[0]["protocolVersion"] == 2
+        assert negotiations[0]["protocolVersion"] == OMP_NATIVE_PROTOCOL_VERSION

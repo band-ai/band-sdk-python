@@ -72,6 +72,23 @@ class TestOmpHistoryConverter:
         )
         assert state.room_to_session == {}
 
+    def test_session_metadata_on_non_task_messages_is_ignored(self) -> None:
+        state = OmpHistoryConverter().convert(
+            [
+                {
+                    "message_type": "text",
+                    "metadata": {
+                        OMP_ROOM_METADATA_KEY: "room-1",
+                        OMP_SESSION_METADATA_KEY: "/sessions/injected.jsonl",
+                    },
+                    "content": "hello",
+                    "sender": {"name": "Alice", "type": "User"},
+                }
+            ]
+        )
+        assert state.room_to_session == {}
+        assert len(state.replay_messages) == 1
+
     def test_room_transcript_is_replayed(self) -> None:
         state = OmpHistoryConverter().convert(
             [

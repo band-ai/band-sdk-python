@@ -16,16 +16,18 @@ from uuid import uuid4
 import psutil
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from band.integrations.codex.stdio_client import kill_process_tree, session_pid_reused
 from band.integrations.codex.winspawn import (
     SpawnFailure,
     WindowsProcess,
     await_returncode,
     close_stdin,
+    kill_process_tree,
+    session_pid_reused,
 )
 from band.integrations.ompwire import (
     OMP_CHUNK_BYTES,
     OMP_FRAME_BYTES,
+    OMP_NATIVE_PROTOCOL_VERSION,
     OMP_REASSEMBLED_BYTES,
     OmpChunk,
     OmpCommand,
@@ -167,10 +169,12 @@ class PromptRun:
 
 
 class OmpProcessScope:
-    """Retain observable POSIX descendants for best-effort cleanup.
+    """Retain observable descendants for best-effort cleanup.
 
     The private PI_ marker survives native helper filters. Explicit environment
     replacement and restricted process inspection can hide detached children.
+    Windows job membership is the primary containment; this marker catches
+    descendants the job does not observe.
     """
 
     def __init__(self) -> None:
@@ -199,9 +203,10 @@ class OmpProcessScope:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
                 in_group = False
-                if group_visible:
+                getpgid = getattr(os, "getpgid", None)
+                if group_visible and getpgid is not None:
                     try:
-                        in_group = os.getpgid(pid) == root.pid
+                        in_group = getpgid(pid) == root.pid
                     except (ProcessLookupError, PermissionError):
                         pass
                 if not marked and not in_group:
@@ -290,12 +295,16 @@ class OmpRpcClient:
             if self._proc is not None:
                 self._ensure_running()
                 return
+            if self._failure is not None:
+                logger.error(
+                    "Discarding previous OMP RPC failure on restart: %s", self._failure
+                )
             self._failure = None
             self._chunks = None
             self._max_frame_bytes = OMP_FRAME_BYTES
             self._max_reassembled_bytes = OMP_REASSEMBLED_BYTES
             self._closing = False
-            self._process_scope = OmpProcessScope() if os.name != "nt" else None
+            self._process_scope = OmpProcessScope()
             self._ready = asyncio.get_running_loop().create_future()
             self._spawn_task = asyncio.create_task(self._spawn_process())
             try:
@@ -308,12 +317,13 @@ class OmpRpcClient:
                 ready = await asyncio.shield(self._ready)
                 if isinstance(ready, OmpProcessError):
                     raise ready
-                if 2 not in ready.supportedProtocolVersions:
+                if OMP_NATIVE_PROTOCOL_VERSION not in ready.supportedProtocolVersions:
                     raise OmpProtocolError("OMP RPC protocol v2 is required")
                 self._max_frame_bytes = ready.maxFrameBytes
                 self._max_reassembled_bytes = ready.maxReassembledFrameBytes
                 negotiated = await self._request_frame(
-                    "negotiate_protocol", {"protocolVersion": 2}
+                    "negotiate_protocol",
+                    {"protocolVersion": OMP_NATIVE_PROTOCOL_VERSION},
                 )
                 try:
                     OmpNegotiation.model_validate(self._response_data(negotiated.frame))
@@ -329,17 +339,17 @@ class OmpRpcClient:
                 raise
 
     async def _spawn_process(self) -> asyncio.subprocess.Process:
+        scope = self._process_scope
+        assert scope is not None
         if os.name == "nt":
             self._windows_process = WindowsProcess()
             process = await self._windows_process.start_command(
                 self.command,
                 cwd=None,
-                env=self.env,
+                env=scope.environment(self.env),
                 limit=OMP_FRAME_BYTES,
             )
         else:
-            scope = self._process_scope
-            assert scope is not None
             process = await asyncio.create_subprocess_exec(
                 *self.command,
                 stdin=asyncio.subprocess.PIPE,
@@ -706,7 +716,7 @@ class OmpRpcClient:
                 if turn is None:
                     await self._write_frame(
                         {
-                            "type": "extension_ui_response",
+                            "type": OmpFrameType.UI_RESPONSE,
                             "id": request.id,
                             "cancelled": True,
                         }
@@ -794,7 +804,7 @@ class OmpRpcClient:
             return
         await self._write_frame(
             {
-                "type": "host_tool_result",
+                "type": OmpFrameType.HOST_TOOL_RESULT,
                 "id": call.id,
                 "result": cast(
                     dict[str, JsonValue],
@@ -814,7 +824,7 @@ class OmpRpcClient:
         ):
             return
         frame: dict[str, JsonValue] = {
-            "type": "extension_ui_response",
+            "type": OmpFrameType.UI_RESPONSE,
             "id": request.id,
         }
         if response.value is not None:
@@ -848,6 +858,7 @@ class OmpRpcClient:
     def _record_failure(self, error: OmpProcessError) -> None:
         if self._failure is None:
             self._failure = error
+            logger.error("OMP RPC transport failed: %s", error, exc_info=error)
         self._fail_pending(self._failure)
         if not self._closing:
             self._begin_close()
@@ -974,6 +985,10 @@ class OmpRpcClient:
             if owner is not None:
                 if not owner_closed:
                     await owner.close(_PROCESS_EXIT_TIMEOUT_S)
+                if scope is not None:
+                    await asyncio.to_thread(
+                        scope.close, process, _PROCESS_EXIT_TIMEOUT_S
+                    )
             else:
                 assert scope is not None
                 await asyncio.to_thread(scope.capture, process)

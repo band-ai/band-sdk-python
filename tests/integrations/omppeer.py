@@ -349,6 +349,28 @@ class Peer:
                 self.invalid_chunk()
             case "event-backpressure":
                 return
+            case "ui-notify":
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "ui-notify",
+                        "method": "notify",
+                        "message": "status",
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
+            case "reused-callback":
+                call = {
+                    "type": "host_tool_call",
+                    "id": "host-dup",
+                    "toolCallId": "call-dup",
+                    "toolName": "band_chat",
+                    "arguments": {},
+                }
+                send(call)
+                send(call)
             case "frame-overflow":
                 send(
                     {
@@ -620,6 +642,27 @@ class Peer:
                     self.end("callbacks complete")
                     self.result(settled=True)
                     self.settle()
+            case "orphan-tool":
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-orphan",
+                        "toolCallId": "call-orphan",
+                        "toolName": "band_chat",
+                        "arguments": {},
+                    }
+                )
+            case "orphan-ui":
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "ui-orphan",
+                        "method": "select",
+                        "title": "Allow command?",
+                        "options": ["Approve", "Deny"],
+                    }
+                )
+                self.respond(frame)
             case "checkpoint":
                 self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
             case "abort":

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import (
     AliasChoices,
@@ -18,6 +18,7 @@ from pydantic import (
 OMP_FRAME_BYTES = 1024 * 1024
 OMP_REASSEMBLED_BYTES = 64 * 1024 * 1024
 OMP_CHUNK_BYTES = 256 * 1024
+OMP_NATIVE_PROTOCOL_VERSION: Final = 2
 
 
 class OmpFrameType(StrEnum):
@@ -27,7 +28,9 @@ class OmpFrameType(StrEnum):
     SESSION_SETTLED = "session_settled"
     HOST_TOOL_CALL = "host_tool_call"
     HOST_TOOL_CANCEL = "host_tool_cancel"
+    HOST_TOOL_RESULT = "host_tool_result"
     UI_REQUEST = "extension_ui_request"
+    UI_RESPONSE = "extension_ui_response"
     CHUNK = "rpc_chunk"
     FRAME_ERROR = "rpc_frame_error"
 

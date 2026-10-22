@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import shutil
-import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
@@ -19,6 +18,7 @@ from band.integrations.codex.winspawn import (
     WindowsProcess,
     await_returncode,
     close_stdin,
+    kill_process_tree,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,32 +27,6 @@ logger = logging.getLogger(__name__)
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
 _STDOUT_LIMIT = 16 * 1024 * 1024
-
-
-def session_pid_reused(process: asyncio.subprocess.Process) -> bool:
-    """True when ``process.pid`` now names some other live process.
-
-    After the leader is reaped, its session id stays reserved only while a
-    member of that session still exists. Once the id is free it can be given
-    to a new session, and ``killpg`` would signal that session.
-    """
-    if process.returncode is None:
-        return False
-    try:
-        os.kill(process.pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        logger.warning(
-            "Process %s pid is not signalable; leaving its session",
-            process.pid,
-        )
-        return True
-    logger.warning(
-        "Process %s pid was reused; not signaling that session",
-        process.pid,
-    )
-    return True
 
 
 def _missing_cli_message(binary: str) -> str:
@@ -70,21 +44,6 @@ async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
     _done, pending = await asyncio.wait(readers, timeout=_EXIT_OBSERVE_S)
     if pending:
         logger.warning("Codex stdio readers still pending after tree kill")
-
-
-async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Force-stop the owned Unix process group, including after root exit.
-
-    The codex launcher is a shim whose real CLI is its child. On Unix the
-    child leads a session, so ``killpg`` still reaches that group after the
-    leader has exited.
-    """
-    if os.name == "nt" or session_pid_reused(process):
-        return
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
 
 class CodexStdioClient(BaseJsonRpcClient):
