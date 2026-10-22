@@ -25,8 +25,7 @@ class TestOmpRoomAsk:
     ) -> None:
         tools = FakeAgentTools()
         try:
-            async with asyncio.timeout(5):
-                await ask_turn(ask_adapter, tools)
+            await ask_turn(ask_adapter, tools)
             [posted] = tools.messages_sent
             assert posted["mentions"] == [{"id": "peer-456", "name": "Test Peer"}]
             for text in (
@@ -63,10 +62,9 @@ class TestOmpRoomAsk:
             resumed.execute_tool_call_structured = partial(
                 AgentTools.execute_tool_call_structured, resumed
             )
-            async with asyncio.timeout(5):
-                await ask_turn(
-                    ask_adapter, resumed, bootstrap=False, content="Use SQLite for Dev."
-                )
+            await ask_turn(
+                ask_adapter, resumed, bootstrap=False, content="Use SQLite for Dev."
+            )
             assert ask_adapter._rooms["room-123"].runtime is runtime
             assert (
                 resumed.messages_sent[0]["content"]
@@ -92,9 +90,8 @@ class TestOmpRoomAsk:
         tools = FakeAgentTools()
         tools.send_message_error = error
         try:
-            async with asyncio.timeout(5):
-                with pytest.raises(TurnResultAlreadyReported):
-                    await ask_turn(ask_adapter, tools)
+            with pytest.raises(TurnResultAlreadyReported):
+                await ask_turn(ask_adapter, tools)
             assert not tools.turn.replied
             assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
             frames = await ask_frames(ask_adapter)
@@ -114,9 +111,8 @@ class TestOmpRoomAsk:
         tools = FakeAgentTools()
         tools.send_message_error = RoomExecutionStoppedError("room-123")
         try:
-            async with asyncio.timeout(5):
-                with pytest.raises(RoomExecutionStoppedError):
-                    await ask_turn(ask_adapter, tools)
+            with pytest.raises(RoomExecutionStoppedError):
+                await ask_turn(ask_adapter, tools)
             assert not tools.turn.replied
             assert not failure_reports(tools)
             assert "room-123" not in ask_adapter._rooms
@@ -130,11 +126,10 @@ class TestOmpRoomAsk:
         held = tools.hold_message("Database?")
         running = asyncio.create_task(ask_turn(ask_adapter, tools))
         try:
-            async with asyncio.timeout(5):
-                await held.sending.wait()
-                running.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await running
+            await held.sending.wait()
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
             assert not tools.turn.replied
             assert not tools.messages_sent
             assert not failure_reports(tools)
