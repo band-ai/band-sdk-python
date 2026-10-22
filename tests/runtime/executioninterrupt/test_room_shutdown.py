@@ -20,7 +20,6 @@ from band.runtime.cycle import TurnScope
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.adaptercleanup import CleanupPlatform
-from tests.adapters.waiting import spin
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import ShutdownStep, auxiliary_context
 from tests.runtime.helpers import resist_cancellation_until, rest_client_over
@@ -99,15 +98,15 @@ class TestRoomShutdown:
     async def test_retried_stop_cancels_an_observer_that_swallowed_the_first(
         self, mock_link
     ) -> None:
-        entered, cancelled = asyncio.Event(), asyncio.Event()
+        entered, cancelled, release = (asyncio.Event() for _ in range(3))
 
         async def observer(ctx: ExecutionContext, scope: TurnScope) -> None:
             task = asyncio.current_task()
             assert task is not None
             entered.set()
-            while True:
+            while not release.is_set():
                 try:
-                    await asyncio.Future[None]()
+                    await release.wait()
                 except asyncio.CancelledError:
                     cancelled.set()
                     if task.cancelling() == 2:
@@ -122,16 +121,20 @@ class TestRoomShutdown:
             ctx.observe_platform_stop(scope)
             assert scope.observer_task is not None
             async with background(scope.observer_task) as observing:
-                await entered.wait()
-                async with background(ctx.stop()) as stopping:
-                    await cancelled.wait()
-                    await clock.elapse(CYCLE_CANCEL_GRACE_SECONDS)
-                    with pytest.raises(CleanupIncompleteError):
-                        await stopping
-                assert observing.cancelling() == 1
-                await ctx.stop()
-                assert observing.cancelled()
-                assert observing.cancelling() == 2
+                try:
+                    await entered.wait()
+                    async with background(ctx.stop()) as stopping:
+                        await cancelled.wait()
+                        await clock.elapse(CYCLE_CANCEL_GRACE_SECONDS)
+                        with pytest.raises(CleanupIncompleteError):
+                            await stopping
+                    assert observing.cancelling() == 1
+                    await ctx.stop()
+                    assert observing.cancelled()
+                    assert observing.cancelling() == 2
+                finally:
+                    release.set()
+                    await ctx.stop()
 
     async def test_interrupted_drain_still_keeps_the_stubborn_task_for_stop(
         self, mock_link
@@ -244,19 +247,22 @@ class TestRoomShutdown:
     async def test_generated_shutdown_steps_preserve_cancellation_ownership(
         self, steps: list[ShutdownStep]
     ) -> None:
-        started, finalizing, finish, finished = (asyncio.Event() for _ in range(4))
+        started, finish, finished = (asyncio.Event() for _ in range(3))
+        cancellation_received: asyncio.Queue[None] = asyncio.Queue()
 
         async def handler(ctx: ExecutionContext, event: Any) -> None:
             started.set()
             try:
                 await finish.wait()
+            except asyncio.CancelledError:
+                cancellation_received.put_nowait(None)
+                raise
             finally:
-                finalizing.set()
                 while not finish.is_set():
                     try:
                         await finish.wait()
                     except asyncio.CancelledError:
-                        pass
+                        cancellation_received.put_nowait(None)
                 finished.set()
 
         platform = CleanupPlatform()
@@ -290,10 +296,7 @@ class TestRoomShutdown:
                     if settled:
                         assert all(await asyncio.gather(*attempt))
                         continue
-                    if cancellations == 0:
-                        await finalizing.wait()
-                    else:
-                        await spin()
+                    await cancellation_received.get()
                     cancellations += 1
                     await clock.elapse(CYCLE_CANCEL_GRACE_SECONDS)
                     assert work.cancelling() == cancellations
