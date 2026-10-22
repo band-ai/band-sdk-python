@@ -18,6 +18,7 @@ from band.integrations.ompprocess import (
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -142,8 +143,16 @@ class TestRequiredMcpStartup:
         assert runtime.prompt.await_args is not None
         assert runtime.prompt.await_args.args[0] == f"/{command}"
 
-    async def test_ui_request_during_startup_cannot_fall_through_to_inference(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("invoke", "reason"),
+        [
+            ("event", "invoked an agent"),
+            ("tool", "invoked a host tool"),
+            ("ui", "requested UI"),
+        ],
+    )
+    async def test_startup_callbacks_cannot_fall_through_to_inference(
+        self, tmp_path: Path, invoke: str, reason: str
     ) -> None:
         runtime = AsyncMock(spec=OmpRpcClient)
         runtime.request.return_value = {
@@ -157,9 +166,28 @@ class TestRequiredMcpStartup:
             on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
             on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
         ) -> None:
-            _ = (message, on_event, on_tool)
-            await on_ui(OmpUIRequest.model_validate({"id": "ask", "method": "select"}))
+            _ = message
+            match invoke:
+                case "event":
+                    await on_event(
+                        OmpEvent.model_validate({"type": OmpEventType.AGENT_START})
+                    )
+                case "tool":
+                    await on_tool(
+                        OmpHostToolCall.model_validate(
+                            {
+                                "id": "host-1",
+                                "toolCallId": "call-1",
+                                "toolName": "band_chat",
+                                "arguments": {},
+                            }
+                        )
+                    )
+                case "ui":
+                    await on_ui(
+                        OmpUIRequest.model_validate({"id": "ask", "method": "select"})
+                    )
 
         runtime.prompt.side_effect = prompt
-        with pytest.raises(OmpStartupError, match="requested UI"):
+        with pytest.raises(OmpStartupError, match=reason):
             await omp_mcp_ready(runtime, str(tmp_path), {})

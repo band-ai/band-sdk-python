@@ -86,6 +86,30 @@ class TestHostToolAndUICallbacks:
         }
         await second_prompt(client)
 
+    async def test_confirmed_ui_reply_reaches_the_peer(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory("callbacks")
+        observer = Observer()
+
+        async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:
+            return OmpUIResponse(confirmed=True)
+
+        async with asyncio.timeout(5):
+            await client.prompt(
+                "first",
+                on_event=observer.on_event,
+                on_tool=observer.on_tool,
+                on_ui=on_ui,
+            )
+        frames = await checkpoint_frames(client)
+        ui_response = next(frame for frame in frames if frame.get("id") == "approval-1")
+        assert ui_response == {
+            "type": OmpFrameType.UI_RESPONSE,
+            "id": "approval-1",
+            "confirmed": True,
+        }
+
     @pytest.mark.parametrize("kind", ["host", "ui"])
     async def test_native_cancel_targets_the_callback_and_keeps_the_next_turn_usable(
         self, client_factory: ClientFactory, kind: str

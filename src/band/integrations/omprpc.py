@@ -10,6 +10,7 @@ import time
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeVar, cast
 from uuid import uuid4
 
@@ -66,6 +67,11 @@ _EVENT_TYPES = frozenset(OmpEventType)
 _UI_NOTIFICATIONS = frozenset(
     {"notify", "setStatus", "setWidget", "setTitle", "set_editor_text", "open_url"}
 )
+
+
+class OmpCallbackKind(StrEnum):
+    TOOL = "tool"
+    UI = "ui"
 
 
 class OmpRpcError(RuntimeError):
@@ -147,7 +153,7 @@ class PromptRun:
         self.settled_sequence = 0
         self.last_assistant: OmpMessage | None = None
         self.rejected = False
-        self.callbacks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self.callbacks: dict[tuple[OmpCallbackKind, str], asyncio.Task[None]] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
 
@@ -647,6 +653,8 @@ class OmpRpcClient:
             while True:
                 line = await process.stdout.readline()
                 if not line:
+                    if self._closing:
+                        return
                     if self._chunks is not None:
                         raise OmpProtocolError(
                             "OMP RPC protocol chunks interrupted by stdout EOF"
@@ -708,12 +716,14 @@ class OmpRpcClient:
                         "OMP host tool arrived without an active prompt"
                     )
                 self._start_callback(
-                    turn, "tool", call.id, self._handle_tool(turn, call)
+                    turn, OmpCallbackKind.TOOL, call.id, self._handle_tool(turn, call)
                 )
             case OmpFrameType.HOST_TOOL_CANCEL:
                 cancellation = OmpHostToolCancel.model_validate(payload)
                 if turn is not None:
-                    self._cancel_callback(turn, "tool", cancellation.targetId)
+                    self._cancel_callback(
+                        turn, OmpCallbackKind.TOOL, cancellation.targetId
+                    )
             case OmpFrameType.UI_REQUEST:
                 request = OmpUIRequest.model_validate(payload)
                 if request.method == "cancel":
@@ -722,7 +732,9 @@ class OmpRpcClient:
                             "OMP UI cancellation is missing targetId"
                         )
                     if turn is not None:
-                        self._cancel_callback(turn, "ui", request.targetId)
+                        self._cancel_callback(
+                            turn, OmpCallbackKind.UI, request.targetId
+                        )
                     return
                 if request.method in _UI_NOTIFICATIONS:
                     return
@@ -736,7 +748,7 @@ class OmpRpcClient:
                     )
                     return
                 self._start_callback(
-                    turn, "ui", request.id, self._handle_ui(turn, request)
+                    turn, OmpCallbackKind.UI, request.id, self._handle_ui(turn, request)
                 )
             case event_type if event_type in _EVENT_TYPES:
                 event = OmpEvent.model_validate(payload)
@@ -767,7 +779,7 @@ class OmpRpcClient:
     def _start_callback(
         self,
         turn: PromptRun,
-        kind: str,
+        kind: OmpCallbackKind,
         request_id: str,
         callback: Coroutine[object, object, None],
     ) -> None:
@@ -781,7 +793,7 @@ class OmpRpcClient:
         task.add_done_callback(lambda done: self._callback_finished(turn, key, done))
 
     def _callback_still_active(
-        self, turn: PromptRun, kind: str, request_id: str
+        self, turn: PromptRun, kind: OmpCallbackKind, request_id: str
     ) -> bool:
         return (
             not self._closing
@@ -789,14 +801,16 @@ class OmpRpcClient:
         )
 
     @staticmethod
-    def _cancel_callback(turn: PromptRun, kind: str, request_id: str) -> None:
+    def _cancel_callback(
+        turn: PromptRun, kind: OmpCallbackKind, request_id: str
+    ) -> None:
         task = turn.callbacks.pop((kind, request_id), None)
         if task is not None:
             task.cancel()
 
     @staticmethod
     def _callback_finished(
-        turn: PromptRun, key: tuple[str, str], task: asyncio.Task[None]
+        turn: PromptRun, key: tuple[OmpCallbackKind, str], task: asyncio.Task[None]
     ) -> None:
         if turn.callbacks.get(key) is task:
             turn.callbacks.pop(key)
@@ -806,7 +820,7 @@ class OmpRpcClient:
 
     async def _handle_tool(self, turn: PromptRun, call: OmpHostToolCall) -> None:
         result = await turn.on_tool(call)
-        if not self._callback_still_active(turn, "tool", call.id):
+        if not self._callback_still_active(turn, OmpCallbackKind.TOOL, call.id):
             return
         await self._write_frame(
             {
@@ -824,7 +838,7 @@ class OmpRpcClient:
 
     async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
         response = await turn.on_ui(request)
-        if not self._callback_still_active(turn, "ui", request.id):
+        if not self._callback_still_active(turn, OmpCallbackKind.UI, request.id):
             return
         frame: dict[str, JsonValue] = {
             "type": OmpFrameType.UI_RESPONSE,
@@ -844,10 +858,15 @@ class OmpRpcClient:
 
     async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
         assert process.stderr is not None
-        while data := await process.stderr.read(_DRAIN_BYTES):
-            logger.debug(
-                "OMP stderr: %s", data.decode("utf-8", errors="replace").rstrip()
-            )
+        try:
+            while data := await process.stderr.read(_DRAIN_BYTES):
+                logger.debug(
+                    "OMP stderr: %s", data.decode("utf-8", errors="replace").rstrip()
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("OMP stderr reader failed")
 
     def _fail_pending(self, error: OmpProcessError) -> None:
         for pending in self._pending.values():
@@ -910,15 +929,6 @@ class OmpRpcClient:
         while await stream.read(_DRAIN_BYTES):
             pass
 
-    @staticmethod
-    async def _wait_for_exit(process: asyncio.subprocess.Process) -> bool:
-        try:
-            async with asyncio.timeout(_PROCESS_EXIT_TIMEOUT_S):
-                await process.wait()
-        except TimeoutError:
-            return False
-        return True
-
     async def _settle_spawn(self) -> asyncio.subprocess.Process | None:
         spawning = self._spawn_task
         if spawning is None:
@@ -967,8 +977,8 @@ class OmpRpcClient:
             try:
                 async with asyncio.timeout(_ABORT_TIMEOUT_S):
                     await self._request_frame("abort", {}, allow_closing=True)
-            except (TimeoutError, OmpRpcError, OmpProcessError):
-                pass
+            except (TimeoutError, OmpRpcError, OmpProcessError) as error:
+                logger.warning("OMP graceful abort skipped: %s", error)
         if self._reader_task is not None:
             await self._cancel_tasks([self._reader_task])
         drains: list[asyncio.Task[None]] = []
@@ -1002,7 +1012,7 @@ class OmpRpcClient:
                         "OMP process did not exit after containment kill"
                     )
                 await asyncio.to_thread(scope.close, process, _PROCESS_EXIT_TIMEOUT_S)
-            if not await self._wait_for_exit(process):
+            if not await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S):
                 raise OmpProcessError("OMP process did not exit after containment kill")
             self._windows_process = None
             self._process_scope = None

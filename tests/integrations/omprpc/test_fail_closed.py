@@ -32,12 +32,12 @@ class TestFailClosedDispatch:
         async with asyncio.timeout(5):
             await client.request("orphan-ui")
             frames = await checkpoint_frames(client)
-        assert any(
-            frame.get("type") == OmpFrameType.UI_RESPONSE
-            and frame.get("id") == "ui-orphan"
-            and frame.get("cancelled") is True
-            for frame in frames
-        )
+        orphan = next(frame for frame in frames if frame.get("id") == "ui-orphan")
+        assert orphan == {
+            "type": OmpFrameType.UI_RESPONSE,
+            "id": "ui-orphan",
+            "cancelled": True,
+        }
 
     async def test_ui_notifications_do_not_start_a_callback(
         self, client_factory: ClientFactory

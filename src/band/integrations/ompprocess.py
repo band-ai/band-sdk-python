@@ -7,6 +7,7 @@ import os
 import tempfile
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self
 from uuid import uuid4
@@ -40,6 +41,15 @@ OMP_NATIVE_PINNED_PACKAGE = "@oh-my-pi/pi-coding-agent@18.8.9"
 # namespace every projected tool name carries.
 OMP_PLUGIN_ROOT = "band-sdk"
 OMP_PLUGIN_TOOL_NAMESPACE = f"{OMP_PLUGIN_ROOT.replace('-', '_')}_"
+OMP_MCP_STARTUP_JS = "startup.js"
+OMP_MCP_STARTUP_CONFIG = "startup.json"
+OMP_MCP_RECEIPT = "receipt.json"
+OMP_MCP_SERVERS_CONFIG = ".mcp.json"
+
+
+class McpConnectionStatus(StrEnum):
+    CONNECTED = "connected"
+    FAILED = "failed"
 
 
 def omp_runtime_env(
@@ -96,9 +106,9 @@ export default function (pi) {
   const ready = new Promise(resolve => { finish = resolve; });
   const unsubscribe = pi.events.on("mcp:connection-status", event => {
     if (!expected.has(event.serverName) || statuses.has(event.serverName)) return;
-    if (event.type !== "connected" && event.type !== "failed") return;
+    if (event.type !== CONNECTED && event.type !== FAILED) return;
     statuses.set(event.serverName, event);
-    if (event.type === "failed" || statuses.size === expected.size) {
+    if (event.type === FAILED || statuses.size === expected.size) {
       unsubscribe();
       finish();
     }
@@ -133,12 +143,12 @@ class McpCommands(BaseModel):
 
 
 class ConnectedMcpServer(BaseModel):
-    type: Literal["connected"]
+    type: Literal[McpConnectionStatus.CONNECTED]
     serverName: str
 
 
 class FailedMcpServer(BaseModel):
-    type: Literal["failed"]
+    type: Literal[McpConnectionStatus.FAILED]
     serverName: str
     error: str
 
@@ -164,9 +174,9 @@ def omp_mcp_arguments(plugin: str) -> tuple[str, ...]:
         plugin,
         "--mode=rpc-ui",
         "--extension",
-        str(Path(plugin) / "startup.js"),
+        str(Path(plugin) / OMP_MCP_STARTUP_JS),
         "--config",
-        str(Path(plugin) / "startup.json"),
+        str(Path(plugin) / OMP_MCP_STARTUP_CONFIG),
     )
 
 
@@ -203,7 +213,7 @@ async def omp_mcp_ready(
     )
     try:
         receipt = McpStartupReceipt.model_validate_json(
-            (Path(plugin) / "receipt.json").read_text(encoding="utf-8")
+            (Path(plugin) / OMP_MCP_RECEIPT).read_text(encoding="utf-8")
         )
     except (OSError, ValueError) as error:
         raise OmpStartupError("OMP returned no valid SDK startup receipt") from error
@@ -267,15 +277,26 @@ def omp_mcp_plugin(
         startup = {
             "servers": [_plugin_server_name(name) for name in servers],
             "command": omp_mcp_ready_command(str(root)),
-            "receipt": str(root / "receipt.json"),
+            "receipt": str(root / OMP_MCP_RECEIPT),
             "systemPrompt": system_prompt,
         }
-        _write_private(root / ".mcp.json", json.dumps({"mcpServers": projected}))
-        # Quiet startup suppresses the native status bus, not just UI rendering.
-        _write_private(root / "startup.json", json.dumps({"startup": {"quiet": False}}))
         _write_private(
-            root / "startup.js",
-            f"const config = {json.dumps(startup)};\n{_MCP_STARTUP_EXTENSION}",
+            root / OMP_MCP_SERVERS_CONFIG, json.dumps({"mcpServers": projected})
+        )
+        # Quiet startup suppresses the native status bus, not just UI rendering.
+        _write_private(
+            root / OMP_MCP_STARTUP_CONFIG, json.dumps({"startup": {"quiet": False}})
+        )
+        _write_private(
+            root / OMP_MCP_STARTUP_JS,
+            "\n".join(
+                (
+                    f"const config = {json.dumps(startup)};",
+                    f"const CONNECTED = {json.dumps(McpConnectionStatus.CONNECTED)};",
+                    f"const FAILED = {json.dumps(McpConnectionStatus.FAILED)};",
+                    _MCP_STARTUP_EXTENSION,
+                )
+            ),
         )
         yield str(root)
 

@@ -7,6 +7,7 @@ from band.converters.omp import (
     OMP_SESSION_METADATA_KEY,
     OmpHistoryConverter,
 )
+from band.core.types import MessageType
 
 
 class TestOmpHistoryConverter:
@@ -19,21 +20,21 @@ class TestOmpHistoryConverter:
         state = OmpHistoryConverter().convert(
             [
                 {
-                    "message_type": "task",
+                    "message_type": MessageType.TASK,
                     "metadata": {
                         OMP_ROOM_METADATA_KEY: "room-1",
                         OMP_SESSION_METADATA_KEY: "/sessions/old.jsonl",
                     },
                 },
                 {
-                    "message_type": "task",
+                    "message_type": MessageType.TASK,
                     "metadata": {
                         OMP_ROOM_METADATA_KEY: "room-2",
                         OMP_SESSION_METADATA_KEY: "/sessions/other.jsonl",
                     },
                 },
                 {
-                    "message_type": "task",
+                    "message_type": MessageType.TASK,
                     "metadata": {
                         OMP_ROOM_METADATA_KEY: "room-1",
                         OMP_SESSION_METADATA_KEY: "/sessions/new.jsonl",
@@ -51,18 +52,18 @@ class TestOmpHistoryConverter:
             [
                 {"message_type": "task", "metadata": "not a mapping"},
                 {
-                    "message_type": "task",
+                    "message_type": MessageType.TASK,
                     "metadata": {OMP_ROOM_METADATA_KEY: "room-1"},
                 },
                 {
-                    "message_type": "task",
+                    "message_type": MessageType.TASK,
                     "metadata": {
                         OMP_ROOM_METADATA_KEY: "room-1",
                         OMP_SESSION_METADATA_KEY: "",
                     },
                 },
                 {
-                    "message_type": "task",
+                    "message_type": MessageType.TASK,
                     "metadata": {
                         OMP_ROOM_METADATA_KEY: 7,
                         OMP_SESSION_METADATA_KEY: "/sessions/x.jsonl",

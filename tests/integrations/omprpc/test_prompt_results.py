@@ -92,13 +92,19 @@ class TestPromptNarrationAndResults:
         assert (rejected.value.command, rejected.value.code) == ("prompt", "rejected")
         await second_prompt(client)
 
-    @pytest.mark.parametrize("scenario", ["initial-error", "initial-aborted"])
+    @pytest.mark.parametrize(
+        ("scenario", "match"),
+        [
+            ("initial-error", "Initial provider failed"),
+            ("initial-aborted", "OMP prompt aborted"),
+        ],
+    )
     async def test_failed_initial_result_is_reported(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: str, match: str
     ) -> None:
         client = await client_factory(scenario)
         async with asyncio.timeout(5):
-            with pytest.raises(OmpPromptError):
+            with pytest.raises(OmpPromptError, match=match):
                 await prompt_task(client, Observer())
 
     async def test_narration_failure_does_not_leave_the_turn_or_process_waiting(

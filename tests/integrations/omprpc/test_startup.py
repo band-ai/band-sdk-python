@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 
 import pytest
@@ -29,11 +30,15 @@ class TestStartupNegotiation:
                 "no-ready",
             )
         )
+        starting = asyncio.create_task(client.start())
         try:
-            with pytest.raises(TimeoutError):
-                async with asyncio.timeout(0.05):
-                    await client.start()
+            async with asyncio.timeout(5):
+                while client._proc is None and not starting.done():
+                    await asyncio.sleep(0)
             assert client._proc is not None
+            assert starting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await starting
             assert client._proc.returncode is not None
         finally:
             await client.close()
@@ -60,3 +65,11 @@ class TestStartupNegotiation:
         async with asyncio.timeout(6):
             with pytest.raises(error, match="protocol"):
                 await client_factory(scenario)
+
+    async def test_graceful_close_does_not_log_stdout_eof_as_a_crash(
+        self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = await client_factory("basic")
+        with caplog.at_level(logging.ERROR, logger="band.integrations.omprpc"):
+            await client.close()
+        assert caplog.records == []
