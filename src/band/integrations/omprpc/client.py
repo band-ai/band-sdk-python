@@ -13,6 +13,7 @@ from typing import TypeVar, cast
 from pydantic import JsonValue, ValidationError
 
 from band.integrations.codex.winspawn import (
+    CreateProcess,
     SpawnFailure,
     WindowsProcess,
     await_returncode,
@@ -61,7 +62,6 @@ from band.integrations.ompwire import (
 )
 
 TModel = TypeVar("TModel", bound=OmpWireModel)
-CreateProcess = Callable[..., Awaitable[asyncio.subprocess.Process]]
 
 logger = logging.getLogger(__name__)
 
@@ -184,8 +184,8 @@ class OmpRpcClient:
         scope = self._process_scope
         assert scope is not None
         env = scope.environment(self.env)
-        if os.name == "nt" and self.create_process is None:
-            self._windows_process = WindowsProcess()
+        if os.name == "nt":
+            self._windows_process = WindowsProcess(create_process=self.create_process)
             process = await self._windows_process.start_command(
                 self.command, cwd=None, env=env, limit=OMP_FRAME_BYTES
             )
