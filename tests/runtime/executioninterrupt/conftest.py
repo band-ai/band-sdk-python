@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.runtime.helpers import AGENT_ID
+
 
 @pytest.fixture
-def mock_link():
+def mock_link() -> MagicMock:
     link = MagicMock()
-    link.agent_id = "agent-123"
+    link.agent_id = AGENT_ID
     link.rest = MagicMock()
     link.rest.agent_api_participants = MagicMock()
     link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
