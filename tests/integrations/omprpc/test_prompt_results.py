@@ -13,6 +13,7 @@ from band.integrations.ompwire import (
     OmpEventType,
     OmpState,
 )
+from tests.integrations.omppeer import COMPLETE
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -58,7 +59,7 @@ class TestPromptNarrationAndResults:
             for content in message.content
         ] == [
             ("thinking", None, "Considering the result"),
-            ("text", "complete", None),
+            ("text", COMPLETE, None),
         ]
         assert message.usage is not None
         assert (

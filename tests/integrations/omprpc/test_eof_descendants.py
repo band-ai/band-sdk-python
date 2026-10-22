@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 
 import pytest
 
 from tests.integrations.omprpc.kit import (
     ProcessGate,
-    descendant_client,
     descendant_liveness,
-    owned_rpc_process,
+    hold_after_stdin_closed,
+    job_member_pids,
     process_is_alive,
     session_ids,
+    start_eof_client,
     unrelated_gate_child,
 )
+from tests.ostable import skip_unless_os
 
 
 class TestEofDescendants:
@@ -23,64 +24,53 @@ class TestEofDescendants:
     async def test_close_reaps_a_detached_child_created_after_stdin_eof(
         self,
         process_gate: ProcessGate,
-        monkeypatch: pytest.MonkeyPatch,
         stdio: str,
     ) -> None:
-        client = descendant_client(
-            process_gate, scenario="eof-descendants", stdio=stdio, detached=True
-        )
-        entered = asyncio.Event()
-        release = threading.Event()
-        loop = asyncio.get_running_loop()
-        closing: asyncio.Task[None] | None = None
-
+        client, helper, root = await start_eof_client(process_gate, stdio=stdio)
         async with unrelated_gate_child(process_gate) as unrelated:
             try:
-                await client.start()
-                helper = await process_gate.connection()
-                root = owned_rpc_process(client)
-                scope = client._process_scope
-                assert scope is not None
-                signal = scope.signal
-
-                def hold_signal() -> None:
-                    loop.call_soon_threadsafe(entered.set)
-                    if not release.wait(timeout=10):
-                        raise TimeoutError(
-                            "Test did not release the containment reaper"
-                        )
-                    signal()
-
-                with monkeypatch.context() as patch:
-                    patch.setattr(scope, "signal", hold_signal)
-                    closing = asyncio.create_task(client.close())
-                    try:
-                        async with asyncio.timeout(10):
-                            await entered.wait()
-                            late_child = await process_gate.connection()
-                            assert root.returncode is not None
-                            assert late_child.receipt.parent_pid == helper.process.pid
-                            ids = session_ids([late_child.process.pid])
-                            if ids is not None:
-                                assert ids == [late_child.process.pid]
-                            assert await descendant_liveness([helper, late_child]) == [
-                                True,
-                                True,
-                            ]
-                            assert await asyncio.to_thread(
-                                process_is_alive, unrelated.process
-                            )
-                            assert not closing.done()
-                            release.set()
-                            await closing
-                    finally:
-                        release.set()
-                        await asyncio.gather(closing, return_exceptions=True)
-
+                async with hold_after_stdin_closed(client) as closing:
+                    late_child = await process_gate.connection()
+                    assert root.returncode is not None
+                    assert late_child.receipt.parent_pid == helper.process.pid
+                    assert await descendant_liveness([helper, late_child]) == [
+                        True,
+                        True,
+                    ]
+                    assert await asyncio.to_thread(process_is_alive, unrelated.process)
+                    assert not closing.done()
                 assert await descendant_liveness([helper, late_child]) == [False, False]
                 assert await asyncio.to_thread(process_is_alive, unrelated.process)
             finally:
-                release.set()
-                if closing is not None:
-                    await asyncio.gather(closing, return_exceptions=True)
                 await client.close()
+
+    @pytest.mark.parametrize("accepted_on", [("posix",)])
+    async def test_eof_late_child_is_its_own_session(
+        self, process_gate: ProcessGate, accepted_on: tuple[str, ...]
+    ) -> None:
+        skip_unless_os(accepted_on)
+        client, helper, root = await start_eof_client(process_gate, stdio="discard")
+        try:
+            async with hold_after_stdin_closed(client):
+                late_child = await process_gate.connection()
+                ids = session_ids([late_child.process.pid])
+                assert ids == [late_child.process.pid]
+                assert ids[0] != root.pid
+                assert helper.process.pid != late_child.process.pid
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize("accepted_on", [("nt",)])
+    async def test_eof_late_child_is_a_job_member(
+        self, process_gate: ProcessGate, accepted_on: tuple[str, ...]
+    ) -> None:
+        skip_unless_os(accepted_on)
+        client, helper, _root = await start_eof_client(process_gate, stdio="discard")
+        try:
+            async with hold_after_stdin_closed(client):
+                late_child = await process_gate.connection()
+                members = job_member_pids(client)
+                assert helper.process.pid in members
+                assert late_child.process.pid in members
+        finally:
+            await client.close()

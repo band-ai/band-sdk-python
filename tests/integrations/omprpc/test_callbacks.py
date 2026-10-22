@@ -14,7 +14,12 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
-from tests.integrations.omppeer import UI_APPROVE, UI_DENY
+from tests.integrations.omppeer import (
+    HOST_CANCELLED_ID,
+    UI_APPROVE,
+    UI_CANCELLED_ID,
+    UI_DENY,
+)
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -84,7 +89,7 @@ class TestHostToolAndUICallbacks:
         assert ui_response == {
             "type": OmpFrameType.UI_RESPONSE,
             "id": "approval-1",
-            "value": "Approve",
+            "value": UI_APPROVE,
         }
         await second_prompt(client)
 
@@ -112,9 +117,12 @@ class TestHostToolAndUICallbacks:
             "confirmed": True,
         }
 
-    @pytest.mark.parametrize("kind", ["host", "ui"])
+    @pytest.mark.parametrize(
+        ("kind", "target"),
+        [("host", HOST_CANCELLED_ID), ("ui", UI_CANCELLED_ID)],
+    )
     async def test_native_cancel_targets_the_callback_and_keeps_the_next_turn_usable(
-        self, client_factory: ClientFactory, kind: str
+        self, client_factory: ClientFactory, kind: str, target: str
     ) -> None:
         client = await client_factory(f"{kind}-cancel")
         observer = Observer()
@@ -150,7 +158,6 @@ class TestHostToolAndUICallbacks:
                 await cancelled.wait()
                 await running
             frames = await checkpoint_frames(client)
-            target = "host-cancelled" if kind == "host" else "ui-cancelled"
             assert not any(frame.get("id") == target for frame in frames)
             await second_prompt(client)
         finally:
@@ -177,6 +184,8 @@ class TestHostToolAndUICallbacks:
                     on_ui=on_ui,
                 )
         assert process.returncode is not None
+        await client.start()
+        await second_prompt(client)
 
     async def test_tool_callback_exception_propagates_unchanged_and_reaps_the_process(
         self,

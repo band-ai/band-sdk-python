@@ -50,7 +50,7 @@ class TestOmpHistoryConverter:
     def test_unusable_metadata_is_ignored(self) -> None:
         state = OmpHistoryConverter().convert(
             [
-                {"message_type": "task", "metadata": "not a mapping"},
+                {"message_type": MessageType.TASK, "metadata": "not a mapping"},
                 {
                     "message_type": MessageType.TASK,
                     "metadata": {OMP_ROOM_METADATA_KEY: "room-1"},

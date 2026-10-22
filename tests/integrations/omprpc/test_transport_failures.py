@@ -7,7 +7,12 @@ import asyncio
 import pytest
 
 from band.integrations.omprpc import OmpProcessError, OmpProtocolError
-from tests.integrations.omprpc.kit import ClientFactory, Observer, prompt_task
+from tests.integrations.omprpc.kit import (
+    ClientFactory,
+    Observer,
+    owned_rpc_process,
+    prompt_task,
+)
 
 
 class TestTransportAndProtocolFailures:
@@ -30,8 +35,7 @@ class TestTransportAndProtocolFailures:
         match: str,
     ) -> None:
         client = await client_factory(scenario)
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         async with asyncio.timeout(6):
             with pytest.raises(error, match=match):
                 await prompt_task(client, Observer())
@@ -42,8 +46,7 @@ class TestTransportAndProtocolFailures:
         client_factory: ClientFactory,
     ) -> None:
         client = await client_factory("basic")
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         async with asyncio.timeout(6):
             with pytest.raises(OmpProcessError, match="EOF"):
                 await client.request("crash")
@@ -74,8 +77,7 @@ class TestTransportAndProtocolFailures:
         self, client_factory: ClientFactory, scenario: str
     ) -> None:
         client = await client_factory(scenario)
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         async with asyncio.timeout(6):
             with pytest.raises(OmpProtocolError, match="protocol"):
                 await prompt_task(client, Observer())

@@ -21,6 +21,7 @@ from band.integrations.ompprocess import (
     omp_mcp_plugin,
     omp_mcp_ready_command,
 )
+from tests.ostable import skip_unless_os
 
 
 def plugin_privacy(root: Path, files: tuple[Path, ...]) -> tuple[int, int | None]:
@@ -91,8 +92,7 @@ class TestMcpPluginProjection:
     def test_projected_plugin_files_are_owner_only(
         self, tmp_path: Path, accepted_on: tuple[str, ...]
     ) -> None:
-        if os.name not in accepted_on:
-            pytest.skip("Unix permission bits are not the Windows ACL boundary")
+        skip_unless_os(accepted_on)
         servers = {"local": OmpMcpServer(command="./server")}
         with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
             assert plugin is not None
@@ -105,6 +105,24 @@ class TestMcpPluginProjection:
             assert root.is_dir()
             assert all(path.is_file() for path in files)
             assert plugin_privacy(root, files) == (0o700, 0o600)
+
+    @pytest.mark.parametrize("accepted_on", [("nt",)])
+    def test_projected_plugin_files_are_readable(
+        self, tmp_path: Path, accepted_on: tuple[str, ...]
+    ) -> None:
+        skip_unless_os(accepted_on)
+        servers = {"local": OmpMcpServer(command="./server")}
+        with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
+            assert plugin is not None
+            root = Path(plugin)
+            files = (
+                root / OMP_MCP_SERVERS_CONFIG,
+                root / OMP_MCP_STARTUP_CONFIG,
+                root / OMP_MCP_STARTUP_JS,
+            )
+            assert root.is_dir()
+            assert all(path.is_file() for path in files)
+            assert all(os.access(path, os.R_OK) for path in files)
 
     @pytest.mark.parametrize("prefix", RELATIVE_MCP_COMMAND_PREFIXES)
     def test_relative_command_is_absolutized(self, tmp_path: Path, prefix: str) -> None:

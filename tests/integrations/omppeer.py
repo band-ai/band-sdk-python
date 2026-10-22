@@ -33,6 +33,10 @@ FOLLOW_UP_PROMPT = "second"
 CRASH_EXIT = 3
 UI_APPROVE = "Approve"
 UI_DENY = "Deny"
+HOST_CANCELLED_ID = "host-cancelled"
+UI_CANCELLED_ID = "ui-cancelled"
+OVERSIZE_AFTER_READY = "oversize-after-ready"
+READY_LIMIT_BYTES = 1024
 
 
 def burst_message_id(number: int) -> str:
@@ -469,7 +473,7 @@ class Peer:
                 send(
                     {
                         "type": "host_tool_call",
-                        "id": "host-cancelled",
+                        "id": HOST_CANCELLED_ID,
                         "toolCallId": "call-cancelled",
                         "toolName": "band_chat",
                         "arguments": {},
@@ -479,7 +483,7 @@ class Peer:
                 send(
                     {
                         "type": "extension_ui_request",
-                        "id": "ui-cancelled",
+                        "id": UI_CANCELLED_ID,
                         "method": "select",
                         "title": "Allow command?",
                         "options": [UI_APPROVE, UI_DENY],
@@ -623,7 +627,7 @@ class Peer:
                     {
                         "type": "host_tool_cancel",
                         "id": "cancel-frame",
-                        "targetId": "host-cancelled",
+                        "targetId": HOST_CANCELLED_ID,
                     }
                 )
                 self.end("host cancelled")
@@ -636,7 +640,7 @@ class Peer:
                         "type": "extension_ui_request",
                         "id": "ui-cancel-frame",
                         "method": "cancel",
-                        "targetId": "ui-cancelled",
+                        "targetId": UI_CANCELLED_ID,
                     }
                 )
                 self.end("ui cancelled")
@@ -790,6 +794,11 @@ def main() -> None:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     peer = Peer(args.scenario)
     if args.scenario not in {"no-ready", "no-ready-descendants"}:
+        limit = (
+            READY_LIMIT_BYTES
+            if args.scenario == OVERSIZE_AFTER_READY
+            else OMP_FRAME_BYTES
+        )
         send(
             {
                 "type": "ready",
@@ -797,10 +806,13 @@ def main() -> None:
                 "supportedProtocolVersions": [1]
                 if args.scenario == "no-v2"
                 else [1, OMP_NATIVE_PROTOCOL_VERSION],
-                "maxFrameBytes": OMP_FRAME_BYTES,
+                "maxFrameBytes": limit,
                 "maxReassembledFrameBytes": OMP_REASSEMBLED_BYTES,
             }
         )
+        if args.scenario == OVERSIZE_AFTER_READY:
+            sys.stdout.write("{" + ("x" * (limit + 8)) + "}\n")
+            sys.stdout.flush()
     for line in sys.stdin:
         peer.handle(Frame.model_validate_json(line, strict=True))
     if managed_child is not None and managed_child.stdin is not None:

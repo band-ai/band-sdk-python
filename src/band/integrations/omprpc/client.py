@@ -67,6 +67,11 @@ JoinClose = Callable[[Awaitable[None]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
+
+def _noop() -> None:
+    return None
+
+
 _DRAIN_BYTES = 64 * 1024
 _ABORT_TIMEOUT_S = 1.0
 PROCESS_EXIT_TIMEOUT_S = 1.0
@@ -106,6 +111,7 @@ class OmpRpcClient:
         self.create_process = create_process
         self.close_process: CloseProcess = self._close_process
         self.join_close: JoinClose = asyncio.shield
+        self.after_stdin_closed: Callable[[], None] = _noop
         self.callback_exit_timeout_s = CALLBACK_EXIT_TIMEOUT_S
         self.process_exit_timeout_s = PROCESS_EXIT_TIMEOUT_S
         self._proc: asyncio.subprocess.Process | None = None
@@ -798,6 +804,7 @@ class OmpRpcClient:
                 async with self._write_lock:
                     await close_stdin(process)
                 await await_returncode(process, self.process_exit_timeout_s)
+            await asyncio.to_thread(self.after_stdin_closed)
             if owner is not None:
                 if not owner_closed:
                     await owner.close(self.process_exit_timeout_s)

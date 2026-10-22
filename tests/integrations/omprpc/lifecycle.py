@@ -10,7 +10,7 @@ a turn, and reap descendants.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,6 +24,7 @@ from tests.integrations.omprpc.kit import (
     GatedProcess,
     Observer,
     ProcessGate,
+    SpawnBarrier,
     descendant_client,
     descendant_liveness,
     owned_rpc_process,
@@ -51,32 +52,6 @@ class Step(StrEnum):
 
 
 sequences = st.lists(st.sampled_from(Step), min_size=1, max_size=6)
-
-
-class SpawnBarrier:
-    """Create the first subprocess, then hold returning it until released.
-
-    Descendants can still check in at the process gate; ``start()`` / ``close()``
-    wait, so a host cancel can overlap spawn.
-    """
-
-    def __init__(
-        self, spawn: Callable[..., Awaitable[asyncio.subprocess.Process]]
-    ) -> None:
-        self.spawn = spawn
-        self.created = asyncio.Event()
-        self.release = asyncio.Event()
-        self.process: asyncio.subprocess.Process | None = None
-
-    async def create(
-        self, *command: str, **kwargs: object
-    ) -> asyncio.subprocess.Process:
-        process = await self.spawn(*command, **kwargs)
-        if self.process is None:
-            self.process = process
-            self.created.set()
-            await self.release.wait()
-        return process
 
 
 @dataclass

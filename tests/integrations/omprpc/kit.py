@@ -6,6 +6,7 @@ import asyncio
 import os
 import signal
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
@@ -17,7 +18,7 @@ import pytest
 from pydantic import JsonValue
 
 from band.integrations.codex.winspawn import Job
-from band.integrations.omprpc import OmpRpcClient
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import (
     OmpContent,
     OmpEvent,
@@ -29,11 +30,34 @@ from band.integrations.ompwire import (
 )
 from tests.integrations import omppeer
 from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT, ProcessReceipt
+from tests.integrations.omprpc.cancellation import HeldCleanup
 
 ClientFactory = Callable[[str], Awaitable[OmpRpcClient]]
 
 # The fake OMP peer every RPC test launches as its subprocess.
 OMP_PEER_SCRIPT = omppeer.__file__
+
+
+class SpawnBarrier:
+    """Create the first subprocess, then hold returning it until released."""
+
+    def __init__(
+        self, spawn: Callable[..., Awaitable[asyncio.subprocess.Process]]
+    ) -> None:
+        self.spawn = spawn
+        self.created = asyncio.Event()
+        self.release = asyncio.Event()
+        self.process: asyncio.subprocess.Process | None = None
+
+    async def create(
+        self, *command: str, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        process = await self.spawn(*command, **kwargs)
+        if self.process is None:
+            self.process = process
+            self.created.set()
+            await self.release.wait()
+        return process
 
 
 class Observer:
@@ -258,11 +282,93 @@ def refuse_containment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "killpg", refuse_process_signal)
 
 
-def session_ids(pids: Sequence[int]) -> list[int] | None:
+def session_ids(pids: Sequence[int]) -> list[int]:
     getsid = getattr(os, "getsid", None)
-    if getsid is None:
-        return None
+    assert getsid is not None
     return [getsid(pid) for pid in pids]
+
+
+def job_member_pids(client: OmpRpcClient) -> set[int]:
+    owner = client._windows_process
+    assert owner is not None and owner.job is not None
+    return set(owner.job._process_ids())
+
+
+async def wait_for_descendants(gate: ProcessGate, count: int = 2) -> list[GatedProcess]:
+    return [await gate.connection() for _ in range(count)]
+
+
+async def crash_rpc_root(client: OmpRpcClient) -> None:
+    root = owned_rpc_process(client)
+    crashing = asyncio.create_task(client.request("crash"))
+    async with asyncio.timeout(5):
+        await root.wait()
+    assert root.returncode == omppeer.CRASH_EXIT
+    with pytest.raises(OmpProcessError):
+        await crashing
+
+
+@dataclass
+class DescendantTree:
+    client: OmpRpcClient
+    cleanup: HeldCleanup
+    starting: asyncio.Task[None]
+    root: asyncio.subprocess.Process
+    descendants: list[GatedProcess]
+
+
+@asynccontextmanager
+async def hold_after_stdin_closed(
+    client: OmpRpcClient,
+) -> AsyncIterator[asyncio.Task[None]]:
+    entered = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def hold() -> None:
+        loop.call_soon_threadsafe(entered.set)
+        if not release.wait(timeout=10):
+            raise TimeoutError("Test did not release after_stdin_closed")
+
+    client.after_stdin_closed = hold
+    closing = asyncio.create_task(client.close())
+    try:
+        async with asyncio.timeout(10):
+            await entered.wait()
+        yield closing
+        if not closing.done():
+            release.set()
+            await closing
+    finally:
+        release.set()
+        await asyncio.gather(closing, return_exceptions=True)
+
+
+async def start_eof_client(
+    gate: ProcessGate, *, stdio: str
+) -> tuple[OmpRpcClient, GatedProcess, asyncio.subprocess.Process]:
+    client = descendant_client(
+        gate, scenario="eof-descendants", stdio=stdio, detached=True
+    )
+    await client.start()
+    helper = await gate.connection()
+    return client, helper, owned_rpc_process(client)
+
+
+async def connect_descendant_tree(
+    gate: ProcessGate, *, scenario: str, stdio: str
+) -> DescendantTree:
+    client = descendant_client(gate, scenario=scenario, stdio=stdio)
+    cleanup = HeldCleanup(client)
+    starting = asyncio.create_task(client.start())
+    descendants = await wait_for_descendants(gate)
+    return DescendantTree(
+        client=client,
+        cleanup=cleanup,
+        starting=starting,
+        root=owned_rpc_process(client),
+        descendants=descendants,
+    )
 
 
 class DeferredSessionSignal:

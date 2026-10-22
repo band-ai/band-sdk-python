@@ -14,13 +14,15 @@ from band.integrations.omprpc import (
     OmpRpcClient,
     OmpRpcError,
 )
-from tests.integrations.omprpc.kit import OMP_PEER_SCRIPT, ClientFactory
+from tests.integrations.omppeer import OVERSIZE_AFTER_READY
+from tests.integrations.omprpc.kit import OMP_PEER_SCRIPT, ClientFactory, SpawnBarrier
 
 
 class TestStartupNegotiation:
     async def test_cancelled_startup_reaps_a_process_that_never_announces_ready(
         self,
     ) -> None:
+        barrier = SpawnBarrier(asyncio.create_subprocess_exec)
         client = OmpRpcClient(
             (
                 sys.executable,
@@ -28,19 +30,21 @@ class TestStartupNegotiation:
                 OMP_PEER_SCRIPT,
                 "--scenario",
                 "no-ready",
-            )
+            ),
+            create_process=barrier.create,
         )
         starting = asyncio.create_task(client.start())
         try:
             async with asyncio.timeout(5):
-                while client._proc is None and not starting.done():
-                    await asyncio.sleep(0)
-            assert client._proc is not None
+                await barrier.created.wait()
+            assert barrier.process is not None
             assert starting.cancel()
+            barrier.release.set()
             with pytest.raises(asyncio.CancelledError):
                 await starting
-            assert client._proc.returncode is not None
+            assert barrier.process.returncode is not None
         finally:
+            barrier.release.set()
             await client.close()
 
     async def test_missing_executable_is_a_process_failure(self) -> None:
@@ -65,6 +69,13 @@ class TestStartupNegotiation:
         async with asyncio.timeout(6):
             with pytest.raises(error, match="protocol"):
                 await client_factory(scenario)
+
+    async def test_negotiated_frame_limit_applies_before_the_next_line(
+        self, client_factory: ClientFactory
+    ) -> None:
+        async with asyncio.timeout(6):
+            with pytest.raises(OmpProtocolError, match="frame length"):
+                await client_factory(OVERSIZE_AFTER_READY)
 
     async def test_graceful_close_does_not_log_stdout_eof_as_a_crash(
         self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture

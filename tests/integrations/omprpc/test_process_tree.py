@@ -3,63 +3,45 @@
 from __future__ import annotations
 
 import asyncio
-import os
 
 import psutil
 import pytest
-from pydantic import JsonValue
 
 from band.integrations.omprpc import OmpProcessError
 from band.integrations.omprpc.client import PROCESS_EXIT_TIMEOUT_S
-from tests.integrations.omppeer import CRASH_EXIT
-from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
     DeferredSessionSignal,
     ProcessGate,
     RecycledEnvironment,
+    connect_descendant_tree,
+    crash_rpc_root,
     descendant_client,
     descendant_liveness,
+    job_member_pids,
     owned_rpc_process,
     process_is_alive,
     refuse_containment,
     session_ids,
     unrelated_gate_child,
+    wait_for_descendants,
 )
+from tests.ostable import skip_unless_os
 
 
 class TestProcessTreeCleanup:
-    @pytest.mark.parametrize("root_exit", ["close", "crash"])
     async def test_close_reaps_detached_descendants_without_affecting_other_owners(
-        self, process_gate: ProcessGate, root_exit: str
+        self, process_gate: ProcessGate
     ) -> None:
         client = descendant_client(process_gate, detached=True)
         other = descendant_client(process_gate, detached=True)
-        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
         async with unrelated_gate_child(process_gate) as unrelated:
             try:
                 await client.start()
-                descendants = [
-                    await process_gate.connection(),
-                    await process_gate.connection(),
-                ]
+                descendants = await wait_for_descendants(process_gate)
                 root = owned_rpc_process(client)
-                ids = session_ids([child.process.pid for child in descendants])
-                if ids is not None:
-                    assert ids == [child.process.pid for child in descendants]
-                    assert all(session != root.pid for session in ids)
                 await other.start()
-                other_descendants = [
-                    await process_gate.connection(),
-                    await process_gate.connection(),
-                ]
+                other_descendants = await wait_for_descendants(process_gate)
                 other_root = owned_rpc_process(other)
-                if root_exit == "crash":
-                    crashing = asyncio.create_task(client.request("crash"))
-                    async with asyncio.timeout(5):
-                        await root.wait()
-                    assert root.returncode == CRASH_EXIT
-                    with pytest.raises(OmpProcessError):
-                        await crashing
 
                 await client.close()
                 assert root.returncode is not None
@@ -74,8 +56,64 @@ class TestProcessTreeCleanup:
             finally:
                 await client.close()
                 await other.close()
-                if crashing is not None:
-                    await asyncio.gather(crashing, return_exceptions=True)
+
+    async def test_crash_then_close_reaps_detached_descendants_without_affecting_other_owners(
+        self, process_gate: ProcessGate
+    ) -> None:
+        client = descendant_client(process_gate, detached=True)
+        other = descendant_client(process_gate, detached=True)
+        async with unrelated_gate_child(process_gate) as unrelated:
+            try:
+                await client.start()
+                descendants = await wait_for_descendants(process_gate)
+                root = owned_rpc_process(client)
+                await other.start()
+                other_descendants = await wait_for_descendants(process_gate)
+                other_root = owned_rpc_process(other)
+                await crash_rpc_root(client)
+
+                await client.close()
+                assert root.returncode is not None
+                assert await descendant_liveness(descendants) == [False, False]
+                assert other_root.returncode is None
+                assert await descendant_liveness(other_descendants) == [True, True]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+                await other.close()
+                assert await descendant_liveness(other_descendants) == [False, False]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+            finally:
+                await client.close()
+                await other.close()
+
+    @pytest.mark.parametrize("accepted_on", [("posix",)])
+    async def test_detached_descendants_are_their_own_sessions(
+        self, process_gate: ProcessGate, accepted_on: tuple[str, ...]
+    ) -> None:
+        skip_unless_os(accepted_on)
+        client = descendant_client(process_gate, detached=True)
+        try:
+            await client.start()
+            descendants = await wait_for_descendants(process_gate)
+            root = owned_rpc_process(client)
+            ids = session_ids([child.process.pid for child in descendants])
+            assert ids == [child.process.pid for child in descendants]
+            assert all(session != root.pid for session in ids)
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize("accepted_on", [("nt",)])
+    async def test_detached_descendants_are_job_members(
+        self, process_gate: ProcessGate, accepted_on: tuple[str, ...]
+    ) -> None:
+        skip_unless_os(accepted_on)
+        client = descendant_client(process_gate, detached=True)
+        try:
+            await client.start()
+            descendants = await wait_for_descendants(process_gate)
+            members = job_member_pids(client)
+            assert {child.process.pid for child in descendants} <= members
+        finally:
+            await client.close()
 
     async def test_stale_matching_environment_cannot_adopt_a_reused_process_identity(
         self, process_gate: ProcessGate, monkeypatch: pytest.MonkeyPatch
@@ -84,10 +122,7 @@ class TestProcessTreeCleanup:
         async with unrelated_gate_child(process_gate) as unrelated:
             try:
                 await client.start()
-                descendants = [
-                    await process_gate.connection(),
-                    await process_gate.connection(),
-                ]
+                descendants = await wait_for_descendants(process_gate)
                 root = owned_rpc_process(client)
                 boundary = RecycledEnvironment(unrelated, root.pid)
                 with monkeypatch.context() as patch:
@@ -103,48 +138,27 @@ class TestProcessTreeCleanup:
         self, process_gate: ProcessGate
     ) -> None:
         client = descendant_client(process_gate)
-        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
         try:
             await client.start()
-            descendants = [
-                await process_gate.connection(),
-                await process_gate.connection(),
-            ]
-            root = owned_rpc_process(client)
+            descendants = await wait_for_descendants(process_gate)
             assert await descendant_liveness(descendants) == [True, True]
-
-            crashing = asyncio.create_task(client.request("crash"))
-            async with asyncio.timeout(5):
-                await root.wait()
-            assert root.returncode == CRASH_EXIT
-            with pytest.raises(OmpProcessError):
-                await crashing
+            await crash_rpc_root(client)
             await client.close()
-
             assert await descendant_liveness(descendants) == [False, False]
-            await client.close()
         finally:
             await client.close()
-            if crashing is not None:
-                await asyncio.gather(crashing, return_exceptions=True)
 
     async def test_failed_containment_cleanup_is_retried_before_restart(
         self, process_gate: ProcessGate, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = descendant_client(process_gate)
-        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
         try:
             await client.start()
             old_root = owned_rpc_process(client)
-            descendants = [
-                await process_gate.connection(),
-                await process_gate.connection(),
-            ]
+            descendants = await wait_for_descendants(process_gate)
             with monkeypatch.context() as patch:
                 refuse_containment(patch)
-                crashing = asyncio.create_task(client.request("crash"))
-                async with asyncio.timeout(5):
-                    await old_root.wait()
+                await crash_rpc_root(client)
                 with pytest.raises(PermissionError, match="not signalable"):
                     await client.close()
                 assert await descendant_liveness(descendants) == [True, True]
@@ -152,15 +166,12 @@ class TestProcessTreeCleanup:
             await client.start()
             assert owned_rpc_process(client) is not old_root
             assert await descendant_liveness(descendants) == [False, False]
-            await process_gate.connection()
-            await process_gate.connection()
+            await wait_for_descendants(process_gate)
             await client.close()
         finally:
             await client.close()
-            if crashing is not None:
-                await asyncio.gather(crashing, return_exceptions=True)
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX group settlement boundary")
+    @pytest.mark.parametrize("accepted_on", [("posix",)])
     @pytest.mark.parametrize(
         "hide_after_signal", [False, True], ids=["visible", "hidden-after-signal"]
     )
@@ -168,26 +179,22 @@ class TestProcessTreeCleanup:
         self,
         process_gate: ProcessGate,
         monkeypatch: pytest.MonkeyPatch,
+        accepted_on: tuple[str, ...],
         hide_after_signal: bool,
     ) -> None:
+        skip_unless_os(accepted_on)
         client = descendant_client(process_gate)
-        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
         try:
             await client.start()
             old_root = owned_rpc_process(client)
-            descendants = [
-                await process_gate.connection(),
-                await process_gate.connection(),
-            ]
+            descendants = await wait_for_descendants(process_gate)
             boundary = DeferredSessionSignal(
                 old_root.pid, descendants, hide_after_signal=hide_after_signal
             )
             with monkeypatch.context() as patch:
                 boundary.install(patch)
                 client.process_exit_timeout_s = 0
-                crashing = asyncio.create_task(client.request("crash"))
-                async with asyncio.timeout(5):
-                    await old_root.wait()
+                await crash_rpc_root(client)
                 for _ in range(2):
                     with pytest.raises(OmpProcessError, match="session members"):
                         await client.close()
@@ -197,97 +204,91 @@ class TestProcessTreeCleanup:
             await client.start()
             assert owned_rpc_process(client) is not old_root
             assert await descendant_liveness(descendants) == [False, False]
-            await process_gate.connection()
-            await process_gate.connection()
+            await wait_for_descendants(process_gate)
             await client.close()
         finally:
             await client.close()
-            if crashing is not None:
-                await asyncio.gather(crashing, return_exceptions=True)
 
     @pytest.mark.parametrize("stdio", ["inherit", "discard"])
-    @pytest.mark.parametrize("interruption", ["startup", "close"])
-    async def test_cancelled_cleanup_reaps_descendants_but_not_unrelated_processes(
+    async def test_cancelled_startup_cleanup_reaps_descendants_but_not_unrelated_processes(
         self,
         process_gate: ProcessGate,
         stdio: str,
-        interruption: str,
     ) -> None:
-        client = descendant_client(
-            process_gate,
-            scenario=(
-                "no-ready-descendants" if interruption == "startup" else "descendants"
-            ),
-            stdio=stdio,
+        tree = await connect_descendant_tree(
+            process_gate, scenario="no-ready-descendants", stdio=stdio
         )
-        cleanup = HeldCleanup(client)
-        starting: asyncio.Task[None] | None = None
-        closing: asyncio.Task[None] | None = None
         async with unrelated_gate_child(process_gate) as unrelated:
             try:
-                starting = asyncio.create_task(client.start())
-                try:
-                    descendants = [
-                        await process_gate.connection(),
-                        await process_gate.connection(),
-                    ]
-                except TimeoutError:
-                    if starting.done():
-                        await starting
-                    process = getattr(client, "_proc", None)
-                    pytest.fail(
-                        "Peer did not connect its descendants: "
-                        f"startup_done={starting.done()}, "
-                        f"root_pid={process.pid if process else None}, "
-                        f"returncode={process.returncode if process else None}"
-                    )
-                spawning = client._spawn_task
-                assert spawning is not None
-                async with asyncio.timeout(5):
-                    root = await asyncio.shield(spawning)
-                root_process = await asyncio.to_thread(psutil.Process, root.pid)
-                ancestors = [
-                    await asyncio.to_thread(process.process.parents)
-                    for process in descendants
-                ]
-                assert all(root_process in parents for parents in ancestors)
-                assert (
-                    descendants[0].process in ancestors[1]
-                    or descendants[1].process in ancestors[0]
-                )
-                if interruption == "startup":
-                    closing = starting
-                    assert closing.cancel()
-                else:
-                    async with asyncio.timeout(5):
-                        await starting
-                    closing = asyncio.create_task(client.close())
-                await cleanup.wait_for_join(closing)
-                if interruption == "close":
-                    await cleanup.cancel_and_wait_for_rejoin(closing)
-
+                root_process = await asyncio.to_thread(psutil.Process, tree.root.pid)
+                closing = tree.starting
+                assert closing.cancel()
+                await tree.cleanup.wait_for_join(closing)
                 for _ in range(3):
-                    await cleanup.cancel_and_wait_for_rejoin(closing)
-                    assert root.returncode is None
+                    await tree.cleanup.cancel_and_wait_for_rejoin(closing)
+                    assert tree.root.returncode is None
                     assert await asyncio.to_thread(process_is_alive, root_process)
-                    assert await descendant_liveness(descendants) == [True, True]
+                    assert await descendant_liveness(tree.descendants) == [True, True]
                     assert await asyncio.to_thread(process_is_alive, unrelated.process)
-                    assert not cleanup.finished.is_set()
+                    assert not tree.cleanup.finished.is_set()
 
-                cleanup.release.set()
+                tree.cleanup.release.set()
                 async with asyncio.timeout(10):
                     with pytest.raises(asyncio.CancelledError):
                         await closing
-                    await root.wait()
-                assert cleanup.finished.is_set()
-                assert root.returncode is not None
-                assert await descendant_liveness(descendants) == [False, False]
+                    await tree.root.wait()
+                assert tree.cleanup.finished.is_set()
+                assert tree.root.returncode is not None
+                assert await descendant_liveness(tree.descendants) == [False, False]
                 assert await asyncio.to_thread(process_is_alive, unrelated.process)
-                await client.close()
+                await tree.client.close()
             finally:
-                cleanup.release.set()
-                tasks = {task for task in (starting, closing) if task is not None}
+                tree.cleanup.release.set()
+                tree.starting.cancel()
+                await asyncio.gather(tree.starting, return_exceptions=True)
+                await tree.client.close()
+
+    @pytest.mark.parametrize("stdio", ["inherit", "discard"])
+    async def test_cancelled_close_cleanup_reaps_descendants_but_not_unrelated_processes(
+        self,
+        process_gate: ProcessGate,
+        stdio: str,
+    ) -> None:
+        tree = await connect_descendant_tree(
+            process_gate, scenario="descendants", stdio=stdio
+        )
+        closing: asyncio.Task[None] | None = None
+        async with unrelated_gate_child(process_gate) as unrelated:
+            try:
+                async with asyncio.timeout(5):
+                    await tree.starting
+                root_process = await asyncio.to_thread(psutil.Process, tree.root.pid)
+                closing = asyncio.create_task(tree.client.close())
+                await tree.cleanup.wait_for_join(closing)
+                await tree.cleanup.cancel_and_wait_for_rejoin(closing)
+                for _ in range(3):
+                    await tree.cleanup.cancel_and_wait_for_rejoin(closing)
+                    assert tree.root.returncode is None
+                    assert await asyncio.to_thread(process_is_alive, root_process)
+                    assert await descendant_liveness(tree.descendants) == [True, True]
+                    assert await asyncio.to_thread(process_is_alive, unrelated.process)
+                    assert not tree.cleanup.finished.is_set()
+
+                tree.cleanup.release.set()
+                async with asyncio.timeout(10):
+                    with pytest.raises(asyncio.CancelledError):
+                        await closing
+                    await tree.root.wait()
+                assert tree.cleanup.finished.is_set()
+                assert tree.root.returncode is not None
+                assert await descendant_liveness(tree.descendants) == [False, False]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+                await tree.client.close()
+            finally:
+                tree.cleanup.release.set()
+                tree.starting.cancel()
+                tasks = [tree.starting, *([closing] if closing is not None else [])]
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-                await client.close()
+                await tree.client.close()
