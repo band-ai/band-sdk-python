@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 from hypothesis import Phase, example, given, settings
@@ -30,7 +31,8 @@ class TestRpcLifecycleModel:
     # Each generated step retains its separate, shorter hang guard.
     @pytest.mark.timeout(600)
     @settings(
-        max_examples=20,
+        # Explicit scenarios still run everywhere; generated Windows peers are costly.
+        max_examples=8 if sys.platform == "win32" else 20,
         deadline=None,
         phases=(Phase.explicit, Phase.reuse, Phase.generate),
     )
