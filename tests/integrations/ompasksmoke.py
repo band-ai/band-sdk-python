@@ -2,6 +2,7 @@
 
 Run with ``python -m tests.integrations.ompasksmoke --executable /path/to/omp``.
 The native extension command validates the real wire answer and writes a receipt.
+The model selection enables RPC startup only; the command never invokes it.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import tempfile
 from pathlib import Path
 
+from band.core.defaultmodels import ANTHROPIC_SMALL_MODEL
 from band.integrations.omproomask import delivered_answers
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
@@ -44,12 +46,14 @@ async def smoke(executable: str, timeout_s: float) -> None:
                 executable,
                 "--mode",
                 "rpc",
+                "--model",
+                f"anthropic/{ANTHROPIC_SMALL_MODEL}",
                 "--no-session",
                 f"--cwd={sandbox}",
                 "--no-extensions",
                 f"--extension={Path(__file__).with_suffix('.js')}",
             ),
-            env={"BAND_OMP_ASK_SMOKE_RECEIPT": str(receipt)},
+            env={"HOME": sandbox, "BAND_OMP_ASK_SMOKE_RECEIPT": str(receipt)},
         )
         try:
             async with asyncio.timeout(timeout_s):
