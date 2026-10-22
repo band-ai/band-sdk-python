@@ -23,7 +23,7 @@ from tests.runtime.resync.kit import ReconciledRoom, ReconciliationPeer
 
 
 @pytest.fixture
-def mock_link():
+def mock_link() -> MagicMock:
     """BandLink mock configured for ExecutionContext tests."""
     link = MagicMock()
     link.agent_id = "agent-123"
@@ -53,6 +53,7 @@ def mock_link():
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
+    link.report_activity = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
 
