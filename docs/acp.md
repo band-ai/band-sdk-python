@@ -252,3 +252,9 @@ A `create_process` factory customizes creation without bypassing containment.
 On Windows it launches the existing helper; the client still owns the Job
 containing the native process and its descendants, including during cancelled
 or incomplete startup.
+
+On POSIX, process-group capture rechecks a reaped leader's identity after
+enumerating members, before retaining that group. A reused leader PID does not
+transfer custody to an unrelated session. Platforms without process-group support
+use their existing Job and environment-marker ownership instead of probing that
+PID as a group identity.

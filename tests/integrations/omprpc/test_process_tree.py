@@ -11,12 +11,15 @@ from pydantic import JsonValue
 
 from band.integrations.omprpc import OmpProcessError
 from band.integrations.omprpc.client import PROCESS_EXIT_TIMEOUT_S
+from band.integrations.omprpc.scope import OmpProcessScope
 from tests.integrations.omppeer import CRASH_EXIT
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
+    ClientFactory,
     DeferredSessionSignal,
     ProcessGate,
     RecycledEnvironment,
+    RecycledGroup,
     descendant_client,
     descendant_liveness,
     owned_rpc_process,
@@ -28,6 +31,27 @@ from tests.integrations.omprpc.kit import (
 
 
 class TestProcessTreeCleanup:
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group identity boundary")
+    async def test_reused_group_during_capture_cannot_adopt_an_unrelated_process(
+        self,
+        client_factory: ClientFactory,
+        process_gate: ProcessGate,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        client = await client_factory("basic")
+        root = owned_rpc_process(client)
+        await client.close()
+        assert root.returncode is not None
+        scope = OmpProcessScope()
+        async with unrelated_gate_child(process_gate) as unrelated:
+            boundary = RecycledGroup(root, unrelated)
+            with monkeypatch.context() as patch:
+                boundary.install(patch)
+                scope.capture(root)
+            assert boundary.reused
+            assert unrelated.process not in scope.processes
+            assert await asyncio.to_thread(process_is_alive, unrelated.process)
+
     @pytest.mark.parametrize("root_exit", ["close", "crash"])
     async def test_close_reaps_detached_descendants_without_affecting_other_owners(
         self, process_gate: ProcessGate, root_exit: str

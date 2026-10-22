@@ -339,6 +339,32 @@ async def unrelated_gate_child(gate: ProcessGate) -> AsyncIterator[GatedProcess]
             await process.wait()
 
 
+class RecycledGroup:
+    """Reuse a reaped leader's group id during membership enumeration."""
+
+    def __init__(
+        self, root: asyncio.subprocess.Process, unrelated: GatedProcess
+    ) -> None:
+        self.root = root
+        self.unrelated = unrelated
+        self.reused = False
+
+    def check_leader(self, pid: int, sig: int) -> None:
+        assert (pid, sig) == (self.root.pid, 0)
+        if not self.reused:
+            raise ProcessLookupError
+
+    def group(self, pid: int) -> int:
+        assert pid == self.unrelated.process.pid
+        self.reused = True
+        return self.root.pid
+
+    def install(self, patch: pytest.MonkeyPatch) -> None:
+        patch.setattr(psutil, "pids", lambda: [self.unrelated.process.pid])
+        patch.setattr(os, "kill", self.check_leader)
+        patch.setattr(os, "getpgid", self.group)
+
+
 class RecycledEnvironment:
     """Expose one stale matching environment while the process identity changes."""
 
