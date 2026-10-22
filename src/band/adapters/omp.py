@@ -154,6 +154,7 @@ class OmpRoom:
     session_id: str = ""
     session_file: str | None = None
     bootstrapped: bool = False
+    retiring: bool = False
 
 
 @dataclass
@@ -447,7 +448,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             deadline = asyncio.timeout(self.config.turn_timeout_s)
             try:
                 async with deadline:
-                    room = self._rooms.get(room_id) or await self._open_room(
+                    room = self._rooms.get(room_id)
+                    if room is not None and room.retiring:
+                        await self._close_room(room_id)
+                        room = None
+                    room = room or await self._open_room(
                         room_id, history if is_session_bootstrap else OmpSessionState()
                     )
                     prompt = await self._prompt_text(
@@ -797,15 +802,14 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
 
     async def _close_room(self, room_id: str) -> None:
-        room = self._rooms.pop(room_id, None)
-        try:
-            if room is not None:
-                try:
-                    await room.runtime.close()
-                finally:
-                    room.resources.close()
-        finally:
-            self._workspaces.release(room_id)
+        room = self._rooms.get(room_id)
+        if room is not None:
+            room.retiring = True
+            # A failed close still owns the process, startup files and workspace.
+            await room.runtime.close()
+            room.resources.close()
+            self._rooms.pop(room_id, None)
+        self._workspaces.release(room_id)
 
     async def on_cleanup(self, room_id: str) -> None:
         owner = self._owners.get(room_id)
