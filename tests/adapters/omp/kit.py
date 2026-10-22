@@ -19,6 +19,7 @@ from band.adapters.omp import (
     OMP_SESSION_DIRECTORY,
     OmpAdapter,
     OmpAdapterConfig,
+    OmpPermissionRequest,
 )
 from band.converters.omp import OmpSessionState
 from band.core.delivery import DeliveryFailedError
@@ -1151,6 +1152,29 @@ def make_adapter(
         OmpAdapterConfig(cwd=str(tmp_path)),
         emit=emit,
         resolve_permission=resolve_permission,
+    )
+
+
+class GatedPermissionResolver:
+    """Hold each manual choice until its test supplies a result."""
+
+    def __init__(self, *titles: str) -> None:
+        self.entered = {title: asyncio.Event() for title in titles}
+        self.responses: dict[str, asyncio.Future[str | None]] = {
+            title: asyncio.get_running_loop().create_future() for title in titles
+        }
+
+    async def __call__(self, request: OmpPermissionRequest) -> str | None:
+        self.entered[request.title].set()
+        return await self.responses[request.title]
+
+
+def permission_request(request_id: str) -> OmpUIRequest:
+    return OmpUIRequest(
+        id=request_id,
+        method="select",
+        title=request_id,
+        options=["Approve", "Deny"],
     )
 
 
