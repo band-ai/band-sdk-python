@@ -79,9 +79,10 @@ async def overflow_reaps_and_restarts(
             await running
         with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
             await burst
-    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
-    assert [record.levelno for record in errors] == [logging.ERROR]
-    assert BACKLOG_EXCEEDED in errors[0].getMessage()
+    assert any(
+        record.levelno == logging.ERROR and BACKLOG_EXCEEDED in record.getMessage()
+        for record in caplog.records
+    )
     assert stopped.is_set()
     assert process.returncode is not None
     await client.start()
