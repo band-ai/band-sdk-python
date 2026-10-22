@@ -238,9 +238,11 @@ class ACPRuntime(ACPSessionOperations):
             # Even a context that returned successfully can leave a child
             # running; its process handle, not that return, confirms exit.
             if isinstance(process, asyncio.subprocess.Process):
+                # A refused context exit may have left ACP reading stdout.
+                close = getattr(self._conn, "close", None)
+                if close is not None:
+                    await close()
                 await _kill(process)
-            if isinstance(process, asyncio.subprocess.Process) and process.stdout:
-                await _read_to_eof(process.stdout)
 
     def _forget_connection(self) -> None:
         self._ctx = None
@@ -320,6 +322,9 @@ async def _kill(process: asyncio.subprocess.Process) -> None:
         )
         with suppress(ProcessLookupError):
             process.kill()
+    # A paused pipe can prevent an already-registered wait from completing.
+    if process.stdout is not None:
+        await _read_to_eof(process.stdout)
     await process.wait()
 
 

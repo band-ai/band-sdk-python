@@ -22,6 +22,16 @@ class TestProcessReaping:
             assert runtime.closed
 
     @pytest.mark.asyncio
+    async def test_stop_drains_buffered_stdout_before_confirming_exit(self) -> None:
+        async with leaky_runtime(buffered_stdout=True) as (runtime, process):
+            await runtime.start()
+            await runtime.stop()
+
+            assert process.returncode is not None
+            assert process.stdout is not None and process.stdout.at_eof()
+            assert runtime.closed
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("confirmation", ["kill", "wait"])
     async def test_failed_confirmation_keeps_the_child_and_refuses_its_connection(
         self, confirmation: str
