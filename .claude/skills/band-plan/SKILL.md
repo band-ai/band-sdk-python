@@ -108,6 +108,8 @@ area a worker where available, and also do Phase 2's survey for its area.
    choosing the design. Record affected consumers, relevant sibling sources,
    and the placement rationale in the plan; for clearly local changes, record
    why sibling comparison is unnecessary. Reuse Phase 1 research where available.
+   Include evidence-backed sibling followups and relevant counterpart skill
+   updates as proposals under the existing scope gate.
 
 ## Phase 3 — Find the root cause and the right level
 
