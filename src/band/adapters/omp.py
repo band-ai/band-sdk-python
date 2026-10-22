@@ -54,10 +54,10 @@ from band.integrations.ompprocess import (
     DEFAULT_OMP_COMMAND,
     OmpMcpServer,
     normalize_native_mcp_device_call,
-    omp_command_in_workspace,
     omp_mcp_arguments,
     omp_mcp_plugin,
     omp_mcp_ready,
+    omp_rpc_command_in_workspace,
     omp_runtime_env,
 )
 from band.integrations.omprpc import OmpRpcClient, OmpRpcError
@@ -264,7 +264,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             model=self.config.model,
             approval_mode=self.config.approval_mode,
         )
-        return omp_command_in_workspace(command, workspace) if workspace else command
+        return (
+            omp_rpc_command_in_workspace(command, workspace) if workspace else command
+        )
 
     async def _open_room(self, room_id: str, history: OmpSessionState) -> OmpRoom:
         workspace = self._workspaces.claim(room_id)
