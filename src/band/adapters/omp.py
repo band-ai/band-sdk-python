@@ -25,9 +25,8 @@ from typing_extensions import Unpack
 
 from band.converters.helpers import build_replay_messages
 from band.converters.omp import (
-    OMP_ROOM_METADATA_KEY,
-    OMP_SESSION_METADATA_KEY,
     OmpHistoryConverter,
+    OmpMetadataKey,
     OmpSessionState,
 )
 from band.core.adapterconfig import BaseAdapterConfig
@@ -498,9 +497,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         "OMP session",
                         MessageType.TASK,
                         metadata={
-                            OMP_ROOM_METADATA_KEY: room_id,
+                            OmpMetadataKey.ROOM: room_id,
                             "omp_session_id": room.session_id,
-                            OMP_SESSION_METADATA_KEY: room.session_file,
+                            OmpMetadataKey.SESSION: room.session_file,
                         },
                     )
             except asyncio.CancelledError:
