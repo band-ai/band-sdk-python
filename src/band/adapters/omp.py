@@ -994,7 +994,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             room.bootstrapped = True
             # A lost post-prompt state response must not outlive completion.
             try:
-                async with asyncio.timeout(omprpc.COMPLETION_TIMEOUT_S):
+                async with asyncio.timeout(room.client.completion_timeout_s):
                     await self._refresh_state(room)
             except TimeoutError as cause:
                 raise omprpc.OmpCompletionTimeout(
