@@ -529,9 +529,11 @@ class OmpRpcClient:
 
     async def _deliver_events(self, turn: PromptRun) -> None:
         try:
-            while True:
+            while self._turn is turn and not self._closing:
                 event = await turn.events.get()
                 try:
+                    if self._turn is not turn or self._closing:
+                        return
                     await turn.on_event(event)
                 finally:
                     turn.events.task_done()
