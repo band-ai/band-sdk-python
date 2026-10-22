@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import psutil
+import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
@@ -175,16 +176,14 @@ async def owned_rpc_turn(
         async def start(self):
             await super().start()
             assert self._proc is not None
-            assert self._process_identity is not None
+            root_identity = await asyncio.to_thread(psutil.Process, self._proc.pid)
             checkpoint = await self.request("checkpoint")
             peer_pid = checkpoint["pid"]
             assert isinstance(peer_pid, int)
             peer_identity = await asyncio.to_thread(psutil.Process, peer_pid)
             await asyncio.to_thread(peer_identity.create_time)
-            assert (
-                peer_identity == self._process_identity
-                or self._process_identity
-                in (await asyncio.to_thread(peer_identity.parents))
+            assert peer_identity == root_identity or root_identity in (
+                await asyncio.to_thread(peer_identity.parents)
             )
             clients.append((self, peer_identity))
 
@@ -253,18 +252,35 @@ async def owned_rpc_turn(
         closing = client._close_task
         assert closing is not None and closing.done() and not closing.cancelled()
         assert closing.exception() is None
-        assert client._process_identity is not None
-        assert (
-            peer_identity == client._process_identity
-            or peer_identity in client._descendants
-        )
-        # Windows venv launchers can expose the interpreter as a descendant.
-        # Cleanup guarantees settlement, not a zero status after forced termination.
-        for identity in {
-            client._process_identity,
-            peer_identity,
-            *client._descendants,
-        }:
-            assert not await asyncio.to_thread(process_is_alive, identity)
+        # The retained helper can differ from the native interpreter on Windows.
+        assert not await asyncio.to_thread(process_is_alive, peer_identity)
     assert adapter._rooms == {}
     return tools, observed
+
+
+class Launches:
+    """Record native runtime instances and the startup overlays they own."""
+
+    def __init__(self) -> None:
+        self.runtimes: list[PendingRuntime] = []
+        self.servers: list[dict[str, object]] = []
+        self.plugins: list[Path] = []
+        self.spawned = asyncio.Event()
+
+    def __call__(self, command: list[str], **_kwargs: object) -> PendingRuntime:
+        plugin = command[command.index("--plugin-dir") + 1]
+        overlay = json.loads((Path(plugin) / ".mcp.json").read_text(encoding="utf-8"))
+        self.servers.append(overlay["mcpServers"])
+        self.plugins.append(Path(plugin))
+        runtime = PendingRuntime()
+        runtime.finish.set()
+        self.runtimes.append(runtime)
+        self.spawned.set()
+        return runtime
+
+
+@pytest.fixture
+def launches(monkeypatch: pytest.MonkeyPatch) -> Launches:
+    record = Launches()
+    monkeypatch.setattr("band.adapters.omp.OmpRpcClient", record)
+    return record
