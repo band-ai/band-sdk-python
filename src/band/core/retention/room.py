@@ -84,7 +84,8 @@ class RetainedRoom:
         self._generation = 0
         self._leases = 0
         self._owned: set[asyncio.Task[Any]] = set()
-        # Owned tasks that requested this room's cleanup and unwind themselves.
+        self._waiting: dict[asyncio.Task[Any], asyncio.Task[Any]] = {}
+        # Cleanup requesters and their active dependents unwind themselves.
         self._unwinding: set[asyncio.Task[Any]] = set()
         self._holders: Counter[asyncio.Task[Any] | None] = Counter()
         self._activity = ProviderActivity.UNKNOWN
@@ -208,9 +209,30 @@ class RetainedRoom:
         enrolled.set_result(None)
         return task
 
+    async def wait_owned(self, task: asyncio.Task[Any]) -> None:
+        """Wait for accepted work to settle without consuming its outcome.
+
+        Cancellation leaves the target running. Active accepted dependents
+        share a cleanup requester's exemption until their own operation ends.
+        Read ``task.result()`` explicitly when the outcome is needed.
+        """
+        current = asyncio.current_task()
+        if current is task:
+            raise ValueError("Owned work cannot wait for itself")
+        if task.done():
+            return
+        if current is None or not self.enrolls(current) or not self.enrolls(task):
+            raise ValueError("Pending waits require work accepted by this room")
+        self._waiting[current] = task
+        try:
+            await asyncio.wait({task})
+        finally:
+            self._waiting.pop(current, None)
+
     def _disown(self, task: asyncio.Task[Any]) -> None:
         self._owned.discard(task)
         self._unwinding.discard(task)
+        self._waiting.pop(task, None)
         self._schedule()
 
     def recover(self, *, generation: int, reason: str) -> bool:
@@ -591,10 +613,22 @@ class RetainedRoom:
         """Exempt enrolled work requesting cleanup from cancellation; it is
         told cleanup is pending and still joined once it unwinds."""
         current = asyncio.current_task()
-        if not self.enrolls(current):
+        if current is None or not self.enrolls(current):
             return False
-        if current is not None and current in self._owned:
-            self._unwinding.add(current)
+        pending = {current}
+        visited = set()
+        while pending:
+            requester = pending.pop()
+            if requester in visited:
+                continue
+            visited.add(requester)
+            if requester in self._owned:
+                self._unwinding.add(requester)
+            pending.update(
+                waiter
+                for waiter, target in self._waiting.items()
+                if target is requester and self.enrolls(waiter)
+            )
         return True
 
     async def dispose(self) -> None:
