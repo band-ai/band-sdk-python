@@ -39,6 +39,13 @@ class TestRpcLifecycleModel:
     @example(steps=[Step.PROMPT, Step.CRASH, Step.PROMPT, Step.CANCEL_OWNER])
     @example(steps=[Step.CANCEL_START_RESTART, Step.PROMPT, Step.CLOSE])
     @example(steps=[Step.CANCEL_CLOSE_RESTART, Step.PROMPT, Step.SETTLE])
+    @example(
+        steps=[
+            Step.CANCEL_CLOSE_RESTART,
+            Step.CANCEL_OWNER,
+            Step.CANCEL_CLOSE_RESTART,
+        ]
+    )
     @example(steps=[Step.PROMPT, Step.PROMPT, Step.CANCEL_OWNER, Step.CANCEL_OWNER])
     @example(
         steps=[

@@ -270,9 +270,8 @@ class ProcessGate:
         self.connections.put_nowait((reader, writer))
 
     async def connection(self) -> GatedProcess:
-        async with asyncio.timeout(5):
-            reader, _ = await self.connections.get()
-            receipt = ProcessReceipt.model_validate_json(await reader.readline())
+        reader, _ = await self.connections.get()
+        receipt = ProcessReceipt.model_validate_json(await reader.readline())
         process = await asyncio.to_thread(psutil.Process, receipt.pid)
         self.processes.append(process)
         assert await asyncio.to_thread(process.create_time) == receipt.created
@@ -329,11 +328,11 @@ async def wait_for_descendants(gate: ProcessGate, count: int = 2) -> list[GatedP
 async def descendants_started_with(
     gate: ProcessGate, root: asyncio.subprocess.Process, count: int = 2
 ) -> list[GatedProcess]:
-    created = await asyncio.to_thread(psutil.Process(root.pid).create_time)
+    ancestor = await asyncio.to_thread(psutil.Process, root.pid)
     children: list[GatedProcess] = []
     while len(children) < count:
         child = await gate.connection()
-        if child.receipt.created >= created:
+        if is_descendant(child.process, ancestor):
             children.append(child)
     return children
 
