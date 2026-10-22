@@ -553,7 +553,8 @@ class OmpRpcClient:
             case event_type if event_type in _EVENT_TYPES:
                 event = OmpEvent.model_validate(payload)
                 if turn is not None:
-                    turn.observe(event, sequence)
+                    if overflow := turn.observe(event, sequence):
+                        self._record_failure(overflow)
                 else:
                     logger.debug("OMP RPC ignored an event without an active prompt")
 
@@ -677,7 +678,7 @@ class OmpRpcClient:
     def _record_failure(self, error: OmpProcessError) -> None:
         if self._failure is None:
             self._failure = error
-            logger.error("OMP RPC transport failed: %s", error, exc_info=error)
+            logger.error("OMP RPC transport failed: %s", error)
         self._fail_pending(self._failure)
         if not self._closing:
             self._begin_close()
@@ -805,8 +806,9 @@ class OmpRpcClient:
                 label="write",
             )
             if not owner_closed:
-                async with self._write_lock:
-                    await close_stdin(process)
+                # A drain blocked on a full pipe keeps this lock; close must
+                # not wait for it. Writers are already cancelled.
+                await close_stdin(process)
                 await await_returncode(process, self.process_exit_timeout_s)
             await asyncio.to_thread(self.after_stdin_closed)
             if owner is not None:

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
 from band.integrations.omprpc import OmpProcessError, OmpProtocolError
+from tests.integrations.omppeer import FRAME_PAYLOAD_MARK
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -40,6 +42,19 @@ class TestTransportAndProtocolFailures:
             with pytest.raises(error, match=match):
                 await prompt_task(client, Observer())
         assert process.returncode is not None
+
+    async def test_protocol_failure_logs_omit_the_frame_payload(
+        self,
+        client_factory: ClientFactory,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client = await client_factory("bad-json")
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="band.integrations.omprpc.client"):
+            async with asyncio.timeout(6):
+                with pytest.raises(OmpProtocolError, match="protocol"):
+                    await prompt_task(client, Observer())
+        assert FRAME_PAYLOAD_MARK not in caplog.text
 
     async def test_eof_fails_a_command_waiter_and_closes_the_transport(
         self,

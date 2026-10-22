@@ -31,6 +31,7 @@ BACKGROUND_COMPLETE = "background complete"
 RESUMED_PROVIDER_FAILED = "Resumed provider failed"
 FOLLOW_UP_PROMPT = "second"
 CRASH_EXIT = 3
+FRAME_PAYLOAD_MARK = "omp-frame-payload-must-not-be-logged"
 UI_APPROVE = "Approve"
 UI_DENY = "Deny"
 HOST_CANCELLED_ID = "host-cancelled"
@@ -313,7 +314,7 @@ class Peer:
                 send({"type": "agent_start"})
                 raise SystemExit(2)
             case "bad-json":
-                sys.stdout.write("{broken\n")
+                sys.stdout.write("{" + FRAME_PAYLOAD_MARK + "\n")
                 sys.stdout.flush()
                 return
             case "bad-event":

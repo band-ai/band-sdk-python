@@ -166,3 +166,31 @@ class TestInterruptionAndReaping:
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
+
+    async def test_close_finishes_while_a_stdin_drain_is_held(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory("basic")
+        process = owned_rpc_process(client)
+        stdin = process.stdin
+        assert stdin is not None
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        drain = stdin.drain
+
+        async def hold_drain() -> None:
+            entered.set()
+            await release.wait()
+            await drain()
+
+        stdin.drain = hold_drain
+        writing = asyncio.create_task(client.request("checkpoint"))
+        try:
+            async with asyncio.timeout(5):
+                await entered.wait()
+                await client.close()
+            assert process.returncode is not None
+        finally:
+            release.set()
+            writing.cancel()
+            await asyncio.gather(writing, return_exceptions=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -67,10 +68,20 @@ async def overflow_reaps_and_restarts(
     running: asyncio.Task[None],
     process: asyncio.subprocess.Process,
     stopped: asyncio.Event,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    await client.request("event-burst", count=EVENT_BACKLOG_LIMIT + 1)
-    with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
-        await running
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="band.integrations.omprpc.client"):
+        burst = asyncio.create_task(
+            client.request("event-burst", count=EVENT_BACKLOG_LIMIT + 1)
+        )
+        with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
+            await running
+        with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
+            await burst
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert [record.levelno for record in errors] == [logging.ERROR]
+    assert BACKLOG_EXCEEDED in errors[0].getMessage()
     assert stopped.is_set()
     assert process.returncode is not None
     await client.start()
@@ -143,7 +154,7 @@ class TestEventBackpressure:
             await asyncio.gather(running, return_exceptions=True)
 
     async def test_overload_before_result_fails_closed_and_restarts(
-        self, client_factory: ClientFactory
+        self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
     ) -> None:
         client = await client_factory("event-backpressure")
         async with (
@@ -154,10 +165,10 @@ class TestEventBackpressure:
                 stopped,
             ),
         ):
-            await overflow_reaps_and_restarts(client, running, process, stopped)
+            await overflow_reaps_and_restarts(client, running, process, stopped, caplog)
 
     async def test_overload_after_settlement_fails_closed_and_restarts(
-        self, client_factory: ClientFactory
+        self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
     ) -> None:
         client = await client_factory("event-backpressure")
         async with (
@@ -169,4 +180,4 @@ class TestEventBackpressure:
             ),
         ):
             await client.request("event-result")
-            await overflow_reaps_and_restarts(client, running, process, stopped)
+            await overflow_reaps_and_restarts(client, running, process, stopped, caplog)

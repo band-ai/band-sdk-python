@@ -58,15 +58,16 @@ class PromptRun:
         if not self.failure.done():
             self.failure.set_result(error)
 
-    def observe(self, event: OmpEvent, sequence: int) -> None:
+    def observe(self, event: OmpEvent, sequence: int) -> OmpProcessError | None:
         if self.failure.done():
-            return
+            return None
         # Waiting for space would block the reader that services reentrant commands.
         try:
             self.events.put_nowait(event)
         except asyncio.QueueFull:
-            self.fail(OmpProcessError(BACKLOG_EXCEEDED))
-            return
+            error = OmpProcessError(BACKLOG_EXCEEDED)
+            self.fail(error)
+            return error
         self.last_activity_sequence = sequence
         match event.type:
             case OmpEventType.MESSAGE_END if (
@@ -83,3 +84,4 @@ class PromptRun:
                     self.last_assistant,
                 )
         self.changed.set()
+        return None
