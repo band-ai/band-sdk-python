@@ -388,6 +388,8 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   Callbacks that resist cancellation keep retirement unproven even after every
   identified native process exits; the room and workspace remain owned until a
   later cleanup proves those callbacks have finished.
+  Event delivery starts no further callbacks after retirement begins. Once a
+  resistant callback returns, its delivery worker exits so cleanup can be retried.
 - **Process close.** A usable reader gets a best-effort abort request bounded to
   one second, then stdin closes for EOF while output is drained. The root gets
   one second to exit before forced cleanup, which still runs if the root has
