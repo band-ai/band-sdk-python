@@ -12,7 +12,7 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
-from band.integrations.ompprocess import OmpMcpServer
+from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpContent,
@@ -289,7 +289,7 @@ def launches(monkeypatch: pytest.MonkeyPatch) -> Launches:
 
 def remote(token: str) -> OmpMcpServer:
     return OmpMcpServer(
-        type="http",
+        type=OmpMcpTransport.HTTP,
         url="http://127.0.0.1:9/mcp",
         headers={"Authorization": f"Bearer {token}"},
     )

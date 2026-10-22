@@ -11,7 +11,7 @@ import pytest
 import band.integrations.ompprocess as omp_module
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
-from band.integrations.ompprocess import OmpMcpServer
+from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.testing import FakeAgentTools, failure_reports
 from tests.adapters.omp.kit import (
     BandMcpReplyRuntime,
@@ -333,7 +333,7 @@ class TestMcpResolution:
         ready = AsyncMock()
         monkeypatch.setattr("band.adapters.omp.OmpRpcClient", spawn)
         monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", ready)
-        band = OmpMcpServer(type="http", url="http://127.0.0.1:9/band")
+        band = OmpMcpServer(type=OmpMcpTransport.HTTP, url="http://127.0.0.1:9/band")
         adapter = OmpAdapter(
             OmpAdapterConfig(
                 cwd=str(tmp_path),

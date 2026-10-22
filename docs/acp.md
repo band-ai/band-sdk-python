@@ -388,8 +388,9 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
   starts without a supplied cwd. Session state carries `omp_session_id`,
   `omp_session_file` and `omp_room_id`. A workspace is not an OS sandbox.
-- **External MCP servers.** `mcp_servers` is a name-to-`OmpMcpServer` map; import
-  that typed model from `band.integrations.ompprocess`. Stdio entries use
+- **External MCP servers.** `mcp_servers` is a name-to-`OmpMcpServer` map. Import
+  `OmpMcpServer` and `OmpMcpTransport` from `band.integrations.ompprocess`;
+  use `OmpMcpTransport` members for Python `type` arguments. Stdio entries use
   `command`, `args`, `env` and optional `cwd`; remote entries use `url`, `headers`
   and optional `type` (`http` or `sse`). Relative stdio `cwd` resolves from the
   room workspace; relative path-like commands resolve from that server cwd, or
