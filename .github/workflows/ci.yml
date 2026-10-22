@@ -9,23 +9,30 @@ permissions:
   contents: read
 
 jobs:
-  windows-custody-probe:
-    name: Windows custody proof (${{ matrix.variant }}, Python 3.13)
+  windows-injected-spawn-red:
+    name: Windows injected spawn regression (unfixed root, Python 3.13)
     runs-on: windows-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [root, leaf]
     defaults:
       run:
         shell: bash
+        working-directory: sdk
+    env:
+      PYTHONPATH: '${{ github.workspace }}/sdk/src;${{ github.workspace }}/sdk'
     steps:
       - name: Checkout diagnostic ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          ref: ${{ matrix.variant == 'root' && '84d9c08fbdedf72799366bf67a05afeb67e3f1ed' || github.sha }}
+          ref: ${{ github.sha }}
+          path: probe
+
+      - name: Checkout unfixed SDK root
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: 79abb7630643ee7c84be0e04274ef6ec5cb2561e
+          path: sdk
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -37,21 +44,15 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Install the locked CI environment
+      - name: Install the locked SDK dev environment
         run: uv sync --all-packages --locked --extra dev
 
-      - name: Verify owned kernel exit while an unrelated process survives
-        if: matrix.variant == 'leaf'
-        run: uv run --all-packages --no-sync python -m tests.integrations.omprpc.wincustody
+      - name: Copy the exact regression into the SDK test tree
+        run: cp ../probe/tests/integrations/omprpc/test_injected_spawn.py tests/integrations/omprpc/test_injected_spawn.py
 
-      - name: Exercise native RPC and Codex process lifecycle contracts
-        run: uv run --all-packages --no-sync pytest tests/integrations/codex tests/integrations/omprpc -q --no-cov
-
-      - name: Preserve pre-teardown evidence
-        if: always() && matrix.variant == 'leaf'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-custody-evidence
-          path: windows-custody.jsonl
-          if-no-files-found: error
-          retention-days: 3
+      - name: Attribute SDK sources and run the injected spawn regression
+        run: |
+          echo "SDK git HEAD:"
+          git rev-parse HEAD
+          uv run --all-packages --no-sync python -c "import band.integrations.omprpc.client as client; import tests.integrations.omprpc.kit as kit; print('SDK client:', client.__file__); print('SDK testkit:', kit.__file__)"
+          uv run --all-packages --no-sync python -m pytest tests/integrations/omprpc/test_injected_spawn.py
