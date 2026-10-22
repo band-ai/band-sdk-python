@@ -24,6 +24,7 @@ from tests.integrations.omprpc.kit import (
     Observer,
     StubbornToolObserver,
     background_claim_observed,
+    checkpoint_frames,
     completion_session,
     peer_process,
     process_is_alive,
@@ -54,6 +55,8 @@ class TestCompletionGuard:
                 assert not running.done()
 
                 await session.clock.elapse(COMPLETION_BUDGET_S)
+                with pytest.raises(OmpProcessError):
+                    await checkpoint_frames(client)
 
                 with pytest.raises(OmpCompletionTimeout):
                     await session.clock.run_io(running)
@@ -120,6 +123,8 @@ class TestCompletionGuard:
                     assert not running.done()
 
                     await session.clock.elapse(COMPLETION_BUDGET_S)
+                    with pytest.raises(OmpProcessError):
+                        await checkpoint_frames(session.client)
 
                     with pytest.raises(OmpCompletionTimeout):
                         await session.clock.run_io(running)
@@ -147,10 +152,10 @@ class TestCompletionGuard:
                     client.callback_exit_timeout_s = NO_CALLBACK_GRACE_S
 
                     await session.clock.elapse(COMPLETION_BUDGET_S)
+                    assert observer.cancel_seen.is_set()
 
                     with pytest.raises(OmpCompletionTimeout):
                         await session.clock.run_io(running)
-                    assert observer.cancel_seen.is_set()
                     assert not observer.finished.is_set()
                     assert not await asyncio.to_thread(process_is_alive, session.peer)
                     with pytest.raises(OmpProcessError):
@@ -241,6 +246,8 @@ class TestCompletionGuard:
                 assert not running.done()
 
                 await session.clock.elapse(COMPLETION_BUDGET_S)
+                with pytest.raises(OmpProcessError):
+                    await checkpoint_frames(session.client)
 
                 with pytest.raises(OmpCompletionTimeout):
                     await session.clock.run_io(running)
