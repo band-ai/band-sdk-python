@@ -624,7 +624,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     # The post-prompt state refresh is part of completion: a
                     # lost response must fail bounded, not outlive the turn.
                     try:
-                        async with asyncio.timeout(omprpc.COMPLETION_TIMEOUT_S):
+                        async with asyncio.timeout(room.runtime.completion_timeout_s):
                             await self._refresh_state(room)
                     except TimeoutError as cause:
                         raise omprpc.OmpCompletionTimeout(

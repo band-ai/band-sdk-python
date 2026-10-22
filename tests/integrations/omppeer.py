@@ -23,6 +23,7 @@ from band.integrations.ompwire import (
     OMP_REASSEMBLED_BYTES,
     OmpPromptStatus,
 )
+from band.runtime.tools.types import BandTool
 
 PROTOCOL_VERSION = 1
 COMPLETE = "complete"
@@ -33,6 +34,11 @@ FOLLOW_UP_PROMPT = "second"
 CRASH_EXIT = 3
 UI_APPROVE = "Approve"
 UI_DENY = "Deny"
+COMPLETION_REPLY_SCENARIO = "completion-reply"
+COMPLETION_REPLY_CALL_ID = "recovered-reply"
+COMPLETION_REPLY_RECIPIENT = "peer-456"
+REFRESH_LOSS_SCENARIO = "refresh-state-silent"
+DROP_STATE_RESPONSES = "drop-state-responses"
 
 
 def burst_message_id(number: int) -> str:
@@ -192,6 +198,7 @@ class Peer:
         self.async_hint: bool | None = None
         self.state_request_count = 0
         self.snapshot_responses = 0
+        self.drop_state_responses = False
 
     def respond(self, frame: Frame, data: dict[str, JsonValue] | None = None) -> None:
         result: dict[str, JsonValue] = {
@@ -481,12 +488,30 @@ class Peer:
                     }
                 )
                 return
-            case "refresh-state-silent":
-                # A fully healthy completion; the loss happens later, on the
-                # adapter-phase post-prompt refresh (state request #3).
+            case scenario if scenario == COMPLETION_REPLY_SCENARIO:
                 self.respond(frame)
                 send({"type": "agent_start"})
-                self.end("complete")
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": COMPLETION_REPLY_CALL_ID,
+                        "toolCallId": COMPLETION_REPLY_CALL_ID,
+                        "toolName": BandTool.SEND_MESSAGE,
+                        "arguments": {
+                            "content": COMPLETE,
+                            "mentions": [COMPLETION_REPLY_RECIPIENT],
+                        },
+                    }
+                )
+                self.end(COMPLETE)
+                self.result(settled=True)
+                self.settle()
+                return
+            case scenario if scenario == REFRESH_LOSS_SCENARIO:
+                # Loss is explicitly armed after the real prompt completes.
+                self.respond(frame)
+                send({"type": "agent_start"})
+                self.end(COMPLETE)
                 self.result(settled=True)
                 self.settle()
                 return
@@ -673,15 +698,15 @@ class Peer:
                 self.respond(frame, {"enabled": True})
             case "prompt":
                 self.prompt(frame)
+            case command if command == DROP_STATE_RESPONSES:
+                self.drop_state_responses = True
+                self.respond(frame)
             case "get_state":
                 self.state_request_count += 1
                 if self.scenario == "get-state-silent":
                     return  # every snapshot response is lost
-                if (
-                    self.scenario == "refresh-state-silent"
-                    and self.state_request_count > 2
-                ):
-                    return  # the post-completion refresh response is lost
+                if self.drop_state_responses:
+                    return
                 self.snapshot_responses += 1
                 self.respond(
                     frame,

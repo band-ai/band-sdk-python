@@ -1,275 +1,287 @@
-"""Completion protection: stuck results, settlement, drains, and lost replies.
-
-Every shape reproduces a demonstrated stall (failing before the guard) and
-asserts the bounded, typed disposition with honest ownership and retirement
-semantics. Budgets are shrunk via ``COMPLETION_TIMEOUT_S`` and synchronized on
-peer frames, never on sleeps that the assertion depends on.
-"""
+"""Prove completion failure and recovery through native protocol barriers."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
+from collections.abc import Awaitable, Callable
 
 import pytest
 
-from band.integrations import omprpc
 from band.integrations.omprpc import (
     OmpCompletionTimeout,
     OmpProcessError,
     OmpRpcClient,
 )
-from band.integrations.ompwire import OmpHostToolCall, OmpToolResult
+from band.integrations.ompwire import OmpEventType
+from tests.integrations.omppeer import BACKGROUND_COMPLETE, COMPLETE, YIELDED
 from tests.integrations.omprpc.kit import (
+    BACKGROUND_WINDOW_S,
+    CALLBACK_SETTLEMENT_BUDGET_S,
+    COMPLETION_BUDGET_S,
+    NO_CALLBACK_GRACE_S,
+    BlockedEventObserver,
     ClientFactory,
     Observer,
+    StubbornToolObserver,
+    background_claim_observed,
+    completion_session,
+    peer_process,
+    process_is_alive,
     prompt_task,
     second_prompt,
+    snapshots_observed,
+    state_requests_observed,
 )
-
-GUARD_S = 0.25
-
-
-@pytest.fixture
-def short_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(omprpc, "COMPLETION_TIMEOUT_S", GUARD_S)
+from tests.toolkit.clock import binary_clock_resolution
 
 
-async def snapshots_observed(client: OmpRpcClient, count: int) -> None:
-    """Barrier: the peer answered at least ``count`` snapshot requests, and a
-    final checkpoint round trip proves the client dispatched those answers —
-    so any settlement wait has re-evaluated before the assertion continues."""
-    while (await client.request("checkpoint"))["snapshots"] < count:
-        pass
-    await client.request("checkpoint")
-
-
+@pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestCompletionGuard:
     @pytest.mark.parametrize(
         "scenario", ["no-result", "stale-idle-result", "lost-settlement"]
     )
-    async def test_stuck_completion_fails_bounded_with_uncertainty(
-        self,
-        client_factory: ClientFactory,
-        short_guard: None,
-        scenario: str,
+    async def test_idle_completion_failure_retires_before_explicit_restart(
+        self, client_factory: ClientFactory, scenario: str
     ) -> None:
-        client = await client_factory(scenario)
-        observer = Observer()
-        running = prompt_task(client, observer)
-        await observer.wait_for("agent_end")
-        async with asyncio.timeout(10):
-            with pytest.raises(OmpCompletionTimeout, match="uncertain"):
-                await running
-        # The transport retires with the failure: it is not left reusable.
-        with pytest.raises(OmpProcessError):
-            await client.request("get_state")
+        async with completion_session(client_factory, scenario) as session:
+            client = session.client
+            observer = Observer()
+            async with session.clock.background(
+                prompt_task(client, observer)
+            ) as running:
+                await observer.wait_for(OmpEventType.AGENT_END)
+                await snapshots_observed(client)
+                assert not running.done()
+
+                await session.clock.elapse(COMPLETION_BUDGET_S)
+
+                with pytest.raises(OmpCompletionTimeout):
+                    await session.clock.run_io(running)
+            with pytest.raises(OmpProcessError):
+                await client.request("get_state")
+            assert not await asyncio.to_thread(process_is_alive, session.peer)
+
+            await session.clock.run_io(client.start())
+            replacement = await peer_process(client)
+            assert replacement != session.peer
+            await session.clock.run_io(second_prompt(client))
 
     async def test_settled_snapshot_with_pending_work_cannot_end_turn(
-        self, client_factory: ClientFactory, short_guard: None
+        self, client_factory: ClientFactory
     ) -> None:
-        # Background work can outlive the answer: a producer may report
-        # isSettled while hasPendingAsyncWork stays set. That contradictory
-        # snapshot must not settle the wait (red before: it ended the turn on
-        # the strength of isSettled alone), the guard must not arm on it, and
-        # completion must arrive only through the later all-idle snapshot.
-        client = await client_factory("settled-with-pending")
-        observer = Observer()
-        running = prompt_task(client, observer)
-        await observer.wait_for("agent_end")
-        await snapshots_observed(client, 1)
-        assert not running.done()
-        await client.request("release")  # job finishes; state goes all-idle
-        async with asyncio.timeout(10):
-            await running
+        async with completion_session(
+            client_factory, "settled-with-pending"
+        ) as session:
+            observer = Observer()
+            async with session.clock.background(
+                prompt_task(session.client, observer)
+            ) as running:
+                await observer.wait_for(OmpEventType.AGENT_END)
+                await snapshots_observed(session.client)
+
+                await session.clock.elapse(BACKGROUND_WINDOW_S)
+                assert not running.done()
+
+                await session.client.request("release")
+                await session.clock.run_io(running)
+            assert BACKGROUND_COMPLETE in observer.assistant_texts
 
     async def test_silent_background_completion_recovers_by_resnapshot(
-        self, client_factory: ClientFactory, short_guard: None
+        self, client_factory: ClientFactory
     ) -> None:
-        # Settlement, newer busy continuation, then the completion's settle
-        # frame is lost: waiting on frames alone would stall forever (red
-        # before), and a naive timer would false-fire on the busy window
-        # (REQ2). The settlement wait must re-observe native state on wake
-        # and finish from positive proof, without any guard failure.
-        client = await client_factory("silent-settled-continuation")
-        observer = Observer()
-        running = prompt_task(client, observer)
-        claimed = None
-        while claimed is None:
-            event = await observer.wait_for("agent_end")
-            if event.awaitingAsyncWork is True:
-                claimed = event
-        await client.request("checkpoint")  # the claim was observed in full
-        assert not running.done()  # no settle frame exists for the completion
-        await client.request("release")  # completes; emits no settle frame
-        async with asyncio.timeout(10):
-            await running
+        async with completion_session(
+            client_factory, "silent-settled-continuation"
+        ) as session:
+            observer = Observer()
+            async with session.clock.background(
+                prompt_task(session.client, observer)
+            ) as running:
+                await background_claim_observed(observer)
+                await snapshots_observed(session.client)
 
-    async def test_blocked_event_drain_fails_bounded_after_settlement(
-        self, client_factory: ClientFactory, short_guard: None
+                await session.clock.elapse(BACKGROUND_WINDOW_S)
+                assert not running.done()
+
+                await session.client.request("release")
+                await session.clock.run_io(running)
+            assert BACKGROUND_COMPLETE in observer.assistant_texts
+
+    async def test_blocked_event_drain_fails_after_settlement(
+        self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("drain-blocked-event")
-        drain = asyncio.Event()
-        observer = Observer()
-
-        async def on_event(event) -> None:
-            if event.messageId == "blocked":
-                await drain.wait()
-            await observer.on_event(event)
-
-        running = asyncio.create_task(
-            client.prompt(
-                "first",
-                on_event=on_event,
-                on_tool=observer.on_tool,
-                on_ui=observer.on_ui,
-            )
-        )
-        try:
-            async with asyncio.timeout(10):
-                with pytest.raises(OmpCompletionTimeout, match="uncertain"):
-                    await running
-        finally:
-            drain.set()
-            await asyncio.gather(running, return_exceptions=True)
-
-    async def test_cancellation_resistant_callback_fails_and_cannot_retire(
-        self, client_factory: ClientFactory, short_guard: None
-    ) -> None:
-        client = await client_factory("drain-stubborn")
-        resumed = asyncio.Event()
-        cancellations = 0
-
-        async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
-            nonlocal cancellations
-            while not resumed.is_set():
+        async with completion_session(client_factory, "drain-blocked-event") as session:
+            observer = BlockedEventObserver()
+            async with session.clock.background(
+                prompt_task(session.client, observer)
+            ) as running:
                 try:
-                    await resumed.wait()
-                except asyncio.CancelledError:
-                    cancellations += 1
-            return OmpToolResult(content=[])
+                    await observer.entered.wait()
+                    await snapshots_observed(session.client)
+                    assert not running.done()
 
-        observer = Observer()
-        running = asyncio.create_task(
-            client.prompt(
-                "first",
-                on_event=observer.on_event,
-                on_tool=on_tool,
-                on_ui=observer.on_ui,
-            )
-        )
-        async with asyncio.timeout(10):
-            with pytest.raises(OmpCompletionTimeout, match="uncertain"):
-                await running
-        assert cancellations >= 1  # the loop absorbed cancellation
-        # Retirement is unproven while a callback task survives: restarts fail
-        # closed instead of overlapping ownership (REQ3).
-        with pytest.raises(OmpProcessError, match="retirement is unproven"):
-            await client.start()
-        resumed.set()
+                    await session.clock.elapse(COMPLETION_BUDGET_S)
+
+                    with pytest.raises(OmpCompletionTimeout):
+                        await session.clock.run_io(running)
+                finally:
+                    observer.resume.set()
+            assert not await asyncio.to_thread(process_is_alive, session.peer)
+
+    async def test_surviving_callback_blocks_restart_until_retirement_is_proven(
+        self, client_factory: ClientFactory
+    ) -> None:
+        async with completion_session(client_factory, "drain-stubborn") as session:
+            client = session.client
+            client.callback_exit_timeout_s = CALLBACK_SETTLEMENT_BUDGET_S
+            observer = StubbornToolObserver()
+            async with session.clock.background(
+                prompt_task(client, observer)
+            ) as running:
+                try:
+                    await observer.entered.wait()
+                    await observer.wait_for(OmpEventType.AGENT_END)
+                    await snapshots_observed(client)
+                    assert not running.done()
+                    # The callback already owns its settlement wait; subsequent
+                    # cancellation checks must not grant it another grace period.
+                    client.callback_exit_timeout_s = NO_CALLBACK_GRACE_S
+
+                    await session.clock.elapse(COMPLETION_BUDGET_S)
+
+                    with pytest.raises(OmpCompletionTimeout):
+                        await session.clock.run_io(running)
+                    assert observer.cancel_seen.is_set()
+                    assert not observer.finished.is_set()
+                    assert not await asyncio.to_thread(process_is_alive, session.peer)
+                    with pytest.raises(OmpProcessError):
+                        await client.start()
+                finally:
+                    await observer.release()
+
+            await session.clock.run_io(client.close())
+            await session.clock.run_io(client.start())
+            replacement = await peer_process(client)
+            assert replacement != session.peer
+            await session.clock.run_io(second_prompt(client))
 
     @pytest.mark.parametrize(
-        "scenario", ["no-result", "lost-settlement", "get-state-silent"]
+        ("scenario", "completion_barrier"),
+        [
+            ("no-result", snapshots_observed),
+            ("lost-settlement", snapshots_observed),
+            ("get-state-silent", state_requests_observed),
+        ],
     )
     async def test_cancellation_during_completion_keeps_stop_semantics(
-        self, client_factory: ClientFactory, short_guard: None, scenario: str
+        self,
+        client_factory: ClientFactory,
+        scenario: str,
+        completion_barrier: Callable[[OmpRpcClient], Awaitable[None]],
     ) -> None:
-        client = await client_factory(scenario)
-        observer = Observer()
-        running = prompt_task(client, observer)
-        await observer.wait_for("agent_end")
-        await asyncio.sleep(GUARD_S / 5)  # inside the armed window, before firing
-        running.cancel()
-        async with asyncio.timeout(10):
-            with pytest.raises(asyncio.CancelledError):
-                await running
-        assert process_is_gone(client)
+        async with completion_session(client_factory, scenario) as session:
+            observer = Observer()
+            async with session.clock.background(
+                prompt_task(session.client, observer)
+            ) as running:
+                await observer.wait_for(OmpEventType.AGENT_END)
+                await completion_barrier(session.client)
+                assert not running.done()
+
+                running.cancel()
+
+                with pytest.raises(asyncio.CancelledError):
+                    await session.clock.run_io(running)
+            with pytest.raises(OmpProcessError):
+                await session.client.request("get_state")
+            assert not await asyncio.to_thread(process_is_alive, session.peer)
 
     async def test_cancellation_with_surviving_callback_stays_cancellation(
-        self, client_factory: ClientFactory, short_guard: None
+        self, client_factory: ClientFactory
     ) -> None:
-        # STOP precedence over a dirty retirement: cancelling while a
-        # cancellation-resistant callback is armed must end the turn as
-        # CancelledError — never converted into a turn failure or a restart
-        # request. The recorded retirement error alone blocks replacement.
-        client = await client_factory("drain-stubborn")
-        resumed = asyncio.Event()
-
-        async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
-            while not resumed.is_set():
+        async with completion_session(client_factory, "drain-stubborn") as session:
+            client = session.client
+            client.callback_exit_timeout_s = CALLBACK_SETTLEMENT_BUDGET_S
+            observer = StubbornToolObserver()
+            async with session.clock.background(
+                prompt_task(client, observer)
+            ) as running:
                 try:
-                    await resumed.wait()
-                except asyncio.CancelledError:
-                    continue
-            return OmpToolResult(content=[])
+                    await observer.entered.wait()
+                    await observer.wait_for(OmpEventType.AGENT_END)
+                    await snapshots_observed(client)
+                    assert not running.done()
+                    client.callback_exit_timeout_s = NO_CALLBACK_GRACE_S
 
-        observer = Observer()
-        running = asyncio.create_task(
-            client.prompt(
-                "first",
-                on_event=observer.on_event,
-                on_tool=on_tool,
-                on_ui=observer.on_ui,
-            )
-        )
-        await observer.wait_for("agent_end")
-        await asyncio.sleep(GUARD_S / 5)  # armed, callback claimed
-        running.cancel()
-        async with asyncio.timeout(10):
-            with pytest.raises(asyncio.CancelledError):
-                await running
-        assert process_is_gone(client)
-        with pytest.raises(OmpProcessError, match="retirement is unproven"):
-            await client.start()  # the recorded error is the fail-closed route
-        resumed.set()
-        with contextlib.suppress(Exception):
-            await client.close()
+                    running.cancel()
 
-    async def test_lost_snapshot_response_fails_bounded_at_the_request_layer(
-        self, client_factory: ClientFactory, short_guard: None
+                    with pytest.raises(asyncio.CancelledError):
+                        await session.clock.run_io(running)
+                    assert observer.cancel_seen.is_set()
+                    assert not observer.finished.is_set()
+                    assert not await asyncio.to_thread(process_is_alive, session.peer)
+                    with pytest.raises(OmpProcessError):
+                        await client.start()
+                finally:
+                    await observer.release()
+
+            await session.clock.run_io(client.close())
+            await session.clock.run_io(client.start())
+            await session.clock.run_io(second_prompt(client))
+
+    async def test_lost_snapshot_response_fails_at_the_request_layer(
+        self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("get-state-silent")
-        observer = Observer()
-        running = prompt_task(client, observer)
-        async with asyncio.timeout(10):
-            with pytest.raises(OmpCompletionTimeout, match="uncertain"):
-                await running
+        async with completion_session(client_factory, "get-state-silent") as session:
+            observer = Observer()
+            async with session.clock.background(
+                prompt_task(session.client, observer)
+            ) as running:
+                await observer.wait_for(OmpEventType.AGENT_END)
+                await state_requests_observed(session.client)
+                assert not running.done()
 
-    async def test_legitimate_background_beyond_the_budget_never_fires(
-        self, client_factory: ClientFactory, short_guard: None
-    ) -> None:
-        client = await client_factory("yield")
-        observer = Observer()
-        running = prompt_task(client, observer)
-        first_end = await observer.wait_for("agent_end")
-        assert first_end.awaitingAsyncWork is True
-        # Wait far past the guard budget: claiming background ownership must
-        # keep the guard disarmed — the overall deadline remains the backstop.
-        await asyncio.sleep(GUARD_S * 20)
-        assert not running.done() and not running.cancelled()
-        await client.request("release")
-        async with asyncio.timeout(10):
-            await running  # completes normally, no completion failure
+                await session.clock.elapse(COMPLETION_BUDGET_S)
 
-    async def test_healthy_turn_finishes_far_inside_the_budget(
-        self, client_factory: ClientFactory, short_guard: None
+                with pytest.raises(OmpCompletionTimeout):
+                    await session.clock.run_io(running)
+            with pytest.raises(OmpProcessError):
+                await session.client.request("get_state")
+            assert not await asyncio.to_thread(process_is_alive, session.peer)
+
+    async def test_claimed_background_work_outlives_the_idle_budget(
+        self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("basic")
-        observer = Observer()
-        async with asyncio.timeout(5):
-            await prompt_task(client, observer)
-        assert [event.type for event in observer.events][-1] == "agent_end"
+        async with completion_session(client_factory, "yield") as session:
+            observer = Observer()
+            async with session.clock.background(
+                prompt_task(session.client, observer)
+            ) as running:
+                first_end = await observer.wait_for(OmpEventType.AGENT_END)
+                assert first_end.awaitingAsyncWork is True
+                await snapshots_observed(session.client)
+
+                await session.clock.elapse(BACKGROUND_WINDOW_S)
+                assert not running.done()
+
+                await session.client.request("release")
+                await session.clock.run_io(running)
+            assert observer.assistant_texts == [YIELDED, BACKGROUND_COMPLETE]
+
+    async def test_healthy_turn_completes_and_keeps_the_transport_reusable(
+        self, client_factory: ClientFactory
+    ) -> None:
+        async with completion_session(client_factory, "basic") as session:
+            observer = Observer()
+            await session.clock.run_io(prompt_task(session.client, observer))
+            assert observer.assistant_texts == [COMPLETE]
+            assert observer.outline[-1] == OmpEventType.AGENT_END
+            await session.clock.run_io(second_prompt(session.client))
 
     async def test_late_stale_result_cannot_complete_a_newer_turn(
         self, client_factory: ClientFactory
     ) -> None:
-        client = await client_factory("late-stale-result")
-        observer = Observer()
-        async with asyncio.timeout(5):
-            await prompt_task(client, observer)
-        await second_prompt(client)  # its result decoys with a stale id first
-
-
-def process_is_gone(client: OmpRpcClient) -> bool:
-    process = client._proc
-    return process is None or process.returncode is not None
+        async with completion_session(client_factory, "late-stale-result") as session:
+            observer = Observer()
+            await session.clock.run_io(prompt_task(session.client, observer))
+            assert observer.assistant_texts == [COMPLETE]
+            await session.clock.run_io(second_prompt(session.client))
