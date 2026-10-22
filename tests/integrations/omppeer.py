@@ -21,9 +21,22 @@ from band.integrations.ompwire import (
     OMP_FRAME_BYTES,
     OMP_NATIVE_PROTOCOL_VERSION,
     OMP_REASSEMBLED_BYTES,
+    OmpPromptStatus,
 )
 
 PROTOCOL_VERSION = 1
+COMPLETE = "complete"
+YIELDED = "yielded"
+BACKGROUND_COMPLETE = "background complete"
+RESUMED_PROVIDER_FAILED = "Resumed provider failed"
+FOLLOW_UP_PROMPT = "second"
+CRASH_EXIT = 3
+UI_APPROVE = "Approve"
+UI_DENY = "Deny"
+
+
+def burst_message_id(number: int) -> str:
+    return f"burst-{number}"
 
 
 class Frame(BaseModel):
@@ -161,8 +174,8 @@ def assistant(text: str, *, stop: str = "stop") -> dict[str, JsonValue]:
             },
         },
     }
-    if stop == "error":
-        message["errorMessage"] = "Resumed provider failed"
+    if stop == OmpPromptStatus.ERROR:
+        message["errorMessage"] = RESUMED_PROVIDER_FAILED
     return message
 
 
@@ -227,7 +240,7 @@ class Peer:
     def finish(self, frame: Frame) -> None:
         self.respond(frame)
         send({"type": "agent_start"})
-        self.end("complete")
+        self.end(COMPLETE)
         self.result(settled=True)
         self.settle()
 
@@ -267,7 +280,7 @@ class Peer:
         self.settled = False
         if (
             self.prompt_count > 1 and self.scenario != "lifecycle"
-        ) or frame.message == "second":
+        ) or frame.message == FOLLOW_UP_PROMPT:
             self.finish(frame)
             return
         match self.scenario:
@@ -333,7 +346,7 @@ class Peer:
                         "id": "approval-1",
                         "method": "select",
                         "title": "Allow command?",
-                        "options": ["Approve", "Deny"],
+                        "options": [UI_APPROVE, UI_DENY],
                     }
                 )
                 return
@@ -366,7 +379,7 @@ class Peer:
                         "message": "status",
                     }
                 )
-                self.end("complete")
+                self.end(COMPLETE)
                 self.result(settled=True)
                 self.settle()
             case "reused-callback":
@@ -388,7 +401,7 @@ class Peer:
                     }
                 )
             case "large-image":
-                message = assistant("complete")
+                message = assistant(COMPLETE)
                 message["content"] = [
                     {
                         "type": "image",
@@ -430,14 +443,14 @@ class Peer:
                         "isError": False,
                     }
                 )
-                self.end("complete")
+                self.end(COMPLETE)
                 self.result(settled=True)
                 self.settle()
             case "settlement-before-result":
-                self.end("complete")
+                self.end(COMPLETE)
                 self.settle()
             case "no-result":
-                self.end("complete")
+                self.end(COMPLETE)
                 self.settle()
             case "settled-during-callback":
                 send(
@@ -449,7 +462,7 @@ class Peer:
                         "arguments": {},
                     }
                 )
-                self.end("complete")
+                self.end(COMPLETE)
                 self.result(settled=True)
                 self.settle()
             case "host-cancel":
@@ -469,16 +482,20 @@ class Peer:
                         "id": "ui-cancelled",
                         "method": "select",
                         "title": "Allow command?",
-                        "options": ["Approve", "Deny"],
+                        "options": [UI_APPROVE, UI_DENY],
                     }
                 )
             case "initial-error" | "initial-aborted":
-                stop = "error" if self.scenario == "initial-error" else "aborted"
+                stop = (
+                    OmpPromptStatus.ERROR
+                    if self.scenario == "initial-error"
+                    else OmpPromptStatus.ABORTED
+                )
                 self.end("failed", stop=stop)
                 self.result(settled=True, status=stop)
                 self.settle()
             case _:
-                self.end("yielded", pending=True)
+                self.end(YIELDED, pending=True)
                 self.result(settled=self.scenario == "false-result-settled")
                 if self.scenario == "state-settles":
                     self.settled = True
@@ -547,14 +564,14 @@ class Peer:
                     send(
                         {
                             "type": "message_update",
-                            "messageId": f"burst-{number}",
+                            "messageId": burst_message_id(number),
                             "message": {"role": "assistant", "content": str(number)},
                         }
                     )
                 self.respond(frame)
             case "event-result":
                 self.held = frame
-                self.end("complete", compacted=True)
+                self.end(COMPLETE, compacted=True)
                 self.result(settled=True)
                 self.settle()
             case "event-ui":
@@ -565,7 +582,7 @@ class Peer:
                         "id": "backlog-approval",
                         "method": "select",
                         "title": "Allow command?",
-                        "options": ["Approve", "Deny"],
+                        "options": [UI_APPROVE, UI_DENY],
                     }
                 )
             case "ask-ui":
@@ -590,12 +607,12 @@ class Peer:
                 else:
                     send({"type": "agent_start"})
                     stop = {
-                        "resume-error": "error",
-                        "resume-error-compacted": "error",
-                        "resume-aborted": "aborted",
+                        "resume-error": OmpPromptStatus.ERROR,
+                        "resume-error-compacted": OmpPromptStatus.ERROR,
+                        "resume-aborted": OmpPromptStatus.ABORTED,
                     }.get(self.scenario, "stop")
                     self.end(
-                        "background complete",
+                        BACKGROUND_COMPLETE,
                         stop=stop,
                         compacted=self.scenario == "resume-error-compacted",
                     )
@@ -684,7 +701,7 @@ class Peer:
                         "id": "ui-orphan",
                         "method": "select",
                         "title": "Allow command?",
-                        "options": ["Approve", "Deny"],
+                        "options": [UI_APPROVE, UI_DENY],
                     }
                 )
                 self.respond(frame)
@@ -694,7 +711,7 @@ class Peer:
                 if self.scenario != "stubborn":
                     self.respond(frame)
                     if self.prompt_id is not None:
-                        self.end("aborted", stop="aborted")
+                        self.end(OmpPromptStatus.ABORTED, stop=OmpPromptStatus.ABORTED)
                         self.settle()
             case "first" | "hold":
                 self.held = frame
@@ -715,7 +732,7 @@ class Peer:
                     }
                 )
             case "crash":
-                raise SystemExit(3)
+                raise SystemExit(CRASH_EXIT)
             case "stderr":
                 sys.stderr.write("x" * (2 * 1024 * 1024))
                 sys.stderr.flush()

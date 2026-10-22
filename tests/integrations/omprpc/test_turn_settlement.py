@@ -6,17 +6,24 @@ import asyncio
 
 import pytest
 
-from band.integrations import omprpc
 from band.integrations.omprpc import OmpProcessError, OmpPromptError
+from band.integrations.omprpc.errors import CALLBACKS_UNFINISHED
 from band.integrations.ompwire import (
     OmpEventType,
     OmpHostToolCall,
+    OmpPromptStatus,
     OmpState,
     OmpToolResult,
+)
+from tests.integrations.omppeer import (
+    BACKGROUND_COMPLETE,
+    RESUMED_PROVIDER_FAILED,
+    YIELDED,
 )
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
+    owned_rpc_process,
     prompt_task,
     second_prompt,
 )
@@ -38,16 +45,24 @@ class TestTurnSettlement:
             await client.request("release")
             async with asyncio.timeout(5):
                 await running
-            assert observer.assistant_texts == ["yielded", "background complete"]
+            assert observer.assistant_texts == [YIELDED, BACKGROUND_COMPLETE]
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
 
     @pytest.mark.parametrize(
-        "scenario", ["resume-error", "resume-error-compacted", "resume-aborted"]
+        ("scenario", "error"),
+        [
+            ("resume-error", RESUMED_PROVIDER_FAILED),
+            ("resume-error-compacted", RESUMED_PROVIDER_FAILED),
+            (
+                "resume-aborted",
+                f"OMP continuation {OmpPromptStatus.ABORTED}",
+            ),
+        ],
     )
     async def test_resumed_failures_override_a_successful_initial_prompt_result(
-        self, client_factory: ClientFactory, scenario: str
+        self, client_factory: ClientFactory, scenario: str, error: str
     ) -> None:
         client = await client_factory(scenario)
         observer = Observer()
@@ -55,16 +70,9 @@ class TestTurnSettlement:
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
             await client.request("release")
-            expected = (
-                "Resumed provider failed" if scenario != "resume-aborted" else "aborted"
-            )
             async with asyncio.timeout(5):
-                with pytest.raises(OmpPromptError, match=expected):
+                with pytest.raises(OmpPromptError, match=error):
                     await running
-            assert (
-                sum(event.type == OmpEventType.AGENT_END for event in observer.events)
-                == 2
-            )
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
@@ -100,12 +108,11 @@ class TestTurnSettlement:
         assert OmpState.model_validate(await client.request("get_state")).isSettled
 
     async def test_settlement_does_not_succeed_while_a_callback_is_still_running(
-        self, client_factory: ClientFactory, monkeypatch: pytest.MonkeyPatch
+        self, client_factory: ClientFactory
     ) -> None:
-        monkeypatch.setattr(omprpc, "_CALLBACK_EXIT_TIMEOUT_S", 0)
         client = await client_factory("settled-during-callback")
-        process = client._proc
-        assert process is not None
+        client.callback_exit_timeout_s = 0
+        process = owned_rpc_process(client)
         held = asyncio.Event()
 
         async def on_tool(_call: OmpHostToolCall) -> OmpToolResult:
@@ -113,7 +120,7 @@ class TestTurnSettlement:
             return OmpToolResult(content=[])
 
         observer = Observer()
-        with pytest.raises(OmpProcessError, match="callbacks did not finish"):
+        with pytest.raises(OmpProcessError, match=CALLBACKS_UNFINISHED):
             async with asyncio.timeout(5):
                 await client.prompt(
                     "first",

@@ -9,9 +9,10 @@ import psutil
 import pytest
 from pydantic import JsonValue
 
-from band.integrations import omprpc
 from band.integrations.codex.winspawn import Job
 from band.integrations.omprpc import OmpProcessError
+from band.integrations.omprpc.client import PROCESS_EXIT_TIMEOUT_S
+from tests.integrations.omppeer import CRASH_EXIT
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
     DeferredSessionSignal,
@@ -62,7 +63,7 @@ class TestProcessTreeCleanup:
                     crashing = asyncio.create_task(client.request("crash"))
                     async with asyncio.timeout(5):
                         await root.wait()
-                    assert root.returncode == 3
+                    assert root.returncode == CRASH_EXIT
                     with pytest.raises(OmpProcessError):
                         await crashing
 
@@ -123,7 +124,7 @@ class TestProcessTreeCleanup:
             crashing = asyncio.create_task(client.request("crash"))
             async with asyncio.timeout(5):
                 await root.wait()
-            assert root.returncode == 3
+            assert root.returncode == CRASH_EXIT
             with pytest.raises(OmpProcessError):
                 await crashing
             await client.close()
@@ -196,7 +197,7 @@ class TestProcessTreeCleanup:
             )
             with monkeypatch.context() as patch:
                 boundary.install(patch)
-                patch.setattr(omprpc, "_PROCESS_EXIT_TIMEOUT_S", 0)
+                client.process_exit_timeout_s = 0
                 crashing = asyncio.create_task(client.request("crash"))
                 async with asyncio.timeout(5):
                     await old_root.wait()
@@ -204,6 +205,7 @@ class TestProcessTreeCleanup:
                     with pytest.raises(OmpProcessError, match="session members"):
                         await client.close()
                 assert await descendant_liveness(descendants) == [True, True]
+            client.process_exit_timeout_s = PROCESS_EXIT_TIMEOUT_S
 
             await client.start()
             assert client._proc is not old_root

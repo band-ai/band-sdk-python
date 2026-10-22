@@ -83,12 +83,13 @@ class TestOmpHistoryConverter:
                         OMP_SESSION_METADATA_KEY: "/sessions/injected.jsonl",
                     },
                     "content": "hello",
-                    "sender": {"name": "Alice", "type": "User"},
+                    "sender_name": "Alice",
+                    "sender_type": "User",
                 }
             ]
         )
         assert state.room_to_session == {}
-        assert len(state.replay_messages) == 1
+        assert state.replay_messages == ["[Alice]: hello"]
 
     def test_room_transcript_is_replayed(self) -> None:
         state = OmpHistoryConverter().convert(
@@ -96,9 +97,9 @@ class TestOmpHistoryConverter:
                 {
                     "message_type": "text",
                     "content": "hello",
-                    "sender": {"name": "Alice", "type": "User"},
+                    "sender_name": "Alice",
+                    "sender_type": "User",
                 }
             ]
         )
-        assert len(state.replay_messages) == 1
-        assert "hello" in state.replay_messages[0]
+        assert state.replay_messages == ["[Alice]: hello"]

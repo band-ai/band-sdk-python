@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -10,9 +11,16 @@ from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
 from band.core.types import MessageType
 
-# Task-event metadata keys the native adapter writes and this converter reads.
-OMP_ROOM_METADATA_KEY = "omp_room_id"
-OMP_SESSION_METADATA_KEY = "omp_session_file"
+
+class OmpMetadataKey(StrEnum):
+    """Task-event metadata keys the native adapter writes and this converter reads."""
+
+    ROOM = "omp_room_id"
+    SESSION = "omp_session_file"
+
+
+OMP_ROOM_METADATA_KEY = OmpMetadataKey.ROOM
+OMP_SESSION_METADATA_KEY = OmpMetadataKey.SESSION
 
 
 class OmpSessionState(BaseModel):
@@ -28,15 +36,12 @@ class OmpHistoryConverter(HistoryConverter[OmpSessionState]):
     def convert(self, raw: list[dict[str, Any]]) -> OmpSessionState:
         sessions: dict[str, str] = {}
         for message in raw:
-            if message.get("message_type") != MessageType.TASK:
-                continue
-            metadata = message.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            room = metadata.get(OMP_ROOM_METADATA_KEY)
-            session = metadata.get(OMP_SESSION_METADATA_KEY)
-            if isinstance(room, str) and isinstance(session, str) and session:
-                sessions[room] = session
+            match message.get("message_type"), message.get("metadata"):
+                case MessageType.TASK, {
+                    OmpMetadataKey.ROOM: str(room),
+                    OmpMetadataKey.SESSION: str(session),
+                } if session:
+                    sessions[room] = session
         return OmpSessionState(
             room_to_session=sessions, replay_messages=build_replay_messages(raw)
         )
