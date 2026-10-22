@@ -15,7 +15,12 @@ from band.integrations.omprpc import (
     OmpRpcError,
 )
 from tests.integrations.omppeer import OVERSIZE_AFTER_READY
-from tests.integrations.omprpc.kit import OMP_PEER_SCRIPT, ClientFactory, SpawnBarrier
+from tests.integrations.omprpc.kit import (
+    OMP_PEER_SCRIPT,
+    ClientFactory,
+    SpawnBarrier,
+    owned_rpc_process,
+)
 
 
 class TestStartupNegotiation:
@@ -70,12 +75,16 @@ class TestStartupNegotiation:
             with pytest.raises(error, match="protocol"):
                 await client_factory(scenario)
 
-    async def test_negotiated_frame_limit_applies_before_the_next_line(
-        self, client_factory: ClientFactory
-    ) -> None:
-        async with asyncio.timeout(6):
-            with pytest.raises(OmpProtocolError, match="frame length"):
-                await client_factory(OVERSIZE_AFTER_READY)
+    async def test_negotiated_frame_limit_applies_before_the_next_line(self) -> None:
+        client = OmpRpcClient(
+            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", OVERSIZE_AFTER_READY)
+        )
+        try:
+            with pytest.raises(OmpProtocolError):
+                await client.start()
+            assert owned_rpc_process(client).returncode is not None
+        finally:
+            await client.close()
 
     async def test_graceful_close_does_not_log_stdout_eof_as_a_crash(
         self, client_factory: ClientFactory, caplog: pytest.LogCaptureFixture
