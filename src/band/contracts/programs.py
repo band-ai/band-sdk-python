@@ -44,6 +44,7 @@ class ProgramStart(WireRequest):
 
 class ProgramTask(WireRequest):
     id: Identifier
+    sender_role: Identifier | None = None
     kind: Identifier
     payload: JsonObject
 
