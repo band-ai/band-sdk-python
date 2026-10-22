@@ -24,7 +24,7 @@ from band.core.model_catalog import ModelSelection
 from band.core.types import MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
-from band.integrations.ompprocess import OmpMcpServer
+from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
     OmpCommandName,
@@ -916,7 +916,7 @@ def launches(monkeypatch: pytest.MonkeyPatch) -> Launches:
 
 def remote(token: str) -> OmpMcpServer:
     return OmpMcpServer(
-        type="http",
+        type=OmpMcpTransport.HTTP,
         url="http://127.0.0.1:9/mcp",
         headers={"Authorization": f"Bearer {token}"},
     )
