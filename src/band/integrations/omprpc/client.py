@@ -13,6 +13,7 @@ from typing import Any, TypeVar, cast
 from pydantic import JsonValue, ValidationError
 
 from band.integrations.codex.winspawn import (
+    CreateProcess,
     SpawnFailure,
     WindowsProcess,
     await_returncode,
@@ -61,7 +62,6 @@ from band.integrations.ompwire import (
 )
 
 TModel = TypeVar("TModel", bound=OmpWireModel)
-CreateProcess = Callable[..., Awaitable[asyncio.subprocess.Process]]
 CloseProcess = Callable[[], Coroutine[Any, Any, None]]
 JoinClose = Callable[[Awaitable[None]], Awaitable[None]]
 
@@ -195,12 +195,10 @@ class OmpRpcClient:
         scope = self._process_scope
         assert scope is not None
         env = scope.environment(self.env)
-        # Windows has no process group. The job is the whole tree (membership
-        # at create, no breakaway). A create_process factory skips it, so that
-        # path is not a job test. Nested jobs belong here only if close()
-        # still leaves live members.
-        if os.name == "nt" and self.create_process is None:
-            self._windows_process = WindowsProcess()
+        # Windows has no process group. Descendants inherit job membership at
+        # creation and cannot break away.
+        if os.name == "nt":
+            self._windows_process = WindowsProcess(create_process=self.create_process)
             process = await self._windows_process.start_command(
                 self.command, cwd=None, env=env, limit=OMP_FRAME_BYTES
             )

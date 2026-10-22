@@ -22,11 +22,13 @@ import signal
 import subprocess
 import sys
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any, NoReturn
+
+CreateProcess = Callable[..., Awaitable[asyncio.subprocess.Process]]
 
 logger = logging.getLogger(__name__)
 
@@ -749,10 +751,11 @@ async def _launch_helper(
     cwd: str | None,
     env: Mapping[str, str] | None,
     limit: int,
+    create_process: CreateProcess,
 ) -> asyncio.subprocess.Process:
     startup = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
     startup.lpAttributeList = {"handle_list": [status_handle]}
-    return await asyncio.create_subprocess_exec(
+    return await create_process(
         *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -767,7 +770,8 @@ async def _launch_helper(
 class WindowsProcess:
     """One client-owned helper and job, including incomplete startup."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, create_process: CreateProcess | None = None) -> None:
+        self.create_process = create_process or asyncio.create_subprocess_exec
         self.job: Job | None = create_job()
         self.process: asyncio.subprocess.Process | None = None
         self.closing = False
@@ -837,6 +841,7 @@ class WindowsProcess:
                 cwd=cwd,
                 env=env,
                 limit=limit,
+                create_process=self.create_process,
             )
         finally:
             # Only the helper may keep the writer; its exit must produce EOF.
