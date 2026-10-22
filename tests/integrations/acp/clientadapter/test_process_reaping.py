@@ -22,8 +22,15 @@ class TestProcessReaping:
             assert runtime.closed
 
     @pytest.mark.asyncio
-    async def test_stop_drains_buffered_stdout_before_confirming_exit(self) -> None:
-        async with leaky_runtime(buffered_stdout=True) as (runtime, process):
+    @pytest.mark.parametrize("disconnected", [False, True])
+    async def test_stop_drains_buffered_stdout_before_confirming_exit(
+        self, disconnected: bool
+    ) -> None:
+        failure = ConnectionResetError("connection lost") if disconnected else None
+        async with leaky_runtime(buffered_stdout=True, close_failure=failure) as (
+            runtime,
+            process,
+        ):
             await runtime.start()
             await runtime.stop()
 

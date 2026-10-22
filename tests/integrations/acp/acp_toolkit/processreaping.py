@@ -21,6 +21,7 @@ async def leaky_runtime(
     failure: BaseException | None = None,
     *,
     buffered_stdout: bool = False,
+    close_failure: Exception | None = None,
 ) -> AsyncIterator[tuple[ACPRuntime, asyncio.subprocess.Process]]:
     command = (
         f"import sys; sys.stdout.buffer.write(b'x' * {STDOUT_BURST_BYTES}); "
@@ -43,6 +44,8 @@ async def leaky_runtime(
     connection = make_acp_connection()
     if failure is not None:
         connection.initialize.side_effect = failure
+    if close_failure is not None:
+        connection.close.side_effect = close_failure
 
     @asynccontextmanager
     async def spawn(*args: Any, **kwargs: Any) -> AsyncIterator[tuple[Any, Any]]:

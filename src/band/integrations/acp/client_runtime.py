@@ -241,7 +241,8 @@ class ACPRuntime(ACPSessionOperations):
                 # A refused context exit may have left ACP reading stdout.
                 close = getattr(self._conn, "close", None)
                 if close is not None:
-                    await close()
+                    with suppress(ConnectionError):
+                        await close()
                 await _kill(process)
 
     def _forget_connection(self) -> None:
