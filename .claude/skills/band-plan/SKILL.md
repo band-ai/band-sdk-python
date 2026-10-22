@@ -104,6 +104,10 @@ area a worker where available, and also do Phase 2's survey for its area.
 2. Find the single source of truth for every value, policy, or constant the
    plan touches. The plan extends it, never adds a parallel one. This is a
    synthesis across all areas, so do it here, not in a worker.
+3. Apply `AGENTS.md` "Engineering Standard" ownership assessment before
+   choosing the design. Record affected consumers, relevant sibling sources,
+   and the placement rationale in the plan; for clearly local changes, record
+   why sibling comparison is unnecessary. Reuse Phase 1 research where available.
 
 ## Phase 3 — Find the root cause and the right level
 
@@ -186,6 +190,8 @@ else's review.
      confirm or finds contradicted;
    - challenge the root cause and level: is this the real cause, or would
      someone looking at the whole system call it a patch?
+   - verify the ownership assessment: does the chosen layer follow from the
+     inspected consumers and sibling sources, or a justified local scope?
    - run a pre-mortem: it's three months later and this change was reverted —
      give the three most plausible reasons;
    - flag only gaps that affect correctness, the root cause, compatibility, or
