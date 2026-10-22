@@ -3,55 +3,53 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
-from band.core.protocols import TurnResultAlreadyReported
-from band.integrations import omprpc
 from band.integrations.omprpc import OmpCompletionTimeout, OmpProcessError
-from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import run_turn
-from tests.integrations.omprpc.kit import OMP_PEER_SCRIPT
+from band.testing import reported_failures
+from tests.adapters.omp.kit import (
+    HoldInput,
+    RetirementClients,
+    StubbornAdapterTool,
+    owned_room,
+    run_turn,
+)
+from tests.baseline.tools import BaselineTools
+from tests.integrations.omppeer import COMPLETE
+from tests.integrations.omprpc.kit import (
+    COMPLETION_BUDGET_S,
+    NO_CALLBACK_GRACE_S,
+    OMP_PEER_SCRIPT,
+    owned_rpc_process,
+    peer_process,
+    process_is_alive,
+    snapshots_observed,
+)
+from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.timecontrol import controlled_clock
 
 pytest.importorskip("psutil", reason="psutil not installed (band-sdk[omp])")
 
 
-class HoldInput(BaseModel):
-    """Zero-field model for the cancellation-resistant hold tool."""
+ROOM_ID = "room-123"
+WORKSPACE_CONTENDER_ID = "workspace-contender"
+TURN_DEADLINE_S = 30.0
 
 
-def _hold(gate: asyncio.Event):  # CustomToolDef handler
-    async def hold(_inp: HoldInput) -> str:
-        while True:
-            try:
-                await gate.wait()
-            except asyncio.CancelledError:  # cancellation-resistant callback
-                continue
-            return "released"
-
-    return hold
-
-
-@pytest.fixture(autouse=True)
-def native_startup_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", AsyncMock())
-
-
+@pytest.mark.looptime(resolution=binary_clock_resolution())
 class TestUnprovenRetirement:
     async def test_survivor_blocks_successor_until_callback_finishes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(omprpc, "COMPLETION_TIMEOUT_S", 0.25)
-        gate = asyncio.Event()
+        clients = RetirementClients()
+        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", clients)
+        hold = StubbornAdapterTool()
         adapter = OmpAdapter(
             OmpAdapterConfig(
-                cwd=str(tmp_path),
                 command=(
                     sys.executable,
                     "-u",
@@ -59,43 +57,117 @@ class TestUnprovenRetirement:
                     "--scenario",
                     "drain-stubborn-adapter",
                 ),
-                turn_timeout_s=30.0,
+                turn_timeout_s=TURN_DEADLINE_S,
             ),
+            workspace_for_room=lambda _room_id: str(tmp_path),
             emit=(),
-            additional_tools=[(HoldInput, _hold(gate))],
+            additional_tools=[(HoldInput, hold.hold)],
         )
 
-        try:
-            tools1 = FakeAgentTools()
-            async with asyncio.timeout(20):
-                with pytest.raises(OmpCompletionTimeout, match="uncertain"):
-                    await run_turn(adapter, tools1)
-            assert reported_failures(tools1)
-            room = adapter._rooms.get("room-123")
-            assert room is not None  # unproven retirement: the room stays owned
+        async with controlled_clock() as clock:
+            failed_tools = BaselineTools()
+            try:
+                async with clock.background(
+                    run_turn(adapter, failed_tools, room_id=ROOM_ID)
+                ) as running:
+                    try:
+                        runtime = await clients.created.get()
+                        await clock.run_io(hold.entered.wait())
+                        await snapshots_observed(runtime, count=2)
+                        process = owned_rpc_process(runtime)
+                        failed_peer = await peer_process(runtime)
+                        assert not running.done()
+                        assert not hold.cancel_seen.is_set()
+                        runtime.callback_exit_timeout_s = NO_CALLBACK_GRACE_S
 
-            # A successor must not launch a replacement transport while the
-            # survivor keeps the retirement unproven.
-            tools2 = FakeAgentTools()
-            async with asyncio.timeout(20):
-                with pytest.raises(
-                    (OmpProcessError, BaseExceptionGroup),
-                    match="retirement is unproven",
-                ):
-                    await run_turn(adapter, tools2, bootstrap=False)
-            assert adapter._rooms.get("room-123") is room  # not replaced
-            assert not tools2.turn.replied  # no synthesized success anywhere
+                        await clock.elapse(COMPLETION_BUDGET_S)
+                        assert hold.cancel_seen.is_set()
 
-            gate.set()  # the callback completes; retirement becomes provable
-            with contextlib.suppress(TurnResultAlreadyReported):
-                # The stub peer never replies; an unsettled-but-run turn is
-                # the honest disposition here. What matters is the seam:
-                async with asyncio.timeout(30):
-                    await run_turn(adapter, FakeAgentTools(), bootstrap=False)
-            replacement = adapter._rooms["room-123"]
-            assert replacement is not room  # replaced only after proof
-            proc = room.runtime._proc
-            assert proc is None or proc.returncode is not None  # survivor reaped
-            assert await replacement.runtime.request("checkpoint")  # live
-        finally:
-            gate.set()  # never leak a cancellation-resistant callback
+                        # Prove deadline cancellation before real process cleanup
+                        # is allowed to make the clock progress again.
+                        assert not hold.finished.is_set()
+                        with pytest.raises(OmpCompletionTimeout, match="uncertain"):
+                            await clock.run_io(running)
+
+                        assert [
+                            failure["provider"]
+                            for failure in reported_failures(failed_tools)
+                        ] == ["omp"]
+                        assert not failed_tools.turn.replied
+                        room = owned_room(adapter, ROOM_ID)
+                        assert room.runtime is runtime
+                        assert process.returncode is not None
+                        assert not await asyncio.to_thread(
+                            process_is_alive, failed_peer
+                        )
+                        assert clients.plugins[0].is_dir()
+
+                        blocked_tools = BaselineTools()
+                        with pytest.raises(
+                            OmpProcessError, match="retirement is unproven"
+                        ):
+                            await clock.run_io(
+                                run_turn(
+                                    adapter,
+                                    blocked_tools,
+                                    bootstrap=False,
+                                    room_id=ROOM_ID,
+                                )
+                            )
+                        assert owned_room(adapter, ROOM_ID) is room
+                        assert clients.clients == [runtime]
+                        assert not blocked_tools.turn.replied
+                        assert not hold.finished.is_set()
+                        assert clients.plugins[0].is_dir()
+
+                        contender_tools = BaselineTools()
+                        with pytest.raises(
+                            ValueError, match="workspace_for_room assigned"
+                        ):
+                            await run_turn(
+                                adapter,
+                                contender_tools,
+                                room_id=WORKSPACE_CONTENDER_ID,
+                            )
+                        assert clients.clients == [runtime]
+                        assert owned_room(adapter, ROOM_ID) is room
+                        assert not contender_tools.turn.replied
+
+                        await hold.release()
+                        await hold.retired.wait()
+                        assert hold.finished.is_set()
+
+                        recovered_tools = BaselineTools()
+                        async with clock.background(
+                            run_turn(
+                                adapter,
+                                recovered_tools,
+                                bootstrap=False,
+                                room_id=ROOM_ID,
+                            )
+                        ) as recovering:
+                            replacement_runtime = await clients.created.get()
+                            assert hold.finished.is_set()
+                            assert process.returncode is not None
+                            assert not clients.plugins[0].exists()
+                            await clock.run_io(recovering)
+
+                        assert recovered_tools.chat == [COMPLETE]
+                        assert recovered_tools.turn.replied
+                        assert recovered_tools.turn.complete
+                        assert not reported_failures(recovered_tools)
+                        assert not failed_tools.turn.replied
+                        assert not blocked_tools.turn.replied
+                        assert len(clients.clients) == 2
+                        replacement = owned_room(adapter, ROOM_ID)
+                        assert replacement is not room
+                        assert replacement.runtime is replacement_runtime
+                        recovered_peer = await peer_process(replacement.runtime)
+                        assert recovered_peer != failed_peer
+                        assert await asyncio.to_thread(process_is_alive, recovered_peer)
+                    finally:
+                        # Release external work before background() cancels and
+                        # joins the turn, including a failure during startup.
+                        await hold.release()
+            finally:
+                await clock.run_io(adapter.cleanup_all())

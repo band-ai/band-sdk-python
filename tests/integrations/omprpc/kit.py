@@ -563,8 +563,8 @@ class BlockedEventObserver(Observer):
         await super().on_event(event)
 
 
-class StubbornToolObserver(Observer):
-    """Keep claimed host work alive until the test explicitly releases it."""
+class StubbornCallbackObserver(Observer):
+    """Hold claimed callback work until the test explicitly releases it."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -572,8 +572,12 @@ class StubbornToolObserver(Observer):
         self.cancel_seen = asyncio.Event()
         self.resume = asyncio.Event()
         self.finished = asyncio.Event()
+        self.retired = asyncio.Event()
 
-    async def on_tool(self, call: OmpHostToolCall) -> OmpToolResult:
+    async def hold_callback(self) -> None:
+        owner = asyncio.current_task()
+        assert owner is not None
+        owner.add_done_callback(lambda _task: self.retired.set())
         self.entered.set()
         try:
             while not self.resume.is_set():
@@ -581,7 +585,6 @@ class StubbornToolObserver(Observer):
                     await self.resume.wait()
                 except asyncio.CancelledError:
                     self.cancel_seen.set()
-            return OmpToolResult(content=[])
         finally:
             self.finished.set()
 
@@ -589,6 +592,22 @@ class StubbornToolObserver(Observer):
         self.resume.set()
         if self.entered.is_set():
             await self.finished.wait()
+
+
+class StubbornToolObserver(StubbornCallbackObserver):
+    """Keep claimed host work alive until the test explicitly releases it."""
+
+    async def on_tool(self, call: OmpHostToolCall) -> OmpToolResult:
+        await self.hold_callback()
+        return OmpToolResult(content=[])
+
+
+class StubbornEventObserver(StubbornCallbackObserver):
+    """Record callback admission while keeping its event worker alive."""
+
+    async def on_event(self, event: OmpEvent) -> None:
+        await super().on_event(event)
+        await self.hold_callback()
 
 
 async def snapshots_observed(client: OmpRpcClient, count: int = 1) -> None:
