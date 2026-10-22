@@ -12,6 +12,11 @@ from tests.adapters.omp.kit import AutomaticThinkingRuntime, run_turn
 
 
 class TestConfiguration:
+    def test_native_workspace_is_selected_by_the_rpc_launch_command(self) -> None:
+        command = OmpAdapter()._spawn_command("/workspace")
+
+        assert command[-1] == "--cwd=/workspace"
+
     @pytest.mark.parametrize(
         "flag",
         ["--yolo", "--auto-approve", "--approval-mode=yolo", "--approval-mode=write"],
