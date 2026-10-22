@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
+from unittest.mock import patch
 
 from hypothesis import strategies as st
 
@@ -27,6 +28,7 @@ from tests.integrations.omprpc.kit import (
     SpawnBarrier,
     descendant_client,
     descendant_liveness,
+    descendants_started_with,
     owned_rpc_process,
     process_gate_session,
     prompt_task,
@@ -86,7 +88,7 @@ class RpcLifecycle:
         self.children: list[GatedProcess] = []
 
     async def record_children(self) -> list[GatedProcess]:
-        children = [await self.gate.connection(), await self.gate.connection()]
+        children = await descendants_started_with(self.gate, self.roots[-1])
         self.children.extend(children)
         return children
 
@@ -206,22 +208,21 @@ class RpcLifecycle:
     @asynccontextmanager
     async def held_first_spawn(self) -> AsyncIterator[HeldSpawn]:
         await self.close()
-        barrier = SpawnBarrier(asyncio.create_subprocess_exec)
-        self.client.create_process = barrier.create
-        starting = self._track(asyncio.create_task(self.client.start()))
-        try:
-            await barrier.created.wait()
-            assert barrier.process is not None
-            self.roots.append(barrier.process)
-            yield HeldSpawn(
-                starting=starting,
-                root=barrier.process,
-                children=await self.record_children(),
-                barrier=barrier,
-            )
-        finally:
-            self.client.create_process = None
-            barrier.release.set()
+        barrier = SpawnBarrier(self.client.spawn_owned_process)
+        with patch.object(self.client, "spawn_owned_process", barrier.create):
+            starting = self._track(asyncio.create_task(self.client.start()))
+            try:
+                await barrier.created.wait()
+                assert barrier.process is not None
+                self.roots.append(barrier.process)
+                yield HeldSpawn(
+                    starting=starting,
+                    root=barrier.process,
+                    children=await self.record_children(),
+                    barrier=barrier,
+                )
+            finally:
+                barrier.release.set()
 
     async def cancel_held_start_then_restart(self) -> None:
         async with self.held_first_spawn() as spawn:

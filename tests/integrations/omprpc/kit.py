@@ -202,6 +202,33 @@ def process_is_alive(process: psutil.Process) -> bool:
         return False
 
 
+def is_descendant(child: psutil.Process, ancestor: psutil.Process) -> bool:
+    """True when ``ancestor`` is a living parent of ``child``.
+
+    Windows Python launchers insert an extra process, so the gate child's
+    ``parent_pid`` is not always the owned helper.
+    """
+    try:
+        ancestor_pid = ancestor.pid
+        ancestor_created = ancestor.create_time()
+        current = child.parent()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
+    seen: set[int] = set()
+    while current is not None:
+        try:
+            pid = current.pid
+            if pid == ancestor_pid and current.create_time() == ancestor_created:
+                return True
+            if pid in seen:
+                return False
+            seen.add(pid)
+            current = current.parent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+    return False
+
+
 def kill_gate_processes(processes: list[psutil.Process]) -> None:
     for process in processes:
         with suppress(psutil.NoSuchProcess):
@@ -296,6 +323,18 @@ def job_member_pids(client: OmpRpcClient) -> set[int]:
 
 async def wait_for_descendants(gate: ProcessGate, count: int = 2) -> list[GatedProcess]:
     return [await gate.connection() for _ in range(count)]
+
+
+async def descendants_started_with(
+    gate: ProcessGate, root: asyncio.subprocess.Process, count: int = 2
+) -> list[GatedProcess]:
+    created = await asyncio.to_thread(psutil.Process(root.pid).create_time)
+    children: list[GatedProcess] = []
+    while len(children) < count:
+        child = await gate.connection()
+        if child.receipt.created >= created:
+            children.append(child)
+    return children
 
 
 async def crash_rpc_root(client: OmpRpcClient) -> None:

@@ -8,7 +8,7 @@ import os
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from pydantic import JsonValue, ValidationError
 
@@ -193,31 +193,44 @@ class OmpRpcClient:
                 await self.close()
                 raise
 
+    async def spawn_owned_process(
+        self, *command: str, **kwargs: Any
+    ) -> asyncio.subprocess.Process:
+        """Start and retain the command within this client's process containment.
+
+        ``create_process`` is the low-level launcher, including for the Windows
+        helper. Wrappers override this method and delegate to its bound original
+        or ``super()`` so creation owns exactly one helper and Job.
+        """
+        if os.name == "nt":
+            self._windows_process = WindowsProcess(create_process=self.create_process)
+            process = await self._windows_process.start_command(
+                command,
+                cwd=cast(str | None, kwargs.get("cwd")),
+                env=cast(Mapping[str, str] | None, kwargs.get("env")),
+                limit=cast(int, kwargs.get("limit", OMP_FRAME_BYTES)),
+            )
+        else:
+            create = self.create_process or asyncio.create_subprocess_exec
+            process = await create(*command, **kwargs)
+        # A wrapper may hold or fail after creation; cleanup still owns the child.
+        self._proc = process
+        return process
+
     async def _spawn_process(self) -> asyncio.subprocess.Process:
         scope = self._process_scope
         assert scope is not None
         env = scope.environment(self.env)
-        # Windows has no process group. Descendants inherit job membership at
-        # creation and cannot break away.
-        if os.name == "nt":
-            self._windows_process = WindowsProcess(create_process=self.create_process)
-            process = await self._windows_process.start_command(
-                self.command, cwd=None, env=env, limit=OMP_FRAME_BYTES
-            )
-        else:
-            create = self.create_process or asyncio.create_subprocess_exec
-            process = await create(
-                *self.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=None,
-                env=env,
-                start_new_session=os.name != "nt",
-                limit=OMP_FRAME_BYTES,
-            )
-        self._proc = process
-        return process
+        return await self.spawn_owned_process(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=None,
+            env=env,
+            start_new_session=os.name != "nt",
+            limit=OMP_FRAME_BYTES,
+        )
 
     async def request(
         self, command: str, **parameters: JsonValue
@@ -748,7 +761,7 @@ class OmpRpcClient:
             return self._proc
         try:
             return await asyncio.shield(spawning)
-        except (OSError, SpawnFailure):
+        except Exception:  # noqa: BLE001 -- startup propagates the error; cleanup retains its child.
             return self._proc
         except asyncio.CancelledError:
             if not spawning.cancelled():

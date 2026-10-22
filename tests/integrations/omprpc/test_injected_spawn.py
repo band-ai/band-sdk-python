@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from typing import Any
 
 import pytest
 
@@ -16,6 +17,18 @@ from tests.integrations.omprpc.kit import (
     prompt_task,
     second_prompt,
 )
+
+
+class FailingOwnedClient(OmpRpcClient):
+    fail_spawn = True
+
+    async def spawn_owned_process(
+        self, *command: str, **kwargs: Any
+    ) -> asyncio.subprocess.Process:
+        process = await super().spawn_owned_process(*command, **kwargs)
+        if self.fail_spawn:
+            raise ValueError("Owned spawn wrapper failed")
+        return process
 
 
 class TestInjectedSpawnOwnership:
@@ -48,4 +61,24 @@ class TestInjectedSpawnOwnership:
             if running is not None:
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
+            await client.close()
+
+    async def test_failed_owned_wrapper_reaps_before_restart(self) -> None:
+        client = FailingOwnedClient(
+            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", "basic"),
+            create_process=asyncio.create_subprocess_exec,
+        )
+        process: asyncio.subprocess.Process | None = None
+        try:
+            with pytest.raises(ValueError, match="Owned spawn wrapper failed"):
+                await client.start()
+            process = owned_rpc_process(client)
+            assert process.returncode is not None
+            client.fail_spawn = False
+            await client.start()
+            await second_prompt(client)
+        finally:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
             await client.close()

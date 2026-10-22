@@ -309,6 +309,10 @@ A `create_process` factory customizes creation without bypassing containment.
 On Windows it launches the existing helper; the client still owns the Job
 containing the native process and its descendants, including during cancelled
 or incomplete startup.
+To hold or observe the owned launch, wrap `spawn_owned_process` and delegate to
+its bound original (or override it and call `super()`). Do not pass that wrapper
+as `create_process`: that factory runs below the ownership boundary. The owned
+method retains the process before returning, so wrapper failure still reaps it.
 
 On POSIX, process-group capture rechecks a reaped leader's identity after
 enumerating members, before retaining that group. A reused leader PID does not

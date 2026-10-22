@@ -10,6 +10,7 @@ from tests.integrations.omprpc.kit import (
     ProcessGate,
     descendant_liveness,
     hold_after_stdin_closed,
+    is_descendant,
     job_member_pids,
     process_is_alive,
     session_ids,
@@ -32,7 +33,7 @@ class TestEofDescendants:
                 async with hold_after_stdin_closed(client) as closing:
                     late_child = await process_gate.connection()
                     assert root.returncode is not None
-                    assert late_child.receipt.parent_pid == helper.process.pid
+                    assert is_descendant(late_child.process, helper.process)
                     assert await descendant_liveness([helper, late_child]) == [
                         True,
                         True,
