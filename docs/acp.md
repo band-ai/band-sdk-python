@@ -247,3 +247,8 @@ fails the owning prompt with `OmpProcessError` and starts cleanup rather than
 silently dropping events and reporting success. The wire reader does not wait
 for callback capacity, so callbacks can still issue correlated commands and
 answer native UI requests while delivery is held.
+
+A `create_process` factory customizes creation without bypassing containment.
+On Windows it launches the existing helper; the client still owns the Job
+containing the native process and its descendants, including during cancelled
+or incomplete startup.
