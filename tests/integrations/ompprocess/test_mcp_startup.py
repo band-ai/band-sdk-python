@@ -121,19 +121,20 @@ class TestRequiredMcpStartup:
         plugin = tmp_path / "band-sdk"
         plugin.mkdir()
         command = omp_mcp_ready_command(str(plugin))
-        (plugin / "receipt.json").write_text(
-            json.dumps(
-                {
-                    "systemPromptReady": True,
-                    "servers": [
-                        {"type": "connected", "serverName": "band-sdk:required"}
-                    ],
-                }
-            ),
-            encoding="utf-8",
+        receipt = json.dumps(
+            {
+                "systemPromptReady": True,
+                "servers": [{"type": "connected", "serverName": "band-sdk:required"}],
+            }
         )
         runtime = AsyncMock(spec=OmpRpcClient)
         runtime.request.return_value = {"commands": [{"name": command}]}
+
+        async def prompt(message: str, **_callbacks: object) -> None:
+            _ = message
+            (plugin / "receipt.json").write_text(receipt, encoding="utf-8")
+
+        runtime.prompt.side_effect = prompt
         await omp_mcp_ready(
             runtime,
             str(plugin),

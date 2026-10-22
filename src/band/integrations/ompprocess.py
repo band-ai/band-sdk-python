@@ -15,9 +15,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from band.integrations.omp import (
-    OMP_CWD_FLAG,
     normalize_omp_mcp_device_call,
     normalize_omp_mcp_tool_name,
+    omp_cwd_argument,
     omp_provider_env,
 )
 from band.integrations.omprpc import OmpRpcClient
@@ -69,7 +69,7 @@ def omp_runtime_env(
 
 def omp_rpc_command_in_workspace(command: Sequence[str], workspace: str) -> list[str]:
     """Select OMP's room workspace without changing the subprocess launch cwd."""
-    return [*command, f"{OMP_CWD_FLAG}={workspace}"]
+    return [*command, omp_cwd_argument(workspace)]
 
 
 class OmpMcpServer(BaseModel):

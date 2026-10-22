@@ -6,8 +6,14 @@ import asyncio
 
 import pytest
 
-from band.integrations.omprpc import OmpPromptError
-from band.integrations.ompwire import OmpEventType, OmpState
+from band.integrations import omprpc
+from band.integrations.omprpc import OmpProcessError, OmpPromptError
+from band.integrations.ompwire import (
+    OmpEventType,
+    OmpHostToolCall,
+    OmpState,
+    OmpToolResult,
+)
 from tests.integrations.omprpc.kit import ClientFactory, Observer, prompt_task
 
 
@@ -87,3 +93,25 @@ class TestTurnSettlement:
         async with asyncio.timeout(5):
             await prompt_task(client, observer)
         assert OmpState.model_validate(await client.request("get_state")).isSettled
+
+    async def test_settlement_does_not_succeed_while_a_callback_is_still_running(
+        self, client_factory: ClientFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(omprpc, "_CALLBACK_EXIT_TIMEOUT_S", 0)
+        client = await client_factory("settled-during-callback")
+        held = asyncio.Event()
+
+        async def on_tool(_call: OmpHostToolCall) -> OmpToolResult:
+            await held.wait()
+            return OmpToolResult(content=[])
+
+        observer = Observer()
+        with pytest.raises(OmpProcessError, match="callbacks did not finish"):
+            async with asyncio.timeout(5):
+                await client.prompt(
+                    "first",
+                    on_event=observer.on_event,
+                    on_tool=on_tool,
+                    on_ui=observer.on_ui,
+                )
+        held.set()

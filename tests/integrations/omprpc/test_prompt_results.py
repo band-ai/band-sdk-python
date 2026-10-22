@@ -103,9 +103,13 @@ class TestPromptNarrationAndResults:
         self, client_factory: ClientFactory, scenario: str, match: str
     ) -> None:
         client = await client_factory(scenario)
+        process = client._proc
+        assert process is not None
         async with asyncio.timeout(5):
             with pytest.raises(OmpPromptError, match=match):
                 await prompt_task(client, Observer())
+        assert process.returncode is None
+        await second_prompt(client)
 
     async def test_narration_failure_does_not_leave_the_turn_or_process_waiting(
         self,

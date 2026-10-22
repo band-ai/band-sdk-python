@@ -26,6 +26,7 @@ from band.integrations.codex.winspawn import (
     session_pid_reused,
 )
 from band.integrations.ompwire import (
+    OMP_ASSISTANT_ROLE,
     OMP_CHUNK_BYTES,
     OMP_FRAME_BYTES,
     OMP_NATIVE_PROTOCOL_VERSION,
@@ -43,6 +44,7 @@ from band.integrations.ompwire import (
     OmpNegotiation,
     OmpPromptAcceptance,
     OmpPromptResult,
+    OmpPromptStatus,
     OmpReady,
     OmpResponse,
     OmpState,
@@ -173,7 +175,7 @@ class PromptRun:
         self.last_activity_sequence = sequence
         match event.type:
             case OmpEventType.MESSAGE_END if (
-                event.message is not None and event.message.role == "assistant"
+                event.message is not None and event.message.role == OMP_ASSISTANT_ROLE
             ):
                 self.last_assistant = event.message
             case OmpEventType.AGENT_END:
@@ -181,7 +183,7 @@ class PromptRun:
                     (
                         message
                         for message in reversed(event.messages)
-                        if message.role == "assistant"
+                        if message.role == OMP_ASSISTANT_ROLE
                     ),
                     self.last_assistant,
                 )
@@ -303,6 +305,7 @@ class OmpRpcClient:
         self._start_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
+        self._write_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         """Start the supplied command and require native RPC protocol v2."""
@@ -338,7 +341,9 @@ class OmpRpcClient:
                 if isinstance(ready, OmpProcessError):
                     raise ready
                 if OMP_NATIVE_PROTOCOL_VERSION not in ready.supportedProtocolVersions:
-                    raise OmpProtocolError("OMP RPC protocol v2 is required")
+                    raise OmpProtocolError(
+                        f"OMP RPC protocol v{OMP_NATIVE_PROTOCOL_VERSION} is required"
+                    )
                 self._max_frame_bytes = ready.maxFrameBytes
                 self._max_reassembled_bytes = ready.maxReassembledFrameBytes
                 negotiated = await self._request_frame(
@@ -348,7 +353,7 @@ class OmpRpcClient:
                 self._parse_response(
                     negotiated.frame,
                     OmpNegotiation,
-                    "OMP RPC protocol v2 negotiation failed",
+                    f"OMP RPC protocol v{OMP_NATIVE_PROTOCOL_VERSION} negotiation failed",
                 )
             except (OSError, SpawnFailure) as cause:
                 await self.close()
@@ -503,6 +508,8 @@ class OmpRpcClient:
             if not turn.rejected:
                 await self.close()
             raise
+        except OmpPromptError:
+            raise
         except BaseException:
             await self.close()
             raise
@@ -535,7 +542,7 @@ class OmpRpcClient:
             )
             if pending:
                 raise OmpProcessError("OMP callbacks did not finish after settlement")
-        if outcome is not None and outcome.status != "completed":
+        if outcome is not None and outcome.status != OmpPromptStatus.COMPLETED:
             raise OmpPromptError(
                 outcome.status,
                 outcome.error.message
@@ -543,7 +550,10 @@ class OmpRpcClient:
                 else f"OMP prompt {outcome.status}",
             )
         assistant = turn.last_assistant
-        if assistant is not None and assistant.stopReason in {"error", "aborted"}:
+        if assistant is not None and assistant.stopReason in {
+            OmpPromptStatus.ERROR,
+            OmpPromptStatus.ABORTED,
+        }:
             raise OmpPromptError(
                 assistant.stopReason,
                 assistant.errorMessage or f"OMP continuation {assistant.stopReason}",
@@ -739,13 +749,18 @@ class OmpRpcClient:
                 if request.method in _UI_NOTIFICATIONS:
                     return
                 if turn is None:
-                    await self._write_frame(
-                        {
-                            "type": OmpFrameType.UI_RESPONSE,
-                            "id": request.id,
-                            "cancelled": True,
-                        }
+                    write = asyncio.create_task(
+                        self._write_frame(
+                            {
+                                "type": OmpFrameType.UI_RESPONSE,
+                                "id": request.id,
+                                "cancelled": True,
+                            }
+                        )
                     )
+                    self._write_tasks.add(write)
+                    write.add_done_callback(self._write_tasks.discard)
+                    write.add_done_callback(self._consume_task)
                     return
                 self._start_callback(
                     turn, OmpCallbackKind.UI, request.id, self._handle_ui(turn, request)
@@ -783,6 +798,9 @@ class OmpRpcClient:
         request_id: str,
         callback: Coroutine[object, object, None],
     ) -> None:
+        if self._closing or turn.failure.done():
+            callback.close()
+            return
         key = (kind, request_id)
         task = asyncio.create_task(callback)
         if key in turn.callbacks:

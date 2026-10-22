@@ -19,6 +19,13 @@ OMP_FRAME_BYTES = 1024 * 1024
 OMP_REASSEMBLED_BYTES = 64 * 1024 * 1024
 OMP_CHUNK_BYTES = 256 * 1024
 OMP_NATIVE_PROTOCOL_VERSION: Final = 2
+OMP_ASSISTANT_ROLE = "assistant"
+
+
+class OmpPromptStatus(StrEnum):
+    COMPLETED = "completed"
+    ERROR = "error"
+    ABORTED = "aborted"
 
 
 class OmpFrameType(StrEnum):
@@ -322,7 +329,11 @@ class OmpPromptResult(OmpWireModel):
     type: Literal[OmpFrameType.PROMPT_RESULT]
     id: str | None = None
     agentInvoked: bool
-    status: Literal["completed", "error", "aborted"]
+    status: Literal[
+        OmpPromptStatus.COMPLETED,
+        OmpPromptStatus.ERROR,
+        OmpPromptStatus.ABORTED,
+    ]
     sessionSettled: bool
     error: OmpPromptFailure | None = None
 

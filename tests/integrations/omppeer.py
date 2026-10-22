@@ -439,6 +439,19 @@ class Peer:
             case "no-result":
                 self.end("complete")
                 self.settle()
+            case "settled-during-callback":
+                send(
+                    {
+                        "type": "host_tool_call",
+                        "id": "host-held",
+                        "toolCallId": "call-held",
+                        "toolName": "band_chat",
+                        "arguments": {},
+                    }
+                )
+                self.end("complete")
+                self.result(settled=True)
+                self.settle()
             case "host-cancel":
                 send(
                     {

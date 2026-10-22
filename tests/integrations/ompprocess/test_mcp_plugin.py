@@ -66,8 +66,10 @@ class TestMcpPluginProjection:
                 "---\nalwaysApply: true\n---\nReply through Band."
             )
 
-    def test_arguments_load_the_plugin_and_its_startup_extension(self) -> None:
-        plugin = "/tmp/overlay/band-sdk"
+    def test_arguments_load_the_plugin_and_its_startup_extension(
+        self, tmp_path: Path
+    ) -> None:
+        plugin = str(tmp_path / "band-sdk")
         arguments = omp_mcp_arguments(plugin)
         assert arguments[:2] == ("--plugin-dir", plugin)
         assert "--mode=rpc-ui" in arguments
