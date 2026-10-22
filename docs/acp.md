@@ -295,19 +295,25 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   matching prompt outcome and actual native session settlement
   (`session_settled` or `get_state.isSettled`). An error in a resumed assistant
   message fails the same Band turn. `turn_timeout_s` covers the whole lifecycle.
-  Timeout, errors and cancellation close that room's process and its owned
-  containment before returning; a subsequent message starts a fresh process
-  rather than inheriting unfinished work. Cancelling a prompt still waiting
-  for admission does not interrupt the active prompt.
+  Timeout, errors and cancellation run cleanup for that room's process; a
+  subsequent message starts a fresh native process rather than reusing the
+  failed one. Cancelling a prompt still waiting for admission does not
+  interrupt the active prompt.
 - **Process close.** A usable reader gets a best-effort abort request bounded to
   one second, then stdin closes for EOF while output is drained. The root gets
-  one second to exit before containment is force-stopped, even if the root
-  already exited. POSIX uses a process group established at spawn and `SIGKILL`;
-  Windows establishes job membership before the command runs and retains the
-  job handle through cleanup. Successful close confirms root exit and containment
-  settlement; it does not guarantee exit status zero. Caller cancellation still
-  waits for shared cleanup, and cleanup failures propagate. A failed close retains
-  the room, startup files and exclusive workspace claim; cleanup or the next turn
+  one second to exit before forced cleanup, which still runs if the root has
+  already exited. POSIX cleanup kills the process group established at spawn
+  and discovers additional descendants through a per-launch inherited
+  environment marker. Signals validate captured process identities to avoid
+  killing unrelated processes. This discovery is best effort: a detached
+  descendant whose environment is replaced or hidden by the OS may remain
+  undiscovered and outlive close. It is not an OS containment guarantee or a
+  security sandbox. Windows establishes job membership before the command runs
+  and retains the job handle through cleanup. Successful close confirms root
+  exit and settlement of identified members, not a zero exit status or exit
+  of every possible POSIX descendant. Caller cancellation still waits for
+  shared cleanup, and cleanup failures propagate. A failed close retains the
+  room, startup files and exclusive workspace claim; cleanup or the next turn
   retries that same close before releasing resources or starting a fresh process.
 - **Isolation and state.** Each room owns a native process, persistent session
   and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
