@@ -11,10 +11,16 @@ from typing import cast
 
 import psutil
 import pytest
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig, OmpPermissionRequest
+from band.adapters.omp import (
+    OmpAdapter,
+    OmpAdapterConfig,
+    OmpPermissionRequest,
+    OmpRoom,
+)
 from band.converters.omp import OmpSessionState
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import Emit
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpRpcClient
@@ -32,7 +38,9 @@ from band.testing import FakeAgentTools, reported_failures
 from tests.integrations.acp.conftest import make_platform_message
 from tests.integrations.omppeer import COMPLETION_REPLY_SCENARIO, DROP_STATE_RESPONSES
 from tests.integrations.omprpc.kit import (
+    CALLBACK_SETTLEMENT_BUDGET_S,
     COMPLETION_BUDGET_S,
+    StubbornCallbackObserver,
     process_is_alive,
     state_request_count,
 )
@@ -153,15 +161,21 @@ class RepeatedRuntime(PendingRuntime):
         )
 
 
-async def run_turn(adapter, tools, *, bootstrap=True):
+async def run_turn(
+    adapter: OmpAdapter,
+    tools: AgentToolsProtocol,
+    *,
+    bootstrap: bool = True,
+    room_id: str = "room-123",
+) -> None:
     await adapter.run_judged_turn(
-        msg=make_platform_message("Finish the background work"),
+        msg=make_platform_message("Finish the background work", room_id=room_id),
         tools=tools,
         history=OmpSessionState(),
         participants_msg=None,
         contacts_msg=None,
         is_session_bootstrap=bootstrap,
-        room_id="room-123",
+        room_id=room_id,
     )
 
 
@@ -649,3 +663,43 @@ class RefreshClients:
         self.clients.append(client)
         self.created.put_nowait(client)
         return client
+
+
+class HoldInput(BaseModel):
+    """Accept the zero-field cancellation-resistant hold tool input."""
+
+
+class StubbornAdapterTool(StubbornCallbackObserver):
+    """Keep real custom-tool work alive until its owner releases it."""
+
+    async def hold(self, _input: HoldInput) -> str:
+        await self.hold_callback()
+        return "released"
+
+
+class RetirementClients:
+    """Launch a stubborn callback peer, then healthy peers for adapter retries."""
+
+    def __init__(self) -> None:
+        self.clients: list[OmpRpcClient] = []
+        self.created: asyncio.Queue[OmpRpcClient] = asyncio.Queue()
+        self.plugins: list[Path] = []
+
+    def __call__(
+        self, command: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> OmpRpcClient:
+        launch = list(command)
+        if self.clients:
+            launch[launch.index("--scenario") + 1] = COMPLETION_REPLY_SCENARIO
+        client = OmpRpcClient(launch, env=env)
+        client.completion_timeout_s = COMPLETION_BUDGET_S
+        client.callback_exit_timeout_s = CALLBACK_SETTLEMENT_BUDGET_S
+        self.plugins.append(Path(launch[launch.index("--plugin-dir") + 1]))
+        self.clients.append(client)
+        self.created.put_nowait(client)
+        return client
+
+
+def owned_room(adapter: OmpAdapter, room_id: str) -> OmpRoom:
+    """Expose the room whose runtime, workspace and startup files remain owned."""
+    return adapter._rooms[room_id]
