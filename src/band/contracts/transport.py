@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import TracebackType
 from typing import Self
@@ -45,14 +46,17 @@ class ContractTransport:
         else:
             headers["x-api-key"] = credential
         try:
-            async with self._http.stream(
-                method,
-                self.connection.url + path,
-                content=body,
-                headers=headers,
-                timeout=self.connection.timeout,
-                follow_redirects=False,
-            ) as response:
+            async with (
+                asyncio.timeout(self.connection.timeout),
+                self._http.stream(
+                    method,
+                    self.connection.url + path,
+                    content=body,
+                    headers=headers,
+                    timeout=self.connection.timeout,
+                    follow_redirects=False,
+                ) as response,
+            ):
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     if len(content) + len(chunk) > limit:
@@ -70,7 +74,7 @@ class ContractTransport:
                         raise ContractInboxConflict(409, code)
                     raise ContractHTTPError(response.status_code, code)
                 return result
-        except httpx.HTTPError:
+        except (httpx.HTTPError, TimeoutError):
             logger.debug("Contract request ended without an authoritative response")
             raise ContractTransportError(
                 "Contract delivery is unknown; retry only the same request identity and body"
