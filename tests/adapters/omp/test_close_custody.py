@@ -68,8 +68,11 @@ class TestCloseCustody:
             await adapter.cleanup_all()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cleanup_retry", ["next_turn", "on_cleanup", "cleanup_all"]
+    )
     async def test_selection_after_failed_close_is_retained_for_the_next_turn(
-        self, launches: Launches, tmp_path: Path
+        self, launches: Launches, tmp_path: Path, cleanup_retry: str
     ) -> None:
         adapter = OmpAdapter(workspace_for_room=lambda _room: str(tmp_path), emit=())
         await run_turn(adapter, FakeAgentTools())
@@ -88,6 +91,10 @@ class TestCloseCustody:
 
             await adapter.apply_model_selection(selection, room_id="room-123")
             retiring.close = close
+            if cleanup_retry == "on_cleanup":
+                await adapter.on_cleanup("room-123")
+            elif cleanup_retry == "cleanup_all":
+                await adapter.cleanup_all()
             tools = FakeAgentTools()
             await run_turn(adapter, tools)
 
