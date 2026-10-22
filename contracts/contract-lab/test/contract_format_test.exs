@@ -204,9 +204,9 @@ defmodule ContractLab.ContractFormatTest do
 
   describe "syntax U vectors shared with the Python formatter" do
     @replyvectors Path.join(__DIR__, "fixtures/reply_format_vectors.json")
-                   |> File.read!()
-                   |> JSON.decode!()
-                   |> Map.fetch!("vectors")
+                  |> File.read!()
+                  |> JSON.decode!()
+                  |> Map.fetch!("vectors")
 
     for %{"name" => name, "input" => input, "expected" => expected} <- @replyvectors do
       @input input
