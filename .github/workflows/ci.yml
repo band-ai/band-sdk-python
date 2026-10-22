@@ -18,7 +18,7 @@ jobs:
       PYTHONPATH: '${{ github.workspace }}/sdk/src;${{ github.workspace }}/sdk'
       E2E_TESTS_ENABLED: 'false'
       DOCKER_TESTS_ENABLED: 'false'
-      SDK_REF: '0720167358abccceb65be410378e871783089c6d'
+      SDK_REF: 'c4ae7d844cc981205474ae6135ec5c5ce7505f3f'
     steps:
       - name: Check out immutable SDK root
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
