@@ -295,20 +295,20 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   matching prompt outcome and actual native session settlement
   (`session_settled` or `get_state.isSettled`). An error in a resumed assistant
   message fails the same Band turn. `turn_timeout_s` covers the whole lifecycle.
-  Timeout, errors and cancellation close that room's process and terminate its
-  captured descendants before returning; a subsequent message starts a fresh
-  process rather than inheriting unfinished work.
+  Timeout, errors and cancellation close that room's process and its owned
+  containment before returning; a subsequent message starts a fresh process
+  rather than inheriting unfinished work. Cancelling a prompt still waiting
+  for admission does not interrupt the active prompt.
 - **Process close.** A usable reader gets a best-effort abort request bounded to
   one second, then stdin closes for EOF while output is drained. The root gets
-  one second to exit before termination and, if needed, kill, each followed by
-  another one-second exit wait. Captured descendants are terminated and, if
-  needed, killed concurrently with the root's EOF grace; Python running behind
-  a Windows virtualenv launcher is one such descendant.
-  On POSIX, termination sends `SIGTERM` and kill sends `SIGKILL`. On Windows,
-  both are forced `TerminateProcess` operations, not graceful signal delivery.
-  Successful close proves the root was waited for and captured descendants
-  settled; it does not guarantee exit status zero. Caller cancellation still
-  waits for shared cleanup, and cleanup failures propagate.
+  one second to exit before containment is force-stopped, even if the root
+  already exited. POSIX uses a process group established at spawn and `SIGKILL`;
+  Windows establishes job membership before the command runs and retains the
+  job handle through cleanup. Successful close confirms root exit and containment
+  settlement; it does not guarantee exit status zero. Caller cancellation still
+  waits for shared cleanup, and cleanup failures propagate. A failed close retains
+  the room, startup files and exclusive workspace claim; cleanup or the next turn
+  retries that same close before releasing resources or starting a fresh process.
 - **Isolation and state.** Each room owns a native process, persistent session
   and workspace. OMP receives the workspace via `--cwd`; the subprocess itself
   starts without a supplied cwd. Session state carries `omp_session_id`,
