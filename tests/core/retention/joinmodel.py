@@ -9,12 +9,12 @@ import pytest
 from band.core.exceptions import CleanupIncompleteError
 from tests.adapters.hold import Hold
 from tests.adapters.waiting import until
-from tests.core.retention.kit import ResidenceHost
+from tests.core.retention.kit import SETTLE_GRACE_S, ResidenceHost
 
 
-async def play(parents: list[int], departed: set[int]) -> None:
+async def play(parents: list[int], departed: set[int], fail_close: bool) -> None:
     """Build an acyclic wait graph, remove callers, then request cleanup."""
-    async with ResidenceHost(timeout=None) as host:
+    async with ResidenceHost(timeout=None, settle_grace=SETTLE_GRACE_S) as host:
         resident = host.room()
         await resident.turn()
         request, finish = Hold(), Hold()
@@ -26,6 +26,7 @@ async def play(parents: list[int], departed: set[int]) -> None:
             await finish.wait()
 
         tasks = [resident.room.start_owned(requester)]
+        disposal = None
 
         async def dependent(target: asyncio.Task[None]) -> None:
             await resident.room.wait_owned(target)
@@ -59,7 +60,19 @@ async def play(parents: list[int], departed: set[int]) -> None:
                 if index not in departed and parent in protected:
                     protected.add(index)
             request.released.set()
-            await until(lambda: resident.room.closing, failure="cleanup not requested")
+            await finish.arrived()
+            await until(
+                lambda: (
+                    bool(host.clock.timers)
+                    or all(
+                        task.done()
+                        for index, task in enumerate(tasks)
+                        if index not in protected
+                    )
+                ),
+                failure="grace not armed",
+            )
+            await host.clock.advance(SETTLE_GRACE_S)
             await until(
                 lambda: all(
                     task.done() or task.cancelling()
@@ -70,8 +83,18 @@ async def play(parents: list[int], departed: set[int]) -> None:
             )
             assert all(not tasks[index].cancelling() for index in protected)
             assert resident.live and not resident.releases
+            resident.fail_close = fail_close
+            disposal = asyncio.create_task(resident.room.dispose())
         finally:
             request.released.set()
             finish.released.set()
             await asyncio.gather(*tasks, return_exceptions=True)
+        assert disposal is not None
+        if fail_close:
+            with pytest.raises(RuntimeError, match="close refused"):
+                await disposal
+            assert resident.live and resident.room.snapshot.pending_cleanup
+            resident.fail_close = False
+        else:
+            await disposal
         await resident.room.dispose()
