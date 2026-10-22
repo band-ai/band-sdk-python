@@ -68,9 +68,15 @@ async def overflow_reaps_and_restarts(
     process: asyncio.subprocess.Process,
     stopped: asyncio.Event,
 ) -> None:
-    await client.request("event-burst", count=EVENT_BACKLOG_LIMIT + 1)
-    with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
-        await running
+    trigger = asyncio.create_task(
+        client.request("event-burst", count=EVENT_BACKLOG_LIMIT + 1)
+    )
+    try:
+        with pytest.raises(OmpProcessError, match=BACKLOG_EXCEEDED):
+            await running
+    finally:
+        trigger.cancel()
+        await asyncio.gather(trigger, return_exceptions=True)
     assert stopped.is_set()
     assert process.returncode is not None
     await client.start()
