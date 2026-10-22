@@ -206,29 +206,53 @@ class TestOwnedJoins:
             await asyncio.gather(first, child, return_exceptions=True)
 
     @pytest.mark.parametrize("outcome", ["success", "failure", "cancelled"])
-    async def test_completed_target_is_completion_only(
-        self, host: ResidenceHost, outcome: str
+    @pytest.mark.parametrize("completed", [False, True], ids=["pending", "completed"])
+    async def test_target_is_completion_only(
+        self, host: ResidenceHost, outcome: str, completed: bool
     ) -> None:
         room = host.room().room
+        gate = Hold()
+        failure = RuntimeError("target failed")
 
         async def work() -> int:
+            await gate.wait()
             if outcome == "failure":
-                raise RuntimeError("target failed")
+                raise failure
             if outcome == "cancelled":
                 raise asyncio.CancelledError
             return 42
 
         task = room.start_owned(work)
-        await asyncio.wait({task})
-        await room.wait_owned(task)
-        if outcome == "success":
-            assert task.result() == 42
-        elif outcome == "failure":
-            with pytest.raises(RuntimeError, match="target failed"):
-                task.result()
-        else:
-            with pytest.raises(asyncio.CancelledError):
-                task.result()
+
+        async def join() -> None:
+            await room.wait_owned(task)
+
+        waiter = None
+        try:
+            await gate.arrived()
+            if completed:
+                gate.released.set()
+                await asyncio.wait({task})
+            waiter = room.start_owned(join)
+            if not completed:
+                await until(lambda: waiter in room._waiting, failure="join missing")
+                gate.released.set()
+            assert await waiter is None
+            assert waiter not in room._waiting
+            if outcome == "success":
+                assert task.result() == 42
+            elif outcome == "failure":
+                with pytest.raises(RuntimeError) as error:
+                    task.result()
+                assert error.value is failure
+            else:
+                with pytest.raises(asyncio.CancelledError):
+                    task.result()
+        finally:
+            gate.released.set()
+            await asyncio.gather(task, return_exceptions=True)
+            if waiter is not None:
+                await asyncio.gather(waiter, return_exceptions=True)
 
     async def test_pending_foreign_and_self_waits_are_rejected(
         self, host: ResidenceHost
