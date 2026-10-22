@@ -12,8 +12,9 @@ from tests.integrations.omprpc.lifecycle import Step, play, sequences
 
 class TestRpcLifecycleModel:
     @pytest.mark.parametrize("detached", [False, True], ids=["session", "detached"])
-    # The generated workload launches hundreds of real peers; each step stays guarded.
-    @pytest.mark.timeout(120)
+    # The full Hypothesis workload can exceed two minutes on Windows.
+    # Each generated step retains its separate, shorter hang guard.
+    @pytest.mark.timeout(600)
     @settings(
         max_examples=20,
         deadline=None,
