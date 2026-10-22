@@ -80,7 +80,7 @@ explicit user approval.
 | Skill | Use when |
 |---|---|
 | [band-python-conventions](.claude/skills/band-python-conventions/SKILL.md) | Python source, comments, docstrings, and error handling |
-| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests or assessing meaningful coverage and realistic flows |
+| [band-python-test-conventions](.claude/skills/band-python-test-conventions/SKILL.md) | writing/reviewing tests; complementary branches not line counts; intent assertions; seams not patches; no wall-clock proof |
 
 | Skill | Use when |
 |---|---|
@@ -447,7 +447,10 @@ install` it and exercise the real call in this repo's venv.
 
 For Python changes, before selecting checks, re-read your own diff once against
 the `band-python-conventions` skill — including code you just wrote this session,
-not only code you started from. The two rules that get skipped under time pressure:
+not only code you started from. Test diffs also re-read
+`band-python-test-conventions` (complementary branches, intent assertions,
+seams not patches, no wall-clock proof). The two rules that get skipped under
+time pressure:
 
 - **Single source of truth**: a literal, magic string, or multi-line block
   re-typed in more than one place (a second copy you just wrote counts) instead

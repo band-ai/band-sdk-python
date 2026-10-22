@@ -52,12 +52,20 @@ Test rules:
 - Test behavior that can actually break, not defaults or implementation
   trivia (see the `band-python-test-conventions` skill). A test that would
   still pass under a symptom-level patch doesn't cover the root cause.
+  Cover complementary branches of each owned decision, not line execution;
+  assert a named projection of the outcome, not internals or unclaimed
+  empties. Parametrize `(scenario, expected)` — do not `if` on scenario
+  inside the test.
 - When a material scenario needs end-to-end coverage to prove the behavior,
   reuse or extend the `tests/e2e/baseline` toolkit (see the
   `band-write-e2e-test` skill) instead of building new plumbing. Otherwise use
   the lowest boundary that preserves the behavior being tested.
-- A missing helper, fixture, or local peer is its own step, before the step
-  that uses it — never an empty mock in place of a real boundary.
+- A missing helper, fixture, constructor seam, or local peer is its own
+  step, before the step that uses it — never `unittest.mock.patch` of a
+  private name, stdlib spawn, or timeout constant, and never an empty mock
+  in place of a real boundary. Timeouts are proven with a public `0` ("check
+  now") plus the complementary "finished before wait" sequence, not by
+  sleeping the grace period.
 
 Scope rules:
 

@@ -79,9 +79,9 @@ reuse, target location, precedents, and any coverage overlap).
 ## Phase 2 — Plan the test
 
 Apply [test conventions](../band-python-test-conventions/SKILL.md)
-"Coverage and realistic flows" when mapping existing coverage and selecting
-the scenario. Show which meaningful gap this test closes and which complete
-interaction it proves.
+"Coverage is branches, not lines" when mapping existing coverage and selecting
+the scenario. Show which complementary-branch gap this test closes and which
+complete interaction it proves.
 
 Write a concrete plan (not code yet). It must answer:
 
