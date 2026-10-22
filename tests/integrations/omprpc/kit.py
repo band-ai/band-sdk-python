@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import cast
 
 import psutil
+import pytest
 from pydantic import JsonValue
 
 from band.integrations.omprpc import OmpRpcClient
@@ -120,7 +121,11 @@ async def queue_prompt(
 
 
 def descendant_client(
-    gate: ProcessGate, *, scenario: str = "descendants", stdio: str = "discard"
+    gate: ProcessGate,
+    *,
+    scenario: str = "descendants",
+    stdio: str = "discard",
+    detached: bool = False,
 ) -> OmpRpcClient:
     return OmpRpcClient(
         (
@@ -133,6 +138,7 @@ def descendant_client(
             str(gate.port),
             "--child-stdio",
             stdio,
+            *(("--detached-children",) if detached else ()),
         )
     )
 
@@ -231,7 +237,7 @@ def refuse_process_signal(*args: object) -> None:
 
 
 class DeferredSessionSignal:
-    """Keep real members alive while their post-signal group lookup disappears."""
+    """Keep real members alive while post-signal ownership lookup disappears."""
 
     def __init__(
         self,
@@ -245,13 +251,89 @@ class DeferredSessionSignal:
         self.hide_after_signal = hide_after_signal
         self.signalled = False
         self.original_group = os.getpgid
+        self.original_kill = os.kill
+        self.original_environment = psutil.Process.environ
 
     def send(self, pgid: int, sig: int) -> None:
         assert pgid == self.pgid
         assert sig == signal.SIGKILL
         self.signalled = True
 
+    def send_pid(self, pid: int, sig: int) -> None:
+        if sig == signal.SIGKILL:
+            assert pid in self.members
+            self.signalled = True
+            return
+        self.original_kill(pid, sig)
+
     def group(self, pid: int) -> int:
         if self.signalled and self.hide_after_signal and pid in self.members:
             raise ProcessLookupError(pid)
         return self.original_group(pid)
+
+    def environment(self, process: psutil.Process) -> dict[str, str]:
+        if self.signalled and self.hide_after_signal and process.pid in self.members:
+            raise psutil.NoSuchProcess(process.pid)
+        return self.original_environment(process)
+
+    def install(self, patch: pytest.MonkeyPatch) -> None:
+        patch.setattr(os, "killpg", self.send)
+        patch.setattr(os, "kill", self.send_pid)
+        patch.setattr(os, "getpgid", self.group)
+        patch.setattr(
+            psutil.Process, "environ", lambda process: self.environment(process)
+        )
+
+
+@asynccontextmanager
+async def unrelated_gate_child(gate: ProcessGate) -> AsyncIterator[GatedProcess]:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-u",
+        OMP_PEER_SCRIPT,
+        "--scenario",
+        "gated-child",
+        "--gate-port",
+        str(gate.port),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=os.name != "nt",
+    )
+    try:
+        yield await gate.connection()
+    finally:
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+        async with asyncio.timeout(5):
+            await process.wait()
+
+
+class RecycledEnvironment:
+    """Expose one stale matching environment while the process identity changes."""
+
+    def __init__(self, unrelated: GatedProcess, owner_pid: int) -> None:
+        self.pid = unrelated.process.pid
+        self.owner_environment = psutil.Process(owner_pid).environ()
+        self.original_environment = psutil.Process.environ
+        self.original_create_time = psutil.Process.create_time
+        self.recycled = False
+
+    def environment(self, process: psutil.Process) -> dict[str, str]:
+        if process.pid == self.pid and not self.recycled:
+            self.recycled = True
+            return self.owner_environment
+        return self.original_environment(process)
+
+    def create_time(self, process: psutil.Process) -> float:
+        created = self.original_create_time(process)
+        return created + 1 if self.recycled and process.pid == self.pid else created
+
+    def install(self, patch: pytest.MonkeyPatch) -> None:
+        patch.setattr(
+            psutil.Process, "environ", lambda process: self.environment(process)
+        )
+        patch.setattr(
+            psutil.Process, "create_time", lambda process: self.create_time(process)
+        )

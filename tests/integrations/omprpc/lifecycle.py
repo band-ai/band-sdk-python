@@ -70,9 +70,9 @@ async def announced_operation(
 
 
 class RpcLifecycle:
-    def __init__(self, gate: ProcessGate) -> None:
+    def __init__(self, gate: ProcessGate, *, detached: bool) -> None:
         self.gate = gate
-        self.client = descendant_client(gate, scenario="lifecycle")
+        self.client = descendant_client(gate, scenario="lifecycle", detached=detached)
         self.live = False
         self.active: asyncio.Task[None] | None = None
         self.observer: Observer | None = None
@@ -234,17 +234,17 @@ class RpcLifecycle:
 
 
 @asynccontextmanager
-async def rpc_lifecycle() -> AsyncIterator[RpcLifecycle]:
+async def rpc_lifecycle(*, detached: bool) -> AsyncIterator[RpcLifecycle]:
     async with process_gate_session() as gate:
-        session = RpcLifecycle(gate)
+        session = RpcLifecycle(gate, detached=detached)
         try:
             yield session
         finally:
             await session.cleanup()
 
 
-async def play(steps: list[Step]) -> None:
-    async with rpc_lifecycle() as session:
+async def play(steps: list[Step], *, detached: bool) -> None:
+    async with rpc_lifecycle(detached=detached) as session:
         for step in steps:
             async with asyncio.timeout(STEP_GUARD_S):
                 await session.take(step)

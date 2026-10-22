@@ -18,14 +18,95 @@ from tests.integrations.omprpc.kit import (
     OMP_PEER_SCRIPT,
     DeferredSessionSignal,
     ProcessGate,
+    RecycledEnvironment,
     descendant_client,
     descendant_liveness,
     process_is_alive,
     refuse_process_signal,
+    unrelated_gate_child,
 )
 
 
 class TestProcessTreeCleanup:
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX setsid ownership boundary")
+    @pytest.mark.parametrize("root_exit", ["close", "crash"])
+    async def test_close_reaps_detached_descendants_without_affecting_other_owners(
+        self, process_gate: ProcessGate, root_exit: str
+    ) -> None:
+        client = descendant_client(process_gate, detached=True)
+        other = descendant_client(process_gate, detached=True)
+        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
+        async with unrelated_gate_child(process_gate) as unrelated:
+            try:
+                await client.start()
+                descendants = [
+                    await process_gate.connection(),
+                    await process_gate.connection(),
+                ]
+                root = client._proc
+                assert root is not None
+                assert all(
+                    os.getsid(child.process.pid) == child.process.pid
+                    for child in descendants
+                )
+                assert all(
+                    os.getsid(child.process.pid) != root.pid for child in descendants
+                )
+                await other.start()
+                other_descendants = [
+                    await process_gate.connection(),
+                    await process_gate.connection(),
+                ]
+                other_root = other._proc
+                assert other_root is not None
+                if root_exit == "crash":
+                    crashing = asyncio.create_task(client.request("crash"))
+                    async with asyncio.timeout(5):
+                        await root.wait()
+                    assert root.returncode == 3
+                    with pytest.raises(OmpProcessError):
+                        await crashing
+
+                await client.close()
+                assert root.returncode is not None
+                assert await descendant_liveness(descendants) == [False, False]
+                assert other_root.returncode is None
+                assert await descendant_liveness(other_descendants) == [True, True]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+                assert (await other.request("get_state"))["isSettled"] is True
+                await other.close()
+                assert await descendant_liveness(other_descendants) == [False, False]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+            finally:
+                await client.close()
+                await other.close()
+                if crashing is not None:
+                    await asyncio.gather(crashing, return_exceptions=True)
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX inherited-scope boundary")
+    async def test_stale_matching_environment_cannot_adopt_a_reused_process_identity(
+        self, process_gate: ProcessGate, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = descendant_client(process_gate, detached=True)
+        async with unrelated_gate_child(process_gate) as unrelated:
+            try:
+                await client.start()
+                descendants = [
+                    await process_gate.connection(),
+                    await process_gate.connection(),
+                ]
+                root = client._proc
+                assert root is not None
+                boundary = RecycledEnvironment(unrelated, root.pid)
+                with monkeypatch.context() as patch:
+                    boundary.install(patch)
+                    await client.close()
+                assert boundary.recycled
+                assert await descendant_liveness(descendants) == [False, False]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+            finally:
+                await client.close()
+
     async def test_close_reaps_owned_descendants_after_the_root_has_crashed(
         self, process_gate: ProcessGate
     ) -> None:
@@ -116,8 +197,7 @@ class TestProcessTreeCleanup:
                 old_root.pid, descendants, hide_after_signal=hide_after_signal
             )
             with monkeypatch.context() as patch:
-                patch.setattr(os, "killpg", boundary.send)
-                patch.setattr(os, "getpgid", boundary.group)
+                boundary.install(patch)
                 patch.setattr(omprpc, "_PROCESS_EXIT_TIMEOUT_S", 0)
                 crashing = asyncio.create_task(client.request("crash"))
                 async with asyncio.timeout(5):

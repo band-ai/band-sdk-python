@@ -6,10 +6,12 @@ import asyncio
 import base64
 import logging
 import os
+import time
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
+from uuid import uuid4
 
 import psutil
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -52,6 +54,7 @@ _DRAIN_BYTES = 64 * 1024
 _ABORT_TIMEOUT_S = 1.0
 _PROCESS_EXIT_TIMEOUT_S = 1.0
 _CALLBACK_EXIT_TIMEOUT_S = 1.0
+_PROCESS_SCOPE_VALUE = "1"
 _PAYLOAD_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _EVENT_TYPES = frozenset(OmpEventType)
 _UI_NOTIFICATIONS = frozenset(
@@ -153,6 +156,88 @@ class PromptRun:
         self.changed.set()
 
 
+class OmpProcessScope:
+    """Retain observable POSIX descendants for best-effort cleanup.
+
+    The private PI_ marker survives native helper filters. Explicit environment
+    replacement and restricted process inspection can hide detached children.
+    """
+
+    def __init__(self) -> None:
+        self.key = f"PI_BAND_PROCESS_{uuid4().hex}"
+        self.processes: set[psutil.Process] = set()
+
+    def environment(self, base: Mapping[str, str] | None) -> dict[str, str]:
+        return {
+            **(os.environ if base is None else base),
+            self.key: _PROCESS_SCOPE_VALUE,
+        }
+
+    def capture(self, root: asyncio.subprocess.Process) -> None:
+        group_visible = not session_pid_reused(root)
+        group_members: list[psutil.Process] = []
+        for pid in psutil.pids():
+            # asyncio's child watcher remains the sole waiter for the root.
+            if pid == 0 or pid == root.pid:
+                continue
+            try:
+                member = psutil.Process(pid)
+                created = member.create_time()
+                marked = False
+                try:
+                    marked = member.environ().get(self.key) == _PROCESS_SCOPE_VALUE
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+                in_group = False
+                if group_visible:
+                    try:
+                        in_group = os.getpgid(pid) == root.pid
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                if not marked and not in_group:
+                    continue
+                current = psutil.Process(pid)
+                if current.create_time() != created or current != member:
+                    continue
+                if marked:
+                    self.processes.add(member)
+                elif in_group:
+                    group_members.append(member)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if group_visible and not session_pid_reused(root):
+            self.processes.update(group_members)
+
+    @staticmethod
+    def _is_alive(process: psutil.Process) -> bool:
+        try:
+            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            return False
+
+    def signal(self) -> None:
+        for process in self.processes:
+            try:
+                process.kill()
+            except psutil.NoSuchProcess:
+                pass
+
+    def close(self, root: asyncio.subprocess.Process, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        self.capture(root)
+        alive = [process for process in self.processes if self._is_alive(process)]
+        while alive:
+            self.signal()
+            psutil.wait_procs(alive, timeout=max(0.0, deadline - time.monotonic()))
+            self.capture(root)
+            alive = [process for process in self.processes if self._is_alive(process)]
+            if alive and time.monotonic() >= deadline:
+                raise OmpProcessError(
+                    "OMP owned session members survived cleanup: "
+                    f"{sorted(process.pid for process in alive)}"
+                )
+
+
 class OmpRpcClient:
     """One OMP process, one persistent reader, and at most one active prompt."""
 
@@ -165,7 +250,7 @@ class OmpRpcClient:
         self.env = None if env is None else {**os.environ, **env}
         self._proc: asyncio.subprocess.Process | None = None
         self._windows_process: WindowsProcess | None = None
-        self._session_waiters: set[psutil.Process] = set()
+        self._process_scope: OmpProcessScope | None = None
         self._spawn_task: asyncio.Task[asyncio.subprocess.Process] | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
@@ -200,6 +285,7 @@ class OmpRpcClient:
             self._max_frame_bytes = OMP_FRAME_BYTES
             self._max_reassembled_bytes = OMP_REASSEMBLED_BYTES
             self._closing = False
+            self._process_scope = OmpProcessScope() if os.name != "nt" else None
             self._ready = asyncio.get_running_loop().create_future()
             self._spawn_task = asyncio.create_task(self._spawn_process())
             try:
@@ -242,13 +328,15 @@ class OmpRpcClient:
                 limit=OMP_FRAME_BYTES,
             )
         else:
+            scope = self._process_scope
+            assert scope is not None
             process = await asyncio.create_subprocess_exec(
                 *self.command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=None,
-                env=self.env,
+                env=scope.environment(self.env),
                 start_new_session=True,
                 limit=OMP_FRAME_BYTES,
             )
@@ -803,40 +891,6 @@ class OmpRpcClient:
             return False
         return True
 
-    def _capture_session_waiters(self, process: asyncio.subprocess.Process) -> None:
-        if session_pid_reused(process):
-            return
-        members: list[psutil.Process] = []
-        for pid in psutil.pids():
-            # asyncio's child watcher remains the sole waiter for the root.
-            if pid == process.pid:
-                continue
-            try:
-                if os.getpgid(pid) == process.pid:
-                    member = psutil.Process(pid)
-                    member.create_time()
-                    members.append(member)
-            except (ProcessLookupError, psutil.NoSuchProcess):
-                continue
-        if not session_pid_reused(process):
-            self._session_waiters.update(members)
-
-    def _wait_for_session_exit(self) -> None:
-        _, alive = psutil.wait_procs(
-            self._session_waiters, timeout=_PROCESS_EXIT_TIMEOUT_S
-        )
-        remaining: list[int] = []
-        for member in alive:
-            try:
-                if member.is_running() and member.status() != psutil.STATUS_ZOMBIE:
-                    remaining.append(member.pid)
-            except psutil.NoSuchProcess:
-                pass
-        if remaining:
-            raise OmpProcessError(
-                f"OMP session members survived containment kill: {sorted(remaining)}"
-            )
-
     async def _settle_spawn(self) -> asyncio.subprocess.Process | None:
         spawning = self._spawn_task
         if spawning is None:
@@ -860,6 +914,7 @@ class OmpRpcClient:
             await self._cancel_tasks(workers)
 
         owner = self._windows_process
+        scope = self._process_scope
         owner_closed = False
         if owner is not None and self._proc is None:
             # Stop incomplete helper creation/readiness before awaiting its spawn task.
@@ -871,7 +926,10 @@ class OmpRpcClient:
         process = await self._settle_spawn()
         if process is None:
             self._windows_process = None
+            self._process_scope = None
             return
+        if scope is not None:
+            await asyncio.to_thread(scope.capture, process)
         if (
             self._failure is None
             and process.returncode is None
@@ -893,9 +951,9 @@ class OmpRpcClient:
         ) and process.stderr is not None:
             drains.append(asyncio.create_task(self._drain(process.stderr)))
         try:
-            if owner is None:
-                # EOF and signals can remove PGID visibility before exit is observable.
-                await asyncio.to_thread(self._capture_session_waiters, process)
+            if scope is not None:
+                # Ownership lookup can disappear before process exit is observable.
+                await asyncio.to_thread(scope.capture, process)
             if not owner_closed:
                 await close_stdin(process)
                 await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S)
@@ -903,13 +961,19 @@ class OmpRpcClient:
                 if not owner_closed:
                     await owner.close(_PROCESS_EXIT_TIMEOUT_S)
             else:
-                await asyncio.to_thread(self._capture_session_waiters, process)
+                assert scope is not None
+                await asyncio.to_thread(scope.capture, process)
                 await kill_process_tree(process)
-                await asyncio.to_thread(self._wait_for_session_exit)
+                await asyncio.to_thread(scope.signal)
+                if not await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S):
+                    raise OmpProcessError(
+                        "OMP process did not exit after containment kill"
+                    )
+                await asyncio.to_thread(scope.close, process, _PROCESS_EXIT_TIMEOUT_S)
             if not await self._wait_for_exit(process):
                 raise OmpProcessError("OMP process did not exit after containment kill")
             self._windows_process = None
-            self._session_waiters.clear()
+            self._process_scope = None
         finally:
             if self._stderr_task is not None:
                 drains.append(self._stderr_task)

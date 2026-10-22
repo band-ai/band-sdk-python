@@ -41,7 +41,9 @@ class ProcessReceipt(BaseModel):
     created: float
 
 
-def start_descendant(scenario: str, port: int, stdio: str) -> subprocess.Popen[bytes]:
+def start_descendant(
+    scenario: str, port: int, stdio: str, *, detached: bool = False
+) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         (
             sys.executable,
@@ -51,19 +53,25 @@ def start_descendant(scenario: str, port: int, stdio: str) -> subprocess.Popen[b
             scenario,
             "--gate-port",
             str(port),
+            *(("--detached-children",) if detached else ()),
         ),
         # A parent's pending pipe read can block Python's stdin initialization on Windows.
         # Descendants are controlled by the gate socket, not the RPC input pipe.
         stdin=subprocess.DEVNULL,
         stdout=None if stdio == "inherit" else subprocess.DEVNULL,
         stderr=None if stdio == "inherit" else subprocess.DEVNULL,
+        start_new_session=detached and os.name != "nt",
     )
 
 
-def hold_process_gate(port: int, *, spawn_child: bool) -> None:
+def hold_process_gate(port: int, *, spawn_child: bool, detached: bool = False) -> None:
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    child = start_descendant("gated-child", port, "inherit") if spawn_child else None
+    child = (
+        start_descendant("gated-child", port, "inherit", detached=detached)
+        if spawn_child
+        else None
+    )
     with socket.create_connection(("127.0.0.1", port), timeout=5) as gate:
         gate.settimeout(None)
         receipt = ProcessReceipt(
@@ -556,6 +564,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--gate-port", type=int)
+    parser.add_argument("--detached-children", action="store_true")
     parser.add_argument(
         "--child-stdio", choices=("inherit", "discard"), default="inherit"
     )
@@ -563,13 +572,22 @@ def main() -> None:
     if args.scenario in {"gated-parent", "gated-child"}:
         if args.gate_port is None:
             raise ValueError("A process gate port is required")
-        hold_process_gate(args.gate_port, spawn_child=args.scenario == "gated-parent")
+        hold_process_gate(
+            args.gate_port,
+            spawn_child=args.scenario == "gated-parent",
+            detached=args.detached_children,
+        )
         return
     if args.scenario in {"descendants", "no-ready-descendants", "lifecycle"}:
         if args.gate_port is None:
             raise ValueError("A process gate port is required")
         # The gate, not the peer's stdio EOF, owns these children's lifetime.
-        start_descendant("gated-parent", args.gate_port, args.child_stdio)
+        start_descendant(
+            "gated-parent",
+            args.gate_port,
+            args.child_stdio,
+            detached=args.detached_children,
+        )
     if args.scenario == "stubborn" and hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     peer = Peer(args.scenario)
