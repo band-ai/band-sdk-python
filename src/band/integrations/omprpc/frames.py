@@ -121,9 +121,13 @@ def host_tool_result_frame(
 
 
 def ui_response_frame(request_id: str, response: OmpUIResponse) -> dict[str, JsonValue]:
-    answer = response.model_dump(mode="json", exclude={"cancelled"}, exclude_none=True)
+    answer = response.model_dump(
+        mode="json",
+        exclude_none=True,
+        exclude=None if response.cancelled else {"cancelled"},
+    )
     return {
         "type": OmpFrameType.UI_RESPONSE,
         "id": request_id,
-        **(answer or {"cancelled": True}),
+        **answer,
     }

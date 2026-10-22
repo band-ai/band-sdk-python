@@ -14,7 +14,11 @@ from band.integrations.ompwire import (
     OmpEventType,
     OmpState,
 )
-from tests.integrations.omppeer import COMPLETE, LATE_PROMPT_ERROR
+from tests.integrations.omppeer import (
+    ADMITTED_PROMPT_ERROR,
+    COMPLETE,
+    LATE_PROMPT_ERROR,
+)
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -132,6 +136,22 @@ class TestPromptNarrationAndResults:
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
+
+    async def test_a_late_prompt_error_does_not_reap_the_process(
+        self,
+        client_factory: ClientFactory,
+    ) -> None:
+        client = await client_factory(ADMITTED_PROMPT_ERROR)
+        process = owned_rpc_process(client)
+        async with asyncio.timeout(5):
+            with pytest.raises(OmpRpcError) as late:
+                await prompt_task(client, Observer())
+        assert (late.value.command, late.value.code) == (
+            OmpCommandName.PROMPT,
+            "post_admit",
+        )
+        assert process.returncode is None
+        await second_prompt(client)
 
     @pytest.mark.parametrize(
         ("scenario", "match"),

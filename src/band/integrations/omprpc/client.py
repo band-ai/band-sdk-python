@@ -505,6 +505,8 @@ class OmpRpcClient:
                 result = OmpPromptResult.model_validate(payload)
                 if turn is not None and result.id == turn.id and not turn.result.done():
                     turn.result.set_result(result)
+                else:
+                    logger.debug("OMP RPC ignored an unmatched prompt_result")
             case OmpFrameType.SESSION_SETTLED:
                 if turn is not None and (
                     turn.last_activity_sequence > 0 or turn.result.done()
@@ -586,6 +588,13 @@ class OmpRpcClient:
             logger.debug("OMP RPC ignored an unmatched command response")
             return
         if pending.future.done():
+            if (
+                not response.success
+                and self._turn is not None
+                and response.id == self._turn.id
+            ):
+                self._turn.rejected = True
+                self._turn.fail(command_error(response))
             return
         if response.success:
             pending.future.set_result(ReceivedResponse(response, sequence))

@@ -263,7 +263,7 @@ class OmpUIRequest(OmpWireModel):
 
 
 class OmpUIResponse(OmpWireModel):
-    """Answer one dialog, or cancel it when no answer variant is supplied."""
+    """Answer or explicitly cancel one dialog."""
 
     value: str | None = None
     confirmed: bool | None = None

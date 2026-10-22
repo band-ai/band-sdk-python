@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from band.converters.omp import (
-    OmpHistoryConverter,
-    OmpMetadataKey,
-)
+from band.converters.omp import OmpHistoryConverter, OmpMetadataKey
 from band.core.types import MessageType
 
 

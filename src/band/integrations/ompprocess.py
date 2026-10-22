@@ -138,8 +138,9 @@ export default function (pi) {
     description: "Verify the host-configured MCP connections",
     handler: async (_args, ctx) => {
       await ready;
-      const systemPromptReady = !config.systemPrompt
-        || ctx.getSystemPrompt().some(block => block.includes(config.systemPrompt.trim()));
+      const trimmed = (config.systemPrompt || "").trim();
+      const systemPromptReady = !trimmed
+        || ctx.getSystemPrompt().some(block => block.includes(trimmed));
       writeFileSync(config.receipt, JSON.stringify({ systemPromptReady, servers: [...statuses.values()] }), { mode: 0o600 });
     },
   });
@@ -276,7 +277,8 @@ def omp_mcp_plugin(
     servers: Mapping[str, OmpMcpServer], *, workspace: str, system_prompt: str = ""
 ) -> Iterator[str | None]:
     """Project connection instructions and servers without changing native user configs."""
-    if not servers and not system_prompt:
+    trimmed_prompt = system_prompt.strip()
+    if not servers and not trimmed_prompt:
         yield None
         return
     projected = {
@@ -285,18 +287,18 @@ def omp_mcp_plugin(
     with tempfile.TemporaryDirectory(prefix="band-omp-") as temporary:
         root = Path(temporary) / OMP_PLUGIN_ROOT
         root.mkdir(mode=0o700)
-        if system_prompt:
+        if trimmed_prompt:
             rules = root / "rules"
             rules.mkdir(mode=0o700)
             _write_private(
                 rules / f"band-connection-{uuid4().hex}.md",
-                f"---\nalwaysApply: true\n---\n{system_prompt}",
+                f"---\nalwaysApply: true\n---\n{trimmed_prompt}",
             )
         startup = {
             "servers": [_plugin_server_name(name) for name in servers],
             "command": omp_mcp_ready_command(str(root)),
             "receipt": str(root / OMP_MCP_RECEIPT),
-            "systemPrompt": system_prompt,
+            "systemPrompt": trimmed_prompt,
         }
         _write_private(
             root / OMP_MCP_SERVERS_CONFIG, json.dumps({"mcpServers": projected})

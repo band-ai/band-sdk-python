@@ -40,6 +40,7 @@ UI_CANCELLED_ID = "ui-cancelled"
 OVERSIZE_AFTER_READY = "oversize-after-ready"
 READY_LIMIT_BYTES = 1024
 LATE_PROMPT_ERROR = "late-prompt-error"
+ADMITTED_PROMPT_ERROR = "late-error"
 SETTLED_CALLBACK_SCENARIO = "settled-during-callback"
 SETTLED_CALLBACK_ID = "host-held"
 LATE_CALLBACK_ID = "host-late"
@@ -318,6 +319,19 @@ class Peer:
                         "success": False,
                         "error": "Prompt rejected",
                         "code": "rejected",
+                    }
+                )
+                return
+            case scenario if scenario == ADMITTED_PROMPT_ERROR:
+                self.respond(frame)
+                send(
+                    {
+                        "type": "response",
+                        "id": frame.id,
+                        "command": OmpCommandName.PROMPT,
+                        "success": False,
+                        "error": "Admitted prompt failed later",
+                        "code": "post_admit",
                     }
                 )
                 return

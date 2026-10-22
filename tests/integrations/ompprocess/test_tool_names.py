@@ -11,46 +11,39 @@ from band.integrations.ompprocess import (
     normalize_native_mcp_tool_name,
 )
 
-OWN = frozenset({"band_send_message"})
+OWN_TOOL = "band_send_message"
+OWN = frozenset({OWN_TOOL})
+BARE_TITLE = f"{XD_MCP_PREFIX}{OWN_TOOL}"
+NAMESPACED_TITLE = f"{XD_MCP_PREFIX}{OMP_PLUGIN_TOOL_NAMESPACE}band_{OWN_TOOL}"
+BARE_PATH = f"{XD_URL_PREFIX}{BARE_TITLE}"
+NAMESPACED_PATH = f"{XD_URL_PREFIX}{NAMESPACED_TITLE}"
 
 
 class TestPluginNamespacedToolNames:
     @pytest.mark.parametrize(
         "path",
         [
-            f"{XD_URL_PREFIX}{XD_MCP_PREFIX}band_send_message",
-            (
-                f"{XD_URL_PREFIX}{XD_MCP_PREFIX}"
-                f"{OMP_PLUGIN_TOOL_NAMESPACE}band_band_send_message"
-            ),
+            BARE_PATH,
+            NAMESPACED_PATH,
         ],
     )
     def test_executed_device_write_maps_to_the_band_tool(self, path: str) -> None:
         arguments = {"path": path, "content": '{"chat_id":"room-1","content":"hi"}'}
         assert normalize_native_mcp_device_call(
             "write", arguments, OWN, kind="execute"
-        ) == ("band_send_message", {"chat_id": "room-1", "content": "hi"})
+        ) == (OWN_TOOL, {"chat_id": "room-1", "content": "hi"})
 
-    @pytest.mark.parametrize(
-        "title",
-        [
-            f"{XD_MCP_PREFIX}band_send_message",
-            f"{XD_MCP_PREFIX}{OMP_PLUGIN_TOOL_NAMESPACE}band_band_send_message",
-        ],
-    )
+    @pytest.mark.parametrize("title", [BARE_TITLE, NAMESPACED_TITLE])
     def test_mcp_title_maps_to_the_band_tool(self, title: str) -> None:
-        assert normalize_native_mcp_tool_name(title, OWN) == "band_send_message"
+        assert normalize_native_mcp_tool_name(title, OWN) == OWN_TOOL
         assert normalize_native_mcp_device_call(title, {"chat_id": "r1"}, OWN) == (
-            "band_send_message",
+            OWN_TOOL,
             {"chat_id": "r1"},
         )
 
     def test_a_namespaced_read_is_never_the_band_tool(self) -> None:
         arguments = {
-            "path": (
-                f"{XD_URL_PREFIX}{XD_MCP_PREFIX}"
-                f"{OMP_PLUGIN_TOOL_NAMESPACE}band_band_send_message"
-            ),
+            "path": NAMESPACED_PATH,
             "content": '{"content":"hi"}',
         }
         assert normalize_native_mcp_device_call(

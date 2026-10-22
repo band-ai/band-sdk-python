@@ -29,8 +29,13 @@ def plugin_privacy(root: Path, files: tuple[Path, ...]) -> tuple[int, int | None
 
 
 class TestMcpPluginProjection:
-    def test_nothing_to_project_yields_no_plugin(self, tmp_path: Path) -> None:
-        with omp_mcp_plugin({}, workspace=str(tmp_path)) as plugin:
+    @pytest.mark.parametrize("system_prompt", ["", "   "])
+    def test_nothing_to_project_yields_no_plugin(
+        self, tmp_path: Path, system_prompt: str
+    ) -> None:
+        with omp_mcp_plugin(
+            {}, workspace=str(tmp_path), system_prompt=system_prompt
+        ) as plugin:
             assert plugin is None
 
     def test_servers_land_in_the_plugin_mcp_config(self, tmp_path: Path) -> None:
@@ -43,6 +48,7 @@ class TestMcpPluginProjection:
         with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
             assert plugin is not None
             root = Path(plugin)
+
             config = json.loads(
                 (root / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
             )
@@ -58,6 +64,7 @@ class TestMcpPluginProjection:
             assert local["args"] == ["--port", "1"]
             assert Path(local["cwd"]) == tmp_path.resolve()
             assert Path(local["command"]) == (tmp_path / "server").resolve()
+
         assert not Path(plugin).exists()
 
     def test_connection_instructions_become_an_always_applied_rule(

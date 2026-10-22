@@ -30,6 +30,8 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 
+REQUIRED_SERVER = f"{OMP_PLUGIN_ROOT}:required"
+
 
 class TestRequiredMcpStartup:
     @pytest.mark.parametrize(
@@ -47,11 +49,11 @@ class TestRequiredMcpStartup:
                     "servers": [
                         {
                             "type": McpConnectionStatus.CONNECTED,
-                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                            "serverName": REQUIRED_SERVER,
                         },
                         {
                             "type": McpConnectionStatus.CONNECTED,
-                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                            "serverName": REQUIRED_SERVER,
                         },
                     ],
                 },
@@ -75,7 +77,7 @@ class TestRequiredMcpStartup:
                     "servers": [
                         {
                             "type": McpConnectionStatus.FAILED,
-                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                            "serverName": REQUIRED_SERVER,
                         }
                     ],
                 },
@@ -87,7 +89,7 @@ class TestRequiredMcpStartup:
                     "servers": [
                         {
                             "type": McpConnectionStatus.FAILED,
-                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                            "serverName": REQUIRED_SERVER,
                             "error": "initialize rejected",
                         }
                     ],
@@ -100,7 +102,7 @@ class TestRequiredMcpStartup:
                     "servers": [
                         {
                             "type": McpConnectionStatus.CONNECTED,
-                            "serverName": f"{OMP_PLUGIN_ROOT}:required",
+                            "serverName": REQUIRED_SERVER,
                         }
                     ],
                 },

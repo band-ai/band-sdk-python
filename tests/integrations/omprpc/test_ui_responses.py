@@ -26,7 +26,14 @@ class TestUIResponseVariants:
                 {"confirmed": False},
                 id="declined-confirmation",
             ),
-            pytest.param(OmpUIResponse(), {"cancelled": True}, id="unanswered-dialog"),
+            pytest.param(
+                OmpUIResponse(cancelled=False), {}, id="unanswered-not-cancelled"
+            ),
+            pytest.param(
+                OmpUIResponse(cancelled=True),
+                {"cancelled": True},
+                id="explicit-cancellation",
+            ),
         ],
     )
     async def test_callback_answer_reaches_the_peer_without_other_variants(
