@@ -817,8 +817,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             owner.cancel()
             await asyncio.gather(owner, return_exceptions=True)
         async with self._locks.setdefault(room_id, asyncio.Lock()):
+            room = self._rooms.get(room_id)
+            retrying = room is not None and room.retiring
             await self._close_room(room_id)
-        self._room_selections.pop(room_id, None)
+            if not retrying:
+                self._room_selections.pop(room_id, None)
 
     def _cleanup_rooms(self) -> Iterable[Awaitable[None]]:
         return (self.on_cleanup(room_id) for room_id in tuple(self._rooms))
