@@ -1,0 +1,70 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+....
+
+  1) test multiparticipant collection accepts order ["alpha", "beta"] (ContractLab.EngineTest)
+     test/engine_test.exs:140
+     Assertion with == failed
+     code:  assert s.state == "collecting"
+     left:  "reviewing"
+     right: "collecting"
+     stacktrace:
+       test/engine_test.exs:144: (test)
+
+
+
+  2) test multiparticipant collection accepts order ["beta", "alpha"] (ContractLab.EngineTest)
+     test/engine_test.exs:140
+     Assertion with == failed
+     code:  assert s.state == "collecting"
+     left:  "reviewing"
+     right: "collecting"
+     stacktrace:
+       test/engine_test.exs:144: (test)
+
+
+
+  3) test all participants must answer and routing does not notify the sender (ContractLab.EngineTest)
+     test/engine_test.exs:159
+     %{reason: :terminal, status: :rejected}
+     code: s = accept(s, "bob", "b", "ack")
+     stacktrace:
+       test/engine_test.exs:30: ContractLab.EngineTest.accept/6
+       test/engine_test.exs:164: (test)
+
+..
+
+  4) test one absent member of an all obligation causes expiry (ContractLab.EngineTest)
+     test/engine_test.exs:187
+     %{reason: :terminal, status: :rejected}
+     code: s = start("all-participants") |> accept("alice", "a", "ack") |> accept("bob", "b", "ack")
+     stacktrace:
+       test/engine_test.exs:30: ContractLab.EngineTest.accept/6
+       test/engine_test.exs:188: (test)
+
+
+
+  5) test expiry wins at exact boundary even if the missing participant responds (ContractLab.EngineTest)
+     test/engine_test.exs:194
+     %{reason: :terminal, status: :rejected}
+     code: s = start("all-participants") |> accept("alice", "a", "ack") |> accept("bob", "b", "ack")
+     stacktrace:
+       test/engine_test.exs:30: ContractLab.EngineTest.accept/6
+       test/engine_test.exs:195: (test)
+
+...........
+
+  6) test per-message and per-session mention budgets use resolved unique recipients (ContractLab.EngineTest)
+     test/engine_test.exs:356
+     Assertion with == failed
+     code:  assert d.reason == :mention_budget
+     left:  :terminal
+     right: :mention_budget
+     stacktrace:
+       test/engine_test.exs:366: (test)
+
+............
+Finished in 1.2 seconds (1.2s async, 0.00s sync)
+35 tests, 6 failures

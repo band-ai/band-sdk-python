@@ -1,0 +1,135 @@
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [:clock_range]
+
+
+
+  1) test a finite header duration must fit the authority clock domain (ContractLab.EngineTest)
+     test/engine_test.exs:431
+     match (=) failed
+     code:  assert {:error, :invalid_time_range} =
+              Engine.new(c,
+                session_id: "s1",
+                bindings: s.bindings,
+                now: 0,
+                inactivity: :accepted,
+                max_messages: 10
+              )
+     left:  {:error, :invalid_time_range}
+     right: {:ok,
+             %{
+               id: "s1",
+               status: :active,
+               version: 0,
+               now: 0,
+               state: "new",
+               bindings: %{"a" => "actor:a", "b" => "actor:b"},
+               history: [],
+               variables: %{},
+               inactivity: :accepted,
+               max_messages: 10,
+               outcome: nil,
+               facts: %{},
+               max_at: 9007199254740991000,
+               obligations: [],
+               mentions_used: 0,
+               expired_at: nil,
+               expiry: nil,
+               last_activity: 0,
+               contract: %{
+                 meta: %{line: 1, doc: nil},
+                 name: "explicit-infinity",
+                 states: %{
+                   "new" => %{
+                     meta: %{line: 4, doc: nil},
+                     name: "new",
+                     rules: [
+                       %{
+                         id: "rule-0",
+                         meta: %{line: 5, doc: nil},
+                         matches: %{},
+                         bind: nil,
+                         each: false,
+                         target: nil,
+                         kind: "ping",
+                         to: ["b"],
+                         from: ["a"],
+                         event: true,
+                         activity: false
+                       },
+                       %{
+                         id: "rule-1",
+                         meta: %{line: 6, doc: nil},
+                         matches: %{},
+                         bind: nil,
+                         each: false,
+                         target: "complete",
+                         kind: "close",
+                         to: ["b"],
+                         from: ["a"],
+                         event: false,
+                         activity: false
+                       }
+                     ],
+                     deadlines: [],
+                     max_entries: nil
+                   }
+                 },
+                 types: %{
+                   "close" => %{
+                     meta: %{line: 3, doc: nil},
+                     name: "close",
+                     fields: %{}
+                   },
+                   "ping" => %{
+                     meta: %{line: 2, doc: nil},
+                     name: "ping",
+                     fields: %{}
+                   }
+                 },
+                 engine: "0.1.0-lab.1",
+                 digest: "a8672e845c63d7ae16ecc1e3f8eb4d460400980457ff2d8061461b0059095be1",
+                 roles: ["a", "b"],
+                 card: %{
+                   name: "explicit-infinity",
+                   description: "Test explicit infinity with explicit roles and outcomes.",
+                   lifetime: {:seconds, 9007199254740991},
+                   engine: "0.1.0-lab.1",
+                   roles: ["a", "b"],
+                   inactivity_timeout: :infinite,
+                   mentions: %{per_message: 1, per_session: 200}
+                 },
+                 role_metadata: %{
+                   "a" => %{meta: %{line: 1, doc: nil}, name: "a"},
+                   "b" => %{meta: %{line: 1, doc: nil}, name: "b"}
+                 },
+                 terminals: %{
+                   "complete" => %{
+                     meta: %{line: 7, doc: nil},
+                     name: "complete"
+                   },
+                   "expired" => %{
+                     meta: %{line: 8, doc: nil},
+                     name: "expired"
+                   }
+                 },
+                 any_rules: [],
+                 any_meta: %{line: 1, doc: nil},
+                 room_rules: [],
+                 room_meta: %{line: 1, doc: nil},
+                 source_digest: "a0b6f0f5bb5b587fdc1ac090390734c95ea9b13730850753203e4cd4efbd1746"
+               },
+               entries: %{"new" => 1},
+               entered_at: 0,
+               contributions: %{},
+               max_bytes: 16384,
+               receipts: %{},
+               idle_ms: nil,
+               created_at: 0
+             }}
+     stacktrace:
+       test/engine_test.exs:434: (test)
+
+
+Finished in 1.2 seconds (1.2s async, 0.00s sync)
+35 tests, 1 failure, 34 excluded

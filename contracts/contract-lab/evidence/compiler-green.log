@@ -1,0 +1,7 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+....................................
+Finished in 0.4 seconds (0.4s async, 0.00s sync)
+36 tests, 0 failures

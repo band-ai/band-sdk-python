@@ -1,0 +1,1310 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test requires exact role bindings, separated actors and an explicit inactivity policy (ContractLab.EngineTest)
+     test/engine_test.exs:26
+     match (=) failed
+     code:  assert {:error, :inactivity_policy_required} = Engine.new(c, base)
+     left:  {:error, :inactivity_policy_required}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/engine_test.exs:29: (test)
+
+
+
+  2) test assignment requires worker acceptance, independent review and exact requester acceptance (ContractLab.EngineTest)
+     test/engine_test.exs:34
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> reviewing()
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:35: (test)
+
+
+
+  3) test a revision changes the task reference and rejects stale work (ContractLab.EngineTest)
+     test/engine_test.exs:50
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> reviewing()
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:51: (test)
+
+
+
+  4) test question and answer preserve the task and whole-session deadlines (ContractLab.EngineTest)
+     test/engine_test.exs:62
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> working()
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:63: (test)
+
+
+
+  5) test multiparticipant collection accepts order ["alpha", "beta"] (ContractLab.EngineTest)
+     test/engine_test.exs:73
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("team-review") |> accept("lead", "start", "start", %{"goal" => "Two components"})
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:74: (test)
+
+
+
+  6) test multiparticipant collection accepts order ["beta", "alpha"] (ContractLab.EngineTest)
+     test/engine_test.exs:73
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("team-review") |> accept("lead", "start", "start", %{"goal" => "Two components"})
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:74: (test)
+
+
+
+  7) test all participants must answer and routing does not notify the sender (ContractLab.EngineTest)
+     test/engine_test.exs:89
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("all-participants")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:90: (test)
+
+
+
+  8) test first selected response is enough for an any obligation (ContractLab.EngineTest)
+     test/engine_test.exs:101
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("first-responder") |> accept("lead", "start", "start")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:102: (test)
+
+
+
+  9) test selected participant deadlines are independent (ContractLab.EngineTest)
+     test/engine_test.exs:107
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("selected-deadlines") |> accept("lead", "start", "start")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:108: (test)
+
+
+
+ 10) test one absent member of an all obligation causes expiry (ContractLab.EngineTest)
+     test/engine_test.exs:117
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("all-participants") |> accept("alice", "a", "ack") |> accept("bob", "b", "ack")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:118: (test)
+
+
+
+ 11) test expiry wins at exact boundary even if the missing participant responds (ContractLab.EngineTest)
+     test/engine_test.exs:124
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("all-participants") |> accept("alice", "a", "ack") |> accept("bob", "b", "ack")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:125: (test)
+
+
+
+ 12) test expiry before an invalid proposal still commits the clock transition (ContractLab.EngineTest)
+     test/engine_test.exs:132
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("all-participants")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:133: (test)
+
+
+
+ 13) test accepted progress resets idle only, never a state or maximum deadline (ContractLab.EngineTest)
+     test/engine_test.exs:140
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events") |> accept("lead", "start", "start")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:141: (test)
+
+
+
+ 14) test duplicate retries do not recharge mentions or refresh inactivity (ContractLab.EngineTest)
+     test/engine_test.exs:151
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events") |> accept("lead", "start", "start")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:152: (test)
+
+
+
+ 15) test inactivity policy is selected explicitly and can count transitions or marked events (ContractLab.EngineTest)
+     test/engine_test.exs:164
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("program-counter", inactivity: :transition)
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:165: (test)
+
+
+
+ 16) test idle expiry survives snapshots and traffic cannot extend maximum lifetime (ContractLab.EngineTest)
+     test/engine_test.exs:175
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("program-counter")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:176: (test)
+
+
+
+ 17) test maximum expiry wins ties and explicit infinity stays active (ContractLab.EngineTest)
+     test/engine_test.exs:191
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("program-counter")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:192: (test)
+
+
+
+ 18) test clock regression rejects without mutation (ContractLab.EngineTest)
+     test/engine_test.exs:202
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("explicit-infinity", now: 1000)
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:203: (test)
+
+
+
+ 19) test a snapshot cannot switch the pinned contract (ContractLab.EngineTest)
+     test/engine_test.exs:210
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> offered()
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:211: (test)
+
+
+
+ 20) test round budgets survive snapshots and limit self-revising work (ContractLab.EngineTest)
+     test/engine_test.exs:215
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("bounded-review") |> accept("author", "s1", "submit") |> accept("reviewer", "r1", "revise")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:216: (test)
+
+
+
+ 21) test cancellation is not success and missing acknowledgement preserves unknown effects (ContractLab.EngineTest)
+     test/engine_test.exs:223
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> working()
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:224: (test)
+
+
+
+ 22) test explicit cancellation acknowledgement records the named cancelled outcome (ContractLab.EngineTest)
+     test/engine_test.exs:233
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> working() |> accept("lead", "cancel", "cancel", %{"reason" => "Stop"})
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:234: (test)
+
+
+
+ 23) test per-message and per-session mention budgets use resolved unique recipients (ContractLab.EngineTest)
+     test/engine_test.exs:239
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("all-participants")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:240: (test)
+
+
+
+ 24) test message budget also bounds messages with empty notification fanout (ContractLab.EngineTest)
+     test/engine_test.exs:253
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("explicit-infinity", max_messages: 1) |> accept("a", "a", "ping")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:254: (test)
+
+
+
+ 25) test rejects extra fields before state or quota changes (ContractLab.EngineTest)
+     test/engine_test.exs:265
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:266: (test)
+
+
+
+ 26) test rejects missing fields before state or quota changes (ContractLab.EngineTest)
+     test/engine_test.exs:265
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:266: (test)
+
+
+
+ 27) test rejects wrong types before state or quota changes (ContractLab.EngineTest)
+     test/engine_test.exs:265
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:266: (test)
+
+
+
+ 28) test rejects out of range before state or quota changes (ContractLab.EngineTest)
+     test/engine_test.exs:265
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:266: (test)
+
+
+
+ 29) test rejects fractional number before state or quota changes (ContractLab.EngineTest)
+     test/engine_test.exs:265
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("progress-events")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:266: (test)
+
+
+
+ 30) test transport identity and session binding cannot be claimed by payload (ContractLab.EngineTest)
+     test/engine_test.exs:273
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("explicit-infinity")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:274: (test)
+
+
+
+ 31) test actor-scoped runtime views retain documentation and hide unrelated facts (ContractLab.EngineTest)
+     test/engine_test.exs:284
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("assignment") |> offered()
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:285: (test)
+
+
+
+ 32) test terminal duplicate returns its original accepted receipt without reopening (ContractLab.EngineTest)
+     test/engine_test.exs:296
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: s = start("explicit-infinity") |> accept("a", "end", "close")
+     stacktrace:
+       test/engine_test.exs:10: ContractLab.EngineTest.start/2
+       test/engine_test.exs:297: (test)
+
+
+Finished in 0.4 seconds (0.4s async, 0.00s sync)
+32 tests, 32 failures
+    warning: the following pattern will never match:
+
+        {:ok, s} = ContractLab.Engine.new(c, Keyword.merge(opts, overrides))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "c" was given the type:
+
+        # type: dynamic()
+        # from: test/engine_test.exs:7:14
+        {:ok, c} =
+          ContractLab.load(
+            Path.join(
+              "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts",
+              <<name::binary, ".band">>
+            )
+          )
+
+    where "opts" was given the type:
+
+        # type: dynamic(
+          non_empty_list(
+            {:bindings, term()} or {:inactivity, :accepted} or {:session_id, binary()} or
+              {:max_messages or :now, integer()}
+          )
+        )
+        # from: test/engine_test.exs:8:10
+        opts = [
+          session_id: "s1",
+          bindings: Map.new(c.roles, fn capture -> {capture, <<"actor:", capture::binary>>} end),
+          now: 0,
+          inactivity: :accepted,
+          max_messages: 1000
+        ]
+
+    where "overrides" was given the type:
+
+        # type: dynamic()
+        # from: test/engine_test.exs:6:20
+        overrides
+
+    typing violation found at:
+    │
+ 10 │     {:ok, s} = Engine.new(c, Keyword.merge(opts, overrides))
+    │              ~
+    │
+    └─ test/engine_test.exs:10:14: ContractLab.EngineTest.start/2
+
+    warning: comparison between distinct types found:
+
+        decision.status == :accepted
+
+    given types:
+
+        dynamic(:rejected) == :accepted
+
+    where "decision" was given the type:
+
+        # type: dynamic(%{reason: :not_implemented, status: :rejected})
+        # from: test/engine_test.exs:18:22
+        {decision, next} = send_message(s, role, id, kind, payload, now)
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 19 │     assert decision.status == :accepted, inspect(decision)
+    │                            ~
+    │
+    └─ test/engine_test.exs:19:28: ContractLab.EngineTest.accept/6
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :illegal_message
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/engine_test.exs:38
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :illegal_message
+        # from: test/engine_test.exs:38
+        right = :illegal_message
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 38 │     assert d.reason == :illegal_message
+    │                     ~
+    │
+    └─ test/engine_test.exs:38:21: ContractLab.EngineTest."test assignment requires worker acceptance, independent review and exact requester acceptance"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :illegal_message
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/engine_test.exs:41
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :illegal_message
+        # from: test/engine_test.exs:41
+        right = :illegal_message
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 41 │     assert d.reason == :illegal_message
+    │                     ~
+    │
+    └─ test/engine_test.exs:41:21: ContractLab.EngineTest."test assignment requires worker acceptance, independent review and exact requester acceptance"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :reference
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/engine_test.exs:55
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :reference
+        # from: test/engine_test.exs:55
+        right = :reference
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 55 │     assert d.reason == :reference
+    │                     ~
+    │
+    └─ test/engine_test.exs:55:21: ContractLab.EngineTest."test a revision changes the task reference and rejects stale work"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :already_contributed
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/engine_test.exs:80
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :already_contributed
+        # from: test/engine_test.exs:80
+        right = :already_contributed
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 80 │       assert d.reason == :already_contributed
+    │                       ~
+    │
+    └─ test/engine_test.exs:80:23: ContractLab.EngineTest."test multiparticipant collection accepts order [\"alpha\", \"beta\"]"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :already_contributed
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/engine_test.exs:80
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :already_contributed
+        # from: test/engine_test.exs:80
+        right = :already_contributed
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 80 │       assert d.reason == :already_contributed
+    │                       ~
+    │
+    └─ test/engine_test.exs:80:23: ContractLab.EngineTest."test multiparticipant collection accepts order [\"beta\", \"alpha\"]"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:rejected) == :accepted
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:rejected)
+        # from: test/engine_test.exs:92
+        left = d.status
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :accepted
+        # from: test/engine_test.exs:92
+        right = :accepted
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 92 │     assert d.status == :accepted
+    │                     ~
+    │
+    └─ test/engine_test.exs:92:21: ContractLab.EngineTest."test all participants must answer and routing does not notify the sender"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :terminal
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:127
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :terminal
+         # from: test/engine_test.exs:127
+         right = :terminal
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 127 │     assert d.reason == :terminal
+     │                     ~
+     │
+     └─ test/engine_test.exs:127:21: ContractLab.EngineTest."test expiry wins at exact boundary even if the missing participant responds"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:rejected) == :duplicate
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:rejected)
+         # from: test/engine_test.exs:156
+         left = d.status
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :duplicate
+         # from: test/engine_test.exs:156
+         right = :duplicate
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 156 │     assert d.status == :duplicate
+     │                     ~
+     │
+     └─ test/engine_test.exs:156:21: ContractLab.EngineTest."test duplicate retries do not recharge mentions or refresh inactivity"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :id_conflict
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:161
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :id_conflict
+         # from: test/engine_test.exs:161
+         right = :id_conflict
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 161 │     assert d.reason == :id_conflict
+     │                     ~
+     │
+     └─ test/engine_test.exs:161:21: ContractLab.EngineTest."test duplicate retries do not recharge mentions or refresh inactivity"/1
+
+     warning: the following pattern will never match:
+
+         {:ok, s} =
+           ContractLab.Engine.new(c,
+             session_id: "s1",
+             bindings: s.bindings,
+             now: 0,
+             inactivity: :accepted,
+             max_messages: 100
+           )
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "c" was given the type:
+
+         # type: dynamic(%{
+           ...,
+           card: %{..., inactivity_timeout: {:seconds, integer()}, lifetime: {:seconds, integer()}}
+         })
+         # from: test/engine_test.exs:177:7
+         c = %{
+           s.contract
+           | card: %{s.contract.card | lifetime: {:seconds, 10}, inactivity_timeout: {:seconds, 4}}
+         }
+
+     where "s" was given the type:
+
+         # type: dynamic()
+         # from: test/engine_test.exs:176:7
+         s = start("program-counter")
+
+     typing violation found at:
+     │
+ 178 │     {:ok, s} = Engine.new(c, session_id: "s1", bindings: s.bindings, now: 0, inactivity: :accepted, max_messages: 100)
+     │              ~
+     │
+     └─ test/engine_test.exs:178:14: ContractLab.EngineTest."test idle expiry survives snapshots and traffic cannot extend maximum lifetime"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :terminal
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:187
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :terminal
+         # from: test/engine_test.exs:187
+         right = :terminal
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 187 │     assert d.reason == :terminal
+     │                     ~
+     │
+     └─ test/engine_test.exs:187:21: ContractLab.EngineTest."test idle expiry survives snapshots and traffic cannot extend maximum lifetime"/1
+
+     warning: the following pattern will never match:
+
+         {:ok, s} =
+           ContractLab.Engine.new(c,
+             session_id: "s1",
+             bindings: s.bindings,
+             now: 0,
+             inactivity: :accepted,
+             max_messages: 100
+           )
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "c" was given the type:
+
+         # type: dynamic(%{
+           ...,
+           card: %{..., inactivity_timeout: {:seconds, integer()}, lifetime: {:seconds, integer()}}
+         })
+         # from: test/engine_test.exs:193:7
+         c = %{
+           s.contract
+           | card: %{s.contract.card | lifetime: {:seconds, 5}, inactivity_timeout: {:seconds, 5}}
+         }
+
+     where "s" was given the type:
+
+         # type: dynamic()
+         # from: test/engine_test.exs:192:7
+         s = start("program-counter")
+
+     typing violation found at:
+     │
+ 194 │     {:ok, s} = Engine.new(c, session_id: "s1", bindings: s.bindings, now: 0, inactivity: :accepted, max_messages: 100)
+     │              ~
+     │
+     └─ test/engine_test.exs:194:14: ContractLab.EngineTest."test maximum expiry wins ties and explicit infinity stays active"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :clock_regression
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:206
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :clock_regression
+         # from: test/engine_test.exs:206
+         right = :clock_regression
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 206 │     assert d.reason == :clock_regression
+     │                     ~
+     │
+     └─ test/engine_test.exs:206:21: ContractLab.EngineTest."test clock regression rejects without mutation"/1
+
+     warning: the following pattern will never match:
+
+         {:ok, s} = ContractLab.Engine.restore(s.contract, ContractLab.Engine.snapshot(s), 0)
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "s" was given the type:
+
+         # type: dynamic()
+         # from: test/engine_test.exs:216:7
+         s = accept(accept(start("bounded-review"), "author", "s1", "submit"), "reviewer", "r1", "revise")
+
+     typing violation found at:
+     │
+ 217 │     {:ok, s} = Engine.restore(s.contract, Engine.snapshot(s), 0)
+     │              ~
+     │
+     └─ test/engine_test.exs:217:14: ContractLab.EngineTest."test round budgets survive snapshots and limit self-revising work"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :terminal
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:230
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :terminal
+         # from: test/engine_test.exs:230
+         right = :terminal
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 230 │     assert d.reason == :terminal
+     │                     ~
+     │
+     └─ test/engine_test.exs:230:21: ContractLab.EngineTest."test cancellation is not success and missing acknowledgement preserves unknown effects"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :mention_limit
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:244
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :mention_limit
+         # from: test/engine_test.exs:244
+         right = :mention_limit
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 244 │     assert d.reason == :mention_limit
+     │                     ~
+     │
+     └─ test/engine_test.exs:244:21: ContractLab.EngineTest."test per-message and per-session mention budgets use resolved unique recipients"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :mention_budget
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:249
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :mention_budget
+         # from: test/engine_test.exs:249
+         right = :mention_budget
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 249 │     assert d.reason == :mention_budget
+     │                     ~
+     │
+     └─ test/engine_test.exs:249:21: ContractLab.EngineTest."test per-message and per-session mention budgets use resolved unique recipients"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :message_budget
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:256
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :message_budget
+         # from: test/engine_test.exs:256
+         right = :message_budget
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 256 │     assert d.reason == :message_budget
+     │                     ~
+     │
+     └─ test/engine_test.exs:256:21: ContractLab.EngineTest."test message budget also bounds messages with empty notification fanout"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :payload
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:268
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :payload
+         # from: test/engine_test.exs:268
+         right = :payload
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 268 │       assert d.reason == :payload
+     │                       ~
+     │
+     └─ test/engine_test.exs:268:23: ContractLab.EngineTest."test rejects extra fields before state or quota changes"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :payload
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:268
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :payload
+         # from: test/engine_test.exs:268
+         right = :payload
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 268 │       assert d.reason == :payload
+     │                       ~
+     │
+     └─ test/engine_test.exs:268:23: ContractLab.EngineTest."test rejects fractional number before state or quota changes"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :payload
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:268
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :payload
+         # from: test/engine_test.exs:268
+         right = :payload
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 268 │       assert d.reason == :payload
+     │                       ~
+     │
+     └─ test/engine_test.exs:268:23: ContractLab.EngineTest."test rejects missing fields before state or quota changes"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :payload
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:268
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :payload
+         # from: test/engine_test.exs:268
+         right = :payload
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 268 │       assert d.reason == :payload
+     │                       ~
+     │
+     └─ test/engine_test.exs:268:23: ContractLab.EngineTest."test rejects out of range before state or quota changes"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :payload
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:268
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :payload
+         # from: test/engine_test.exs:268
+         right = :payload
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 268 │       assert d.reason == :payload
+     │                       ~
+     │
+     └─ test/engine_test.exs:268:23: ContractLab.EngineTest."test rejects wrong types before state or quota changes"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :unauthorized
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:276
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :unauthorized
+         # from: test/engine_test.exs:276
+         right = :unauthorized
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 276 │     assert d.reason == :unauthorized
+     │                     ~
+     │
+     └─ test/engine_test.exs:276:21: ContractLab.EngineTest."test transport identity and session binding cannot be claimed by payload"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :session_mismatch
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:279
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :session_mismatch
+         # from: test/engine_test.exs:279
+         right = :session_mismatch
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 279 │     assert d.reason == :session_mismatch
+     │                     ~
+     │
+     └─ test/engine_test.exs:279:21: ContractLab.EngineTest."test transport identity and session binding cannot be claimed by payload"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :envelope
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:281
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :envelope
+         # from: test/engine_test.exs:281
+         right = :envelope
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 281 │     assert d.reason == :envelope
+     │                     ~
+     │
+     └─ test/engine_test.exs:281:21: ContractLab.EngineTest."test transport identity and session binding cannot be claimed by payload"/1
+
+     warning: the following pattern will never match:
+
+         {{:ok, view}, s} = ContractLab.Engine.view(s, actor: "actor:worker", now: 0)
+
+     because the right-hand side has type:
+
+         dynamic({{:error, :not_implemented}, term()})
+
+     where "s" was given the type:
+
+         # type: dynamic()
+         # from: test/engine_test.exs:285:7
+         s = offered(start("assignment"))
+
+     typing violation found at:
+     │
+ 286 │     {{:ok, view}, s} = Engine.view(s, actor: "actor:worker", now: 0)
+     │                      ~
+     │
+     └─ test/engine_test.exs:286:22: ContractLab.EngineTest."test actor-scoped runtime views retain documentation and hide unrelated facts"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:rejected) == :duplicate
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:rejected)
+         # from: test/engine_test.exs:299
+         left = d.status
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :duplicate
+         # from: test/engine_test.exs:299
+         right = :duplicate
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 299 │     assert d.status == :duplicate
+     │                     ~
+     │
+     └─ test/engine_test.exs:299:21: ContractLab.EngineTest."test terminal duplicate returns its original accepted receipt without reopening"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic(:not_implemented) == :terminal
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(:not_implemented)
+         # from: test/engine_test.exs:303
+         left = d.reason
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: :terminal
+         # from: test/engine_test.exs:303
+         right = :terminal
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 303 │     assert d.reason == :terminal
+     │                     ~
+     │
+     └─ test/engine_test.exs:303:21: ContractLab.EngineTest."test terminal duplicate returns its original accepted receipt without reopening"/1
+
+    warning: unknown key .recipients in expression:
+
+        d.recipients
+
+    the given type does not have the given key:
+
+        dynamic(%{reason: :not_implemented, status: :rejected})
+
+    where "d" was given the type:
+
+        # type: dynamic(%{reason: :not_implemented, status: :rejected})
+        # from: test/engine_test.exs:91:12
+        {d, s} = send_message(s, "alice", "a", "ack")
+
+    typing violation found at:
+    │
+ 93 │     assert d.recipients == ["actor:bob", "actor:carol"]
+    │              ~~~~~~~~~~
+    │
+    └─ test/engine_test.exs:93:14: ContractLab.EngineTest."test all participants must answer and routing does not notify the sender"/1
+
+     warning: unknown key .original in expression:
+
+         d.original
+
+     the given type does not have the given key:
+
+         dynamic(%{reason: :not_implemented, status: :rejected})
+
+     where "d" was given the type:
+
+         # type: dynamic(%{reason: :not_implemented, status: :rejected})
+         # from: test/engine_test.exs:155:18
+         {d, retried} = send_message(s, "worker", "p", "progress", payload, 2000)
+
+     typing violation found at:
+     │
+ 157 │     assert d.original.status == :accepted
+     │              ~~~~~~~~
+     │
+     └─ test/engine_test.exs:157:14: ContractLab.EngineTest."test duplicate retries do not recharge mentions or refresh inactivity"/1
+
+     warning: unknown key .original in expression:
+
+         d.original
+
+     the given type does not have the given key:
+
+         dynamic(%{reason: :not_implemented, status: :rejected})
+
+     where "d" was given the type:
+
+         # type: dynamic(%{reason: :not_implemented, status: :rejected})
+         # from: test/engine_test.exs:298:12
+         {d, s} = send_message(s, "a", "end", "close", %{}, 100)
+
+     typing violation found at:
+     │
+ 300 │     assert d.original.outcome == "complete"
+     │              ~~~~~~~~
+     │
+     └─ test/engine_test.exs:300:14: ContractLab.EngineTest."test terminal duplicate returns its original accepted receipt without reopening"/1

@@ -1,0 +1,426 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test append is durable, sequenced and hash chained across restarts (ContractLab.JournalTest)
+     test/journal_test.exs:17
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:18: (test)
+
+
+
+  2) test an incomplete final append is discarded after verifying the completed prefix (ContractLab.JournalTest)
+     test/journal_test.exs:35
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:36: (test)
+
+
+
+  3) test corrupt completed records fail closed and remain available for diagnosis (ContractLab.JournalTest)
+     test/journal_test.exs:50
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:51: (test)
+
+
+
+  4) test reordered and removed middle records fail chain verification (ContractLab.JournalTest)
+     test/journal_test.exs:60
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:61: (test)
+
+
+
+  5) test snapshots bind state to an exact journal sequence and hash (ContractLab.JournalTest)
+     test/journal_test.exs:71
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:72: (test)
+
+
+
+  6) test snapshot corruption is reported separately from an intact journal (ContractLab.JournalTest)
+     test/journal_test.exs:86
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:87: (test)
+
+
+
+  7) test snapshot cannot refer past the surviving journal (ContractLab.JournalTest)
+     test/journal_test.exs:96
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:97: (test)
+
+
+
+  8) test a missing snapshot allows replay from the beginning (ContractLab.JournalTest)
+     test/journal_test.exs:107
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:108: (test)
+
+
+
+  9) test only one journal owner can open a path in this BEAM (ContractLab.JournalTest)
+     test/journal_test.exs:114
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:115: (test)
+
+
+
+ 10) test journal capacity is enforced before writing a partial entry (ContractLab.JournalTest)
+     test/journal_test.exs:123
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path, max_bytes: 500)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:124: (test)
+
+
+
+ 11) test snapshot capacity failure preserves the previous snapshot (ContractLab.JournalTest)
+     test/journal_test.exs:133
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path, max_snapshot_bytes: 500)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:134: (test)
+
+
+
+ 12) test opaque runtime objects and non-JSON state are not journal data (ContractLab.JournalTest)
+     test/journal_test.exs:141
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:142: (test)
+
+
+
+ 13) test symlink aliases cannot obtain a second owner (ContractLab.JournalTest)
+     test/journal_test.exs:149
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: j = open(path)
+     stacktrace:
+       test/journal_test.exs:12: ContractLab.JournalTest.open/2
+       test/journal_test.exs:150: (test)
+
+
+Finished in 0.2 seconds (0.2s async, 0.00s sync)
+13 tests, 13 failures
+    warning: the following pattern will never match:
+
+        {:ok, pid} = ContractLab.Journal.start_link(Keyword.put(opts, :path, path))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "opts" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:11:19
+        opts
+
+    where "path" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:11:13
+        path
+
+    typing violation found at:
+    │
+ 12 │     {:ok, pid} = Journal.start_link(Keyword.put(opts, :path, path))
+    │                ~
+    │
+    └─ test/journal_test.exs:12:16: ContractLab.JournalTest.open/2
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == dynamic(non_empty_list(term()))
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/journal_test.exs:28
+        left = ContractLab.Journal.read(j)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(non_empty_list(term()))
+        # from: test/journal_test.exs:28
+        right = [first, second]
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 28 │     assert Journal.read(j) == [first, second]
+    │                            ~
+    │
+    └─ test/journal_test.exs:28:28: ContractLab.JournalTest."test append is durable, sequenced and hash chained across restarts"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, first} = ContractLab.Journal.append(j, input("one"))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "j" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:36:7
+        j = open(path)
+
+    typing violation found at:
+    │
+ 37 │     {:ok, first} = Journal.append(j, input("one"))
+    │                  ~
+    │
+    └─ test/journal_test.exs:37:18: ContractLab.JournalTest."test an incomplete final append is discarded after verifying the completed prefix"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == dynamic(non_empty_list(term()))
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/journal_test.exs:42
+        left = ContractLab.Journal.read(j)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(non_empty_list(term()))
+        # from: test/journal_test.exs:42
+        right = [first]
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 42 │     assert Journal.read(j) == [first]
+    │                            ~
+    │
+    └─ test/journal_test.exs:42:28: ContractLab.JournalTest."test an incomplete final append is discarded after verifying the completed prefix"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, _} = ContractLab.Journal.append(j, input("one"))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "j" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:51:7
+        j = open(path)
+
+    typing violation found at:
+    │
+ 52 │     {:ok, _} = Journal.append(j, input("one"))
+    │              ~
+    │
+    └─ test/journal_test.exs:52:14: ContractLab.JournalTest."test corrupt completed records fail closed and remain available for diagnosis"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, first} = ContractLab.Journal.append(j, input("one"))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "j" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:72:7
+        j = open(path)
+
+    typing violation found at:
+    │
+ 73 │     {:ok, first} = Journal.append(j, input("one"))
+    │                  ~
+    │
+    └─ test/journal_test.exs:73:18: ContractLab.JournalTest."test snapshots bind state to an exact journal sequence and hash"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, _} = ContractLab.Journal.append(j, input("one"))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "j" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:87:7
+        j = open(path)
+
+    typing violation found at:
+    │
+ 88 │     {:ok, _} = Journal.append(j, input("one"))
+    │              ~
+    │
+    └─ test/journal_test.exs:88:14: ContractLab.JournalTest."test snapshot corruption is reported separately from an intact journal"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, _} = ContractLab.Journal.append(j, input("one"))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "j" was given the type:
+
+        # type: dynamic()
+        # from: test/journal_test.exs:97:7
+        j = open(path)
+
+    typing violation found at:
+    │
+ 98 │     {:ok, _} = Journal.append(j, input("one"))
+    │              ~
+    │
+    └─ test/journal_test.exs:98:14: ContractLab.JournalTest."test snapshot cannot refer past the surviving journal"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/journal_test.exs:110
+         left = ContractLab.Journal.read(j)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/journal_test.exs:110
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 110 │     assert Journal.read(j) == []
+     │                            ~
+     │
+     └─ test/journal_test.exs:110:28: ContractLab.JournalTest."test a missing snapshot allows replay from the beginning"/1
+
+     warning: the following pattern will never match:
+
+         {:ok, _} = ContractLab.Journal.append(j, input("one"))
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "j" was given the type:
+
+         # type: dynamic()
+         # from: test/journal_test.exs:124:7
+         j = open(path, max_bytes: 500)
+
+     typing violation found at:
+     │
+ 125 │     {:ok, _} = Journal.append(j, input("one"))
+     │              ~
+     │
+     └─ test/journal_test.exs:125:14: ContractLab.JournalTest."test journal capacity is enforced before writing a partial entry"/1
+
+     warning: the following pattern will never match:
+
+         {:ok, first} = ContractLab.Journal.snapshot(j, %{"total" => 1})
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "j" was given the type:
+
+         # type: dynamic()
+         # from: test/journal_test.exs:134:7
+         j = open(path, max_snapshot_bytes: 500)
+
+     typing violation found at:
+     │
+ 135 │     {:ok, first} = Journal.snapshot(j, %{"total" => 1})
+     │                  ~
+     │
+     └─ test/journal_test.exs:135:18: ContractLab.JournalTest."test snapshot capacity failure preserves the previous snapshot"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/journal_test.exs:145
+         left = ContractLab.Journal.read(j)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/journal_test.exs:145
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 145 │     assert Journal.read(j) == []
+     │                            ~
+     │
+     └─ test/journal_test.exs:145:28: ContractLab.JournalTest."test opaque runtime objects and non-JSON state are not journal data"/1

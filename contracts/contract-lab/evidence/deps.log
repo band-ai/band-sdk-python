@@ -1,0 +1,7 @@
+Resolving Hex dependencies...
+Resolution completed in 0.047s
+New:
+  yamerl 0.10.0
+  yaml_elixir 2.12.2
+* Getting yaml_elixir (Hex package)
+* Getting yamerl (Hex package)

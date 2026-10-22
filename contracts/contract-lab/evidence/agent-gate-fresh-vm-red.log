@@ -1,0 +1,20 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [location: {"test/agent_gate_test.exs", 48}]
+
+
+
+  1) test a checkpoint is accepted in a fresh checker VM that has never run Engine (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:48
+     match (=) failed
+     code:  assert {"accepted\n", 0} = System.cmd("elixir", args, stderr_to_stdout: true)
+     left:  {"accepted\n", 0}
+     right: {"rejected\n", 0}
+     stacktrace:
+       test/agent_gate_test.exs:64: (test)
+
+
+Finished in 0.8 seconds (0.8s async, 0.00s sync)
+9 tests, 1 failure, 8 excluded

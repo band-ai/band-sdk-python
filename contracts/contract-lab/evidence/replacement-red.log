@@ -1,0 +1,625 @@
+Compiling 2 files (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test ordinary work calls no sidecar and takes periodic snapshots (ContractLab.ReplacementTest)
+     test/replacement_test.exs:38
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, sidecar: fn _ -> send(parent, :sidecar_called); {:ok, Fixed} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:40: (test)
+
+
+
+  2) test crash wakes a sidecar once, validates a replacement, and resumes the failed input (ContractLab.ReplacementTest)
+     test/replacement_test.exs:53
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: Broken, sidecar: fn bundle -> send(parent, {:bundle, bundle}); {:ok, Fixed} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:55: (test)
+
+
+
+  3) test duplicate receipt invokes neither the program nor sidecar and changed identity conflicts (ContractLab.ReplacementTest)
+     test/replacement_test.exs:72
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:73: (test)
+
+
+
+  4) test raw posts, wrong actors and wrong contract receipts cannot reach a program (ContractLab.ReplacementTest)
+     test/replacement_test.exs:83
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:84: (test)
+
+
+
+  5) test without an agent the failed input is retained and manual repair resumes it (ContractLab.ReplacementTest)
+     test/replacement_test.exs:93
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: Broken)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:94: (test)
+
+
+
+  6) test candidate validation replays committed history even when a recent snapshot exists (ContractLab.ReplacementTest)
+     test/replacement_test.exs:102
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: Broken, sidecar: fn _ -> {:ok, Divergent} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:103: (test)
+
+
+
+  7) test repair budget and unresolved fault survive a controller restart (ContractLab.ReplacementTest)
+     test/replacement_test.exs:114
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, options)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:116: (test)
+
+
+
+  8) test an incompatible state version is held for an explicit migration (ContractLab.ReplacementTest)
+     test/replacement_test.exs:126
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: Broken, sidecar: fn _ -> {:ok, VersionTwo} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:127: (test)
+
+
+
+  9) test hung workers are stopped before a replacement continues (ContractLab.ReplacementTest)
+     test/replacement_test.exs:133
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: Hangs, execution_timeout: 20, sidecar: fn _ -> {:ok, Fixed} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:136: (test)
+
+
+
+ 10) test unhandled legal input can wake the sidecar to extend the program (ContractLab.ReplacementTest)
+     test/replacement_test.exs:144
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, sidecar: fn _ -> {:ok, Extended} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:145: (test)
+
+
+
+ 11) test restarts restore snapshots and replay only their completed tail (ContractLab.ReplacementTest)
+     test/replacement_test.exs:153
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:154: (test)
+
+
+
+ 12) test a damaged snapshot recovers from the intact event journal (ContractLab.ReplacementTest)
+     test/replacement_test.exs:166
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:167: (test)
+
+
+
+ 13) test an authorized participant can explicitly activate the sidecar (ContractLab.ReplacementTest)
+     test/replacement_test.exs:177
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, sidecar: fn _ -> {:ok, Fixed} end)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:178: (test)
+
+
+
+ 14) test validated outputs wait in an outbox and destination receipts prevent resend after restart (ContractLab.ReplacementTest)
+     test/replacement_test.exs:185
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:186: (test)
+
+
+
+ 15) test uncertain non-idempotent effects are held across restart until reconciled (ContractLab.ReplacementTest)
+     test/replacement_test.exs:199
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, opts)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:201: (test)
+
+
+
+ 16) test an idempotent destination receives the same key when a missing receipt is retried (ContractLab.ReplacementTest)
+     test/replacement_test.exs:217
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: ExternalEffect, allowed_actions: ["record"])
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:218: (test)
+
+
+
+ 17) test changing an adapter capability does not authorize retry of an unknown effect (ContractLab.ReplacementTest)
+     test/replacement_test.exs:231
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:232: (test)
+
+
+
+ 18) test invalid program outputs cannot enter the outbox (ContractLab.ReplacementTest)
+     test/replacement_test.exs:239
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: InvalidOutput)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:240: (test)
+
+
+
+ 19) test program effects require an explicit host action grant (ContractLab.ReplacementTest)
+     test/replacement_test.exs:247
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: ExternalEffect)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:248: (test)
+
+
+
+ 20) test the pending-input queue is bounded while waiting for an agent (ContractLab.ReplacementTest)
+     test/replacement_test.exs:254
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: p = start(ctx, program: Broken, max_pending: 1)
+     stacktrace:
+       test/replacement_test.exs:24: ContractLab.ReplacementTest.start/2
+       test/replacement_test.exs:255: (test)
+
+
+Finished in 0.5 seconds (0.00s async, 0.5s sync)
+20 tests, 20 failures
+    warning: unused alias Journal
+    │
+  3 │   alias ContractLab.{Engine, Replacement, Program, Journal}
+    │   ~
+    │
+    └─ test/replacement_test.exs:3:3
+
+    warning: the following pattern will never match:
+
+        {:ok, pid} = ContractLab.Replacement.start_link(Keyword.merge(opts, overrides))
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "opts" was given the type:
+
+        # type: dynamic(
+          non_empty_list(
+            {:allowed_actions, empty_list()} or {:controls, non_empty_list(binary())} or
+              {:program, ContractLab.TestPrograms.Counter} or
+              {:programs,
+               non_empty_list(
+                 ContractLab.TestPrograms.Broken or ContractLab.TestPrograms.Counter or
+                   ContractLab.TestPrograms.Divergent or ContractLab.TestPrograms.Extended or
+                   ContractLab.TestPrograms.ExternalEffect or ContractLab.TestPrograms.Fixed or
+                   ContractLab.TestPrograms.Hangs or ContractLab.TestPrograms.InvalidOutput or
+                   ContractLab.TestPrograms.VersionTwo
+               )} or {:role or :session_id, binary()} or {:bindings or :contract or :path, term()} or
+              {:execution_timeout or :max_pending or :max_repairs or :sidecar_timeout or :snapshot_every,
+               integer()}
+          )
+        )
+        # from: test/replacement_test.exs:20:10
+        opts = [
+          path: ctx.path,
+          contract: ctx.contract,
+          bindings: ctx.bindings,
+          role: "counter",
+          session_id: "counter-1",
+          program: ContractLab.TestPrograms.Counter,
+          programs: [
+            ContractLab.TestPrograms.Counter,
+            ContractLab.TestPrograms.Broken,
+            ContractLab.TestPrograms.Fixed,
+            ContractLab.TestPrograms.Extended,
+            ContractLab.TestPrograms.Divergent,
+            ContractLab.TestPrograms.VersionTwo,
+            ContractLab.TestPrograms.Hangs,
+            ContractLab.TestPrograms.ExternalEffect,
+            ContractLab.TestPrograms.InvalidOutput
+          ],
+          snapshot_every: 2,
+          max_repairs: 2,
+          execution_timeout: 100,
+          sidecar_timeout: 1000,
+          max_pending: 10,
+          controls: ["alice"],
+          allowed_actions: []
+        ]
+
+    where "overrides" was given the type:
+
+        # type: dynamic()
+        # from: test/replacement_test.exs:19:19
+        overrides
+
+    typing violation found at:
+    │
+ 24 │     {:ok, pid} = Replacement.start_link(Keyword.merge(opts, overrides))
+    │                ~
+    │
+    └─ test/replacement_test.exs:24:16: ContractLab.ReplacementTest.start/2
+
+    warning: unknown key .state in expression:
+
+        status.state
+
+    the given type does not have the given key:
+
+        dynamic(empty_map())
+
+    where "status" was given the type:
+
+        # type: dynamic(empty_map())
+        # from: test/replacement_test.exs:42:12
+        status = ContractLab.Replacement.status(p)
+
+    typing violation found at:
+    │
+ 43 │     assert status.state == %{"total" => 15}
+    │                   ~~~~~
+    │
+    └─ test/replacement_test.exs:43:19: ContractLab.ReplacementTest."test ordinary work calls no sidecar and takes periodic snapshots"/1
+
+    warning: unknown key .state in expression:
+
+        status.state
+
+    the given type does not have the given key:
+
+        dynamic(empty_map())
+
+    where "status" was given the type:
+
+        # type: dynamic(empty_map())
+        # from: test/replacement_test.exs:64:12
+        status = ContractLab.Replacement.status(p)
+
+    typing violation found at:
+    │
+ 65 │     assert status.state["total"] == 16
+    │                   ~~~~~
+    │
+    └─ test/replacement_test.exs:65:19: ContractLab.ReplacementTest."test crash wakes a sidecar once, validates a replacement, and resumes the failed input"/1
+
+    warning: unknown key .completed_inputs in expression:
+
+        ContractLab.Replacement.status(p).completed_inputs
+
+    the given type does not have the given key:
+
+        dynamic(empty_map())
+
+    where "p" was given the type:
+
+        # type: dynamic()
+        # from: test/replacement_test.exs:73:7
+        p = start(ctx)
+
+    typing violation found at:
+    │
+ 78 │     assert Replacement.status(p).completed_inputs == 1
+    │                                  ~~~~~~~~~~~~~~~~
+    │
+    └─ test/replacement_test.exs:78:34: ContractLab.ReplacementTest."test duplicate receipt invokes neither the program nor sidecar and changed identity conflicts"/1
+
+    warning: unknown key .completed_inputs in expression:
+
+        ContractLab.Replacement.status(p).completed_inputs
+
+    the given type does not have the given key:
+
+        dynamic(empty_map())
+
+    where "p" was given the type:
+
+        # type: dynamic()
+        # from: test/replacement_test.exs:84:7
+        p = start(ctx)
+
+    typing violation found at:
+    │
+ 89 │     assert Replacement.status(p).completed_inputs == 0
+    │                                  ~~~~~~~~~~~~~~~~
+    │
+    └─ test/replacement_test.exs:89:34: ContractLab.ReplacementTest."test raw posts, wrong actors and wrong contract receipts cannot reach a program"/1
+
+    warning: unknown key .mode in expression:
+
+        ContractLab.Replacement.status(p).mode
+
+    the given type does not have the given key:
+
+        dynamic(empty_map())
+
+    where "p" was given the type:
+
+        # type: dynamic()
+        # from: test/replacement_test.exs:94:7
+        p = start(ctx, program: ContractLab.TestPrograms.Broken)
+
+    typing violation found at:
+    │
+ 96 │     assert Replacement.status(p).mode == :needs_agent
+    │                                  ~~~~
+    │
+    └─ test/replacement_test.exs:96:34: ContractLab.ReplacementTest."test without an agent the failed input is retained and manual repair resumes it"/1
+
+     warning: unknown key .state in expression:
+
+         status.state
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "status" was given the type:
+
+         # type: dynamic(empty_map())
+         # from: test/replacement_test.exs:107:12
+         status = ContractLab.Replacement.status(p)
+
+     typing violation found at:
+     │
+ 108 │     assert status.state["total"] == 3
+     │                   ~~~~~
+     │
+     └─ test/replacement_test.exs:108:19: ContractLab.ReplacementTest."test candidate validation replays committed history even when a recent snapshot exists"/1
+
+     warning: unknown key .sidecar_calls in expression:
+
+         ContractLab.Replacement.status(p).sidecar_calls
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:120:7
+         p = start(ctx, options)
+
+     typing violation found at:
+     │
+ 121 │     assert Replacement.status(p).sidecar_calls == 2
+     │                                  ~~~~~~~~~~~~~
+     │
+     └─ test/replacement_test.exs:121:34: ContractLab.ReplacementTest."test repair budget and unresolved fault survive a controller restart"/1
+
+     warning: unknown key .last_fault in expression:
+
+         ContractLab.Replacement.status(p).last_fault
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:127:7
+         p =
+           start(ctx,
+             program: ContractLab.TestPrograms.Broken,
+             sidecar: fn _ -> {:ok, ContractLab.TestPrograms.VersionTwo} end
+           )
+
+     typing violation found at:
+     │
+ 129 │     assert Replacement.status(p).last_fault["message"] =~ "state_version"
+     │                                  ~~~~~~~~~~
+     │
+     └─ test/replacement_test.exs:129:34: ContractLab.ReplacementTest."test an incompatible state version is held for an explicit migration"/1
+
+     warning: unknown key .sidecar_calls in expression:
+
+         ContractLab.Replacement.status(p).sidecar_calls
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:136:7
+         p =
+           start(ctx,
+             program: ContractLab.TestPrograms.Hangs,
+             execution_timeout: 20,
+             sidecar: fn _ -> {:ok, ContractLab.TestPrograms.Fixed} end
+           )
+
+     typing violation found at:
+     │
+ 140 │     assert Replacement.status(p).sidecar_calls == 1
+     │                                  ~~~~~~~~~~~~~
+     │
+     └─ test/replacement_test.exs:140:34: ContractLab.ReplacementTest."test hung workers are stopped before a replacement continues"/1
+
+     warning: unknown key .sidecar_calls in expression:
+
+         ContractLab.Replacement.status(p).sidecar_calls
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:145:7
+         p = start(ctx, sidecar: fn _ -> {:ok, ContractLab.TestPrograms.Extended} end)
+
+     typing violation found at:
+     │
+ 150 │     assert Replacement.status(p).sidecar_calls == 1
+     │                                  ~~~~~~~~~~~~~
+     │
+     └─ test/replacement_test.exs:150:34: ContractLab.ReplacementTest."test unhandled legal input can wake the sidecar to extend the program"/1
+
+     warning: unknown key .state in expression:
+
+         status.state
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "status" was given the type:
+
+         # type: dynamic(empty_map())
+         # from: test/replacement_test.exs:158:12
+         status = ContractLab.Replacement.status(p)
+
+     typing violation found at:
+     │
+ 159 │     assert status.state["total"] == 6
+     │                   ~~~~~
+     │
+     └─ test/replacement_test.exs:159:19: ContractLab.ReplacementTest."test restarts restore snapshots and replay only their completed tail"/1
+
+     warning: unknown key .state in expression:
+
+         ContractLab.Replacement.status(p).state
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:171:7
+         p = start(ctx)
+
+     typing violation found at:
+     │
+ 172 │     assert Replacement.status(p).state["total"] == 6
+     │                                  ~~~~~
+     │
+     └─ test/replacement_test.exs:172:34: ContractLab.ReplacementTest."test a damaged snapshot recovers from the intact event journal"/1
+
+     warning: unknown key .sidecar_calls in expression:
+
+         ContractLab.Replacement.status(p).sidecar_calls
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:178:7
+         p = start(ctx, sidecar: fn _ -> {:ok, ContractLab.TestPrograms.Fixed} end)
+
+     typing violation found at:
+     │
+ 180 │     assert Replacement.status(p).sidecar_calls == 0
+     │                                  ~~~~~~~~~~~~~
+     │
+     └─ test/replacement_test.exs:180:34: ContractLab.ReplacementTest."test an authorized participant can explicitly activate the sidecar"/1
+
+     warning: unknown key .effects in expression:
+
+         ContractLab.Replacement.status(p).effects
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:201:7
+         p = start(ctx, opts)
+
+     typing violation found at:
+     │
+ 207 │     [effect] = Replacement.status(p).effects
+     │                                      ~~~~~~~
+     │
+     └─ test/replacement_test.exs:207:38: ContractLab.ReplacementTest."test uncertain non-idempotent effects are held across restart until reconciled"/1
+
+     warning: unknown key .effects in expression:
+
+         ContractLab.Replacement.status(p).effects
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:240:7
+         p = start(ctx, program: ContractLab.TestPrograms.InvalidOutput)
+
+     typing violation found at:
+     │
+ 242 │     assert Replacement.status(p).effects == []
+     │                                  ~~~~~~~
+     │
+     └─ test/replacement_test.exs:242:34: ContractLab.ReplacementTest."test invalid program outputs cannot enter the outbox"/1
+
+     warning: unknown key .effects in expression:
+
+         ContractLab.Replacement.status(p).effects
+
+     the given type does not have the given key:
+
+         dynamic(empty_map())
+
+     where "p" was given the type:
+
+         # type: dynamic()
+         # from: test/replacement_test.exs:248:7
+         p = start(ctx, program: ContractLab.TestPrograms.ExternalEffect)
+
+     typing violation found at:
+     │
+ 250 │     assert Replacement.status(p).effects == []
+     │                                  ~~~~~~~
+     │
+     └─ test/replacement_test.exs:250:34: ContractLab.ReplacementTest."test program effects require an explicit host action grant"/1

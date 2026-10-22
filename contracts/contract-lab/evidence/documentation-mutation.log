@@ -1,0 +1,29 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+..........
+
+  1) test full, type, field, state, rule, deadline and role queries preserve attached docs (ContractLab.CompilerTest)
+     test/compiler_test.exs:22
+     Assertion with =~ failed
+     code:  assert full.meta.doc =~ "Assign work"
+     left:  ""
+     right: "Assign work"
+     stacktrace:
+       test/compiler_test.exs:25: (test)
+
+
+
+  2) test uses Elixir heredoc indentation, escapes and final newline without evaluating interpolation (ContractLab.CompilerTest)
+     test/compiler_test.exs:42
+     Assertion with == failed
+     code:  assert c.meta.doc == expected
+     left:  ""
+     right: "First line.\n  Second line with a \"quote\" and a \\ slash.\n"
+     stacktrace:
+       test/compiler_test.exs:50: (test)
+
+........................
+Finished in 0.9 seconds (0.9s async, 0.00s sync)
+36 tests, 2 failures

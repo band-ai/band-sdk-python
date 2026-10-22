@@ -3,3 +3,6 @@ contracts/header-spikes/priv/unicode16/emoji-data.txt -whitespace
 contracts/engines/band-v1/header-spikes/priv/unicode16/emoji-data.txt -whitespace
 # Formatter inputs intentionally exercise trailing whitespace and blank lines.
 contracts/spec/conformance/format/*/input.band -whitespace
+# Retained command output preserves its original bytes.
+contracts/contract-lab/evidence/*.log -whitespace
+contracts/room-sim/evidence/*.log -whitespace

@@ -1,0 +1,934 @@
+Compiling 1 file (.ex)
+Generated room_sim app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test rooms start without platform services or external dependencies (RoomSimTest)
+     test/room_sim_test.exs:22
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360456.28814>, start: {RoomSim, :start_link, [[id: "empty", now_ms: 42]]}}.
+     Reason: :not_implemented
+     code: room = room("empty", 42)
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:23: (test)
+
+
+
+  2) test sender, room, time, and message id come from the transport (RoomSimTest)
+     test/room_sim_test.exs:31
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30197>, start: {RoomSim, :start_link, [[id: "identity", now_ms: 5000]]}}.
+     Reason: :not_implemented
+     code: room = room("identity", 5_000)
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:32: (test)
+
+
+
+  3) test a made-up client cannot speak or read as a participant (RoomSimTest)
+     test/room_sim_test.exs:47
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30205>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:48: (test)
+
+
+
+  4) test membership identities are explicit and cannot silently change type (RoomSimTest)
+     test/room_sim_test.exs:56
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30212>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:57: (test)
+
+
+
+  5) test direct mentions fan out to agents; references do not; users see both (RoomSimTest)
+     test/room_sim_test.exs:65
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30219>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:66: (test)
+
+
+
+  6) test agent pushes never echo their own message even in a self-mentioned stored fixture (RoomSimTest)
+     test/room_sim_test.exs:80
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30226>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:81: (test)
+
+
+
+  7) test an unmentioned stored text reaches users but no agents (RoomSimTest)
+     test/room_sim_test.exs:90
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30233>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:91: (test)
+
+
+
+  8) test event messages reach humans without waking mentioned agents (RoomSimTest)
+     test/room_sim_test.exs:102
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30240>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:103: (test)
+
+
+
+  9) test agent history models text and direct mentions, not the whole transcript (RoomSimTest)
+     test/room_sim_test.exs:115
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30247>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:116: (test)
+
+
+
+ 10) test fetch has the same visibility restriction and does not reveal hidden message existence (RoomSimTest)
+     test/room_sim_test.exs:133
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30254>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:134: (test)
+
+
+
+ 11) test a downstream builder cannot read an unmentioned review exchange as evidence (RoomSimTest)
+     test/room_sim_test.exs:144
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30261>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:145: (test)
+
+
+
+ 12) test delivery is explicit and can be reordered without changing stored order (RoomSimTest)
+     test/room_sim_test.exs:158
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30268>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:159: (test)
+
+
+
+ 13) test delayed notifications become deliverable at exact virtual time without sleeping (RoomSimTest)
+     test/room_sim_test.exs:173
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30275>, start: {RoomSim, :start_link, [[id: "clock", now_ms: 1000]]}}.
+     Reason: :not_implemented
+     code: room = room("clock", 1_000)
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:174: (test)
+
+
+
+ 14) test duplicate delivery preserves message identity and creates no second stored post (RoomSimTest)
+     test/room_sim_test.exs:189
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30282>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:190: (test)
+
+
+
+ 15) test dropping a notification preserves history for explicit redelivery (RoomSimTest)
+     test/room_sim_test.exs:204
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30285>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:205: (test)
+
+
+
+ 16) test offline posts are not silently delivered on reconnect (RoomSimTest)
+     test/room_sim_test.exs:219
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30292>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:220: (test)
+
+
+
+ 17) test queued pushes for an old connection do not jump to its replacement (RoomSimTest)
+     test/room_sim_test.exs:233
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30299>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:234: (test)
+
+
+
+ 18) test removal revokes access and old queued deliveries, including after rejoining (RoomSimTest)
+     test/room_sim_test.exs:247
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360456.28822>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:248: (test)
+
+
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == integer()
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/room_sim_test.exs:25
+        left = RoomSim.now(room)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: integer()
+        # from: test/room_sim_test.exs:25
+        right = 42
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 25 │     assert RoomSim.now(room) == 42
+    │                              ~
+    │
+    └─ test/room_sim_test.exs:25:30: RoomSimTest."test rooms start without platform services or external dependencies"/1
+
+ 19) test clients and message lookups cannot cross rooms (RoomSimTest)
+     test/room_sim_test.exs:263
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360456.28829>, start: {RoomSim, :start_link, [[id: "one", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: one = room("one")
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:264: (test)
+
+
+
+ 20) test invalid routing data rejects the entire post without consuming an id (RoomSimTest)
+     test/room_sim_test.exs:276
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360456.28836>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:277: (test)
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == empty_list()
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/room_sim_test.exs:26
+        left = RoomSim.members(room)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: empty_list()
+        # from: test/room_sim_test.exs:26
+        right = []
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 26 │     assert RoomSim.members(room) == []
+    │                                  ~
+    │
+    └─ test/room_sim_test.exs:26:34: RoomSimTest."test rooms start without platform services or external dependencies"/1
+
+
+
+ 21) test history and redelivery cursors select only later visible posts (RoomSimTest)
+     test/room_sim_test.exs:290
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360456.28843>, start: {RoomSim, :start_link, [[id: "test-room", now_ms: 0]]}}.
+     Reason: :not_implemented
+     code: room = room()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:291: (test)
+
+
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == empty_list()
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/room_sim_test.exs:27
+        left = RoomSim.pending(room)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: empty_list()
+        # from: test/room_sim_test.exs:27
+        right = []
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 27 │     assert RoomSim.pending(room) == []
+    │                                  ~
+    │
+    └─ test/room_sim_test.exs:27:34: RoomSimTest."test rooms start without platform services or external dependencies"/1
+
+ 22) test invalid time and fault commands leave state intact (RoomSimTest)
+     test/room_sim_test.exs:305
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360449.30305>, start: {RoomSim, :start_link, [[id: "clock", now_ms: 10]]}}.
+     Reason: :not_implemented
+     code: room = room("clock", 10)
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:306: (test)
+
+
+
+ 23) test running the same trace produces the same ids, times, and observable decisions (RoomSimTest)
+     test/room_sim_test.exs:317
+     ** (RuntimeError) failed to start child with the spec %{id: #Reference<0.2884003768.2560360456.28854>, start: {RoomSim, :start_link, [[id: "deterministic", now_ms: 100]]}}.
+     Reason: :not_implemented
+     code: assert run.() == run.()
+     stacktrace:
+       (ex_unit 1.18.4) lib/ex_unit/callbacks.ex:590: ExUnit.Callbacks.start_supervised!/2
+       test/room_sim_test.exs:319: anonymous fn/0 in RoomSimTest."test running the same trace produces the same ids, times, and observable decisions"/1
+       test/room_sim_test.exs:332: (test)
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == empty_list()
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/room_sim_test.exs:28
+        left = RoomSim.transcript(room)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: empty_list()
+        # from: test/room_sim_test.exs:28
+        right = []
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 28 │     assert RoomSim.transcript(room) == []
+    │                                     ~
+    │
+    └─ test/room_sim_test.exs:28:37: RoomSimTest."test rooms start without platform services or external dependencies"/1
+
+    warning: incompatible types given to Kernel.length/1:
+
+        length(RoomSim.transcript(room))
+
+    given types:
+
+        -dynamic({:error, :not_implemented})-
+
+    but expected one of:
+
+        list(term())
+
+    where "room" was given the type:
+
+        # type: dynamic()
+        # from: test/room_sim_test.exs:32:10
+        room = room("identity", 5000)
+
+    typing violation found at:
+    │
+ 44 │     assert length(RoomSim.transcript(room)) == 2
+    │            ~
+    │
+    └─ test/room_sim_test.exs:44:12: RoomSimTest."test sender, room, time, and message id come from the transport"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic({:error, :not_implemented}) == empty_list()
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic({:error, :not_implemented})
+        # from: test/room_sim_test.exs:53
+        left = RoomSim.transcript(room)
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: empty_list()
+        # from: test/room_sim_test.exs:53
+        right = []
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 53 │     assert RoomSim.transcript(room) == []
+    │                                     ~
+    │
+    └─ test/room_sim_test.exs:53:37: RoomSimTest."test a made-up client cannot speak or read as a participant"/1
+
+    warning: incompatible types given to Kernel.length/1:
+
+        length(RoomSim.flush(room))
+
+    given types:
+
+        -dynamic({:error, :not_implemented})-
+
+    but expected one of:
+
+        list(term())
+
+    where "room" was given the type:
+
+        # type: dynamic()
+        # from: test/room_sim_test.exs:66:10
+        room = room()
+
+    typing violation found at:
+    │
+ 73 │     assert length(RoomSim.flush(room)) == 2
+    │            ~
+    │
+    └─ test/room_sim_test.exs:73:12: RoomSimTest."test direct mentions fan out to agents; references do not; users see both"/1
+
+     warning: incompatible types given to Kernel.length/1:
+
+         length(RoomSim.transcript(room))
+
+     given types:
+
+         -dynamic({:error, :not_implemented})-
+
+     but expected one of:
+
+         list(term())
+
+     where "room" was given the type:
+
+         # type: dynamic()
+         # from: test/room_sim_test.exs:145:10
+         room = room()
+
+     typing violation found at:
+     │
+ 155 │     assert length(RoomSim.transcript(room)) == 3
+     │            ~
+     │
+     └─ test/room_sim_test.exs:155:12: RoomSimTest."test a downstream builder cannot read an unmentioned review exchange as evidence"/1
+
+     warning: the following pattern will never match:
+
+         [one, two] = RoomSim.pending(room)
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "room" was given the type:
+
+         # type: dynamic()
+         # from: test/room_sim_test.exs:159:10
+         room = room()
+
+     typing violation found at:
+     │
+ 165 │     [one, two] = RoomSim.pending(room)
+     │                ~
+     │
+     └─ test/room_sim_test.exs:165:16: RoomSimTest."test delivery is explicit and can be reordered without changing stored order"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == dynamic(non_empty_list(term()))
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:170
+         left = RoomSim.transcript(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(non_empty_list(term()))
+         # from: test/room_sim_test.exs:170
+         right = [first, second]
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 170 │     assert RoomSim.transcript(room) == [first, second]
+     │                                     ~
+     │
+     └─ test/room_sim_test.exs:170:37: RoomSimTest."test delivery is explicit and can be reordered without changing stored order"/1
+
+     warning: the following pattern will never match:
+
+         [delivery] = RoomSim.pending(room)
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "room" was given the type:
+
+         # type: dynamic()
+         # from: test/room_sim_test.exs:174:10
+         room = room("clock", 1000)
+
+     typing violation found at:
+     │
+ 178 │     [delivery] = RoomSim.pending(room)
+     │                ~
+     │
+     └─ test/room_sim_test.exs:178:16: RoomSimTest."test delayed notifications become deliverable at exact virtual time without sleeping"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:181
+         left = RoomSim.flush(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:181
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 181 │     assert RoomSim.flush(room) == []
+     │                                ~
+     │
+     └─ test/room_sim_test.exs:181:32: RoomSimTest."test delayed notifications become deliverable at exact virtual time without sleeping"/1
+
+     warning: the following pattern will never match:
+
+         [original] = RoomSim.pending(room)
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "room" was given the type:
+
+         # type: dynamic()
+         # from: test/room_sim_test.exs:190:10
+         room = room()
+
+     typing violation found at:
+     │
+ 194 │     [original] = RoomSim.pending(room)
+     │                ~
+     │
+     └─ test/room_sim_test.exs:194:16: RoomSimTest."test duplicate delivery preserves message identity and creates no second stored post"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == dynamic(non_empty_list(term()))
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:201
+         left = RoomSim.transcript(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(non_empty_list(term()))
+         # from: test/room_sim_test.exs:201
+         right = [message]
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 201 │     assert RoomSim.transcript(room) == [message]
+     │                                     ~
+     │
+     └─ test/room_sim_test.exs:201:37: RoomSimTest."test duplicate delivery preserves message identity and creates no second stored post"/1
+
+     warning: the following pattern will never match:
+
+         [delivery] = RoomSim.pending(room)
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "room" was given the type:
+
+         # type: dynamic()
+         # from: test/room_sim_test.exs:205:10
+         room = room()
+
+     typing violation found at:
+     │
+ 209 │     [delivery] = RoomSim.pending(room)
+     │                ~
+     │
+     └─ test/room_sim_test.exs:209:16: RoomSimTest."test dropping a notification preserves history for explicit redelivery"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:211
+         left = RoomSim.flush(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:211
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 211 │     assert RoomSim.flush(room) == []
+     │                                ~
+     │
+     └─ test/room_sim_test.exs:211:32: RoomSimTest."test dropping a notification preserves history for explicit redelivery"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == dynamic(non_empty_list(term()))
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:216
+         left = RoomSim.transcript(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(non_empty_list(term()))
+         # from: test/room_sim_test.exs:216
+         right = [message]
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 216 │     assert RoomSim.transcript(room) == [message]
+     │                                     ~
+     │
+     └─ test/room_sim_test.exs:216:37: RoomSimTest."test dropping a notification preserves history for explicit redelivery"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:224
+         left = RoomSim.pending(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:224
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 224 │     assert RoomSim.pending(room) == []
+     │                                  ~
+     │
+     └─ test/room_sim_test.exs:224:34: RoomSimTest."test offline posts are not silently delivered on reconnect"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:227
+         left = RoomSim.flush(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:227
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 227 │     assert RoomSim.flush(room) == []
+     │                                ~
+     │
+     └─ test/room_sim_test.exs:227:32: RoomSimTest."test offline posts are not silently delivered on reconnect"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:273
+         left = RoomSim.pending(two)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:273
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 273 │     assert RoomSim.pending(two) == []
+     │                                 ~
+     │
+     └─ test/room_sim_test.exs:273:33: RoomSimTest."test clients and message lookups cannot cross rooms"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:285
+         left = RoomSim.transcript(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:285
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 285 │     assert RoomSim.transcript(room) == []
+     │                                     ~
+     │
+     └─ test/room_sim_test.exs:285:37: RoomSimTest."test invalid routing data rejects the entire post without consuming an id"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:286
+         left = RoomSim.pending(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:286
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 286 │     assert RoomSim.pending(room) == []
+     │                                  ~
+     │
+     └─ test/room_sim_test.exs:286:34: RoomSimTest."test invalid routing data rejects the entire post without consuming an id"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == integer()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:309
+         left = RoomSim.now(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: integer()
+         # from: test/room_sim_test.exs:309
+         right = 10
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 309 │     assert RoomSim.now(room) == 10
+     │                              ~
+     │
+     └─ test/room_sim_test.exs:309:30: RoomSimTest."test invalid time and fault commands leave state intact"/1
+
+     warning: comparison between distinct types found:
+
+         left == right
+
+     given types:
+
+         dynamic({:error, :not_implemented}) == empty_list()
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic({:error, :not_implemented})
+         # from: test/room_sim_test.exs:314
+         left = RoomSim.pending(room)
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: empty_list()
+         # from: test/room_sim_test.exs:314
+         right = []
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 314 │     assert RoomSim.pending(room) == []
+     │                                  ~
+     │
+     └─ test/room_sim_test.exs:314:34: RoomSimTest."test invalid time and fault commands leave state intact"/1
+
+     warning: the following pattern will never match:
+
+         [delivery] = RoomSim.pending(room)
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "room" was given the type:
+
+         # type: dynamic()
+         # from: test/room_sim_test.exs:319:12
+         room = room("deterministic", 100)
+
+     typing violation found at:
+     │
+ 323 │       [delivery] = RoomSim.pending(room)
+     │                  ~
+     │
+     └─ test/room_sim_test.exs:323:18: RoomSimTest."test running the same trace produces the same ids, times, and observable decisions"/1
+
+
+Finished in 0.4 seconds (0.4s async, 0.00s sync)
+23 tests, 23 failures

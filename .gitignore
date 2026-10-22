@@ -22,6 +22,12 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Native contract engine source is part of the SDK release inputs.
+!contracts/header-spikes/lib/
+!contracts/room-sim/lib/
+!contracts/contract-lab/lib/
+!contracts/engines/band-v1/header-spikes/lib/
+!contracts/engines/band-v1/contract-lab/lib/
 parts/
 sdist/
 var/
@@ -182,3 +188,7 @@ scripts/config.yaml
 
 # Local Claude Code settings (machine-specific, not shared)
 .claude/settings.local.json
+
+# Retained upstream validation records referenced by the contract documentation.
+!contracts/contract-lab/evidence/*.log
+!contracts/room-sim/evidence/*.log

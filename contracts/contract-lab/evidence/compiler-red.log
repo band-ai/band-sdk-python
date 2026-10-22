@@ -1,0 +1,446 @@
+==> room_sim
+Compiling 1 file (.ex)
+Generated room_sim app
+==> contract_lab
+===> Analyzing applications...
+===> Compiling yamerl
+==> yaml_elixir
+Compiling 6 files (.ex)
+Generated yaml_elixir app
+==> header_spikes
+Compiling 4 files (.ex)
+Generated header_spikes app
+==> contract_lab
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test compiles documented corpus all-participants.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/all-participants.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  2) test compiles documented corpus assignment.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/assignment.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  3) test compiles documented corpus bounded-review.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/bounded-review.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  4) test compiles documented corpus explicit-infinity.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/explicit-infinity.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  5) test compiles documented corpus first-responder.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/first-responder.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  6) test compiles documented corpus program-counter.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/program-counter.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  7) test compiles documented corpus progress-events.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/progress-events.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  8) test compiles documented corpus room-events.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/room-events.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+  9) test compiles documented corpus selected-deadlines.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/selected-deadlines.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+ 10) test compiles documented corpus team-review.band (ContractLab.CompilerTest)
+     test/compiler_test.exs:7
+     match (=) failed
+     code:  assert {:ok, c} =
+              ContractLab.load(
+                "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts/team-review.band"
+              )
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:8: (test)
+
+
+
+ 11) test full, type, field, state, rule, deadline and role queries preserve attached docs (ContractLab.CompilerTest)
+     test/compiler_test.exs:22
+     match (=) failed
+     code:  assert {:ok, c} = ContractLab.load(Path.join(@root, "assignment.band"))
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:23: (test)
+
+
+
+ 12) test uses Elixir heredoc indentation, escapes and final newline without evaluating interpolation (ContractLab.CompilerTest)
+     test/compiler_test.exs:40
+     match (=) failed
+     code:  assert {:ok, c} = ContractLab.compile(card, literal <> "\n" <> body)
+     left:  {:ok, c}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:47: (test)
+
+
+
+ 13) test documentation changes source identity but leaves behavior digest unchanged (ContractLab.CompilerTest)
+     test/compiler_test.exs:52
+     match (=) failed
+     code:  assert {:ok, a} = ContractLab.compile(card, body)
+     left:  {:ok, a}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:54: (test)
+
+
+
+ 14) test all and selected participant deadlines retain quantifier and per-rule metadata (ContractLab.CompilerTest)
+     test/compiler_test.exs:60
+     match (=) failed
+     code:  assert {:ok, all} = ContractLab.load(Path.join(@root, "all-participants.band"))
+     left:  {:ok, all}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:61: (test)
+
+
+
+ 15) test same body compiles from all three discovery formats (ContractLab.CompilerTest)
+     test/compiler_test.exs:70
+     match (=) failed
+     code:  assert {:ok, a} = ContractLab.load(Path.join(@root, "explicit-infinity.band"))
+     left:  {:ok, a}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:82: (test)
+
+
+
+ 16) test rejects unknown directive (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :syntax, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :syntax, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 17) test rejects duplicate type (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :duplicate, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :duplicate, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 18) test rejects duplicate field (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :duplicate, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :duplicate, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 19) test rejects unknown role (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_role, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_role, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 20) test rejects unknown type (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_type, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_type, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 21) test rejects unknown target (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_state, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_state, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 22) test rejects unknown reference type (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_type, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_type, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 23) test rejects invalid duration (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :duration, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :duration, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 24) test rejects unknown deadline kind (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_type, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_type, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 25) test rejects unknown deadline role (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_role, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_role, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 26) test rejects empty participant set (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :syntax, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :syntax, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 27) test rejects invalid bounds (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :type, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :type, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 28) test rejects missing reference match (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unmatched_reference, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unmatched_reference, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 29) test rejects unknown binding (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :unknown_binding, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :unknown_binding, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 30) test rejects terminal overlaps state (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :duplicate, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :duplicate, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 31) test rejects ambiguous rules (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :ambiguous_rule, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :ambiguous_rule, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 32) test rejects zero rounds (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :rounds, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :rounds, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 33) test rejects interpolation (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :documentation, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :documentation, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 34) test rejects orphan documentation (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :orphan_documentation, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :orphan_documentation, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 35) test rejects unclosed documentation (ContractLab.CompilerTest)
+     test/compiler_test.exs:112
+     match (=) failed
+     code:  assert {:error, %{code: :documentation, line: line}} = ContractLab.compile(card, changed)
+     left:  {:error, %{code: :documentation, line: line}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:116: (test)
+
+
+
+ 36) test rejects unsupported engine version and excessive source size (ContractLab.CompilerTest)
+     test/compiler_test.exs:121
+     match (=) failed
+     code:  assert {:error, %{code: :engine}} = ContractLab.compile(%{card | engine: "9.0.0"}, body)
+     left:  {:error, %{code: :engine}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/compiler_test.exs:123: (test)
+
+
+Finished in 0.3 seconds (0.3s async, 0.00s sync)
+36 tests, 36 failures

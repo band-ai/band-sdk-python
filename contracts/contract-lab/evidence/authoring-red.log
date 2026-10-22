@@ -1,0 +1,73 @@
+Compiling 2 files (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test scenario executes all participants and returns documented decisions (ContractLab.AuthoringTest)
+     test/authoring_test.exs:17
+     match (=) failed
+     code:  assert {:ok, result} = Scenario.run(contract, scenario())
+     left:  {:ok, result}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/authoring_test.exs:19: (test)
+
+
+
+  2) test scenario mismatch reports the exact step and observed decision (ContractLab.AuthoringTest)
+     test/authoring_test.exs:26
+     match (=) failed
+     code:  assert {:error, %{"step" => 1, "actual" => %{"state" => "new"}}} = Scenario.run(contract, spec)
+     left:  {:error, %{"step" => 1, "actual" => %{"state" => "new"}}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/authoring_test.exs:29: (test)
+
+
+
+  3) test tick scenarios test the exact deadline boundary (ContractLab.AuthoringTest)
+     test/authoring_test.exs:32
+     match (=) failed
+     code:  assert {:ok, %{"outcome" => "stalled"}} = Scenario.run(contract, spec)
+     left:  {:ok, %{"outcome" => "stalled"}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/authoring_test.exs:35: (test)
+
+.
+
+  4) test query CLI retains metadata in full, role and type results (ContractLab.AuthoringTest)
+     test/authoring_test.exs:45
+     match (=) failed
+     code:  assert {:ok, full} = CLI.run(["query", @assignment])
+     left:  {:ok, full}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/authoring_test.exs:46: (test)
+
+
+
+  5) test CLI checks contracts and rejects conflicting or unknown query options (ContractLab.AuthoringTest)
+     test/authoring_test.exs:55
+     match (=) failed
+     code:  assert {:ok, [a, b]} = CLI.run(["check", @assignment, @all])
+     left:  {:ok, [a, b]}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/authoring_test.exs:56: (test)
+
+
+
+  6) test CLI replays a real JSON scenario file and propagates failed expectations (ContractLab.AuthoringTest)
+     test/authoring_test.exs:64
+     match (=) failed
+     code:  assert {:ok, %{"outcome" => "complete"}} = CLI.run(["replay", @all, path])
+     left:  {:ok, %{"outcome" => "complete"}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/authoring_test.exs:68: (test)
+
+
+Finished in 0.2 seconds (0.2s async, 0.00s sync)
+7 tests, 6 failures

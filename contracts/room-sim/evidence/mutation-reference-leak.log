@@ -1,0 +1,20 @@
+Compiling 1 file (.ex)
+Generated room_sim app
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [location: {"test/room_sim_test.exs", 68}]
+
+
+
+  1) test direct mentions fan out to agents; references do not; users see both (RoomSimTest)
+     test/room_sim_test.exs:68
+     Assertion with == failed
+     code:  assert Enum.map(RoomSim.pending(room), & &1.participant_id) == ["human", "reviewer"]
+     left:  ["builder", "human", "reviewer"]
+     right: ["human", "reviewer"]
+     stacktrace:
+       test/room_sim_test.exs:75: (test)
+
+
+Finished in 0.6 seconds (0.6s async, 0.00s sync)
+23 tests, 1 failure, 22 excluded

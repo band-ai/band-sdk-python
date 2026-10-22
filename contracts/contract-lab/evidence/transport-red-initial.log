@@ -1,0 +1,574 @@
+Compiling 2 files (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test transport-supplied fields round-trip without duplication (ContractLab.TransportTest)
+     test/transport_test.exs:6
+     match (=) failed
+     code:  assert {:ok, bytes} = Wire.encode(message, transport: transport)
+     left:  {:ok, bytes}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:9: (test)
+
+
+
+  2) test strict wire rejects :duplicate_key in {"id":"a","id":"b","kind":"ping","payload":{}} (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :duplicate_key} =
+              Wire.decode("{\"id\":\"a\",\"id\":\"b\",\"kind\":\"ping\",\"payload\":{}}")
+     left:  {:error, :duplicate_key}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  3) test strict wire rejects :duplicate_key in {"id":"a","kind":"ping","payload":{"x":1,"x":2}} (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :duplicate_key} =
+              Wire.decode("{\"id\":\"a\",\"kind\":\"ping\",\"payload\":{\"x\":1,\"x\":2}}")
+     left:  {:error, :duplicate_key}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  4) test strict wire rejects :unsupported_number in {"id":"a","kind":"ping","payload":{"x":1.0}} (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :unsupported_number} =
+              Wire.decode("{\"id\":\"a\",\"kind\":\"ping\",\"payload\":{\"x\":1.0}}")
+     left:  {:error, :unsupported_number}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  5) test strict wire rejects :unsupported_number in {"id":"a","kind":"ping","payload":{"x":9007199254740992}} (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :unsupported_number} =
+              Wire.decode("{\"id\":\"a\",\"kind\":\"ping\",\"payload\":{\"x\":9007199254740992}}")
+     left:  {:error, :unsupported_number}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  6) test strict wire rejects :json in {"id":"a","kind":"ping","payload":{}} trailing (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :json} = Wire.decode("{\"id\":\"a\",\"kind\":\"ping\",\"payload\":{}} trailing")
+     left:  {:error, :json}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  7) test strict wire rejects :envelope in {"id":"a","kind":"ping","payload":{},"actor":"spoof"} (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :envelope} =
+              Wire.decode("{\"id\":\"a\",\"kind\":\"ping\",\"payload\":{},\"actor\":\"spoof\"}")
+     left:  {:error, :envelope}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  8) test strict wire rejects :envelope in [] (ContractLab.TransportTest)
+     test/transport_test.exs:25
+     match (=) failed
+     code:  assert {:error, :envelope} = Wire.decode("[]")
+     left:  {:error, :envelope}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:26: (test)
+
+
+
+  9) test conflicting carrier fields and arbitrary carrier mappings are rejected (ContractLab.TransportTest)
+     test/transport_test.exs:30
+     match (=) failed
+     code:  assert {:error, :transport_conflict} = Wire.decode(bytes, transport: %{"id" => "transport"})
+     left:  {:error, :transport_conflict}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/transport_test.exs:32: (test)
+
+
+
+ 10) test room event needs no session and duplicate delivery does not recharge its window (ContractLab.TransportTest)
+     test/transport_test.exs:45
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: r = room()
+     stacktrace:
+       test/transport_test.exs:39: ContractLab.TransportTest.room/1
+       test/transport_test.exs:46: (test)
+
+
+
+ 11) test room quota resets at the window boundary while deduplication persists (ContractLab.TransportTest)
+     test/transport_test.exs:57
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: r = room(max_events: 1, max_mentions: 1)
+     stacktrace:
+       test/transport_test.exs:39: ContractLab.TransportTest.room/1
+       test/transport_test.exs:58: (test)
+
+
+
+ 12) test room-event authority, schema, conflicts and retention bounds are enforced (ContractLab.TransportTest)
+     test/transport_test.exs:69
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: r = room(max_receipts: 1)
+     stacktrace:
+       test/transport_test.exs:39: ContractLab.TransportTest.room/1
+       test/transport_test.exs:70: (test)
+
+
+
+ 13) test room events cannot rescue or advance a separate expired session (ContractLab.TransportTest)
+     test/transport_test.exs:82
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: r = room()
+     stacktrace:
+       test/transport_test.exs:39: ContractLab.TransportTest.room/1
+       test/transport_test.exs:83: (test)
+
+
+
+ 14) test room transport identity, delayed delivery and retries feed the same engine decision (ContractLab.TransportTest)
+     test/transport_test.exs:94
+     ** (UndefinedFunctionError) function RoomSim.start_link/0 is undefined or private. Did you mean:
+
+           * start_link/1
+
+     code: {:ok, room} = RoomSim.start_link()
+     stacktrace:
+       (room_sim 0.1.0) RoomSim.start_link()
+       test/transport_test.exs:95: (test)
+
+
+Finished in 0.7 seconds (0.7s async, 0.00s sync)
+14 tests, 14 failures
+    warning: the following pattern will never match:
+
+        {:ok, r} =
+          ContractLab.RoomEvents.new(
+            c,
+            Keyword.merge(
+              [
+                bindings: %{"sender" => "sender-id", "receiver" => "receiver-id"},
+                now: 0,
+                window_ms: 1000,
+                max_events: 2,
+                max_mentions: 2,
+                max_receipts: 100
+              ],
+              opts
+            )
+          )
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "c" was given the type:
+
+        # type: dynamic()
+        # from: test/transport_test.exs:38:14
+        {:ok, c} =
+          ContractLab.load(
+            Path.join(
+              "/home/eric/tv/verification/multi-agent-skill-design-20261010/contract-lab/contracts",
+              "room-events.band"
+            )
+          )
+
+    where "opts" was given the type:
+
+        # type: dynamic()
+        # from: test/transport_test.exs:37:13
+        opts
+
+    typing violation found at:
+    │
+ 39 │     {:ok, r} = RoomEvents.new(c, Keyword.merge([bindings: %{"sender" => "sender-id", "receiver" => "receiver-id"}, now: 0,
+    │              ~
+    │
+    └─ test/transport_test.exs:39:14: ContractLab.TransportTest.room/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:rejected) == :accepted
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:rejected)
+        # from: test/transport_test.exs:48
+        left = d.status
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :accepted
+        # from: test/transport_test.exs:48
+        right = :accepted
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 48 │     assert d.status == :accepted
+    │                     ~
+    │
+    └─ test/transport_test.exs:48:21: ContractLab.TransportTest."test room event needs no session and duplicate delivery does not recharge its window"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:rejected) == :duplicate
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:rejected)
+        # from: test/transport_test.exs:52
+        left = d.status
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :duplicate
+        # from: test/transport_test.exs:52
+        right = :duplicate
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 52 │     assert d.status == :duplicate
+    │                     ~
+    │
+    └─ test/transport_test.exs:52:21: ContractLab.TransportTest."test room event needs no session and duplicate delivery does not recharge its window"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :room_budget
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/transport_test.exs:61
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :room_budget
+        # from: test/transport_test.exs:61
+        right = :room_budget
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 61 │     assert d.reason == :room_budget
+    │                     ~
+    │
+    └─ test/transport_test.exs:61:21: ContractLab.TransportTest."test room quota resets at the window boundary while deduplication persists"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:rejected) == :accepted
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:rejected)
+        # from: test/transport_test.exs:63
+        left = d.status
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :accepted
+        # from: test/transport_test.exs:63
+        right = :accepted
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 63 │     assert d.status == :accepted
+    │                     ~
+    │
+    └─ test/transport_test.exs:63:21: ContractLab.TransportTest."test room quota resets at the window boundary while deduplication persists"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:rejected) == :duplicate
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:rejected)
+        # from: test/transport_test.exs:65
+        left = d.status
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :duplicate
+        # from: test/transport_test.exs:65
+        right = :duplicate
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 65 │     assert d.status == :duplicate
+    │                     ~
+    │
+    └─ test/transport_test.exs:65:21: ContractLab.TransportTest."test room quota resets at the window boundary while deduplication persists"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :unauthorized
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/transport_test.exs:72
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :unauthorized
+        # from: test/transport_test.exs:72
+        right = :unauthorized
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 72 │     assert d.reason == :unauthorized
+    │                     ~
+    │
+    └─ test/transport_test.exs:72:21: ContractLab.TransportTest."test room-event authority, schema, conflicts and retention bounds are enforced"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :payload
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/transport_test.exs:74
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :payload
+        # from: test/transport_test.exs:74
+        right = :payload
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 74 │     assert d.reason == :payload
+    │                     ~
+    │
+    └─ test/transport_test.exs:74:21: ContractLab.TransportTest."test room-event authority, schema, conflicts and retention bounds are enforced"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :id_conflict
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/transport_test.exs:77
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :id_conflict
+        # from: test/transport_test.exs:77
+        right = :id_conflict
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 77 │     assert d.reason == :id_conflict
+    │                     ~
+    │
+    └─ test/transport_test.exs:77:21: ContractLab.TransportTest."test room-event authority, schema, conflicts and retention bounds are enforced"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:not_implemented) == :retention_limit
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:not_implemented)
+        # from: test/transport_test.exs:79
+        left = d.reason
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :retention_limit
+        # from: test/transport_test.exs:79
+        right = :retention_limit
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 79 │     assert d.reason == :retention_limit
+    │                     ~
+    │
+    └─ test/transport_test.exs:79:21: ContractLab.TransportTest."test room-event authority, schema, conflicts and retention bounds are enforced"/1
+
+    warning: comparison between distinct types found:
+
+        left == right
+
+    given types:
+
+        dynamic(:rejected) == :accepted
+
+    where "left" (context ExUnit.Assertions) was given the type:
+
+        # type: dynamic(:rejected)
+        # from: test/transport_test.exs:88
+        left = d.status
+
+    where "right" (context ExUnit.Assertions) was given the type:
+
+        # type: :accepted
+        # from: test/transport_test.exs:88
+        right = :accepted
+
+    While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+    typing violation found at:
+    │
+ 88 │     assert d.status == :accepted
+    │                     ~
+    │
+    └─ test/transport_test.exs:88:21: ContractLab.TransportTest."test room events cannot rescue or advance a separate expired session"/1
+
+    warning: RoomSim.start_link/0 is undefined or private. Did you mean:
+
+          * start_link/1
+
+    │
+ 95 │     {:ok, room} = RoomSim.start_link()
+    │                           ~
+    │
+    └─ test/transport_test.exs:95:27: ContractLab.TransportTest."test room transport identity, delayed delivery and retries feed the same engine decision"/1
+
+     warning: the following pattern will never match:
+
+         {:ok, m} =
+           ContractLab.Wire.decode(first.content, transport: %{"id" => first.id, "session" => "s1"})
+
+     because the right-hand side has type:
+
+         dynamic({:error, :not_implemented})
+
+     where "first" was given the type:
+
+         # type: dynamic()
+         # from: test/transport_test.exs:107
+         {received, [first]} =
+           receive do
+             {:room_message, first} = received -> {received, [first]}
+           after
+             timeout ->
+               ExUnit.Assertions.__timeout__(
+                 {:room_message, {:first, [line: 107, column: 36], nil}},
+                 {:assert_receive, [], room_message: {:first, [line: 107], nil}},
+                 [],
+                 fn message ->
+                   case message do
+                     {:room_message, first} = received ->
+                       _ = [first]
+                       true
+
+                     _ ->
+                       false
+                   end
+                 end,
+                 timeout
+               )
+           end
+
+     typing violation found at:
+     │
+ 111 │     {:ok, m} = Wire.decode(first.content, transport: %{"id" => first.id, "session" => "s1"})
+     │              ~
+     │
+     └─ test/transport_test.exs:111:14: ContractLab.TransportTest."test room transport identity, delayed delivery and retries feed the same engine decision"/1
+
+    warning: unknown key .recipients in expression:
+
+        d.recipients
+
+    the given type does not have the given key:
+
+        dynamic(%{reason: :not_implemented, status: :rejected})
+
+    where "d" was given the type:
+
+        # type: dynamic(%{reason: :not_implemented, status: :rejected})
+        # from: test/transport_test.exs:47:12
+        {d, r} = ContractLab.RoomEvents.step(r, notice("n"), actor: "sender-id", now: 0)
+
+    typing violation found at:
+    │
+ 49 │     assert d.recipients == ["receiver-id"]
+    │              ~~~~~~~~~~
+    │
+    └─ test/transport_test.exs:49:14: ContractLab.TransportTest."test room event needs no session and duplicate delivery does not recharge its window"/1

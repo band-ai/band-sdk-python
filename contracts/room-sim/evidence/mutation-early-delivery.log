@@ -1,0 +1,20 @@
+Compiling 1 file (.ex)
+Generated room_sim app
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [location: {"test/room_sim_test.exs", 176}]
+
+
+
+  1) test delayed notifications become deliverable at exact virtual time without sleeping (RoomSimTest)
+     test/room_sim_test.exs:176
+     match (=) failed
+     code:  assert {:error, :not_due} = RoomSim.deliver(room, delivery.id)
+     left:  {:error, :not_due}
+     right: {:ok, :delivered}
+     stacktrace:
+       test/room_sim_test.exs:185: (test)
+
+
+Finished in 0.6 seconds (0.6s async, 0.00s sync)
+23 tests, 1 failure, 22 excluded

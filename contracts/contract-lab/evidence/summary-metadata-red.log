@@ -1,0 +1,18 @@
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [:metadata_digest]
+
+
+
+  1) test discovery summary is metadata and does not alter the behavior digest (ContractLab.CompilerTest)
+     test/compiler_test.exs:154
+     Assertion with == failed
+     code:  assert a.digest == b.digest
+     left:  "efaadecc6c10f6c5658a78d7df5d08e074f2bae35f4ada5f2830e65714d335c0"
+     right: "def4af78fed075c44d340911f45799f50fd36f33b30d668479b0a14c7fd3af9e"
+     stacktrace:
+       test/compiler_test.exs:158: (test)
+
+
+Finished in 0.8 seconds (0.8s async, 0.00s sync)
+37 tests, 1 failure, 36 excluded

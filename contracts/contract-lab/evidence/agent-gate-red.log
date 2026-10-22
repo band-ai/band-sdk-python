@@ -1,0 +1,293 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test a remote projection checks output using the same engine without committing room state (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:14
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, ^s} = AgentGate.project(s, "actor:lead", 0)
+     stacktrace:
+       test/agent_gate_test.exs:16: (test)
+
+
+
+  2) test out-of-turn and invalid payload replies are rejected locally (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:25
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:worker", 0)
+     stacktrace:
+       test/agent_gate_test.exs:27: (test)
+
+
+
+  3) test redacted checkpoints retain reference checks without exposing other participants' payloads (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:33
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:worker", 0)
+     stacktrace:
+       test/agent_gate_test.exs:36: (test)
+
+
+
+  4) test expired checkpoints reject a reply at the deadline boundary (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:45
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:worker", 0)
+     stacktrace:
+       test/agent_gate_test.exs:48: (test)
+
+
+
+  5) test a checkpoint cannot be used for another actor or source contract (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:54
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:lead", 0)
+     stacktrace:
+       test/agent_gate_test.exs:56: (test)
+
+
+
+  6) test malformed checkpoints, missing versions and transport spoofing fail closed (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:63
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:lead", 0)
+     stacktrace:
+       test/agent_gate_test.exs:65: (test)
+
+
+
+  7) test a stale version is rejected and local clock rollback cannot revive a checkpoint (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:72
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:lead", 100)
+     stacktrace:
+       test/agent_gate_test.exs:74: (test)
+
+
+
+  8) test the checkpoint preserves cumulative admission budgets (ContractLab.AgentGateTest)
+     test/agent_gate_test.exs:79
+     ** (MatchError) no match of right hand side value: {:error, :not_implemented}
+     code: {:ok, projection, _} = AgentGate.project(s, "actor:counter", 0)
+     stacktrace:
+       test/agent_gate_test.exs:82: (test)
+
+
+Finished in 0.2 seconds (0.2s async, 0.00s sync)
+8 tests, 8 failures
+    warning: the following pattern will never match:
+
+        {:ok, projection, ^s} = ContractLab.AgentGate.project(s, "actor:lead", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic(%{
+          ...,
+          contributions: empty_map(),
+          entered_at: term(),
+          entries: term(),
+          obligations: term(),
+          state: term()
+        })
+        # from: test/agent_gate_test.exs:15:12
+        {c, s} = start()
+
+    typing violation found at:
+    │
+ 16 │     {:ok, projection, ^s} = AgentGate.project(s, "actor:lead", 0)
+    │                           ~
+    │
+    └─ test/agent_gate_test.exs:16:27: ContractLab.AgentGateTest."test a remote projection checks output using the same engine without committing room state"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:worker", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic(%{
+          ...,
+          contributions: empty_map(),
+          entered_at: term(),
+          entries: term(),
+          obligations: term(),
+          state: term()
+        })
+        # from: test/agent_gate_test.exs:26:12
+        {c, s} = start()
+
+    typing violation found at:
+    │
+ 27 │     {:ok, projection, _} = AgentGate.project(s, "actor:worker", 0)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:27:26: ContractLab.AgentGateTest."test out-of-turn and invalid payload replies are rejected locally"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:worker", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic()
+        # from: test/agent_gate_test.exs:35:12
+        {_, s} =
+          ContractLab.Engine.step(s, message("o", "offer", %{"task" => "private offer text"}, 0),
+            actor: "actor:lead",
+            now: 0
+          )
+
+    typing violation found at:
+    │
+ 36 │     {:ok, projection, _} = AgentGate.project(s, "actor:worker", 0)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:36:26: ContractLab.AgentGateTest."test redacted checkpoints retain reference checks without exposing other participants' payloads"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:worker", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic()
+        # from: test/agent_gate_test.exs:47:12
+        {_, s} =
+          ContractLab.Engine.step(s, message("o", "offer", %{"task" => "task"}, 0),
+            actor: "actor:lead",
+            now: 0
+          )
+
+    typing violation found at:
+    │
+ 48 │     {:ok, projection, _} = AgentGate.project(s, "actor:worker", 0)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:48:26: ContractLab.AgentGateTest."test expired checkpoints reject a reply at the deadline boundary"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:lead", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic(%{
+          ...,
+          contributions: empty_map(),
+          entered_at: term(),
+          entries: term(),
+          obligations: term(),
+          state: term()
+        })
+        # from: test/agent_gate_test.exs:55:12
+        {c, s} = start()
+
+    typing violation found at:
+    │
+ 56 │     {:ok, projection, _} = AgentGate.project(s, "actor:lead", 0)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:56:26: ContractLab.AgentGateTest."test a checkpoint cannot be used for another actor or source contract"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:lead", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic(%{
+          ...,
+          contributions: empty_map(),
+          entered_at: term(),
+          entries: term(),
+          obligations: term(),
+          state: term()
+        })
+        # from: test/agent_gate_test.exs:64:12
+        {c, s} = start()
+
+    typing violation found at:
+    │
+ 65 │     {:ok, projection, _} = AgentGate.project(s, "actor:lead", 0)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:65:26: ContractLab.AgentGateTest."test malformed checkpoints, missing versions and transport spoofing fail closed"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:lead", 100)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic(%{
+          ...,
+          contributions: empty_map(),
+          entered_at: term(),
+          entries: term(),
+          obligations: term(),
+          state: term()
+        })
+        # from: test/agent_gate_test.exs:73:12
+        {c, s} = start()
+
+    typing violation found at:
+    │
+ 74 │     {:ok, projection, _} = AgentGate.project(s, "actor:lead", 100)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:74:26: ContractLab.AgentGateTest."test a stale version is rejected and local clock rollback cannot revive a checkpoint"/1
+
+    warning: the following pattern will never match:
+
+        {:ok, projection, _} = ContractLab.AgentGate.project(s, "actor:counter", 0)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_implemented})
+
+    where "s" was given the type:
+
+        # type: dynamic()
+        # from: test/agent_gate_test.exs:81:12
+        {_, s} =
+          ContractLab.Engine.step(s, message("i", "increment", %{"by" => 1}, 0),
+            actor: "actor:requester",
+            now: 0
+          )
+
+    typing violation found at:
+    │
+ 82 │     {:ok, projection, _} = AgentGate.project(s, "actor:counter", 0)
+    │                          ~
+    │
+    └─ test/agent_gate_test.exs:82:26: ContractLab.AgentGateTest."test the checkpoint preserves cumulative admission budgets"/1

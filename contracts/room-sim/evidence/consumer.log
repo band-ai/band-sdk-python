@@ -1,0 +1,10 @@
+==> room_sim
+Compiling 1 file (.ex)
+Generated room_sim app
+==> room_sim_consumer
+Generated room_sim_consumer app
+Running ExUnit with seed: 0, max_cases: 24
+
+.
+Finished in 0.01 seconds (0.01s async, 0.00s sync)
+1 test, 0 failures

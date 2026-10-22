@@ -1,0 +1,209 @@
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [:recovery_guards]
+
+
+
+  1) test delivery needs both an attributed actor and its bound role (ContractLab.ReplacementTest)
+     test/replacement_test.exs:384
+     match (=) failed
+     code:  assert {:error, :invalid_delivery} = Replacement.deliver(p, Map.drop(e, [:actor, :role]))
+     left:  {:error, :invalid_delivery}
+     right: {:ok, :completed}
+     stacktrace:
+       test/replacement_test.exs:387: (test)
+
+
+
+  2) test a broken candidate metadata callback cannot crash the controller (ContractLab.ReplacementTest)
+     test/replacement_test.exs:392
+     ** (exit) exited in: GenServer.call(#PID<0.265.0>, {:deliver, %{id: "fault", session: "counter-1", status: :accepted, version: 1, state: "new", metadata: %{line: 11, doc: nil}, kind: "increment", role: "requester", actor: "alice", payload: %{"by" => 13}, definition: "9feb9cac5d47cf2fe1d026f11466f00e6262692cdd12b29e5e9c9df5dbdeb973", outcome: nil, recipients: ["bot"]}}, :infinity)
+         ** (EXIT) an exception was raised:
+             ** (RuntimeError) Version callback crashed
+                 test/support/programs.exs:105: ContractLab.TestPrograms.CrashingVersion.state_version/0
+                 (contract_lab 0.1.0) lib/contract_lab/replacement.ex:732: ContractLab.Replacement.program_valid/1
+                 (contract_lab 0.1.0) lib/contract_lab/replacement.ex:548: ContractLab.Replacement.install/2
+                 (contract_lab 0.1.0) lib/contract_lab/replacement.ex:527: ContractLab.Replacement.invoke_sidecar/1
+                 (contract_lab 0.1.0) lib/contract_lab/replacement.ex:425: ContractLab.Replacement.drain/1
+                 (contract_lab 0.1.0) lib/contract_lab/replacement.ex:87: ContractLab.Replacement.handle_call/3
+                 (stdlib 6.0) gen_server.erl:2209: :gen_server.try_handle_call/4
+                 (stdlib 6.0) gen_server.erl:2238: :gen_server.handle_msg/6
+                 (stdlib 6.0) proc_lib.erl:329: :proc_lib.init_p_do_apply/3
+     code: assert {:ok, :queued} = Replacement.deliver(p, event(ctx, "fault", 13))
+     stacktrace:
+       (elixir 1.18.4) lib/gen_server.ex:1128: GenServer.call/3
+       test/replacement_test.exs:394: (test)
+
+     The following output was logged:
+
+     08:07:36.611 [error] ** Generic server <0.265.0> terminating
+     ** Last message in was {deliver,#{id => <<"fault">>,
+                                       session => <<"counter-1">>,
+                                       status => accepted,version => 1,
+                                       state => <<"new">>,
+                                       metadata => #{line => 11,doc => nil},
+                                       kind => <<"increment">>,
+                                       role => <<"requester">>,
+                                       actor => <<"alice">>,
+                                       payload => #{<<"by">> => 13},
+                                       definition =>
+                                           <<"9feb9cac5d47cf2fe1d026f11466f00e6262692cdd12b29e5e9c9df5dbdeb973">>,
+                                       outcome => nil,
+                                       recipients => [<<"bot">>]}}
+     ** When Server state == #{mode => program,
+                               state => #{<<"total">> => 0},
+                               config =>
+                                   #{<<"allowed_actions">> => [],
+                                     <<"bindings">> =>
+                                         #{<<"counter">> => <<"bot">>,
+                                           <<"requester">> => <<"alice">>},
+                                     <<"controls">> => [<<"alice">>],
+                                     <<"definition">> => <<"9feb9cac5d47cf2f"...>>,
+                                     <<"execution_timeou"...>> => 100,
+                                     <<"initial_program">> =>
+                                         <<"aaccc7b6a092f285"...>>,
+                                     <<"max_effect_attem"...>> => 3,
+                                     <<"max_pending">> => 10,
+                                     <<"max_repairs">> => 2,
+                                     <<"profile">> => <<"contract-lab/rep"...>>,
+                                     <<"role">> => <<"counter">>,
+                                     <<"session">> => <<"counter-"...>>,
+                                     <<"sidecar_"...>> => 1000,...},
+                               completed => #{},
+                               view =>
+                                   #{states =>
+                                         #{<<"new">> =>
+                                               #{meta => #{line => 10,doc => nil},
+                                                 name => <<...>>,
+                                                 rules => [...],...}},
+                                     types =>
+                                         #{<<"increment">> =>
+                                               #{meta => #{line => 5,doc => nil},
+                                                 name => <<...>>,fields => #{...}},
+                                           <<"stop">> =>
+                                               #{meta => #{line => 9,doc => nil},
+                                                 name => <<...>>,fields => #{}},
+                                           <<"tota"...>> => #{meta => #{...},...}},
+                                     role =>
+                                         #{meta => #{line => 1,doc => nil},
+                                           name => <<"counter">>},
+                                     contract =>
+                                         #{meta => #{line => 1,...},
+                                           name => <<"prog"...>>,...},
+                                     terminals =>
+                                         #{<<"comp"...>> => #{meta => #{...},...},
+                                           <<"expi"...>> => #{meta => #{...},...}},...},
+                               contract =>
+                                   #{meta =>
+                                         #{line => 1,doc => <<"A determinis"...>>},
+                                     name => <<"program-counter">>,
+                                     states =>
+                                         #{<<"new">> =>
+                                               #{meta => #{line => 10,doc => nil},
+                                                 name => <<...>>,
+                                                 rules => [...],...}},
+                                     types =>
+                                         #{<<"incr"...>> => #{meta => #{...},...},
+                                           <<"stop">> => #{meta => #{...},...},...},
+                                     engine => <<"0.1.0-la"...>>,...},
+                               program => 'Elixir.ContractLab.TestPrograms.Broken',
+                               programs =>
+                                   ['Elixir.ContractLab.TestPrograms.Broken',
+                                    'Elixir.ContractLab.TestPrograms.Counter',
+                                    'Elixir.ContractLab.TestPrograms.Fixed',
+                                    'Elixir.ContractLab.TestPrograms.Extended',
+                                    'Elixir.ContractLab.TestPrograms.Divergent'|...],
+                               sidecar =>
+                                   #Fun<Elixir.ContractLab.ReplacementTest.4.25489416>,
+                               sidecar_calls => 0,journal => <0.266.0>,
+                               effects => #{},...}
+     ** Reason for termination ==
+     ** {#{message => <<"Version callback crashed">>,
+           '__struct__' => 'Elixir.RuntimeError','__exception__' => true},
+         [{'Elixir.ContractLab.TestPrograms.CrashingVersion',state_version,0,
+              [{file,"test/support/programs.exs"},
+               {line,105},
+               {error_info,#{module => 'Elixir.Exception'}}]},
+          {'Elixir.ContractLab.Replacement',program_valid,1,
+              [{file,"lib/contract_lab/replacement.ex"},{line,732}]},
+          {'Elixir.ContractLab.Replacement',install,2,
+              [{file,"lib/contract_lab/replacement.ex"},{line,548}]},
+          {'Elixir.ContractLab.Replacement',invoke_sidecar,1,
+              [{file,"lib/contract_lab/replacement.ex"},{line,527}]},
+          {'Elixir.ContractLab.Replacement',drain,1,
+              [{file,"lib/contract_lab/replacement.ex"},{line,425}]},
+          {'Elixir.ContractLab.Replacement',handle_call,3,
+              [{file,"lib/contract_lab/replacement.ex"},{line,87}]},
+          {gen_server,try_handle_call,4,[{file,"gen_server.erl"},{line,2209}]},
+          {gen_server,handle_msg,6,[{file,"gen_server.erl"},{line,2238}]},
+          {proc_lib,init_p_do_apply,3,[{file,"proc_lib.erl"},{line,329}]}]}
+     ** Client <0.259.0> stacktrace
+     ** [{gen,do_call,4,[{file,"gen.erl"},{line,241}]},
+         {'Elixir.GenServer',call,3,[{file,"lib/gen_server.ex"},{line,1125}]},
+         {'Elixir.ContractLab.ReplacementTest',
+             'test a broken candidate metadata callback cannot crash the controller',
+             1,
+             [{file,"test/replacement_test.exs"},{line,394}]},
+         {'Elixir.ExUnit.Runner',exec_test,2,
+             [{file,"lib/ex_unit/runner.ex"},{line,511}]},
+         {'Elixir.ExUnit.CaptureLog',with_log,2,
+             [{file,"lib/ex_unit/capture_log.ex"},{line,113}]},
+         {'Elixir.ExUnit.Runner','-maybe_capture_log/3-fun-0-',3,
+             [{file,"lib/ex_unit/runner.ex"},{line,460}]},
+         {timer,tc,2,[{file,"timer.erl"},{line,590}]},
+         {'Elixir.ExUnit.Runner','-spawn_test_monitor/4-fun-1-',6,
+             [{file,"lib/ex_unit/runner.ex"},{line,433}]}]
+
+
+     08:07:36.619 [error]   crasher:
+         initial call: 'Elixir.ContractLab.Replacement':init/1
+         pid: <0.265.0>
+         registered_name: []
+         exception error: #Elixir.RuntimeError
+           in function  'Elixir.ContractLab.TestPrograms.CrashingVersion':state_version/0 (test/support/programs.exs, line 105)
+              *** Version callback crashed
+           in call from 'Elixir.ContractLab.Replacement':program_valid/1 (lib/contract_lab/replacement.ex, line 732)
+           in call from 'Elixir.ContractLab.Replacement':install/2 (lib/contract_lab/replacement.ex, line 548)
+           in call from 'Elixir.ContractLab.Replacement':invoke_sidecar/1 (lib/contract_lab/replacement.ex, line 527)
+           in call from 'Elixir.ContractLab.Replacement':drain/1 (lib/contract_lab/replacement.ex, line 425)
+           in call from 'Elixir.ContractLab.Replacement':handle_call/3 (lib/contract_lab/replacement.ex, line 87)
+           in call from gen_server:try_handle_call/4 (gen_server.erl, line 2209)
+           in call from gen_server:handle_msg/6 (gen_server.erl, line 2238)
+         ancestors: [<0.259.0>]
+         message_queue_len: 0
+         messages: []
+         links: [<0.259.0>]
+         dictionary: []
+         trap_exit: false
+         status: running
+         heap_size: 17731
+         stack_size: 29
+         reductions: 83613
+       neighbours: []
+
+
+
+  3) test repair cannot silently change the initial state before the first completion (ContractLab.ReplacementTest)
+     test/replacement_test.exs:400
+     match (=) failed
+     code:  assert {:ok, :queued} = Replacement.deliver(p, event(ctx, "fault", 13))
+     left:  {:ok, :queued}
+     right: {:ok, :completed}
+     stacktrace:
+       test/replacement_test.exs:402: (test)
+
+
+
+  4) test a full journal cannot make a blocked outbox look flushed (ContractLab.ReplacementTest)
+     test/replacement_test.exs:408
+     match (=) failed
+     code:  assert {:error, :outbox_blocked} =
+              Replacement.flush(p, fn _ -> {:ok, %{}} end, name: "blocked", idempotent: false)
+     left:  {:error, :outbox_blocked}
+     right: {:ok, 0}
+     stacktrace:
+       test/replacement_test.exs:414: (test)
+
+
+Finished in 0.8 seconds (0.00s async, 0.8s sync)
+25 tests, 4 failures, 21 excluded

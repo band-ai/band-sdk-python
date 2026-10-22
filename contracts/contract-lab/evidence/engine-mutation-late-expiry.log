@@ -1,0 +1,121 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+........
+
+  1) test selected participant deadlines are independent (ContractLab.EngineTest)
+     test/engine_test.exs:177
+     Assertion with == failed
+     code:  assert s.outcome == "beta_late"
+     left:  nil
+     right: "beta_late"
+     stacktrace:
+       test/engine_test.exs:183: (test)
+
+
+
+  2) test one absent member of an all obligation causes expiry (ContractLab.EngineTest)
+     test/engine_test.exs:187
+     Assertion with == failed
+     code:  assert s.outcome == "stalled"
+     left:  nil
+     right: "stalled"
+     stacktrace:
+       test/engine_test.exs:190: (test)
+
+
+
+  3) test expiry wins at exact boundary even if the missing participant responds (ContractLab.EngineTest)
+     test/engine_test.exs:194
+     ** (KeyError) key :reason not found in: %{
+       id: "c",
+       session: "s1",
+       status: :accepted,
+       version: 3,
+       state: "complete",
+       metadata: %{line: 8, doc: nil},
+       kind: "ack",
+       role: "carol",
+       outcome: "complete",
+       actor: "actor:carol",
+       definition: "790f53a64ba9372447a644c63b9372a0488a3e6675f20b1803e43548dbc62f57",
+       recipients: ["actor:alice", "actor:bob"],
+       payload: %{}
+     }. Did you mean:
+
+           * :version
+
+     code: assert d.reason == :terminal
+     stacktrace:
+       test/engine_test.exs:197: (test)
+
+
+
+  4) test expiry before an invalid proposal still commits the clock transition (ContractLab.EngineTest)
+     test/engine_test.exs:202
+     Assertion with == failed
+     code:  assert s.outcome == "stalled"
+     left:  nil
+     right: "stalled"
+     stacktrace:
+       test/engine_test.exs:206: (test)
+
+
+
+  5) test accepted progress resets idle only, never a state or maximum deadline (ContractLab.EngineTest)
+     test/engine_test.exs:210
+     Assertion with == failed
+     code:  assert s.outcome == "stalled"
+     left:  nil
+     right: "stalled"
+     stacktrace:
+       test/engine_test.exs:218: (test)
+
+..
+
+  6) test idle expiry survives snapshots and traffic cannot extend maximum lifetime (ContractLab.EngineTest)
+     test/engine_test.exs:245
+     ** (KeyError) key :reason not found in: nil
+
+     If you are using the dot syntax, such as map.field, make sure the left-hand side of the dot is a map
+     code: assert expired.expiry.reason == :inactivity
+     stacktrace:
+       test/engine_test.exs:267: (test)
+
+
+
+  7) test maximum expiry wins ties and explicit infinity stays active (ContractLab.EngineTest)
+     test/engine_test.exs:274
+     ** (KeyError) key :reason not found in: nil
+
+     If you are using the dot syntax, such as map.field, make sure the left-hand side of the dot is a map
+     code: assert s.expiry.reason == :lifetime
+     stacktrace:
+       test/engine_test.exs:292: (test)
+
+...
+
+  8) test cancellation is not success and missing acknowledgement preserves unknown effects (ContractLab.EngineTest)
+     test/engine_test.exs:331
+     Assertion with == failed
+     code:  assert s.outcome == "effects_unknown"
+     left:  nil
+     right: "effects_unknown"
+     stacktrace:
+       test/engine_test.exs:336: (test)
+
+.........
+
+  9) test actor-scoped runtime views retain documentation and hide unrelated facts (ContractLab.EngineTest)
+     test/engine_test.exs:409
+     Assertion with == failed
+     code:  assert s.status == :terminal
+     left:  :active
+     right: :terminal
+     stacktrace:
+       test/engine_test.exs:417: (test)
+
+....
+Finished in 1.5 seconds (1.5s async, 0.00s sync)
+35 tests, 9 failures

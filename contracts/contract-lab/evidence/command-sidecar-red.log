@@ -1,0 +1,73 @@
+Compiling 1 file (.ex)
+Generated contract_lab app
+Running ExUnit with seed: 0, max_cases: 24
+
+
+
+  1) test a command writes and validates a real program artifact which can be loaded again (ContractLab.CommandSidecarTest)
+     test/command_sidecar_test.exs:39
+     match (=) failed
+     code:  assert {:ok, program} = sidecar.(%{"fault" => %{"message" => "Counter crashed"}})
+     left:  {:ok, program}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/command_sidecar_test.exs:41: (test)
+
+
+
+  2) test a failed validator leaves the program unactivated (ContractLab.CommandSidecarTest)
+     test/command_sidecar_test.exs:53
+     match (=) failed
+     code:  assert {:error, {:validation_failed, 7, _}} = CommandSidecar.new(opts).(%{})
+     left:  {:error, {:validation_failed, 7, _}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/command_sidecar_test.exs:55: (test)
+
+
+
+  3) test generator failures and timeouts are reported (ContractLab.CommandSidecarTest)
+     test/command_sidecar_test.exs:59
+     match (=) failed
+     code:  assert {:error, {:generation_failed, 9, _}} = CommandSidecar.new(opts).(%{})
+     left:  {:error, {:generation_failed, 9, _}}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/command_sidecar_test.exs:61: (test)
+
+
+
+  4) test a generated file cannot redefine an existing program module (ContractLab.CommandSidecarTest)
+     test/command_sidecar_test.exs:68
+     match (=) failed
+     code:  assert {:error, :candidate_module_mismatch} = CommandSidecar.new(ctx.opts).(%{})
+     left:  {:error, :candidate_module_mismatch}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/command_sidecar_test.exs:73: (test)
+
+
+
+  5) test release bytes are checked before reloading a program (ContractLab.CommandSidecarTest)
+     test/command_sidecar_test.exs:77
+     match (=) failed
+     code:  assert {:ok, _} = CommandSidecar.new(ctx.opts).(%{})
+     left:  {:ok, _}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/command_sidecar_test.exs:78: (test)
+
+
+
+  6) test command output capture is bounded (ContractLab.CommandSidecarTest)
+     test/command_sidecar_test.exs:84
+     match (=) failed
+     code:  assert {:ok, _} = CommandSidecar.new(ctx.opts).(%{})
+     left:  {:ok, _}
+     right: {:error, :not_implemented}
+     stacktrace:
+       test/command_sidecar_test.exs:86: (test)
+
+
+Finished in 0.1 seconds (0.00s async, 0.1s sync)
+6 tests, 6 failures
