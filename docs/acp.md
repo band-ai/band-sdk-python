@@ -456,6 +456,11 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   call stops only that caller's wait. Until the retirement ends, turns already
   waiting for the room and turns that arrive during it are cancelled rather than
   starting a new process. Once cleanup succeeds, a later turn can start normally.
+- **Activity.** With `Emit.TOOL_CALLS`, overlapping native tools show the most
+  recently started still-open call; only the last completion returns to reasoning.
+  Manual permission waits are reported regardless of narration and remain active
+  until every resolver for that turn completes, fails or is cancelled. Dialogs
+  run independently, and rooms and turns do not share permission-wait ownership.
 - **Permissions.** `approval_mode="yolo"` bypasses native approval checks without
   changing Band platform permissions. Otherwise `resolve_permission` receives
   `OmpPermissionRequest(room_id, session_id, title, options)` and returns an
