@@ -1163,7 +1163,6 @@ class OmpRpcClient:
             return self._proc
 
     async def _close_process(self) -> None:
-        errors: list[Exception] = []
         turn = self._turn
         self._fail_pending(self._failure or OmpProcessError("OMP RPC client closed"))
         if turn is not None:
@@ -1245,10 +1244,6 @@ class OmpRpcClient:
             await self._cancel_tasks(drains)
         error = self._retire_survivors()
         if error is not None:
-            errors.append(error)
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise ExceptionGroup("OMP process cleanup failed", errors)
+            raise error
         self._windows_process = None
         self._process_scope = None
