@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
 from band.core.exceptions import BandConnectionError
-from band.integrations.codex.stdio_client import HELPER_PATH, CodexStdioClient
-from band.integrations.codex.winspawn import WindowsProcess
+from band.integrations.codex import winspawn
+from band.integrations.codex.stdio_client import CodexStdioClient
+from band.integrations.codex.winspawn import HELPER_PATH, WindowsProcess, command_in_job
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows job objects")
@@ -57,12 +59,14 @@ class TestWindowsJobCleanup:
             command=[sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
             cwd=str(workdir),
         )
-        command_for = client._windows_command
+        command_for = command_in_job
         report = tmp_path / "helper-pid"
         owners: list[WindowsProcess] = []
 
-        def rejected_command(job_name: str, status_handle: int) -> list[str]:
-            command = command_for(job_name, status_handle)
+        def rejected_command(
+            child_command: Sequence[str], job_name: str, status_handle: int
+        ) -> list[str]:
+            command = command_for(child_command, job_name, status_handle)
             assert client._windows_process is not None
             owners.append(client._windows_process)
             return [
@@ -74,7 +78,7 @@ class TestWindowsJobCleanup:
                 *command[4:],
             ]
 
-        monkeypatch.setattr(client, "_windows_command", rejected_command)
+        monkeypatch.setattr(winspawn, "command_in_job", rejected_command)
         try:
             with pytest.raises(BandConnectionError):
                 await client.connect()

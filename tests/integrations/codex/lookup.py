@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from band.integrations.codex.stdio_client import CodexStdioClient
+from band.integrations.codex.winspawn import command_in_job
 
 
 async def launch_directly(client: CodexStdioClient) -> None:
@@ -30,7 +31,7 @@ async def launch_directly(client: CodexStdioClient) -> None:
 
 
 def selected_executable(name: str) -> Path:
-    command = CodexStdioClient(command=[name])._windows_command("test-job", 1)
+    command = command_in_job([name], "test-job", 1)
     return Path(command[command.index("--") + 1])
 
 

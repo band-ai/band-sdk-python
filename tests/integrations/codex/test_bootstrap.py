@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from band.integrations.codex.stdio_client import CodexStdioClient
+from band.integrations.codex.winspawn import command_in_job
 
 
 class TestWindowsBootstrap:
@@ -38,7 +39,7 @@ class TestWindowsBootstrap:
             cwd=str(workdir),
             env={"PYTHONPATH": pythonpath} if configured else None,
         )
-        command = client._windows_command("job", 1)
+        command = command_in_job(client.command, "job", 1)
         completed = subprocess.run(
             command[:4],
             cwd=workdir,
@@ -73,7 +74,7 @@ class TestWindowsBootstrap:
         client = CodexStdioClient(
             command=[executable.name, "-c", "pass"], env={"PATH": str(child_path)}
         )
-        command = client._windows_command("job", 1)
+        command = command_in_job(client.command, "job", 1)
         selected = command[command.index("--") + 1]
         assert Path(selected).samefile(executable)
         assert client.env is not None and client.env["PATH"] == str(child_path)

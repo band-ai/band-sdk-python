@@ -11,11 +11,45 @@ from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
     prompt_task,
+    queue_prompt,
     second_prompt,
+    sent_prompt_messages,
 )
 
 
 class TestInterruptionAndReaping:
+    async def test_cancelling_a_queued_prompt_preserves_the_active_and_next_prompt(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory("yield")
+        process = client._proc
+        assert process is not None
+        observer = Observer()
+        active = prompt_task(client, observer)
+        queued: asyncio.Task[None] | None = None
+        try:
+            await observer.wait_for("agent_end")
+            queued = await queue_prompt(client)
+            queued.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await queued
+
+            assert not active.done()
+            assert process.returncode is None
+            assert await sent_prompt_messages(client) == ["first"]
+            await client.request("release")
+            async with asyncio.timeout(5):
+                await active
+            await second_prompt(client)
+            assert client._proc is process
+            assert process.returncode is None
+            assert await sent_prompt_messages(client) == ["first", "second"]
+        finally:
+            tasks = [active, *([queued] if queued is not None else [])]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     @pytest.mark.parametrize("scenario", ["yield", "no-result", "stubborn"])
     @pytest.mark.parametrize("interruption", ["timeout", "cancel"])
     async def test_interrupted_prompt_aborts_reaps_and_can_restart(

@@ -12,6 +12,7 @@ import ctypes
 import functools
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # CreateProcess failed because the executable path does not exist.
 MISSING_EXECUTABLE = frozenset({2, 3})
+HELPER_PATH = Path(__file__).resolve().with_name("winmain.py")
 
 _READY = "ok"
 _STATUS_ERROR = "error"
@@ -344,6 +346,37 @@ def find_executable(name: str) -> str | None:
         capacity = length + 1
 
 
+def absolute_command(command: Sequence[str]) -> tuple[str, ...]:
+    """Resolve the executable in this process, not in the command's directory."""
+    head, *rest = command
+    if Path(head).is_absolute():
+        return (head, *rest)
+    if os.name == "nt" and not os.path.dirname(head):
+        found = find_executable(head)
+    else:
+        found = shutil.which(head)
+        if found is None and Path(head).exists():
+            found = str(Path(head).resolve())
+    if found is None:
+        raise FileNotFoundError(head)
+    return (str(Path(found).resolve()), *rest)
+
+
+def command_in_job(
+    command: Sequence[str], job_name: str, status_handle: int
+) -> list[str]:
+    return [
+        str(process_image()),
+        "-I",
+        "-S",
+        str(HELPER_PATH),
+        job_name,
+        str(status_handle),
+        "--",
+        *absolute_command(command),
+    ]
+
+
 def _winerror(exc: OSError) -> int:
     code = exc.winerror  # type: ignore[attr-defined]
     if isinstance(code, int) and code:
@@ -575,6 +608,22 @@ class WindowsProcess:
         self._creation: asyncio.Task[None] | None = None
         self._status: asyncio.Task[str] | None = None
         self._read_fd: int | None = None
+
+    async def start_command(
+        self,
+        command: Sequence[str],
+        *,
+        cwd: str | None,
+        env: Mapping[str, str] | None,
+        limit: int,
+    ) -> asyncio.subprocess.Process:
+        """Start a command with job membership established before it can run."""
+        return await self.start(
+            functools.partial(command_in_job, command),
+            cwd=cwd,
+            env=env,
+            limit=limit,
+        )
 
     async def start(
         self,

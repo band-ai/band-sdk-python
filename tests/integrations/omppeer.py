@@ -229,7 +229,9 @@ class Peer:
         self.prompt_id = frame.id
         self.prompt_count += 1
         self.settled = False
-        if self.prompt_count > 1 or frame.message == "second":
+        if (
+            self.prompt_count > 1 and self.scenario != "lifecycle"
+        ) or frame.message == "second":
             self.finish(frame)
             return
         match self.scenario:
@@ -563,7 +565,7 @@ def main() -> None:
             raise ValueError("A process gate port is required")
         hold_process_gate(args.gate_port, spawn_child=args.scenario == "gated-parent")
         return
-    if args.scenario in {"descendants", "no-ready-descendants"}:
+    if args.scenario in {"descendants", "no-ready-descendants", "lifecycle"}:
         if args.gate_port is None:
             raise ValueError("A process gate port is required")
         # The gate, not the peer's stdio EOF, owns these children's lifetime.

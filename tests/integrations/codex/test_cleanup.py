@@ -19,13 +19,15 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import CodexStdioClient, stdio_client
-from band.integrations.codex.stdio_client import HELPER_PATH, kill_process_tree
+from band.integrations.codex.stdio_client import kill_process_tree
 from band.integrations.codex.winspawn import (
+    HELPER_PATH,
     Job,
     JobNotDrained,
     SpawnFailure,
     _read_status,
     _start_and_wait,
+    command_in_job,
 )
 from tests.integrations.codex.cleanup import cleanup_snapshot
 from tests.paths import ROOM_PEER
@@ -343,7 +345,7 @@ class TestSubprocessCleanup:
             command=[sys.executable, "-c", "pass"],
             cwd=str(workdir),
         )
-        argv = client._windows_command("job", 1)
+        argv = command_in_job(client.command, "job", 1)
         completed = subprocess.run(
             argv[:4],
             cwd=workdir,
@@ -379,11 +381,9 @@ class TestSubprocessCleanup:
             cwd=str(workdir),
         )
         with pytest.raises(FileNotFoundError):
-            client._windows_command("job", 1)
+            command_in_job(client.command, "job", 1)
         named = Path(sys.executable).name
-        resolved = CodexStdioClient(command=[named, "-c", "pass"])._windows_command(
-            "job", 1
-        )
+        resolved = command_in_job([named, "-c", "pass"], "job", 1)
         assert Path(resolved[resolved.index("--") + 1]).is_absolute()
 
     @pytest.mark.skipif(os.name == "nt", reason="session-group teardown is Unix")

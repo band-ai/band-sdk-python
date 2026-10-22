@@ -3,21 +3,141 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from contextlib import suppress
 
 import psutil
 import pytest
+from pydantic import JsonValue
 
-from band.integrations.omprpc import OmpRpcClient
+from band.integrations import omprpc
+from band.integrations.codex.winspawn import Job
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from tests.integrations.omprpc.kit import (
     OMP_PEER_SCRIPT,
+    DeferredSessionSignal,
     ProcessGate,
+    descendant_client,
+    descendant_liveness,
     process_is_alive,
+    refuse_process_signal,
 )
 
 
 class TestProcessTreeCleanup:
+    async def test_close_reaps_owned_descendants_after_the_root_has_crashed(
+        self, process_gate: ProcessGate
+    ) -> None:
+        client = descendant_client(process_gate)
+        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
+        try:
+            await client.start()
+            descendants = [
+                await process_gate.connection(),
+                await process_gate.connection(),
+            ]
+            root = client._proc
+            assert root is not None
+            assert await descendant_liveness(descendants) == [True, True]
+
+            crashing = asyncio.create_task(client.request("crash"))
+            async with asyncio.timeout(5):
+                await root.wait()
+            assert root.returncode == 3
+            with pytest.raises(OmpProcessError):
+                await crashing
+            await client.close()
+
+            assert await descendant_liveness(descendants) == [False, False]
+            await client.close()
+        finally:
+            await client.close()
+            if crashing is not None:
+                await asyncio.gather(crashing, return_exceptions=True)
+
+    async def test_failed_containment_cleanup_is_retried_before_restart(
+        self, process_gate: ProcessGate, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = descendant_client(process_gate)
+        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
+        try:
+            await client.start()
+            old_root = client._proc
+            assert old_root is not None
+            descendants = [
+                await process_gate.connection(),
+                await process_gate.connection(),
+            ]
+            with monkeypatch.context() as patch:
+                if os.name == "nt":
+                    patch.setattr(Job, "terminate", refuse_process_signal)
+                else:
+                    patch.setattr(os, "killpg", refuse_process_signal)
+                crashing = asyncio.create_task(client.request("crash"))
+                async with asyncio.timeout(5):
+                    await old_root.wait()
+                with pytest.raises(PermissionError, match="not signalable"):
+                    await client.close()
+                assert await descendant_liveness(descendants) == [True, True]
+
+            await client.start()
+            assert client._proc is not old_root
+            assert await descendant_liveness(descendants) == [False, False]
+            await process_gate.connection()
+            await process_gate.connection()
+            await client.close()
+        finally:
+            await client.close()
+            if crashing is not None:
+                await asyncio.gather(crashing, return_exceptions=True)
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX group settlement boundary")
+    @pytest.mark.parametrize(
+        "hide_after_signal", [False, True], ids=["visible", "hidden-after-signal"]
+    )
+    async def test_unsettled_session_members_keep_close_retryable(
+        self,
+        process_gate: ProcessGate,
+        monkeypatch: pytest.MonkeyPatch,
+        hide_after_signal: bool,
+    ) -> None:
+        client = descendant_client(process_gate)
+        crashing: asyncio.Task[dict[str, JsonValue]] | None = None
+        try:
+            await client.start()
+            old_root = client._proc
+            assert old_root is not None
+            descendants = [
+                await process_gate.connection(),
+                await process_gate.connection(),
+            ]
+            boundary = DeferredSessionSignal(
+                old_root.pid, descendants, hide_after_signal=hide_after_signal
+            )
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "killpg", boundary.send)
+                patch.setattr(os, "getpgid", boundary.group)
+                patch.setattr(omprpc, "_PROCESS_EXIT_TIMEOUT_S", 0)
+                crashing = asyncio.create_task(client.request("crash"))
+                async with asyncio.timeout(5):
+                    await old_root.wait()
+                for _ in range(2):
+                    with pytest.raises(OmpProcessError, match="session members"):
+                        await client.close()
+                assert await descendant_liveness(descendants) == [True, True]
+
+            await client.start()
+            assert client._proc is not old_root
+            assert await descendant_liveness(descendants) == [False, False]
+            await process_gate.connection()
+            await process_gate.connection()
+            await client.close()
+        finally:
+            await client.close()
+            if crashing is not None:
+                await asyncio.gather(crashing, return_exceptions=True)
+
     @pytest.mark.parametrize("stdio", ["inherit", "discard"])
     @pytest.mark.parametrize("interruption", ["startup", "close"])
     async def test_cancelled_cleanup_reaps_descendants_but_not_unrelated_processes(

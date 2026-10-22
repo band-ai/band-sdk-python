@@ -14,6 +14,13 @@ from typing import cast
 import psutil
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from band.integrations.codex.stdio_client import kill_process_tree, session_pid_reused
+from band.integrations.codex.winspawn import (
+    SpawnFailure,
+    WindowsProcess,
+    await_returncode,
+    close_stdin,
+)
 from band.integrations.ompwire import (
     OMP_CHUNK_BYTES,
     OMP_FRAME_BYTES,
@@ -157,8 +164,8 @@ class OmpRpcClient:
         self.command = tuple(command)
         self.env = None if env is None else {**os.environ, **env}
         self._proc: asyncio.subprocess.Process | None = None
-        self._process_identity: psutil.Process | None = None
-        self._descendants: set[psutil.Process] = set()
+        self._windows_process: WindowsProcess | None = None
+        self._session_waiters: set[psutil.Process] = set()
         self._spawn_task: asyncio.Task[asyncio.subprocess.Process] | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
@@ -184,8 +191,6 @@ class OmpRpcClient:
                 await self.close()
                 self._proc = None
                 self._spawn_task = None
-                self._process_identity = None
-                self._descendants.clear()
                 self._close_task = None
             if self._proc is not None:
                 self._ensure_running()
@@ -198,7 +203,10 @@ class OmpRpcClient:
             self._ready = asyncio.get_running_loop().create_future()
             self._spawn_task = asyncio.create_task(self._spawn_process())
             try:
-                self._proc = await asyncio.shield(self._spawn_task)
+                process = await asyncio.shield(self._spawn_task)
+                if self._closing:
+                    raise OmpProcessError("OMP RPC client closed during startup")
+                self._proc = process
                 self._reader_task = asyncio.create_task(self._read_stdout(self._proc))
                 self._stderr_task = asyncio.create_task(self._read_stderr(self._proc))
                 ready = await asyncio.shield(self._ready)
@@ -217,7 +225,7 @@ class OmpRpcClient:
                     raise OmpProtocolError(
                         "OMP RPC protocol v2 negotiation failed"
                     ) from cause
-            except OSError as cause:
+            except (OSError, SpawnFailure) as cause:
                 await self.close()
                 raise OmpProcessError("Unable to start OMP RPC process") from cause
             except (Exception, asyncio.CancelledError):
@@ -225,30 +233,27 @@ class OmpRpcClient:
                 raise
 
     async def _spawn_process(self) -> asyncio.subprocess.Process:
-        process = await asyncio.create_subprocess_exec(
-            *self.command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=None,
-            env=self.env,
-            limit=OMP_FRAME_BYTES,
-        )
+        if os.name == "nt":
+            self._windows_process = WindowsProcess()
+            process = await self._windows_process.start_command(
+                self.command,
+                cwd=None,
+                env=self.env,
+                limit=OMP_FRAME_BYTES,
+            )
+        else:
+            process = await asyncio.create_subprocess_exec(
+                *self.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=None,
+                env=self.env,
+                start_new_session=True,
+                limit=OMP_FRAME_BYTES,
+            )
         self._proc = process
-        self._process_identity = await asyncio.to_thread(
-            self._capture_identity, process.pid
-        )
         return process
-
-    @staticmethod
-    def _capture_identity(pid: int) -> psutil.Process | None:
-        try:
-            process = psutil.Process(pid)
-            # Process() can defer AccessDenied when reading the creation time.
-            process.create_time()
-            return process
-        except psutil.NoSuchProcess:
-            return None
 
     async def request(
         self, command: str, **parameters: JsonValue
@@ -267,13 +272,9 @@ class OmpRpcClient:
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
     ) -> None:
         """Deliver a turn through its correlated result and actual native settlement."""
-        try:
-            async with self._prompt_lock:
-                self._ensure_running()
-                await self._execute_prompt(message, on_event, on_tool, on_ui)
-        except asyncio.CancelledError:
-            await self.close()
-            raise
+        async with self._prompt_lock:
+            self._ensure_running()
+            await self._execute_prompt(message, on_event, on_tool, on_ui)
 
     async def close(self) -> None:
         """Finish shared bounded cleanup before propagating caller cancellation."""
@@ -751,6 +752,8 @@ class OmpRpcClient:
 
     def _begin_close(self) -> None:
         self._closing = True
+        if self._windows_process is not None:
+            self._windows_process.closing = True
         if self._close_task is None or (
             self._close_task.done()
             and (
@@ -800,100 +803,54 @@ class OmpRpcClient:
             return False
         return True
 
-    @staticmethod
-    def _process_is_alive(process: psutil.Process) -> bool:
-        try:
-            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            return False
-
-    def _capture_descendants(self) -> None:
-        root = self._process_identity
-        if root is None or not self._process_is_alive(root):
+    def _capture_session_waiters(self, process: asyncio.subprocess.Process) -> None:
+        if session_pid_reused(process):
             return
-        try:
-            descendants = root.children(recursive=True)
-        except psutil.NoSuchProcess:
-            return
-        if not root.is_running():
-            return
-        for process in descendants:
-            try:
-                process.create_time()
-            except psutil.NoSuchProcess:
+        members: list[psutil.Process] = []
+        for pid in psutil.pids():
+            # asyncio's child watcher remains the sole waiter for the root.
+            if pid == process.pid:
                 continue
-            self._descendants.add(process)
-
-    def _signal_root(self, *, kill: bool) -> None:
-        root = self._process_identity
-        if root is None:
-            if self._proc is not None and self._proc.returncode is None:
-                raise OmpProcessError("Cannot signal OMP without a captured identity")
-            return
-        try:
-            if kill:
-                root.kill()
-            else:
-                root.terminate()
-        except psutil.NoSuchProcess:
-            pass
-
-    @classmethod
-    def _close_descendants(cls, processes: Sequence[psutil.Process]) -> None:
-        alive = list(processes)
-        errors: list[Exception] = []
-        for kill in (False, True):
-            for process in alive:
-                try:
-                    if kill:
-                        process.kill()
-                    else:
-                        process.terminate()
-                except psutil.NoSuchProcess:
-                    pass
-                except psutil.Error as cause:
-                    errors.append(cause)
             try:
-                _, alive = psutil.wait_procs(alive, timeout=_PROCESS_EXIT_TIMEOUT_S)
-            except psutil.Error as cause:
-                errors.append(cause)
-            remaining: list[psutil.Process] = []
-            for process in alive:
-                try:
-                    if cls._process_is_alive(process):
-                        remaining.append(process)
-                except psutil.Error as cause:
-                    errors.append(cause)
-                    remaining.append(process)
-            alive = remaining
-            if not alive:
-                break
-        if alive:
-            pids = sorted(process.pid for process in alive)
-            errors.append(OmpProcessError(f"OMP descendants survived kill: {pids}"))
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise ExceptionGroup("OMP descendant cleanup failed", errors)
+                if os.getpgid(pid) == process.pid:
+                    member = psutil.Process(pid)
+                    member.create_time()
+                    members.append(member)
+            except (ProcessLookupError, psutil.NoSuchProcess):
+                continue
+        if not session_pid_reused(process):
+            self._session_waiters.update(members)
+
+    def _wait_for_session_exit(self) -> None:
+        _, alive = psutil.wait_procs(
+            self._session_waiters, timeout=_PROCESS_EXIT_TIMEOUT_S
+        )
+        remaining: list[int] = []
+        for member in alive:
+            try:
+                if member.is_running() and member.status() != psutil.STATUS_ZOMBIE:
+                    remaining.append(member.pid)
+            except psutil.NoSuchProcess:
+                pass
+        if remaining:
+            raise OmpProcessError(
+                f"OMP session members survived containment kill: {sorted(remaining)}"
+            )
+
+    async def _settle_spawn(self) -> asyncio.subprocess.Process | None:
+        spawning = self._spawn_task
+        if spawning is None:
+            return self._proc
+        try:
+            return await asyncio.shield(spawning)
+        except (OSError, SpawnFailure):
+            return self._proc
+        except asyncio.CancelledError:
+            if not spawning.cancelled():
+                raise
+            return self._proc
 
     async def _close_process(self) -> None:
-        process = self._proc
-        errors: list[Exception] = []
-        if self._spawn_task is not None:
-            try:
-                process = await asyncio.shield(self._spawn_task)
-            except OSError:
-                return
-            except psutil.Error as cause:
-                errors.append(cause)
-                process = self._proc
-        if process is None:
-            return
-        # Abort and stdin EOF can orphan children before their parent is reaped.
-        try:
-            await asyncio.to_thread(self._capture_descendants)
-        except psutil.Error as cause:
-            errors.append(cause)
         turn = self._turn
         self._fail_pending(self._failure or OmpProcessError("OMP RPC client closed"))
         if turn is not None:
@@ -901,6 +858,20 @@ class OmpRpcClient:
             if turn.event_worker is not None:
                 workers.append(turn.event_worker)
             await self._cancel_tasks(workers)
+
+        owner = self._windows_process
+        owner_closed = False
+        if owner is not None and self._proc is None:
+            # Stop incomplete helper creation/readiness before awaiting its spawn task.
+            try:
+                await owner.close(_PROCESS_EXIT_TIMEOUT_S)
+                owner_closed = True
+            finally:
+                self._proc = owner.process
+        process = await self._settle_spawn()
+        if process is None:
+            self._windows_process = None
+            return
         if (
             self._failure is None
             and process.returncode is None
@@ -922,37 +893,24 @@ class OmpRpcClient:
         ) and process.stderr is not None:
             drains.append(asyncio.create_task(self._drain(process.stderr)))
         try:
-            await asyncio.to_thread(self._capture_descendants)
-        except psutil.Error as cause:
-            errors.append(cause)
-        if process.stdin is not None:
-            process.stdin.close()
-        descendants = asyncio.create_task(
-            asyncio.to_thread(self._close_descendants, tuple(self._descendants))
-        )
-        try:
+            if owner is None:
+                # EOF and signals can remove PGID visibility before exit is observable.
+                await asyncio.to_thread(self._capture_session_waiters, process)
+            if not owner_closed:
+                await close_stdin(process)
+                await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S)
+            if owner is not None:
+                if not owner_closed:
+                    await owner.close(_PROCESS_EXIT_TIMEOUT_S)
+            else:
+                await asyncio.to_thread(self._capture_session_waiters, process)
+                await kill_process_tree(process)
+                await asyncio.to_thread(self._wait_for_session_exit)
             if not await self._wait_for_exit(process):
-                for kill in (False, True):
-                    try:
-                        await asyncio.to_thread(self._signal_root, kill=kill)
-                    except (psutil.Error, OmpProcessError) as cause:
-                        errors.append(cause)
-                    if await self._wait_for_exit(process):
-                        break
-                else:
-                    errors.append(
-                        OmpProcessError("OMP process did not exit after kill")
-                    )
+                raise OmpProcessError("OMP process did not exit after containment kill")
+            self._windows_process = None
+            self._session_waiters.clear()
         finally:
-            try:
-                await descendants
-            except (psutil.Error, OmpProcessError, ExceptionGroup) as cause:
-                errors.append(cause)
-            finally:
-                if self._stderr_task is not None:
-                    drains.append(self._stderr_task)
-                await self._cancel_tasks(drains)
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise ExceptionGroup("OMP process cleanup failed", errors)
+            if self._stderr_task is not None:
+                drains.append(self._stderr_task)
+            await self._cancel_tasks(drains)

@@ -9,8 +9,6 @@ import os
 import shutil
 import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
-from pathlib import Path
 from typing import Any
 
 from band.core.exceptions import BandConnectionError
@@ -21,8 +19,6 @@ from band.integrations.codex.winspawn import (
     WindowsProcess,
     await_returncode,
     close_stdin,
-    find_executable,
-    process_image,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,31 +27,9 @@ logger = logging.getLogger(__name__)
 # held stdio pipe cannot stall room cleanup.
 _EXIT_OBSERVE_S = 2.0
 _STDOUT_LIMIT = 16 * 1024 * 1024
-HELPER_PATH = Path(__file__).resolve().with_name("winmain.py")
 
 
-def _absolute_command(command: Sequence[str]) -> tuple[str, ...]:
-    """Resolve the executable in this process, not in the room directory.
-
-    The helper's current directory is the room. ``CreateProcessW`` searches
-    that directory when the application name is relative, so a room-local
-    binary would run in place of the one this process would have started.
-    """
-    head, *rest = command
-    if Path(head).is_absolute():
-        return (head, *rest)
-    if os.name == "nt" and not os.path.dirname(head):
-        found = find_executable(head)
-    else:
-        found = shutil.which(head)
-        if found is None and Path(head).exists():
-            found = str(Path(head).resolve())
-    if found is None:
-        raise FileNotFoundError(head)
-    return (str(Path(found).resolve()), *rest)
-
-
-def _session_pid_reused(process: asyncio.subprocess.Process) -> bool:
+def session_pid_reused(process: asyncio.subprocess.Process) -> bool:
     """True when ``process.pid`` now names some other live process.
 
     After the leader is reaped, its session id stays reserved only while a
@@ -70,12 +44,12 @@ def _session_pid_reused(process: asyncio.subprocess.Process) -> bool:
         return False
     except OSError:
         logger.warning(
-            "Codex process %s pid is not signalable; leaving its session",
+            "Process %s pid is not signalable; leaving its session",
             process.pid,
         )
         return True
     logger.warning(
-        "Codex process %s pid was reused; not signaling that session",
+        "Process %s pid was reused; not signaling that session",
         process.pid,
     )
     return True
@@ -99,17 +73,18 @@ async def _wait_readers(readers: Sequence[asyncio.Task[None]]) -> None:
 
 
 async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Force-stop a Unix process and everything in its session.
+    """Force-stop the owned Unix process group, including after root exit.
 
     The codex launcher is a shim whose real CLI is its child. On Unix the
     child leads a session, so ``killpg`` still reaches that group after the
     leader has exited.
     """
-    if os.name != "nt":
-        if not _session_pid_reused(process):
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+    if os.name == "nt" or session_pid_reused(process):
         return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 class CodexStdioClient(BaseJsonRpcClient):
@@ -177,8 +152,8 @@ class CodexStdioClient(BaseJsonRpcClient):
                 raise BandConnectionError("Codex process is already starting")
             self._windows_process = owner = WindowsProcess()
             try:
-                return await owner.start(
-                    self._windows_command,
+                return await owner.start_command(
+                    self.command,
                     cwd=self.cwd,
                     env=self.env,
                     limit=_STDOUT_LIMIT,
@@ -197,18 +172,6 @@ class CodexStdioClient(BaseJsonRpcClient):
             start_new_session=True,
             limit=_STDOUT_LIMIT,
         )
-
-    def _windows_command(self, job_name: str, status_handle: int) -> list[str]:
-        return [
-            str(process_image()),
-            "-I",
-            "-S",
-            str(HELPER_PATH),
-            job_name,
-            str(status_handle),
-            "--",
-            *_absolute_command(self.command),
-        ]
 
     def _spawn_connection_error(self, failure: SpawnFailure) -> BandConnectionError:
         if failure.winerror in MISSING_EXECUTABLE:
