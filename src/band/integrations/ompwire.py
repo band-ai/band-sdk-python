@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final, Literal
+from typing import Final, Literal, Self, cast
 
 from pydantic import (
     AliasChoices,
@@ -223,6 +223,24 @@ class OmpHostToolCancel(OmpWireModel):
     type: Literal[OmpFrameType.HOST_TOOL_CANCEL] = OmpFrameType.HOST_TOOL_CANCEL
     id: str
     targetId: str
+
+
+class OmpHostToolResult(OmpWireModel):
+    type: Literal[OmpFrameType.HOST_TOOL_RESULT] = OmpFrameType.HOST_TOOL_RESULT
+    id: str
+    result: dict[str, JsonValue]
+    isError: bool = False
+
+    @classmethod
+    def from_tool(cls, call_id: str, tool: OmpToolResult) -> Self:
+        return cls(
+            id=call_id,
+            result=cast(
+                dict[str, JsonValue],
+                tool.model_dump(mode="json", exclude={"is_error"}, exclude_none=True),
+            ),
+            isError=tool.is_error,
+        )
 
 
 class OmpAskOption(OmpWireModel):

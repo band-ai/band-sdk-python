@@ -30,7 +30,6 @@ from band.integrations.omprpc.errors import (
 )
 from band.integrations.omprpc.frames import (
     ChunkAssembler,
-    host_tool_result_frame,
     parse_payload_line,
     payload_json,
     ui_response_frame,
@@ -50,6 +49,7 @@ from band.integrations.ompwire import (
     OmpFrameType,
     OmpHostToolCall,
     OmpHostToolCancel,
+    OmpHostToolResult,
     OmpNegotiation,
     OmpPromptAcceptance,
     OmpPromptResult,
@@ -300,7 +300,7 @@ class OmpRpcClient:
             raise ValueError("OMP command parameters must not override id or type")
         request_id = request_id or self._next_id()
         frame = OmpCommand.model_validate(
-            {"type": command, "id": request_id, **parameters}
+            {"type": str(command), "id": request_id, **parameters}
         )
         future: asyncio.Future[ReceivedResponse | OmpRpcError | OmpProcessError] = (
             asyncio.get_running_loop().create_future()
@@ -663,7 +663,9 @@ class OmpRpcClient:
         result = await turn.on_tool(call)
         if not self._callback_still_active(turn, OmpCallbackKind.TOOL, call.id):
             return
-        await self._write_frame(host_tool_result_frame(call.id, result))
+        await self._write_frame(
+            OmpHostToolResult.from_tool(call.id, result).model_dump(mode="json")
+        )
 
     async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
         response = await turn.on_ui(request)

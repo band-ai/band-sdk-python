@@ -106,7 +106,7 @@ class OmpMcpServer(BaseModel):
             raise ValueError("MCP server needs exactly one of command or url")
         if self.command and self.type not in (None, OmpMcpTransport.STDIO):
             raise ValueError(f"a command requires {OmpMcpTransport.STDIO} transport")
-        if self.url and self.type == OmpMcpTransport.STDIO:
+        if self.url and self.type is OmpMcpTransport.STDIO:
             raise ValueError(
                 f"a URL requires {OmpMcpTransport.HTTP} or {OmpMcpTransport.SSE} transport"
             )

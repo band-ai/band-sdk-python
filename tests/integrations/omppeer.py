@@ -315,7 +315,7 @@ class Peer:
                     {
                         "type": "response",
                         "id": frame.id,
-                        "command": "prompt",
+                        "command": OmpCommandName.PROMPT,
                         "success": False,
                         "error": "Prompt rejected",
                         "code": "rejected",
@@ -359,7 +359,7 @@ class Peer:
                     {
                         "type": "response",
                         "id": frame.id,
-                        "command": "get_state",
+                        "command": OmpCommandName.GET_STATE,
                         "success": True,
                         "data": {},
                     }
@@ -544,7 +544,7 @@ class Peer:
             cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True))
         )
         match frame.type:
-            case "negotiate_protocol":
+            case OmpCommandName.NEGOTIATE_PROTOCOL:
                 if self.scenario == "negotiation-rejected":
                     send(
                         {
@@ -565,9 +565,9 @@ class Peer:
                     },
                 )
                 PROTOCOL_VERSION = OMP_NATIVE_PROTOCOL_VERSION
-            case "prompt":
+            case OmpCommandName.PROMPT:
                 self.prompt(frame)
-            case "get_state":
+            case OmpCommandName.GET_STATE:
                 self.state_requested = True
                 self.respond(
                     frame,
@@ -785,7 +785,7 @@ class Peer:
                 )
             case "checkpoint":
                 self.checkpoint(frame)
-            case "abort":
+            case OmpCommandName.ABORT:
                 if self.scenario != "stubborn":
                     self.respond(frame)
                     if self.prompt_id is not None:

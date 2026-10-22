@@ -212,7 +212,7 @@ class TestPromptNarrationAndResults:
         negotiations = [
             frame
             for frame in await checkpoint_frames(client)
-            if frame["type"] == "negotiate_protocol"
+            if frame["type"] == OmpCommandName.NEGOTIATE_PROTOCOL
         ]
         assert len(negotiations) == 1
         assert negotiations[0]["protocolVersion"] == OMP_NATIVE_PROTOCOL_VERSION

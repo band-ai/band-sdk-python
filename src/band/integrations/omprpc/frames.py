@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from typing import cast
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -15,7 +14,6 @@ from band.integrations.ompwire import (
     OmpChunk,
     OmpFrame,
     OmpFrameType,
-    OmpToolResult,
     OmpUIResponse,
 )
 
@@ -104,20 +102,6 @@ def payload_json(frame: dict[str, JsonValue]) -> str:
 
 def parse_payload_line(line: bytes) -> dict[str, JsonValue]:
     return _PAYLOAD_ADAPTER.validate_json(line, strict=True)
-
-
-def host_tool_result_frame(
-    request_id: str, result: OmpToolResult
-) -> dict[str, JsonValue]:
-    return {
-        "type": OmpFrameType.HOST_TOOL_RESULT,
-        "id": request_id,
-        "result": cast(
-            dict[str, JsonValue],
-            result.model_dump(mode="json", exclude={"is_error"}, exclude_none=True),
-        ),
-        "isError": result.is_error,
-    }
 
 
 def ui_response_frame(request_id: str, response: OmpUIResponse) -> dict[str, JsonValue]:

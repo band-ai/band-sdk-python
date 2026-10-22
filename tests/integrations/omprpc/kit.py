@@ -20,6 +20,7 @@ from pydantic import JsonValue
 from band.integrations.codex.winspawn import Job
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import (
+    OmpCommandName,
     OmpContent,
     OmpEvent,
     OmpEventType,
@@ -191,7 +192,7 @@ async def sent_prompt_messages(client: OmpRpcClient) -> list[str]:
     return [
         cast(str, frame["message"])
         for frame in await checkpoint_frames(client)
-        if frame["type"] == "prompt"
+        if frame["type"] == OmpCommandName.PROMPT
     ]
 
 
