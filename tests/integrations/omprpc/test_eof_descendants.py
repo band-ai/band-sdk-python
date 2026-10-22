@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 
 import pytest
@@ -12,13 +11,14 @@ from tests.integrations.omprpc.kit import (
     ProcessGate,
     descendant_client,
     descendant_liveness,
+    owned_rpc_process,
     process_is_alive,
+    session_ids,
     unrelated_gate_child,
 )
 
 
 class TestEofDescendants:
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX detached-helper boundary")
     @pytest.mark.parametrize("stdio", ["inherit", "discard"])
     async def test_close_reaps_a_detached_child_created_after_stdin_eof(
         self,
@@ -38,9 +38,9 @@ class TestEofDescendants:
             try:
                 await client.start()
                 helper = await process_gate.connection()
-                root = client._proc
+                root = owned_rpc_process(client)
                 scope = client._process_scope
-                assert root is not None and scope is not None
+                assert scope is not None
                 signal = scope.signal
 
                 def hold_signal() -> None:
@@ -60,10 +60,9 @@ class TestEofDescendants:
                             late_child = await process_gate.connection()
                             assert root.returncode is not None
                             assert late_child.receipt.parent_pid == helper.process.pid
-                            assert (
-                                os.getsid(late_child.process.pid)
-                                == late_child.process.pid
-                            )
+                            ids = session_ids([late_child.process.pid])
+                            if ids is not None:
+                                assert ids == [late_child.process.pid]
                             assert await descendant_liveness([helper, late_child]) == [
                                 True,
                                 True,

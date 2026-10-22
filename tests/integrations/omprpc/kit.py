@@ -16,6 +16,7 @@ import psutil
 import pytest
 from pydantic import JsonValue
 
+from band.integrations.codex.winspawn import Job
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpContent,
@@ -248,6 +249,20 @@ async def process_gate_session() -> AsyncIterator[ProcessGate]:
 
 def refuse_process_signal(*args: object) -> None:
     raise PermissionError("Process ownership is temporarily not signalable")
+
+
+def refuse_containment(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.name == "nt":
+        monkeypatch.setattr(Job, "terminate", refuse_process_signal)
+        return
+    monkeypatch.setattr(os, "killpg", refuse_process_signal)
+
+
+def session_ids(pids: Sequence[int]) -> list[int] | None:
+    getsid = getattr(os, "getsid", None)
+    if getsid is None:
+        return None
+    return [getsid(pid) for pid in pids]
 
 
 class DeferredSessionSignal:

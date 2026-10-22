@@ -17,6 +17,7 @@ from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
     checkpoint_frames,
+    owned_rpc_process,
     prompt_task,
     second_prompt,
 )
@@ -31,7 +32,7 @@ class TestPromptNarrationAndResults:
         observer = Observer()
         async with asyncio.timeout(5):
             await prompt_task(client, observer)
-        assert [event.type for event in observer.events] == [
+        assert observer.outline == [
             OmpEventType.AGENT_START,
             OmpEventType.TOOL_START,
             OmpEventType.TOOL_END,
@@ -103,8 +104,7 @@ class TestPromptNarrationAndResults:
         self, client_factory: ClientFactory, scenario: str, match: str
     ) -> None:
         client = await client_factory(scenario)
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         async with asyncio.timeout(5):
             with pytest.raises(OmpPromptError, match=match):
                 await prompt_task(client, Observer())
@@ -116,8 +116,7 @@ class TestPromptNarrationAndResults:
         client_factory: ClientFactory,
     ) -> None:
         client = await client_factory("basic")
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         observer = Observer()
 
         async def on_event(event: OmpEvent) -> None:

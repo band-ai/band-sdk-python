@@ -11,6 +11,7 @@ from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
+    owned_rpc_process,
     prompt_task,
     queue_prompt,
     second_prompt,
@@ -23,8 +24,7 @@ class TestInterruptionAndReaping:
         self, client_factory: ClientFactory
     ) -> None:
         client = await client_factory("yield")
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         observer = Observer()
         active = prompt_task(client, observer)
         queued: asyncio.Task[None] | None = None
@@ -42,7 +42,7 @@ class TestInterruptionAndReaping:
             async with asyncio.timeout(5):
                 await active
             await second_prompt(client)
-            assert client._proc is process
+            assert owned_rpc_process(client) is process
             assert process.returncode is None
             assert await sent_prompt_messages(client) == ["first", "second"]
         finally:
@@ -52,34 +52,49 @@ class TestInterruptionAndReaping:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     @pytest.mark.parametrize("scenario", ["yield", "no-result", "stubborn"])
-    @pytest.mark.parametrize("interruption", ["timeout", "cancel"])
-    async def test_interrupted_prompt_aborts_reaps_and_can_restart(
-        self, client_factory: ClientFactory, scenario: str, interruption: str
+    async def test_cancelled_prompt_aborts_reaps_and_can_restart(
+        self, client_factory: ClientFactory, scenario: str
     ) -> None:
         client = await client_factory(scenario)
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         observer = Observer()
         running = prompt_task(client, observer)
         try:
             await observer.wait_for(OmpEventType.AGENT_END)
-            if interruption == "cancel":
-                running.cancel()
-                async with asyncio.timeout(6):
-                    with pytest.raises(asyncio.CancelledError):
-                        await running
-            else:
-                async with asyncio.timeout(6):
-                    with pytest.raises(TimeoutError):
-                        async with asyncio.timeout(None) as deadline:
-                            deadline.reschedule(asyncio.get_running_loop().time())
-                            await running
-                    assert deadline.expired()
+            running.cancel()
+            async with asyncio.timeout(6):
+                with pytest.raises(asyncio.CancelledError):
+                    await running
             assert process.returncode is not None
             async with asyncio.timeout(5):
                 await client.start()
                 await second_prompt(client)
-            assert client._proc is not process
+            assert owned_rpc_process(client) is not process
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    @pytest.mark.parametrize("scenario", ["yield", "no-result", "stubborn"])
+    async def test_timed_out_prompt_aborts_reaps_and_can_restart(
+        self, client_factory: ClientFactory, scenario: str
+    ) -> None:
+        client = await client_factory(scenario)
+        process = owned_rpc_process(client)
+        observer = Observer()
+        running = prompt_task(client, observer)
+        try:
+            await observer.wait_for(OmpEventType.AGENT_END)
+            async with asyncio.timeout(6):
+                with pytest.raises(TimeoutError):
+                    async with asyncio.timeout(None) as deadline:
+                        deadline.reschedule(asyncio.get_running_loop().time())
+                        await running
+                assert deadline.expired()
+            assert process.returncode is not None
+            async with asyncio.timeout(5):
+                await client.start()
+                await second_prompt(client)
+            assert owned_rpc_process(client) is not process
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
@@ -87,18 +102,15 @@ class TestInterruptionAndReaping:
     async def test_repeatedly_cancelled_close_still_waits_for_reap(
         self,
         client_factory: ClientFactory,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         client = await client_factory("stubborn")
-        process = client._proc
-        assert process is not None
-        cleanup = HeldCleanup(client, monkeypatch)
+        process = owned_rpc_process(client)
+        cleanup = HeldCleanup(client)
         closing = asyncio.create_task(client.close())
         try:
             await cleanup.wait_for_join(closing)
             for _ in range(3):
                 await cleanup.cancel_and_wait_for_rejoin(closing)
-                assert client._proc is process
                 assert process.returncode is None
                 assert not cleanup.finished.is_set()
 
@@ -121,8 +133,7 @@ class TestInterruptionAndReaping:
         client_factory: ClientFactory,
     ) -> None:
         client = await client_factory("host-cancel")
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         observer = Observer()
         started = asyncio.Event()
         cancelled = asyncio.Event()

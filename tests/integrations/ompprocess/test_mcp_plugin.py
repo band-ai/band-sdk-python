@@ -13,6 +13,9 @@ from band.integrations.ompprocess import (
     OMP_MCP_SERVERS_CONFIG,
     OMP_MCP_STARTUP_CONFIG,
     OMP_MCP_STARTUP_JS,
+    OMP_MODE_FLAG,
+    OMP_RPC_UI_MODE,
+    RELATIVE_MCP_COMMAND_PREFIXES,
     OmpMcpServer,
     omp_mcp_arguments,
     omp_mcp_plugin,
@@ -80,7 +83,7 @@ class TestMcpPluginProjection:
         plugin = str(tmp_path / "band-sdk")
         arguments = omp_mcp_arguments(plugin)
         assert arguments[:2] == ("--plugin-dir", plugin)
-        assert "--mode=rpc-ui" in arguments
+        assert arguments[arguments.index(OMP_MODE_FLAG) + 1] == OMP_RPC_UI_MODE
         assert str(Path(plugin) / OMP_MCP_STARTUP_JS) in arguments
         assert str(Path(plugin) / OMP_MCP_STARTUP_CONFIG) in arguments
 
@@ -88,6 +91,8 @@ class TestMcpPluginProjection:
     def test_projected_plugin_files_are_owner_only(
         self, tmp_path: Path, accepted_on: tuple[str, ...]
     ) -> None:
+        if os.name not in accepted_on:
+            pytest.skip("Unix permission bits are not the Windows ACL boundary")
         servers = {"local": OmpMcpServer(command="./server")}
         with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
             assert plugin is not None
@@ -99,9 +104,17 @@ class TestMcpPluginProjection:
             )
             assert root.is_dir()
             assert all(path.is_file() for path in files)
-            assert (plugin_privacy(root, files) == (0o700, 0o600)) is (
-                os.name in accepted_on
+            assert plugin_privacy(root, files) == (0o700, 0o600)
+
+    @pytest.mark.parametrize("prefix", RELATIVE_MCP_COMMAND_PREFIXES)
+    def test_relative_command_is_absolutized(self, tmp_path: Path, prefix: str) -> None:
+        servers = {"local": OmpMcpServer(command=f"{prefix}server")}
+        with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
+            assert plugin is not None
+            config = json.loads(
+                (Path(plugin) / OMP_MCP_SERVERS_CONFIG).read_text(encoding="utf-8")
             )
+            assert Path(config["mcpServers"]["local"]["command"]).is_absolute()
 
     @pytest.mark.parametrize(
         "fields",

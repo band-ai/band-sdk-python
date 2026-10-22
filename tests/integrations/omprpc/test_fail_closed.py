@@ -25,6 +25,14 @@ class TestFailClosedDispatch:
             with pytest.raises(OmpProtocolError, match="without an active prompt"):
                 await client.request("orphan-tool")
 
+    async def test_ui_cancel_without_target_id_fails_the_transport(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory("basic")
+        async with asyncio.timeout(6):
+            with pytest.raises(OmpProtocolError, match="missing targetId"):
+                await client.request("orphan-ui-cancel")
+
     async def test_interactive_ui_without_an_active_prompt_is_cancelled(
         self, client_factory: ClientFactory
     ) -> None:
