@@ -1,5 +1,7 @@
-# Local proof branch only: the SDK checkout stays pinned independently of this workflow.
-name: Current-root Windows native proof
+# Standalone privacy-only diagnostic: success is NOT SDK readiness or full native-suite proof.
+# The original full-root proof is separate; its suite failure is not bypassed or resolved here.
+# The SDK checkout stays pinned independently of this diagnostic workflow.
+name: Standalone Windows native MCP privacy-only (not SDK readiness)
 
 on:
   workflow_dispatch:
@@ -8,7 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  windows-native:
+  windows-privacy-only:
+    name: Privacy-only native MCP diagnostic (not SDK readiness)
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -18,7 +21,7 @@ jobs:
       PYTHONPATH: '${{ github.workspace }}/sdk/src;${{ github.workspace }}/sdk'
       E2E_TESTS_ENABLED: 'false'
       DOCKER_TESTS_ENABLED: 'false'
-      SDK_REF: '0720167358abccceb65be410378e871783089c6d'
+      SDK_REF: 'c4ae7d844cc981205474ae6135ec5c5ce7505f3f'
     steps:
       - name: Check out immutable SDK root
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -76,14 +79,6 @@ jobs:
           '@ | .venv/Scripts/python.exe -
           if ($LASTEXITCODE -ne 0) { throw 'Source attribution failed' }
           Get-FileHash -Algorithm SHA256 -Path uv.lock, src/band/integrations/ompprocess.py, src/band/integrations/omprpc/client.py, src/band/integrations/omprpc/scope.py, src/band/integrations/codex/winspawn.py, tests/integrations/omprpc/test_lifecycle_model.py
-
-      - name: Run full native and Codex scope without budget overrides
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # The immutable model keeps 20 generated examples, 15 steps and its 600s whole-case budget.
-          .venv/Scripts/python.exe -m pytest tests/integrations/codex tests/integrations/omprpc tests/integrations/ompprocess tests/integrations/test_ompwire.py tests/converters/test_omp.py -v --no-cov --hypothesis-show-statistics
-          if ($LASTEXITCODE -ne 0) { throw 'Full native/Codex suite failed' }
 
       - name: Install released OMP with the existing setup script
         shell: bash
