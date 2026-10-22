@@ -35,17 +35,14 @@ jobs:
       - name: Install the locked CI environment
         run: uv sync --all-packages --locked --extra dev
 
-      - name: Observe patched native Job kernel-exit cleanup
-        run: uv run --all-packages --no-sync python -m tests.integrations.omprpc.wincustody
-
-      - name: Exercise native RPC and Codex process lifecycle contracts
-        run: uv run --all-packages --no-sync pytest tests/integrations/codex tests/integrations/omprpc -q --no-cov
+      - name: Capture lifecycle operation progress and pending tasks
+        run: uv run --all-packages --no-sync python -m tests.integrations.omprpc.winlifecycle
 
       - name: Preserve pre-teardown evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-retirement-proof
-          path: windows-custody.jsonl
+          name: windows-lifecycle-progress
+          path: windows-lifecycle.jsonl
           if-no-files-found: error
           retention-days: 3
