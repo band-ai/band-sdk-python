@@ -109,7 +109,9 @@ Only CONFIRMED and PARTIALLY-RIGHT findings that **matter** proceed to fixing.
 "Matters" means: user-visible breakage, data corruption, security exposure, a real
 maintenance trap, or a violated project invariant or rule (`AGENTS.md` and the
 guideline skills `band-python-conventions` and `band-python-test-conventions` — e.g. duplicated logic,
-magic literals, narrating comments). Filter out:
+magic literals, narrating comments, tests that assert plumbing or assumptions,
+patch internals, wait out wall-clock grace, branch on scenario inside the test,
+or treat line coverage as branch coverage). Filter out:
 
 - Pedantry and taste conflicts with the project's established conventions
   (the codebase's existing idiom wins over the reviewer's preference).
