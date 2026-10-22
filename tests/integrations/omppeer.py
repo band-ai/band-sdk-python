@@ -33,6 +33,7 @@ class Frame(BaseModel):
     value: str | None = None
     confirmed: bool | None = None
     cancelled: bool | None = None
+    count: int = 0
 
 
 class ProcessReceipt(BaseModel):
@@ -42,7 +43,12 @@ class ProcessReceipt(BaseModel):
 
 
 def start_descendant(
-    scenario: str, port: int, stdio: str, *, detached: bool = False
+    scenario: str,
+    port: int,
+    stdio: str,
+    *,
+    detached: bool = False,
+    spawn_on_eof: bool = False,
 ) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         (
@@ -54,24 +60,35 @@ def start_descendant(
             "--gate-port",
             str(port),
             *(("--detached-children",) if detached else ()),
+            *(("--spawn-on-eof",) if spawn_on_eof else ()),
         ),
         # A parent's pending pipe read can block Python's stdin initialization on Windows.
         # Descendants are controlled by the gate socket, not the RPC input pipe.
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if spawn_on_eof else subprocess.DEVNULL,
         stdout=None if stdio == "inherit" else subprocess.DEVNULL,
         stderr=None if stdio == "inherit" else subprocess.DEVNULL,
         start_new_session=detached and os.name != "nt",
     )
 
 
-def hold_process_gate(port: int, *, spawn_child: bool, detached: bool = False) -> None:
+def hold_process_gate(
+    port: int,
+    *,
+    spawn_child: bool,
+    detached: bool = False,
+    spawn_on_eof: bool = False,
+) -> None:
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    child = (
-        start_descendant("gated-child", port, "inherit", detached=detached)
-        if spawn_child
-        else None
-    )
+
+    def launch_child() -> subprocess.Popen[bytes] | None:
+        return (
+            start_descendant("gated-child", port, "inherit", detached=detached)
+            if spawn_child
+            else None
+        )
+
+    child = None if spawn_on_eof else launch_child()
     with socket.create_connection(("127.0.0.1", port), timeout=5) as gate:
         gate.settimeout(None)
         receipt = ProcessReceipt(
@@ -80,6 +97,9 @@ def hold_process_gate(port: int, *, spawn_child: bool, detached: bool = False) -
             created=psutil.Process().create_time(),
         )
         gate.sendall((receipt.model_dump_json() + "\n").encode())
+        if spawn_on_eof:
+            sys.stdin.buffer.read()
+            child = launch_child()
         gate.recv(1)
     if child is not None:
         child.wait(timeout=5)
@@ -327,6 +347,8 @@ class Peer:
         match self.scenario:
             case scenario if scenario.startswith("chunk-"):
                 self.invalid_chunk()
+            case "event-backpressure":
+                return
             case "frame-overflow":
                 send(
                     {
@@ -466,6 +488,39 @@ class Peer:
                 )
                 if self.scenario == "settles-during-state" and not self.settled:
                     self.settle()
+                if (
+                    self.scenario == "event-backpressure"
+                    and self.held is not None
+                    and self.held.type == "event-result"
+                ):
+                    self.respond(self.held)
+                    self.held = None
+            case "event-burst":
+                for number in range(frame.count):
+                    send(
+                        {
+                            "type": "message_update",
+                            "messageId": f"burst-{number}",
+                            "message": {"role": "assistant", "content": str(number)},
+                        }
+                    )
+                self.respond(frame)
+            case "event-result":
+                self.held = frame
+                self.end("complete", compacted=True)
+                self.result(settled=True)
+                self.settle()
+            case "event-ui":
+                self.held = frame
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "backlog-approval",
+                        "method": "select",
+                        "title": "Allow command?",
+                        "options": ["Approve", "Deny"],
+                    }
+                )
             case "release":
                 if self.scenario == "settlement-before-result":
                     self.result(settled=False)
@@ -513,6 +568,15 @@ class Peer:
                     self.tool_results.add(frame.id)
                 if frame.type == "extension_ui_response":
                     self.ui_answered = True
+                if (
+                    self.scenario == "event-backpressure"
+                    and frame.type == "extension_ui_response"
+                    and frame.id == "backlog-approval"
+                    and self.held is not None
+                    and self.held.type == "event-ui"
+                ):
+                    self.respond(self.held, {"value": frame.value})
+                    self.held = None
                 if (
                     self.scenario == "callbacks"
                     and self.tool_results == {"host-1", "host-2"}
@@ -565,6 +629,7 @@ def main() -> None:
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--gate-port", type=int)
     parser.add_argument("--detached-children", action="store_true")
+    parser.add_argument("--spawn-on-eof", action="store_true")
     parser.add_argument(
         "--child-stdio", choices=("inherit", "discard"), default="inherit"
     )
@@ -576,17 +641,25 @@ def main() -> None:
             args.gate_port,
             spawn_child=args.scenario == "gated-parent",
             detached=args.detached_children,
+            spawn_on_eof=args.spawn_on_eof,
         )
         return
-    if args.scenario in {"descendants", "no-ready-descendants", "lifecycle"}:
+    managed_child: subprocess.Popen[bytes] | None = None
+    if args.scenario in {
+        "descendants",
+        "no-ready-descendants",
+        "lifecycle",
+        "eof-descendants",
+    }:
         if args.gate_port is None:
             raise ValueError("A process gate port is required")
         # The gate, not the peer's stdio EOF, owns these children's lifetime.
-        start_descendant(
+        managed_child = start_descendant(
             "gated-parent",
             args.gate_port,
             args.child_stdio,
             detached=args.detached_children,
+            spawn_on_eof=args.scenario == "eof-descendants",
         )
     if args.scenario == "stubborn" and hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -605,6 +678,8 @@ def main() -> None:
         )
     for line in sys.stdin:
         peer.handle(Frame.model_validate_json(line, strict=True))
+    if managed_child is not None and managed_child.stdin is not None:
+        managed_child.stdin.close()
     if args.scenario == "stubborn":
         threading.Event().wait()
 

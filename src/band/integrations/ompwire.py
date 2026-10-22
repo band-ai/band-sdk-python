@@ -192,7 +192,7 @@ class OmpState(OmpWireModel):
 
 
 class OmpHostToolCall(OmpWireModel):
-    type: Literal["host_tool_call"] = "host_tool_call"
+    type: Literal[OmpFrameType.HOST_TOOL_CALL] = OmpFrameType.HOST_TOOL_CALL
     id: str
     toolCallId: str
     toolName: str
@@ -200,38 +200,69 @@ class OmpHostToolCall(OmpWireModel):
 
 
 class OmpHostToolCancel(OmpWireModel):
-    type: Literal["host_tool_cancel"] = "host_tool_cancel"
+    type: Literal[OmpFrameType.HOST_TOOL_CANCEL] = OmpFrameType.HOST_TOOL_CANCEL
     id: str
     targetId: str
 
 
+class OmpAskOption(OmpWireModel):
+    label: str
+    description: str | None = None
+    preview: str | None = None
+
+
+class OmpAskQuestion(OmpWireModel):
+    """A structured native ask question, enabled by ``set_ask_dialog``."""
+
+    id: str
+    question: str
+    header: str | None = None
+    options: list[OmpAskOption] = Field(default_factory=list)
+    multi: bool = False
+    # The tool schema accepts any number and forwards the recommendation unchanged.
+    recommended: float | None = None
+
+
+class OmpAskAnswer(OmpWireModel):
+    """One answer per question, in question order, using offered option labels."""
+
+    id: str
+    selectedOptions: list[str] = Field(default_factory=list)
+    customInput: str | None = None
+
+
 class OmpUIRequest(OmpWireModel):
-    type: Literal["extension_ui_request"] = "extension_ui_request"
+    type: Literal[OmpFrameType.UI_REQUEST] = OmpFrameType.UI_REQUEST
     id: str
     method: str
     title: str | None = None
     options: list[str] = Field(default_factory=list)
     message: str | None = None
     targetId: str | None = None
+    questions: list[OmpAskQuestion] = Field(default_factory=list)
 
 
 class OmpUIResponse(OmpWireModel):
     value: str | None = None
     confirmed: bool | None = None
+    answers: list[OmpAskAnswer] | None = None
     cancelled: bool = False
 
     @model_validator(mode="after")
     def validate_answer(self) -> OmpUIResponse:
-        if (
-            sum((self.value is not None, self.confirmed is not None, self.cancelled))
-            > 1
-        ):
+        given = (
+            self.value is not None,
+            self.confirmed is not None,
+            self.answers is not None,
+            self.cancelled,
+        )
+        if sum(given) > 1:
             raise ValueError("OMP UI response must contain only one answer")
         return self
 
 
 class OmpReady(OmpWireModel):
-    type: Literal["ready"]
+    type: Literal[OmpFrameType.READY]
     protocolVersion: Literal[1]
     supportedProtocolVersions: list[int]
     maxFrameBytes: int = Field(gt=0, le=OMP_FRAME_BYTES)
@@ -243,7 +274,7 @@ class OmpNegotiation(OmpWireModel):
 
 
 class OmpChunk(OmpWireModel):
-    type: Literal["rpc_chunk"]
+    type: Literal[OmpFrameType.CHUNK]
     chunkId: str = Field(min_length=1, max_length=128)
     index: int = Field(ge=0)
     count: int = Field(ge=2, le=OMP_REASSEMBLED_BYTES // OMP_CHUNK_BYTES)
@@ -258,12 +289,12 @@ class OmpChunk(OmpWireModel):
 
 
 class OmpFrameError(OmpWireModel):
-    type: Literal["rpc_frame_error"]
+    type: Literal[OmpFrameType.FRAME_ERROR]
     error: str
 
 
 class OmpResponse(OmpWireModel):
-    type: Literal["response"]
+    type: Literal[OmpFrameType.RESPONSE]
     id: str | None = None
     command: str
     success: bool
@@ -285,7 +316,7 @@ class OmpPromptFailure(OmpWireModel):
 
 
 class OmpPromptResult(OmpWireModel):
-    type: Literal["prompt_result"]
+    type: Literal[OmpFrameType.PROMPT_RESULT]
     id: str | None = None
     agentInvoked: bool
     status: Literal["completed", "error", "aborted"]

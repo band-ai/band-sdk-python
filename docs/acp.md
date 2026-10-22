@@ -235,3 +235,15 @@ failure fails that room turn visibly instead of falling back.
   credential-redacted; values under credential-named fields are redacted in full.
 - The ACP Python client drains queued update handlers before surfacing a prompt error, so
   a slow client handler can still delay its own `prompt()`.
+
+## Native OMP transport
+
+`band.integrations.omprpc.OmpRpcClient` speaks OMP's native RPC v2 protocol,
+including structured ask questions and answers. It is separate from the ACP
+transport; adding it does not deprecate or remove the public `OmpACPAdapter`.
+
+Event callbacks run serially with a bounded backlog. Exhausting that backlog
+fails the owning prompt with `OmpProcessError` and starts cleanup rather than
+silently dropping events and reporting success. The wire reader does not wait
+for callback capacity, so callbacks can still issue correlated commands and
+answer native UI requests while delivery is held.

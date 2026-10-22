@@ -51,6 +51,7 @@ from band.integrations.ompwire import (
 logger = logging.getLogger(__name__)
 
 _DRAIN_BYTES = 64 * 1024
+_EVENT_BACKLOG_LIMIT = 256
 _ABORT_TIMEOUT_S = 1.0
 _PROCESS_EXIT_TIMEOUT_S = 1.0
 _CALLBACK_EXIT_TIMEOUT_S = 1.0
@@ -123,7 +124,9 @@ class PromptRun:
         self.on_event = on_event
         self.on_tool = on_tool
         self.on_ui = on_ui
-        self.events: asyncio.Queue[OmpEvent] = asyncio.Queue()
+        self.events: asyncio.Queue[OmpEvent] = asyncio.Queue(
+            maxsize=_EVENT_BACKLOG_LIMIT
+        )
         self.failure: asyncio.Future[BaseException] = loop.create_future()
         self.result: asyncio.Future[OmpPromptResult] = loop.create_future()
         self.changed = asyncio.Event()
@@ -140,6 +143,14 @@ class PromptRun:
             self.failure.set_result(error)
 
     def observe(self, event: OmpEvent, sequence: int) -> None:
+        if self.failure.done():
+            return
+        # Waiting for space would block the reader that services reentrant commands.
+        try:
+            self.events.put_nowait(event)
+        except asyncio.QueueFull:
+            self.fail(OmpProcessError("OMP event callback backlog exceeded"))
+            return
         self.last_activity_sequence = sequence
         if (
             event.type == OmpEventType.MESSAGE_END
@@ -152,7 +163,6 @@ class PromptRun:
                 if message.role == "assistant":
                     self.last_assistant = message
                     break
-        self.events.put_nowait(event)
         self.changed.set()
 
 

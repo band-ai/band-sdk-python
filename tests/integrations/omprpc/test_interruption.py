@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from band.integrations.ompwire import OmpHostToolCall, OmpToolResult
+from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
@@ -68,9 +69,12 @@ class TestInterruptionAndReaping:
                     with pytest.raises(asyncio.CancelledError):
                         await running
             else:
-                with pytest.raises(TimeoutError):
-                    async with asyncio.timeout(0.05):
-                        await running
+                async with asyncio.timeout(6):
+                    with pytest.raises(TimeoutError):
+                        async with asyncio.timeout(None) as deadline:
+                            deadline.reschedule(asyncio.get_running_loop().time())
+                            await running
+                    assert deadline.expired()
             assert process.returncode is not None
             async with asyncio.timeout(5):
                 await client.start()
@@ -83,25 +87,34 @@ class TestInterruptionAndReaping:
     async def test_repeatedly_cancelled_close_still_waits_for_reap(
         self,
         client_factory: ClientFactory,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         client = await client_factory("stubborn")
         process = client._proc
         assert process is not None
+        cleanup = HeldCleanup(client, monkeypatch)
         closing = asyncio.create_task(client.close())
-        loop = asyncio.get_running_loop()
-        cancellations = [
-            loop.call_later(delay, closing.cancel) for delay in (0.01, 0.05, 0.1)
-        ]
         try:
+            await cleanup.wait_for_join(closing)
+            for _ in range(3):
+                await cleanup.cancel_and_wait_for_rejoin(closing)
+                assert client._proc is process
+                assert process.returncode is None
+                assert not cleanup.finished.is_set()
+
+            cleanup.release.set()
             async with asyncio.timeout(6):
                 with pytest.raises(asyncio.CancelledError):
                     await closing
+                await process.wait()
+            assert cleanup.finished.is_set()
             assert process.returncode is not None
             await client.close()
         finally:
-            for cancellation in cancellations:
-                cancellation.cancel()
+            cleanup.release.set()
+            closing.cancel()
             await asyncio.gather(closing, return_exceptions=True)
+            await client.close()
 
     async def test_cancelled_prompt_cancels_its_host_callback_before_reap(
         self,

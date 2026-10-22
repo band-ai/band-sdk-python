@@ -123,28 +123,28 @@ class OmpStartupError(RuntimeError):
     """The required native connection context or MCP tools are not ready."""
 
 
-class _McpCommand(BaseModel):
+class McpCommand(BaseModel):
     name: str
 
 
-class _McpCommands(BaseModel):
-    commands: list[_McpCommand]
+class McpCommands(BaseModel):
+    commands: list[McpCommand]
 
 
-class _ConnectedMcpServer(BaseModel):
+class ConnectedMcpServer(BaseModel):
     type: Literal["connected"]
     serverName: str
 
 
-class _FailedMcpServer(BaseModel):
+class FailedMcpServer(BaseModel):
     type: Literal["failed"]
     serverName: str
     error: str
 
 
-class _McpStartupReceipt(BaseModel):
+class McpStartupReceipt(BaseModel):
     systemPromptReady: bool = Field(strict=True)
-    servers: list[_ConnectedMcpServer | _FailedMcpServer]
+    servers: list[ConnectedMcpServer | FailedMcpServer]
 
 
 def _plugin_server_name(name: str) -> str:
@@ -153,7 +153,7 @@ def _plugin_server_name(name: str) -> str:
 
 def omp_mcp_ready_command(plugin: str) -> str:
     """The slash command the plugin's startup extension registers for its receipt."""
-    return f"band-sdk-mcp-{Path(plugin).parent.name}"
+    return f"{OMP_PLUGIN_ROOT}-mcp-{Path(plugin).parent.name}"
 
 
 def omp_mcp_arguments(plugin: str) -> tuple[str, ...]:
@@ -176,7 +176,7 @@ async def omp_mcp_ready(
 ) -> None:
     """Require the connection extension and configured MCP servers before inference."""
     command = omp_mcp_ready_command(plugin)
-    commands = _McpCommands.model_validate(
+    commands = McpCommands.model_validate(
         await runtime.request("get_available_commands")
     )
     if not any(item.name == command for item in commands.commands):
@@ -201,7 +201,7 @@ async def omp_mcp_ready(
         on_ui=on_ui,
     )
     try:
-        receipt = _McpStartupReceipt.model_validate_json(
+        receipt = McpStartupReceipt.model_validate_json(
             (Path(plugin) / "receipt.json").read_text(encoding="utf-8")
         )
     except (OSError, ValueError) as error:
@@ -215,7 +215,7 @@ async def omp_mcp_ready(
     for status in receipt.servers:
         if status.serverName not in expected:
             raise OmpStartupError("OMP returned an unexpected MCP startup receipt")
-        if isinstance(status, _FailedMcpServer):
+        if isinstance(status, FailedMcpServer):
             raise OmpStartupError(
                 f"OMP MCP server {status.serverName} failed: {status.error}"
             )
