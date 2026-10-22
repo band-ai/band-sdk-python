@@ -821,6 +821,10 @@ class OmpRpcClient:
             frame["value"] = response.value
         elif response.confirmed is not None:
             frame["confirmed"] = response.confirmed
+        elif response.answers is not None:
+            frame["answers"] = [
+                answer.model_dump(exclude_none=True) for answer in response.answers
+            ]
         else:
             frame["cancelled"] = True
         await self._write_frame(frame)

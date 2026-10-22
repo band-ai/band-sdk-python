@@ -521,6 +521,22 @@ class Peer:
                         "options": ["Approve", "Deny"],
                     }
                 )
+            case "ask-ui":
+                self.held = frame
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "structured-question",
+                        "method": "ask",
+                        "questions": [
+                            {
+                                "id": "database-choice",
+                                "question": "Which database?",
+                                "options": [{"label": "SQLite"}],
+                            }
+                        ],
+                    }
+                )
             case "release":
                 if self.scenario == "settlement-before-result":
                     self.result(settled=False)
@@ -576,6 +592,22 @@ class Peer:
                     and self.held.type == "event-ui"
                 ):
                     self.respond(self.held, {"value": frame.value})
+                    self.held = None
+                if (
+                    frame.type == "extension_ui_response"
+                    and frame.id == "structured-question"
+                    and self.held is not None
+                    and self.held.type == "ask-ui"
+                ):
+                    self.respond(
+                        self.held,
+                        {
+                            "answer": cast(
+                                dict[str, JsonValue],
+                                frame.model_dump(exclude_unset=True),
+                            )
+                        },
+                    )
                     self.held = None
                 if (
                     self.scenario == "callbacks"
