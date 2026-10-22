@@ -255,7 +255,9 @@ defmodule ContractLab.ContractFormatTest do
 
     # Size is checked first: an over-size source is refused even when it is also invalid.
     assert {:error, :source_size} = Format.format(over <> <<0xFF>>)
-    {us, _} = :timer.tc(fn -> Format.format(String.duplicate("\r", 262_145)) end)
+    over_with_cr = String.duplicate("\r", 262_145)
+    {us, result} = :timer.tc(fn -> Format.format(over_with_cr) end)
+    assert {:error, :source_size} = result
     assert us < 5_000
   end
 
