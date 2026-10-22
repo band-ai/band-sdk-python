@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 import httpx
 
 from band.contracts.wire import JsonObject
 from tests.contracts.author.platform import AuthorPeer
 
+NEXT_CLAIM = "7a8c96d0-5db9-4f1b-887c-774c52f347cd"
+ORIGINAL_CLAIM = "2566700c-66ad-4a72-9f5a-ce315787b04b"
+
 
 class RetryPeer(AuthorPeer):
-    def __init__(self, attempt: int = 0) -> None:
+    def __init__(self, attempt: int = 0, *, queued: bool = False) -> None:
         super().__init__()
         self.initial_attempt = attempt
         self.current_attempt = attempt
-        self.status = "running"
-        self.active_claim: str | None = None
+        self.status = "queued" if queued else "running"
+        self.active_claim: str | None = None if queued else ORIGINAL_CLAIM
         self.receipt: JsonObject | None = None
         self.submissions: list[JsonObject] = []
 
@@ -24,7 +28,8 @@ class RetryPeer(AuthorPeer):
         if operation == "claim":
             claim = body["id"]
             assert isinstance(claim, str)
-            if self.active_claim not in (None, claim):
+            assert str(UUID(claim)) == claim
+            if self.status != "queued" and self.active_claim != claim:
                 return {"job": None}
             self.active_claim = claim
             self.status = "running"

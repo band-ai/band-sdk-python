@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 from band.contracts.wire import JsonObject
 from remote_agent.band.authoring import Journal, process_one
 from remote_agent.band.studio import StudioAgent
-from tests.contracts.author.retry import RetryPeer
+from tests.contracts.author.retry import NEXT_CLAIM, RetryPeer
 
 
 @pytest.mark.contract_linux
@@ -25,7 +25,7 @@ class TestAuthorAcknowledgement:
     def test_claim_restart_and_retry_sequences_keep_original_completion(
         self, actions: list[str]
     ) -> None:
-        peer = RetryPeer()
+        peer = RetryPeer(queued=True)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             journal = Journal(root)
@@ -47,7 +47,7 @@ class TestAuthorAcknowledgement:
                     match action:
                         case "claim":
                             if peer.status == "queued":
-                                peer.native("claim", {"id": "another-worker"})
+                                peer.native("claim", {"id": NEXT_CLAIM})
                         case "restart":
                             journal.close()
                             journal = Journal(root)

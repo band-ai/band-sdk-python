@@ -11,7 +11,7 @@ from band.contracts.author import AuthorCompletion, ContractAuthorClient
 from band.contracts.errors import ContractProtocolError, ContractTransportError
 from band.contracts.wire import JsonObject
 from tests.contracts.author.platform import AuthorPeer
-from tests.contracts.author.retry import RetryPeer
+from tests.contracts.author.retry import NEXT_CLAIM, RetryPeer
 
 
 class TestAcknowledgement:
@@ -125,7 +125,7 @@ class TestAcknowledgement:
             with pytest.raises(ContractTransportError):
                 await client.complete(completion)
             assert peer.status == "queued"
-            claimed = await client.claim(id="next-attempt")
+            claimed = await client.claim(id=NEXT_CLAIM)
             job = claimed["job"]
             assert isinstance(job, dict)
             assert job["attempt"] == attempt + 1
@@ -137,11 +137,24 @@ class TestAcknowledgement:
         assert (
             peer.requests[0].content == peer.requests[2].content == completion.encoded
         )
-        assert json.loads(peer.requests[1].content) == {"id": "next-attempt"}
+        assert json.loads(peer.requests[1].content) == {"id": NEXT_CLAIM}
 
-    @pytest.mark.parametrize("current_attempt", [0, 1, -1, 3, True, "2", None])
+    @pytest.mark.parametrize(
+        ("submitted_attempt", "current_attempt"),
+        [
+            (0, 0),
+            (0, True),
+            (1, 0),
+            (1, 1),
+            (1, -1),
+            (1, 3),
+            (1, True),
+            (1, "2"),
+            (1, None),
+        ],
+    )
     async def test_running_response_requires_a_later_valid_attempt(
-        self, current_attempt: JsonValue
+        self, submitted_attempt: int, current_attempt: JsonValue
     ) -> None:
         peer = AuthorPeer()
         response = peer.project(attempt=1, status="running")
@@ -154,6 +167,23 @@ class TestAcknowledgement:
             with pytest.raises(ContractProtocolError):
                 await client.complete(
                     AuthorCompletion.success(
-                        peer.job, attempt=1, result={"source": "x"}
+                        peer.job, attempt=submitted_attempt, result={"source": "x"}
                     )
                 )
+
+    async def test_original_receipt_is_acknowledged_during_the_last_attempt(
+        self,
+    ) -> None:
+        peer = AuthorPeer()
+        peer.responses = [peer.project(attempt=2, status="running")]
+        completion = AuthorCompletion.success(
+            peer.job, attempt=0, result={"source": "x"}
+        )
+        async with (
+            peer.client() as http,
+            ContractAuthorClient(peer.connection(), http=http) as client,
+        ):
+            result = await client.complete(completion)
+        assert result["attempt"] == 2
+        assert result["status"] == "running"
+        assert peer.requests[0].content == completion.encoded
