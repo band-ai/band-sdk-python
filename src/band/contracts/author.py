@@ -35,8 +35,8 @@ class AuthorCompletion(FrozenModel):
     def failure(
         cls, job: str, *, attempt: int, failure: str, held: bool = False
     ) -> AuthorCompletion:
-        if not failure or len(failure.encode("utf-8")) > 4000:
-            raise ValueError("Author failure text must contain 1 to 4000 UTF-8 bytes")
+        if not failure or len(failure.encode("utf-8")) > 2000:
+            raise ValueError("Author failure text must contain 1 to 2000 UTF-8 bytes")
         return cls(
             job=job,
             attempt=attempt,
