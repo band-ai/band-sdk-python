@@ -132,3 +132,36 @@ class TestTurnSettlement:
         assert process.returncode is not None
         await client.start()
         await second_prompt(client)
+
+    async def test_settlement_succeeds_after_the_running_callback_finishes(
+        self, client_factory: ClientFactory
+    ) -> None:
+        client = await client_factory("settled-during-callback")
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_tool(_call: OmpHostToolCall) -> OmpToolResult:
+            started.set()
+            await release.wait()
+            return OmpToolResult(content=[])
+
+        observer = Observer()
+        running = asyncio.create_task(
+            client.prompt(
+                "first",
+                on_event=observer.on_event,
+                on_tool=on_tool,
+                on_ui=observer.on_ui,
+            )
+        )
+        try:
+            await started.wait()
+            release.set()
+            async with asyncio.timeout(5):
+                await running
+            assert owned_rpc_process(client).returncode is None
+            await second_prompt(client)
+        finally:
+            running.cancel()
+            release.set()
+            await asyncio.gather(running, return_exceptions=True)

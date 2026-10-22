@@ -705,6 +705,14 @@ class Peer:
                     }
                 )
                 self.respond(frame)
+            case "orphan-ui-cancel":
+                send(
+                    {
+                        "type": "extension_ui_request",
+                        "id": "ui-cancel-orphan",
+                        "method": "cancel",
+                    }
+                )
             case "checkpoint":
                 self.respond(frame, {"pid": os.getpid(), "frames": self.frames})
             case "abort":

@@ -32,7 +32,11 @@ from band.integrations.ompwire import (
 if TYPE_CHECKING:
     from band.integrations.omprpc import OmpRpcClient
 
-DEFAULT_OMP_COMMAND: tuple[str, ...] = ("omp", "--mode", "rpc")
+OMP_MODE_FLAG = "--mode"
+OMP_RPC_MODE = "rpc"
+OMP_RPC_UI_MODE = "rpc-ui"
+DEFAULT_OMP_COMMAND: tuple[str, ...] = ("omp", OMP_MODE_FLAG, OMP_RPC_MODE)
+RELATIVE_MCP_COMMAND_PREFIXES = ("./", "../", ".\\", "..\\")
 
 # The native RPC ask dialog and MCP status events need a newer OMP than the
 # ACP bridge's pin.
@@ -174,7 +178,8 @@ def omp_mcp_arguments(plugin: str) -> tuple[str, ...]:
     return (
         "--plugin-dir",
         plugin,
-        "--mode=rpc-ui",
+        OMP_MODE_FLAG,
+        OMP_RPC_UI_MODE,
         "--extension",
         str(Path(plugin) / OMP_MCP_STARTUP_JS),
         "--config",
@@ -244,7 +249,7 @@ def _projected_server(server: OmpMcpServer, workspace: str) -> dict[str, object]
         # Plugin discovery otherwise rebases launch paths into the temporary overlay.
         cwd = Path(os.path.abspath(Path(workspace) / (server.cwd or ".")))
         payload["cwd"] = str(cwd)
-        if server.command.startswith(("./", "../", ".\\", "..\\")):
+        if server.command.startswith(RELATIVE_MCP_COMMAND_PREFIXES):
             payload["command"] = os.path.abspath(cwd / server.command)
     return payload
 

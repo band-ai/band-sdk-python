@@ -8,7 +8,7 @@ import os
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from pydantic import JsonValue, ValidationError
 
@@ -62,6 +62,8 @@ from band.integrations.ompwire import (
 
 TModel = TypeVar("TModel", bound=OmpWireModel)
 CreateProcess = Callable[..., Awaitable[asyncio.subprocess.Process]]
+CloseProcess = Callable[[], Coroutine[Any, Any, None]]
+JoinClose = Callable[[Awaitable[None]], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,8 @@ class OmpRpcClient:
         self.command = tuple(command)
         self.env = None if env is None else {**os.environ, **env}
         self.create_process = create_process
+        self.close_process: CloseProcess = self._close_process
+        self.join_close: JoinClose = asyncio.shield
         self.callback_exit_timeout_s = CALLBACK_EXIT_TIMEOUT_S
         self.process_exit_timeout_s = PROCESS_EXIT_TIMEOUT_S
         self._proc: asyncio.subprocess.Process | None = None
@@ -126,7 +130,7 @@ class OmpRpcClient:
         self._write_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
-        """Start the supplied command and require native RPC protocol v2."""
+        """Start the supplied command and require the native RPC protocol."""
         async with self._start_lock:
             if self._closing:
                 await self.close()
@@ -159,11 +163,12 @@ class OmpRpcClient:
                 if isinstance(ready, OmpProcessError):
                     raise ready
                 if OMP_NATIVE_PROTOCOL_VERSION not in ready.supportedProtocolVersions:
-                    raise OmpProtocolError(
+                    error = OmpProtocolError(
                         f"OMP RPC protocol v{OMP_NATIVE_PROTOCOL_VERSION} is required"
                     )
-                self._max_frame_bytes = ready.maxFrameBytes
-                self._frames.max_reassembled_bytes = ready.maxReassembledFrameBytes
+                    self._record_failure(error)
+                    raise error
+                self._apply_ready_limits(ready)
                 negotiated = await self._request_frame(
                     "negotiate_protocol",
                     {"protocolVersion": OMP_NATIVE_PROTOCOL_VERSION},
@@ -235,7 +240,7 @@ class OmpRpcClient:
         interrupted = False
         while True:
             try:
-                await asyncio.shield(closing)
+                await self.join_close(closing)
                 break
             except asyncio.CancelledError:
                 if closing.cancelled():
@@ -300,7 +305,10 @@ class OmpRpcClient:
         try:
             return model.model_validate(self._response_data(response))
         except ValidationError as cause:
-            raise OmpProtocolError(error) from cause
+            failure = OmpProtocolError(error)
+            failure.__cause__ = cause
+            self._record_failure(failure)
+            raise failure from cause
 
     async def _execute_prompt(
         self,
@@ -335,6 +343,7 @@ class OmpRpcClient:
             await self._cancel_tasks(
                 [work, event_worker, *turn.callback_tasks],
                 timeout=self.callback_exit_timeout_s,
+                label="callback",
             )
 
     async def _complete_prompt(self, turn: PromptRun, message: str) -> None:
@@ -361,7 +370,9 @@ class OmpRpcClient:
                 turn.callback_tasks, timeout=self.callback_exit_timeout_s
             )
             if pending:
-                raise OmpProcessError(CALLBACKS_UNFINISHED)
+                error = OmpProcessError(CALLBACKS_UNFINISHED)
+                self._record_failure(error)
+                raise error
         if outcome is not None and outcome.status != OmpPromptStatus.COMPLETED:
             raise OmpPromptError(
                 outcome.status,
@@ -465,8 +476,11 @@ class OmpRpcClient:
         match frame.type:
             case OmpFrameType.READY:
                 ready = OmpReady.model_validate(payload)
+                self._apply_ready_limits(ready)
                 if self._ready is not None and not self._ready.done():
                     self._ready.set_result(ready)
+                else:
+                    logger.debug("OMP RPC ignored a duplicate ready frame")
             case OmpFrameType.FRAME_ERROR:
                 overflow = OmpFrameError.model_validate(payload)
                 raise OmpProtocolError(
@@ -530,6 +544,8 @@ class OmpRpcClient:
                 event = OmpEvent.model_validate(payload)
                 if turn is not None:
                     turn.observe(event, sequence)
+                else:
+                    logger.debug("OMP RPC ignored an event without an active prompt")
 
     def _dispatch_response(self, response: OmpResponse, sequence: int) -> None:
         if response.id is None:
@@ -542,6 +558,8 @@ class OmpRpcClient:
                 and response.id == self._turn.id
             ):
                 self._turn.fail(command_error(response))
+                return
+            logger.debug("OMP RPC ignored an unmatched command response")
             return
         if response.command != pending.command:
             raise OmpProtocolError("OMP response command does not match its request")
@@ -642,6 +660,10 @@ class OmpRpcClient:
         if self._turn is not None:
             self._turn.fail(error)
 
+    def _apply_ready_limits(self, ready: OmpReady) -> None:
+        self._max_frame_bytes = ready.maxFrameBytes
+        self._frames.max_reassembled_bytes = ready.maxReassembledFrameBytes
+
     def _record_failure(self, error: OmpProcessError) -> None:
         if self._failure is None:
             self._failure = error
@@ -660,7 +682,7 @@ class OmpRpcClient:
                 self._close_task.cancelled() or self._close_task.exception() is not None
             )
         ):
-            self._close_task = asyncio.create_task(self._close_process())
+            self._close_task = asyncio.create_task(self.close_process())
             self._close_task.add_done_callback(self._log_close_failure)
 
     @staticmethod
@@ -675,7 +697,10 @@ class OmpRpcClient:
 
     @staticmethod
     async def _cancel_tasks(
-        tasks: Sequence[asyncio.Task[None]], *, timeout: float
+        tasks: Sequence[asyncio.Task[None]],
+        *,
+        timeout: float,
+        label: str = "callback",
     ) -> None:
         active = {task for task in tasks if not task.done()}
         for task in active:
@@ -684,7 +709,7 @@ class OmpRpcClient:
             _, pending = await asyncio.wait(active, timeout=timeout)
             for task in pending:
                 task.cancel()
-                logger.warning("OMP callback did not honor cancellation")
+                logger.warning("OMP %s did not honor cancellation", label)
         for task in tasks:
             if task.done():
                 OmpRpcClient._consume_task(task)
@@ -720,7 +745,9 @@ class OmpRpcClient:
             workers = list(turn.callback_tasks)
             if turn.event_worker is not None:
                 workers.append(turn.event_worker)
-            await self._cancel_tasks(workers, timeout=self.callback_exit_timeout_s)
+            await self._cancel_tasks(
+                workers, timeout=self.callback_exit_timeout_s, label="callback"
+            )
 
         owner = self._windows_process
         scope = self._process_scope
@@ -762,8 +789,14 @@ class OmpRpcClient:
             if scope is not None:
                 # Ownership lookup can disappear before process exit is observable.
                 await asyncio.to_thread(scope.capture, process)
+            await self._cancel_tasks(
+                list(self._write_tasks),
+                timeout=self.callback_exit_timeout_s,
+                label="write",
+            )
             if not owner_closed:
-                await close_stdin(process)
+                async with self._write_lock:
+                    await close_stdin(process)
                 await await_returncode(process, self.process_exit_timeout_s)
             if owner is not None:
                 if not owner_closed:
@@ -788,9 +821,13 @@ class OmpRpcClient:
             # A cancelled pipe read on Windows stays pending until the child is
             # killed; drain stdout only after that reader finishes.
             if reader is not None:
-                await self._cancel_tasks([reader], timeout=self.callback_exit_timeout_s)
+                await self._cancel_tasks(
+                    [reader], timeout=self.callback_exit_timeout_s, label="reader"
+                )
             if process.stdout is not None:
                 drains.append(asyncio.create_task(self._drain(process.stdout)))
             if self._stderr_task is not None:
                 drains.append(self._stderr_task)
-            await self._cancel_tasks(drains, timeout=self.callback_exit_timeout_s)
+            await self._cancel_tasks(
+                drains, timeout=self.callback_exit_timeout_s, label="drain"
+            )

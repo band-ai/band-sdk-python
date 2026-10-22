@@ -14,6 +14,8 @@ from band.integrations.codex.winspawn import session_pid_reused
 from band.integrations.omprpc.errors import OmpProcessError
 
 _PROCESS_SCOPE_VALUE = "1"
+# pid 0 is the kernel idle process; scanning it is wasted work.
+KERNEL_IDLE_PID = 0
 
 
 class OmpProcessScope:
@@ -41,7 +43,7 @@ class OmpProcessScope:
         getpgid = getattr(os, "getpgid", None)
         for pid in psutil.pids():
             # asyncio's child watcher remains the sole waiter for the root.
-            if pid == 0 or pid == root.pid:
+            if pid == KERNEL_IDLE_PID or pid == root.pid:
                 continue
             try:
                 member = psutil.Process(pid)
@@ -49,7 +51,12 @@ class OmpProcessScope:
                 marked = False
                 try:
                     marked = member.environ().get(self.key) == _PROCESS_SCOPE_VALUE
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    PermissionError,
+                    SystemError,
+                ):
                     pass
                 in_group = False
                 if group_visible and getpgid is not None:
@@ -68,7 +75,7 @@ class OmpProcessScope:
                     group_members.append(member)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        if group_visible and not session_pid_reused(root):
+        if group_visible:
             self.processes.update(group_members)
 
     @staticmethod

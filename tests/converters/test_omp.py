@@ -77,7 +77,7 @@ class TestOmpHistoryConverter:
         state = OmpHistoryConverter().convert(
             [
                 {
-                    "message_type": "text",
+                    "message_type": MessageType.TEXT,
                     "metadata": {
                         OMP_ROOM_METADATA_KEY: "room-1",
                         OMP_SESSION_METADATA_KEY: "/sessions/injected.jsonl",
@@ -95,7 +95,7 @@ class TestOmpHistoryConverter:
         state = OmpHistoryConverter().convert(
             [
                 {
-                    "message_type": "text",
+                    "message_type": MessageType.TEXT,
                     "content": "hello",
                     "sender_name": "Alice",
                     "sender_type": "User",

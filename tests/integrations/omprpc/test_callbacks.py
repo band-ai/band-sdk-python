@@ -14,10 +14,12 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+from tests.integrations.omppeer import UI_APPROVE, UI_DENY
 from tests.integrations.omprpc.kit import (
     ClientFactory,
     Observer,
     checkpoint_frames,
+    owned_rpc_process,
     second_prompt,
 )
 
@@ -54,7 +56,7 @@ class TestHostToolAndUICallbacks:
 
         async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
             approvals.append(request)
-            return OmpUIResponse(value="Approve")
+            return OmpUIResponse(value=UI_APPROVE)
 
         async with asyncio.timeout(5):
             await client.prompt(
@@ -62,7 +64,7 @@ class TestHostToolAndUICallbacks:
             )
         assert {call.id for call in calls} == {"host-1", "host-2"}
         assert [(request.method, request.options) for request in approvals] == [
-            ("select", ["Approve", "Deny"])
+            ("select", [UI_APPROVE, UI_DENY])
         ]
         frames = await checkpoint_frames(client)
         result = next(frame for frame in frames if frame.get("id") == "host-2")
@@ -134,7 +136,7 @@ class TestHostToolAndUICallbacks:
                 await forever.wait()
             finally:
                 cancelled.set()
-            return OmpUIResponse(value="Approve")
+            return OmpUIResponse(value=UI_APPROVE)
 
         running = asyncio.create_task(
             client.prompt(
@@ -160,8 +162,7 @@ class TestHostToolAndUICallbacks:
         client_factory: ClientFactory,
     ) -> None:
         client = await client_factory("ui-error")
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
 
         async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
             raise ValueError("Unoffered permission choice")
@@ -182,8 +183,7 @@ class TestHostToolAndUICallbacks:
         client_factory: ClientFactory,
     ) -> None:
         client = await client_factory("callbacks")
-        process = client._proc
-        assert process is not None
+        process = owned_rpc_process(client)
         observer = Observer()
         sentinel = ValueError("Band delivery failed")
 
