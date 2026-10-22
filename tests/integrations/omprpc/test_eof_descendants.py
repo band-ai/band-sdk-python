@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 
 import pytest
 
+from band.integrations.codex.winspawn import await_returncode, close_stdin
+from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
     ProcessGate,
     descendant_client,
@@ -23,64 +24,40 @@ class TestEofDescendants:
     async def test_close_reaps_a_detached_child_created_after_stdin_eof(
         self,
         process_gate: ProcessGate,
-        monkeypatch: pytest.MonkeyPatch,
         stdio: str,
     ) -> None:
         client = descendant_client(
             process_gate, scenario="eof-descendants", stdio=stdio, detached=True
         )
-        entered = asyncio.Event()
-        release = threading.Event()
-        loop = asyncio.get_running_loop()
+        cleanup: HeldCleanup | None = None
         closing: asyncio.Task[None] | None = None
-
         async with unrelated_gate_child(process_gate) as unrelated:
             try:
                 await client.start()
                 helper = await process_gate.connection()
                 root = owned_rpc_process(client)
-                scope = client._process_scope
-                assert scope is not None
-                signal = scope.signal
+                cleanup = HeldCleanup(client)
+                closing = asyncio.create_task(client.close())
+                await cleanup.wait_for_join(closing)
 
-                def hold_signal() -> None:
-                    loop.call_soon_threadsafe(entered.set)
-                    if not release.wait(timeout=10):
-                        raise TimeoutError(
-                            "Test did not release the containment reaper"
-                        )
-                    signal()
+                await close_stdin(root)
+                late_child = await process_gate.connection()
+                assert await await_returncode(root, float("inf"))
+                assert late_child.receipt.parent_pid == helper.process.pid
+                ids = session_ids([late_child.process.pid])
+                if ids is not None:
+                    assert ids == [late_child.process.pid]
+                assert await descendant_liveness([helper, late_child]) == [True, True]
+                assert await asyncio.to_thread(process_is_alive, unrelated.process)
+                assert not closing.done()
 
-                with monkeypatch.context() as patch:
-                    patch.setattr(scope, "signal", hold_signal)
-                    closing = asyncio.create_task(client.close())
-                    try:
-                        async with asyncio.timeout(10):
-                            await entered.wait()
-                            late_child = await process_gate.connection()
-                            assert root.returncode is not None
-                            assert late_child.receipt.parent_pid == helper.process.pid
-                            ids = session_ids([late_child.process.pid])
-                            if ids is not None:
-                                assert ids == [late_child.process.pid]
-                            assert await descendant_liveness([helper, late_child]) == [
-                                True,
-                                True,
-                            ]
-                            assert await asyncio.to_thread(
-                                process_is_alive, unrelated.process
-                            )
-                            assert not closing.done()
-                            release.set()
-                            await closing
-                    finally:
-                        release.set()
-                        await asyncio.gather(closing, return_exceptions=True)
-
+                cleanup.release.set()
+                await closing
                 assert await descendant_liveness([helper, late_child]) == [False, False]
                 assert await asyncio.to_thread(process_is_alive, unrelated.process)
             finally:
-                release.set()
+                if cleanup is not None:
+                    cleanup.release.set()
                 if closing is not None:
                     await asyncio.gather(closing, return_exceptions=True)
                 await client.close()

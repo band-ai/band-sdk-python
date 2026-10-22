@@ -14,10 +14,26 @@ from band.integrations.omprpc import (
     OmpRpcClient,
     OmpRpcError,
 )
-from tests.integrations.omprpc.kit import OMP_PEER_SCRIPT, ClientFactory
+from tests.integrations.omppeer import READY_LIMIT_BURST
+from tests.integrations.omprpc.kit import (
+    OMP_PEER_SCRIPT,
+    ClientFactory,
+    owned_rpc_process,
+)
 
 
 class TestStartupNegotiation:
+    async def test_ready_limits_apply_before_the_next_buffered_frame(self) -> None:
+        client = OmpRpcClient(
+            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", READY_LIMIT_BURST)
+        )
+        try:
+            with pytest.raises(OmpProtocolError):
+                await client.start()
+            assert owned_rpc_process(client).returncode is not None
+        finally:
+            await client.close()
+
     async def test_cancelled_startup_reaps_a_process_that_never_announces_ready(
         self,
     ) -> None:

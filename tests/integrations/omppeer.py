@@ -33,6 +33,8 @@ FOLLOW_UP_PROMPT = "second"
 CRASH_EXIT = 3
 UI_APPROVE = "Approve"
 UI_DENY = "Deny"
+READY_LIMIT_BURST = "ready-limit-burst"
+READY_BURST_FRAME_BYTES = 256
 
 
 def burst_message_id(number: int) -> str:
@@ -749,6 +751,32 @@ class Peer:
                 self.respond(frame)
 
 
+def announce_ready(scenario: str) -> None:
+    ready: dict[str, JsonValue] = {
+        "type": "ready",
+        "protocolVersion": 1,
+        "supportedProtocolVersions": [1]
+        if scenario == "no-v2"
+        else [1, OMP_NATIVE_PROTOCOL_VERSION],
+        "maxFrameBytes": OMP_FRAME_BYTES,
+        "maxReassembledFrameBytes": OMP_REASSEMBLED_BYTES,
+    }
+    if scenario == READY_LIMIT_BURST:
+        ready["maxFrameBytes"] = READY_BURST_FRAME_BYTES
+        frames = (
+            ready,
+            {"type": "session_settled", "padding": "x" * READY_BURST_FRAME_BYTES},
+        )
+        # One write keeps the oversized frame buffered behind its ready limits.
+        sys.stdout.write(
+            "\n".join(json.dumps(frame, separators=(",", ":")) for frame in frames)
+            + "\n"
+        )
+        sys.stdout.flush()
+        return
+    send(ready)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", required=True)
@@ -790,17 +818,7 @@ def main() -> None:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     peer = Peer(args.scenario)
     if args.scenario not in {"no-ready", "no-ready-descendants"}:
-        send(
-            {
-                "type": "ready",
-                "protocolVersion": 1,
-                "supportedProtocolVersions": [1]
-                if args.scenario == "no-v2"
-                else [1, OMP_NATIVE_PROTOCOL_VERSION],
-                "maxFrameBytes": OMP_FRAME_BYTES,
-                "maxReassembledFrameBytes": OMP_REASSEMBLED_BYTES,
-            }
-        )
+        announce_ready(args.scenario)
     for line in sys.stdin:
         peer.handle(Frame.model_validate_json(line, strict=True))
     if managed_child is not None and managed_child.stdin is not None:
