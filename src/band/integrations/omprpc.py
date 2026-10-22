@@ -122,6 +122,26 @@ def _command_error(response: OmpResponse) -> OmpRpcError:
     )
 
 
+def _ui_response_frame(
+    request_id: str, response: OmpUIResponse
+) -> dict[str, JsonValue]:
+    frame: dict[str, JsonValue] = {
+        "type": OmpFrameType.UI_RESPONSE,
+        "id": request_id,
+    }
+    if response.value is not None:
+        frame["value"] = response.value
+    elif response.confirmed is not None:
+        frame["confirmed"] = response.confirmed
+    elif response.answers is not None:
+        frame["answers"] = [
+            answer.model_dump(exclude_none=True) for answer in response.answers
+        ]
+    else:
+        frame["cancelled"] = True
+    return frame
+
+
 @dataclass
 class PendingChunks:
     chunk_id: str
@@ -959,11 +979,9 @@ class OmpRpcClient:
                 if turn is None:
                     write = asyncio.create_task(
                         self._write_frame(
-                            {
-                                "type": OmpFrameType.UI_RESPONSE,
-                                "id": request.id,
-                                "cancelled": True,
-                            }
+                            _ui_response_frame(
+                                request.id, OmpUIResponse(cancelled=True)
+                            )
                         )
                     )
                     self._write_tasks.add(write)
@@ -1066,21 +1084,7 @@ class OmpRpcClient:
         response = await turn.on_ui(request)
         if not self._callback_still_active(turn, OmpCallbackKind.UI, request.id):
             return
-        frame: dict[str, JsonValue] = {
-            "type": OmpFrameType.UI_RESPONSE,
-            "id": request.id,
-        }
-        if response.value is not None:
-            frame["value"] = response.value
-        elif response.confirmed is not None:
-            frame["confirmed"] = response.confirmed
-        elif response.answers is not None:
-            frame["answers"] = [
-                answer.model_dump(exclude_none=True) for answer in response.answers
-            ]
-        else:
-            frame["cancelled"] = True
-        await self._write_frame(frame)
+        await self._write_frame(_ui_response_frame(request.id, response))
 
     async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
         assert process.stderr is not None
@@ -1155,6 +1159,11 @@ class OmpRpcClient:
         while await stream.read(_DRAIN_BYTES):
             pass
 
+    @staticmethod
+    async def _await_contained_exit(process: asyncio.subprocess.Process) -> None:
+        if not await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S):
+            raise OmpProcessError("OMP process did not exit after containment kill")
+
     async def _settle_spawn(self) -> asyncio.subprocess.Process | None:
         spawning = self._spawn_task
         if spawning is None:
@@ -1209,11 +1218,10 @@ class OmpRpcClient:
                     await self._request_frame("abort", {}, allow_closing=True)
             except (TimeoutError, OmpRpcError, OmpProcessError) as error:
                 logger.warning("OMP graceful abort skipped: %s", error)
-        if self._reader_task is not None:
-            await self._cancel_tasks([self._reader_task])
+        reader = self._reader_task
+        if reader is not None and not reader.done():
+            reader.cancel()
         drains: list[asyncio.Task[None]] = []
-        if process.stdout is not None:
-            drains.append(asyncio.create_task(self._drain(process.stdout)))
         if (
             self._stderr_task is None or self._stderr_task.done()
         ) and process.stderr is not None:
@@ -1237,14 +1245,16 @@ class OmpRpcClient:
                 await asyncio.to_thread(scope.capture, process)
                 await kill_process_tree(process)
                 await asyncio.to_thread(scope.signal)
-                if not await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S):
-                    raise OmpProcessError(
-                        "OMP process did not exit after containment kill"
-                    )
+                await self._await_contained_exit(process)
                 await asyncio.to_thread(scope.close, process, _PROCESS_EXIT_TIMEOUT_S)
-            if not await await_returncode(process, _PROCESS_EXIT_TIMEOUT_S):
-                raise OmpProcessError("OMP process did not exit after containment kill")
+            await self._await_contained_exit(process)
         finally:
+            # A cancelled pipe read on Windows stays pending until the child is
+            # killed; drain stdout only after that reader finishes.
+            if reader is not None:
+                await self._cancel_tasks([reader])
+            if process.stdout is not None:
+                drains.append(asyncio.create_task(self._drain(process.stdout)))
             if self._stderr_task is not None:
                 drains.append(self._stderr_task)
             await self._cancel_tasks(drains)

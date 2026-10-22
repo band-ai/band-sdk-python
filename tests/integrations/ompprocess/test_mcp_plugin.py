@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -75,6 +77,36 @@ class TestMcpPluginProjection:
         assert "--mode=rpc-ui" in arguments
         assert str(Path(plugin) / OMP_MCP_STARTUP_JS) in arguments
         assert str(Path(plugin) / OMP_MCP_STARTUP_CONFIG) in arguments
+
+    @pytest.mark.parametrize(
+        "accepted_on, file_mode, dir_mode",
+        [
+            (("posix",), 0o600, 0o700),
+            (("nt",), None, None),
+        ],
+    )
+    def test_projected_plugin_files_are_owner_only(
+        self,
+        tmp_path: Path,
+        accepted_on: tuple[str, ...],
+        file_mode: int | None,
+        dir_mode: int | None,
+    ) -> None:
+        servers = {"local": OmpMcpServer(command="./server")}
+        with omp_mcp_plugin(servers, workspace=str(tmp_path)) as plugin:
+            assert plugin is not None
+            root = Path(plugin)
+            files = (
+                root / OMP_MCP_SERVERS_CONFIG,
+                root / OMP_MCP_STARTUP_CONFIG,
+                root / OMP_MCP_STARTUP_JS,
+            )
+            assert root.is_dir()
+            assert all(path.is_file() for path in files)
+            if os.name not in accepted_on or file_mode is None or dir_mode is None:
+                return
+            assert stat.S_IMODE(root.stat().st_mode) == dir_mode
+            assert all(stat.S_IMODE(path.stat().st_mode) == file_mode for path in files)
 
     @pytest.mark.parametrize(
         "fields",
