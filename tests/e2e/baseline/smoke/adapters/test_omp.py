@@ -97,7 +97,7 @@ class TestOmp:
     ) -> None:
         """Distinguish an OMP/provider stall from a Band delivery failure."""
         from band.integrations.ompprocess import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
-            omp_command_in_workspace,
+            omp_rpc_command_in_workspace,
         )
         from band.integrations.omprpc import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
             OmpRpcClient,
@@ -135,7 +135,7 @@ class TestOmp:
                 model=omp_model(baseline_settings),
             )
             runtime = OmpRpcClient(
-                command=omp_command_in_workspace(command, sandbox),
+                command=omp_rpc_command_in_workspace(command, sandbox),
                 env=omp_acp_env(baseline_settings, omp_agent_home_dir(sandbox)),
             )
             try:
