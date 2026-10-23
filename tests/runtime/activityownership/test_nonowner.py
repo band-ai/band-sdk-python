@@ -13,7 +13,11 @@ from band.runtime.toolactivity import report_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, past_a_keep_alive
+from tests.runtime.activityownership.kit import (
+    ActivityPlatform,
+    deliver_event,
+    past_a_keep_alive,
+)
 
 
 @pytest.mark.looptime
@@ -36,8 +40,8 @@ class TestNonOwnerObservations:
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="owner"))
-        await ctx._process_event(make_message_event(msg_id="busy"))
+        await deliver_event(ctx, make_message_event(msg_id="owner"))
+        await deliver_event(ctx, make_message_event(msg_id="busy"))
         await activity_platform.next_body()
         release.set()
         await workers[0].task
@@ -60,7 +64,7 @@ class TestNonOwnerObservations:
             captured.append(AgentTools.from_context(ctx))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         await ctx._join_activity_completion()
         before = list(activity_platform.activity_bodies)
         await report_tool_activity(captured[0], "Bash")
@@ -91,9 +95,9 @@ class TestNonOwnerObservations:
             )
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="owner"))
+        await deliver_event(ctx, make_message_event(msg_id="owner"))
         waiting = asyncio.create_task(
-            ctx._process_event(make_message_event(msg_id="waiting"))
+            deliver_event(ctx, make_message_event(msg_id="waiting"))
         )
         await waiting_started.wait()
         worker_release.set()

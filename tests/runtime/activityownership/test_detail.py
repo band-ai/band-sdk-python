@@ -23,7 +23,11 @@ from tests.activitysupport import (
     tool_body,
 )
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, past_a_keep_alive
+from tests.runtime.activityownership.kit import (
+    ActivityPlatform,
+    deliver_event,
+    past_a_keep_alive,
+)
 
 
 @pytest.mark.looptime
@@ -45,7 +49,7 @@ class TestOwnedDetail:
             await tools.send_message("Done", mentions=["alice"])
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         assert activity_platform.posts == ["messages"]
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
@@ -75,7 +79,7 @@ class TestOwnedDetail:
             workers.append(bind_turn_task(tools, asyncio.create_task(release.wait())))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         owner = captured[0]
         await activity_platform.shown(set_permission_wait(owner, True))
         # The keep-alive repeats PERMISSION while the wait holds.
@@ -114,8 +118,8 @@ class TestOwnedDetail:
             await activity_platform.shown(set_permission_wait(tools, True))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="first"))
-        await ctx._process_event(make_message_event(msg_id="second"))
+        await deliver_event(ctx, make_message_event(msg_id="first"))
+        await deliver_event(ctx, make_message_event(msg_id="second"))
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
             tool_body("Bash"),

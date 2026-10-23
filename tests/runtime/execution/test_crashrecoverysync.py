@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -11,9 +10,7 @@ from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import DeliveryStatus
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
-from band.platform.event import ParticipantAddedEvent, PlatformEvent
 from band.platform.message_lifecycle import ActionablePage
-from band.runtime import resync
 from band.runtime.delivery import TurnOutcome
 from band.runtime.execution import ExecutionContext
 from band.runtime.messages import PlatformMessage
