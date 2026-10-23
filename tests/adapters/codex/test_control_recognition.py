@@ -13,11 +13,11 @@ class TestCodexControlRecognition:
     @pytest.mark.parametrize(
         ("content", "recognized"),
         [
-            ("/approve req-1", True),
-            ("@owner/codex /status", True),
+            (f"/{CodexCommand.APPROVE} req-1", True),
+            (f"@owner/codex /{CodexCommand.STATUS}", True),
             (f"/{CodexCommand.MODEL}", True),
-            ("/sandbox workspace-write", True),
-            ("do not /approve req-1", False),
+            (f"/{CodexCommand.SANDBOX} workspace-write", True),
+            (f"do not /{CodexCommand.APPROVE} req-1", False),
             ("/unknown", False),
             ("", False),
         ],

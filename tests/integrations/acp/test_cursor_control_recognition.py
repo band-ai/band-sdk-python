@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig
+from band.integrations.acp.cursor import ROOM_COMMAND, CursorCommandWord
 from tests.adapters.codex.kit import make_platform_message
 
 
@@ -12,12 +13,15 @@ class TestCursorControlRecognition:
     @pytest.mark.parametrize(
         ("content", "recognized"),
         [
-            ("/cursor", True),
-            ("@owner/cursor /CuRsOr decisions", True),
-            ("  /cursor\tstatus", True),
-            ("/cursor unknown", True),
-            ("/cursor-extra", False),
-            ("do not run /cursor", False),
+            (ROOM_COMMAND, True),
+            (
+                f"@owner/cursor {ROOM_COMMAND.title()} {CursorCommandWord.DECISIONS}",
+                True,
+            ),
+            (f"  {ROOM_COMMAND}\tstatus", True),
+            (f"{ROOM_COMMAND} unknown", True),
+            (f"{ROOM_COMMAND}-extra", False),
+            (f"do not run {ROOM_COMMAND}", False),
             ("", False),
         ],
     )
