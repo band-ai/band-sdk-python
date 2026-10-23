@@ -906,7 +906,9 @@ def redact_tool_call_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any
         return args
     return {
         **args,
-        "content": file_content_placeholder(len(content.encode("utf-8"))),
+        "content": file_content_placeholder(
+            len(content.encode("utf-8", "surrogatepass"))
+        ),
     }
 
 
