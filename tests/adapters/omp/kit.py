@@ -56,6 +56,27 @@ class EchoInput(BaseModel):
     text: str
 
 
+class EchoDetail(BaseModel):
+    text: str
+    payload: bytes
+
+
+class EchoResult(BaseModel):
+    detail: EchoDetail
+
+
+class StartupGate:
+    """Hold native startup readiness until the test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, *_args: object, **_kwargs: object) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+
 class PendingRuntime:
     def __init__(self, *_args, **_kwargs):
         self.yielded = asyncio.Event()
@@ -178,6 +199,24 @@ class RecordingRuntime(PendingRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         self.prompt_text = _message
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+
+class SelectionGateRuntime(RecordingRuntime):
+    """Hold one native selection command at its request boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held_command: OmpCommandName | None = None
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def request(
+        self, command: str, **parameters: JsonValue
+    ) -> dict[str, JsonValue]:
+        if command == self.held_command:
+            self.entered.set()
+            await self.release.wait()
+        return await super().request(command, **parameters)
 
 
 class AutomaticThinkingRuntime(PendingRuntime):
@@ -437,8 +476,14 @@ class UnencodableCallRuntime(PendingRuntime):
 
 
 class CustomHostToolRuntime(RecordingRuntime):
-    def __init__(self, *_args, **_kwargs):
+    def __init__(
+        self,
+        *_args: object,
+        arguments: dict[str, JsonValue] | None = None,
+        **_kwargs: object,
+    ) -> None:
         super().__init__(*_args, **_kwargs)
+        self.arguments = {"text": "ping"} if arguments is None else arguments
         self.tool_result: OmpToolResult | None = None
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
@@ -447,7 +492,7 @@ class CustomHostToolRuntime(RecordingRuntime):
                 id="call",
                 toolCallId="echo",
                 toolName="echo",
-                arguments={"text": "ping"},
+                arguments=self.arguments,
             )
         )
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
@@ -743,6 +788,8 @@ async def owned_rpc_turn(
     native_arguments=None,
     native_error: bool = True,
     inject_band_tools: bool = True,
+    tools: FakeAgentTools | None = None,
+    judged: bool = False,
 ):
     observed = []
     clients = []
@@ -805,22 +852,26 @@ async def owned_rpc_turn(
         OmpAdapterConfig(cwd=str(tmp_path), inject_band_tools=inject_band_tools),
         resolve_permission=_cancel,
     )
-    tools = FakeAgentTools()
+    tools = tools if tools is not None else FakeAgentTools()
+    turn_input = {
+        "msg": make_platform_message("Handle the permission request"),
+        "tools": tools,
+        "history": OmpSessionState(),
+        "participants_msg": None,
+        "contacts_msg": None,
+        "is_session_bootstrap": True,
+        "room_id": "room",
+    }
     try:
-        await adapter.on_message(
-            make_platform_message("Handle the permission request"),
-            tools,
-            OmpSessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room",
-        )
+        if judged:
+            await adapter.run_judged_turn(**turn_input)
+        else:
+            await adapter.on_message(**turn_input)
     finally:
         await adapter.cleanup_all()
-    assert clients
-    await released_rpc_clients(clients)
-    assert occupied_room_ids(adapter) == set()
+        assert clients
+        await released_rpc_clients(clients)
+        assert occupied_room_ids(adapter) == set()
     return tools, observed
 
 
