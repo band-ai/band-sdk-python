@@ -4,11 +4,15 @@
 # already runs xdist on the 4 vCPUs of that runner. This workflow times the
 # suite the same way on one Ubuntu runner, writes `.test_durations`, and
 # opens a PR when the file drifts. A quiet week opens nothing. CI reads the
-# file so historically slow tests start first and those four workers stay busy.
+# file so historically slow tests start first and the four workers stay busy.
 #
 # Store uses in-job xdist (not serial `-n0`): each worker writes a `.gwN`
 # sidecar and the controller merges, so this job saturates the cores it is
 # already allocated instead of idling three of them for a serial retime.
+#
+# Cut from and PR against main, same as kit-image-rebuild / release-please.
+# GitHub only registers workflow_dispatch once this file is on the default
+# branch; a branch probe cannot start it.
 
 name: pytest-durations
 
@@ -40,12 +44,10 @@ jobs:
           client-id: ${{ secrets.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Checkout the dispatched ref
+      - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # On-demand runs use the selected branch so a probe can exercise this
-          # workflow before it is on main. Scheduled runs are always main.
-          ref: ${{ github.ref }}
+          ref: main
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure git to use HTTPS for GitHub
@@ -74,7 +76,6 @@ jobs:
             --ignore=tests/e2e --ignore=tests/integration
 
       - name: Open a durations PR when the file drifted
-        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -88,6 +89,8 @@ jobs:
           git config user.email "release-bot@band.ai"
           git switch -c "$DURATIONS_BRANCH"
           git commit -m "chore: refresh unit-test durations"
+          # Plain --force: the branch is bot-owned with deterministic per-run
+          # content, and a re-run must simply overwrite the previous attempt.
           git push -u origin "$DURATIONS_BRANCH" --force
           if [ -z "$(gh pr list --head "$DURATIONS_BRANCH" --state open --json number --jq '.[].number')" ]; then
             gh pr create \
@@ -97,16 +100,4 @@ jobs:
               --head "$DURATIONS_BRANCH"
           else
             echo "PR for ${DURATIONS_BRANCH} already open; the push updated it."
-          fi
-
-      - name: Report durations drift on a branch probe
-        if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
-        run: |
-          set -euo pipefail
-          git add -- "$DURATIONS_PATH"
-          if git diff --cached --quiet; then
-            echo "probe: durations unchanged; would not open a PR"
-          else
-            echo "probe: durations drifted; skipping PR because this run is not on the default branch"
-            git diff --cached --stat
           fi

@@ -47,11 +47,13 @@ the workflow files cannot say for themselves.
   `PYTEST_ADDOPTS`: local live runs (`E2E_TESTS_ENABLED` and the other suite
   gates) and `--pdb` must stay single-process. Use `pytest -n0` to debug.
 - **Durations rebalance** is `.github/workflows/pytest-durations.yml`:
-  Mondays at 04:17 UTC (after weekly CI) and on `workflow_dispatch`. It
-  times the unit suite with the same in-job xdist flags on one Ubuntu
-  runner, writes `.test_durations`, and opens a PR when the file drifts. A
-  quiet week opens nothing. CI reads that file so historically slow tests
-  start first and the four workers stay busy. This is not extra PR jobs.
+  Mondays at 04:17 UTC (after weekly CI) and on `workflow_dispatch` once
+  the file is on `main`. It times the unit suite with the same in-job xdist
+  flags on one Ubuntu runner, writes `.test_durations`, and opens a PR
+  against `main` when the file drifts. A quiet week opens nothing. CI reads
+  that file so historically slow tests start first and the four workers stay
+  busy. This is not extra PR jobs. GitHub does not register a new
+  `workflow_dispatch` file until it is on the default branch.
 
 ## PyPI publish
 

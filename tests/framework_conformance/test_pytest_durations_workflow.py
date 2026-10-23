@@ -47,29 +47,19 @@ class TestPytestDurationsWorkflow:
         token = next(step for step in steps if step.get("id") == "app-token")
         assert token["with"]["client-id"] == "${{ secrets.APP_CLIENT_ID }}"
         assert token["with"]["private-key"] == "${{ secrets.APP_PRIVATE_KEY }}"
-        checkout = next(
-            step for step in steps if step.get("name") == "Checkout the dispatched ref"
-        )
-        assert checkout["with"]["ref"] == "${{ github.ref }}"
+        checkout = next(step for step in steps if step.get("name") == "Checkout main")
+        assert checkout["with"]["ref"] == "main"
         pr = next(
             step
             for step in steps
             if step.get("name") == "Open a durations PR when the file drifted"
         )
-        assert pr["if"] == (
-            "github.ref == format('refs/heads/{0}', "
-            "github.event.repository.default_branch)"
-        )
+        assert "if" not in pr
         script = pr["run"]
         assert 'git add -- "$DURATIONS_PATH"' in script
         assert "git diff --cached --quiet" in script
         assert "gh pr create" in script
+        assert "--base main" in script
         assert "chore/pytest-durations" in workflow["env"]["DURATIONS_BRANCH"]
         assert workflow["env"]["DURATIONS_PATH"] == DURATIONS_PATH_NAME
         assert pr["env"]["GH_TOKEN"] == "${{ steps.app-token.outputs.token }}"
-        probe = next(
-            step
-            for step in steps
-            if step.get("name") == "Report durations drift on a branch probe"
-        )
-        assert "skipping PR" in probe["run"]

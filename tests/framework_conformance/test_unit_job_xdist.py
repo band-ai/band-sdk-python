@@ -12,6 +12,15 @@ UNIT_PYTEST_STEPS = (
     ("test-strands-nooa", "Run Strands and NOOA tests"),
     ("test-parlant", "Run parlant tests"),
 )
+SERIAL_PYTEST_STEPS = (
+    ("test", "Collect baseline E2E in the core environment"),
+    ("test", "Run markdown doc tests"),
+    ("test-crewai", "Collect baseline E2E in the CrewAI environment"),
+    ("test-strands-nooa", "Collect baseline E2E in the Strands and NOOA environment"),
+    ("test-strands-nooa", "Verify selected Strands and NOOA coverage"),
+    ("test-strands-nooa", "Run NOOA markdown examples"),
+    ("test-parlant", "Collect baseline E2E in the Parlant environment"),
+)
 
 
 class TestUnitJobXdist:
@@ -22,6 +31,12 @@ class TestUnitJobXdist:
                 assert flag in command, (job, flag)
             assert "--splits" not in command
             assert "matrix.shard" not in command
+
+    def test_collect_only_and_markdown_docs_stay_serial(self) -> None:
+        for job, step in SERIAL_PYTEST_STEPS:
+            command = job_command(job, step)
+            for flag in CI_XDIST_FLAGS:
+                assert flag not in command, (job, step, flag)
 
     def test_main_test_job_ignores_live_suites(self) -> None:
         command = job_command("test", "Run tests")
