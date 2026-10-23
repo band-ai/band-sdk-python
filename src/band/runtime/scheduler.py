@@ -363,9 +363,15 @@ class Scheduler:
                 return ResyncOutcome.RETRY
             finally:
                 if recovery:
+                    # A skipped /next head is still outstanding, so this is not idle.
+                    empty_room = (
+                        outcome is ResyncOutcome.EMPTY
+                        and not self.handled_work
+                        and not self.next_fallback
+                    )
                     self.schedule.complete(
                         asyncio.get_running_loop().time(),
-                        empty=outcome is ResyncOutcome.EMPTY and not self.handled_work,
+                        empty=empty_room,
                         stopped=self.owner.is_stopped,
                     )
 
