@@ -472,6 +472,21 @@ class Scheduler:
             segment.append(event)
         return segment
 
+    def local_predecessor(self, identity: str) -> PlatformEvent | None:
+        """Keep a known original behind the local boundary it arrived after."""
+        head: PlatformEvent | None = None
+        boundary = False
+        for event in self.pending:
+            if self.holds_retry(event):
+                continue
+            if delivery_id(event) == identity:
+                return head if boundary else None
+            if head is None:
+                head = event
+            if not is_ordinary(event):
+                boundary = True
+        return None
+
     def prune_skipped(
         self,
         candidates: Iterable[Candidate],
@@ -558,10 +573,13 @@ class Scheduler:
     ) -> ResyncOutcome:
         """Select the next turn from the page and the retained originals, and run it."""
         segment = self.local_segment()
-        candidates = self.candidates(read.rows)
-        candidates.sort(
-            key=lambda candidate: candidate.message_id not in active.resumed_retries
-        )
+        if not read.rows and self.sync_complete:
+            candidates = [self.classify(Candidate.retained(event)) for event in segment]
+        else:
+            candidates = self.candidates(read.rows)
+            candidates.sort(
+                key=lambda candidate: candidate.message_id not in active.resumed_retries
+            )
         frontier = MessageKey.last_of(read.rows)
         selection = select_prefix(
             candidates,
@@ -572,6 +590,14 @@ class Scheduler:
             resumed=active.resumed_retries,
         )
         skipped = self.prune_skipped(candidates, frontier, exhausted=read.exhausted)
+        next_input = selection.members[0] if selection.members else selection.at
+        if next_input is not None and selection.stop is not Stop.FRONTIER:
+            prior = self.local_predecessor(next_input.message_id)
+            if prior is not None:
+                if not is_ordinary(prior):
+                    return (await self.dispatch_local(prior)).scheduling
+                member = next(c for c in candidates if c.event is prior)
+                return await self.dispatch_selection(active, (member,))
         if selection.members:
             return await self.dispatch_selection(active, selection.members)
         if selection.stop is Stop.HELD and selection.at is not None:
