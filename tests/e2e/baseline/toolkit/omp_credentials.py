@@ -25,7 +25,7 @@ def omp_command(settings: BaselineSettings) -> tuple[str, ...]:
 
 def native_omp_command(settings: BaselineSettings) -> tuple[str, ...]:
     """The executable and arguments used by native OMP RPC probes."""
-    override = settings.backends.omp_command.strip()
+    override = settings.backends.omp_native_command.strip()
     return tuple(override.split()) if override else DEFAULT_OMP_COMMAND
 
 

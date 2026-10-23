@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.samples.omppermission import deny_probe_allow_completion
 from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.builders import omp_acp_env, omp_agent_home_dir
 from tests.e2e.baseline.toolkit.omp_credentials import native_omp_command, omp_model
@@ -28,6 +27,9 @@ def denying_omp_adapter(
     from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
         OmpAdapter,
         OmpAdapterConfig,
+    )
+    from tests.e2e.baseline.smoke.samples.omppermission import (  # noqa: PLC0415 -- this policy imports the optional native adapter
+        deny_probe_allow_completion,
     )
 
     async def deny(request: OmpPermissionRequest) -> str | None:
