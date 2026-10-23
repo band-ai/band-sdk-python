@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from band.adapters.omp import OmpPermissionRequest
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
@@ -16,13 +16,15 @@ from tests.e2e.baseline.smoke.adapters.omp.kit import (
     denying_omp_adapter,
     permission_probe_sandbox,
 )
-from tests.e2e.baseline.smoke.samples.omppermission import FORM_PROBE_TITLE
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+if TYPE_CHECKING:
+    from band.adapters.omp import OmpPermissionRequest
 
 
 class TestOmpPermissionDeny:
@@ -37,6 +39,10 @@ class TestOmpPermissionDeny:
         user_ops: UserOps,
         reply_capture: CaptureFactory,
     ) -> None:
+        from tests.e2e.baseline.smoke.samples.omppermission import (  # noqa: PLC0415 -- this sample imports the optional native adapter
+            FORM_PROBE_TITLE,
+        )
+
         requests: list[OmpPermissionRequest] = []
         with permission_probe_sandbox() as sandbox:
             adapter = denying_omp_adapter(
