@@ -93,8 +93,7 @@ class TurnOutcome(Enum):
     RETRY_LATER = "retry_later"
     NOT_ACCEPTED = "not_accepted"
     DECLINED = "declined"
-    # The platform no longer has the original though the room is still
-    # visible: no turn will run it, and nothing about it was processed.
+    # A readable room after a 404 lets the SDK infer that the original is gone.
     ABSENT = "absent"
 
 
@@ -224,10 +223,10 @@ class DeliveryLifecycle:
         return pending is not None and pending["continuation"]["kind"] == "retry"
 
     async def is_gone(self, identity: str) -> bool:
-        """Whether a 404 on ``identity`` means the message is gone, not that the room is.
+        """Infer a missing message from a 404 followed by a readable room.
 
-        The platform answers a non-participant's every room route with the same
-        404, so only a room read that succeeds proves the message itself is missing.
+        The probe is not atomic with the write: restored access between requests
+        can retire an original that still exists.
         """
         try:
             await self.link.get_next_message(self.room_id)
@@ -239,16 +238,15 @@ class DeliveryLifecycle:
             )
             return False
         logger.info(
-            "Room %s readable after a 404 on message %s; dropping it as gone",
+            "Room %s readable after a 404 on message %s; inferring deletion",
             self.room_id,
             identity,
         )
         return True
 
     def retire_gone(self, identity: str) -> None:
-        """Drop the pending settlement of a message the platform no longer has."""
-        # Local completion is the core's only release of a pending settlement;
-        # nothing is written, and no turn can run a message that does not exist.
+        """Drop the pending settlement of an original inferred missing."""
+        # Local completion releases the pending settlement without a platform write.
         self.claims.remember_completed(self.room_id, identity)
         self.retry_not_before.pop(identity, None)
 
