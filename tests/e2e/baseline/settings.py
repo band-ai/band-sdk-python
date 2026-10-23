@@ -205,7 +205,9 @@ class Backends(BaseSettings):
 
     # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
     # provider-qualified OMP_MODEL (passed as --model); override binary/args via OMP_COMMAND.
+    # Native RPC needs its own complete override because ACP requires a subcommand.
     omp_command: str = ""  # OMP_COMMAND
+    omp_native_command: str = ""  # OMP_NATIVE_COMMAND (defaults to `omp --mode rpc`)
     omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
     # Copilot-hosted auth for the non-BYOK smokes in test_copilot_acp.py; the

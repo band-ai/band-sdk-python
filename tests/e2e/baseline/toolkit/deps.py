@@ -41,6 +41,7 @@ from band.integrations.acp.cursor import CURSOR_CLI_BINARY
 from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.omp_credentials import (
+    native_omp_command,
     omp_command,
     omp_provider_api_key,
 )
@@ -172,6 +173,7 @@ class Dep(Enum):
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
     CURSOR_CLI = "cursor_cli"  # the `agent` CLI and noninteractive auth for Cursor ACP
     OMP = "omp"  # Bun + `omp` CLI + provider key for OMP_MODEL
+    OMP_NATIVE = "omp_native"  # the omp extra and native RPC backend
     SECOND_USER = "second_user"  # BAND_API_KEY_USER_2, a second human in the room
 
 
@@ -240,8 +242,11 @@ def _bun_meets_min_version(min_version: str) -> bool:
 
 
 def _omp_cli_responds(settings: BaselineSettings) -> bool:
-    """The OMP command every baseline test launches answers ``--help``."""
-    command = omp_command(settings)
+    """The ACP-bridged OMP command every baseline test launches answers ``--help``."""
+    return _cli_responds(omp_command(settings))
+
+
+def _cli_responds(command: tuple[str, ...]) -> bool:
     if shutil.which(command[0]) is None:
         return False
     try:
@@ -261,6 +266,15 @@ def _omp_available(settings: BaselineSettings) -> bool:
     return (
         _bun_meets_min_version(OMP_MIN_BUN)
         and _omp_cli_responds(settings)
+        and bool(omp_provider_api_key(settings))
+    )
+
+
+def _native_omp_available(settings: BaselineSettings) -> bool:
+    return (
+        importlib.util.find_spec("psutil") is not None
+        and _bun_meets_min_version(OMP_MIN_BUN)
+        and _cli_responds(native_omp_command(settings))
         and bool(omp_provider_api_key(settings))
     )
 
@@ -385,6 +399,11 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OMP: DepSpec(
         _omp_available,
         f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
+        lane=Lane.BACKENDS,
+    ),
+    Dep.OMP_NATIVE: DepSpec(
+        _native_omp_available,
+        f"band-sdk[omp], Bun >= {OMP_MIN_BUN}, working `omp --mode rpc`, and a provider key for OMP_MODEL are required",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(

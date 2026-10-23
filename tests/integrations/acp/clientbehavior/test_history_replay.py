@@ -3,9 +3,7 @@ from __future__ import annotations
 import pytest
 from acp import RequestError
 
-from band.integrations.acp.client_adapter import (
-    NEW_MESSAGE_MARKER_PREFIX,
-)
+from band.converters.helpers import NEW_MESSAGE_MARKER_PREFIX
 from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent,
     acp_adapter,

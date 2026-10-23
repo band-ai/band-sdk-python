@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from band.integrations.acp.client_adapter import (
+from band.converters.helpers import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
 )
