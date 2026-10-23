@@ -24,6 +24,12 @@ OMP_ACP_SUBCOMMAND = "acp"
 # The acp subcommand's flag for the room workspace, passed as ``--cwd=<path>``.
 OMP_CWD_FLAG = "--cwd"
 
+
+def omp_cwd_argument(workspace: str) -> str:
+    """Format OMP's workspace flag without changing launch cwd."""
+    return f"{OMP_CWD_FLAG}={workspace}"
+
+
 DEFAULT_OMP_ACP_COMMAND: tuple[str, ...] = (
     "omp",
     OMP_ACP_SUBCOMMAND,
@@ -167,7 +173,7 @@ def omp_command_in_workspace(command: Sequence[str], workspace: str) -> list[str
             f"got {list(command)!r}"
         )
     split = list(command).index(OMP_ACP_SUBCOMMAND) + 1
-    return [*command[:split], f"{OMP_CWD_FLAG}={workspace}", *command[split:]]
+    return [*command[:split], omp_cwd_argument(workspace), *command[split:]]
 
 
 def omp_elicitation_call_id(session_id: str) -> str:
@@ -210,12 +216,12 @@ def is_omp_approve_deny_form(requested_schema: object) -> bool:
     return approve_deny_form_field(requested_schema) is not None
 
 
-def _omp_mcp_remainder(name_or_path: str) -> str | None:
-    """Strip ``xd://`` and/or ``mcp__``; ``None`` when not an OMP MCP spelling."""
+def _omp_mcp_remainder(name_or_path: str, namespace: str) -> str | None:
+    """Strip ``xd://``, ``mcp__`` and ``namespace``; ``None`` when not an OMP MCP spelling."""
     text = name_or_path.removeprefix(XD_URL_PREFIX)
     if not text.startswith(XD_MCP_PREFIX):
         return None
-    remainder = text.removeprefix(XD_MCP_PREFIX)
+    remainder = text.removeprefix(XD_MCP_PREFIX).removeprefix(namespace)
     return remainder or None
 
 
@@ -243,10 +249,14 @@ def _omp_mcp_wire_candidates(remainder: str) -> list[str]:
 
 
 def normalize_omp_mcp_tool_name(
-    name_or_path: str, own_names: Collection[str]
+    name_or_path: str, own_names: Collection[str], *, namespace: str = ""
 ) -> str | None:
-    """Map an OMP ``mcp__…`` title or ``xd://mcp__…`` path to a Band tool name."""
-    remainder = _omp_mcp_remainder(name_or_path)
+    """Map an OMP ``mcp__…`` title or ``xd://mcp__…`` path to a Band tool name.
+
+    ``namespace`` is a server-name prefix OMP mints into every tool of a
+    plugin-projected server; it is removed before the remainder is matched.
+    """
+    remainder = _omp_mcp_remainder(name_or_path, namespace)
     if remainder is None:
         return None
     for candidate in _omp_mcp_wire_candidates(remainder):
@@ -262,6 +272,7 @@ def normalize_omp_mcp_device_call(
     own_names: Collection[str],
     *,
     kind: str | None = None,
+    namespace: str = "",
 ) -> tuple[str, dict[str, object]]:
     """Map OMP MCP device writes / ``mcp__`` titles to canonical Band tool names.
 
@@ -281,7 +292,7 @@ def normalize_omp_mcp_device_call(
             break
 
     if path is not None:
-        canonical = normalize_omp_mcp_tool_name(path, own_names)
+        canonical = normalize_omp_mcp_tool_name(path, own_names, namespace=namespace)
         content = args.get("content")
         if canonical is None or kind == _ACP_KIND_READ:
             return name, args
@@ -297,7 +308,7 @@ def normalize_omp_mcp_device_call(
             return canonical, args
         return canonical, parsed
 
-    canonical = normalize_omp_mcp_tool_name(name, own_names)
+    canonical = normalize_omp_mcp_tool_name(name, own_names, namespace=namespace)
     if canonical is None:
         return name, args
     return canonical, args

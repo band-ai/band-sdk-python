@@ -12,8 +12,20 @@ import pytest
 import pytest_asyncio
 
 from band.integrations.codex import stdio_client, winspawn
+from tests.integrations.codex.job import JobKernel
 from tests.integrations.codex.lifecycle import WindowsLifecycle
 from tests.integrations.codex.lookup import WindowsLookup
+
+
+@pytest.fixture
+def job_kernel(monkeypatch: pytest.MonkeyPatch) -> JobKernel:
+    kernel = JobKernel()
+    monkeypatch.setattr(winspawn, "_kernel32", lambda: kernel)
+    monkeypatch.setattr(winspawn, "_last_error", lambda: kernel.last_error)
+    monkeypatch.setattr(
+        winspawn, "_win_os_error", lambda code: OSError(code, "native Job failure")
+    )
+    return kernel
 
 
 @pytest.fixture
@@ -21,8 +33,9 @@ def windows_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WindowsLo
     peer = WindowsLookup(tmp_path)
     monkeypatch.chdir(peer.current)
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(stdio_client, "os", SimpleNamespace(name="nt", path=os.path))
-    monkeypatch.setattr(winspawn, "os", SimpleNamespace(name="nt", pathsep=os.pathsep))
+    monkeypatch.setattr(
+        winspawn, "os", SimpleNamespace(name="nt", path=os.path, pathsep=os.pathsep)
+    )
     monkeypatch.setattr(winspawn, "_kernel32", lambda: peer.kernel)
     return peer
 
@@ -40,9 +53,6 @@ async def windows_lifecycle(
     )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", peer.launch)
     monkeypatch.setattr(winspawn, "_read_status", peer.read_status)
-    monkeypatch.setattr(
-        peer.client, "_windows_command", lambda _job, _handle: ["unused"]
-    )
     try:
         yield peer
     finally:

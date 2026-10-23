@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Mapping
 from typing import cast
 
@@ -65,7 +66,7 @@ class WindowsLifecycle:
     def __init__(self) -> None:
         self.helper = HelperPeer()
         self.job = JobPeer(self.helper)
-        self.client = CodexStdioClient(command=["unused"])
+        self.client = CodexStdioClient(command=[sys.executable])
         self.creation_started = asyncio.Event()
         self.creation_allowed = asyncio.Event()
         self.creation_allowed.set()

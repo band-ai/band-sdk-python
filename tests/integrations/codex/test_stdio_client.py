@@ -408,3 +408,17 @@ async def test_stdio_client_eof_fails_pending_and_enqueues_disconnect(
     event = await client.recv_event(timeout_s=1.0)
     assert event.method == "transport/closed"
     await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="Windows closes through the job object")
+async def test_close_lets_codex_exit_on_stdin_eof_before_killing_its_tree(
+    fake_codex_server_script: Path,
+) -> None:
+    """A harness that exits once its stdin closes ends on its own terms; the
+    tree kill is the fallback for one that does not."""
+    client = await _build_client(fake_codex_server_script, scenario="basic")
+    process = client._proc
+    assert process is not None
+    await client.close()
+    assert process.returncode == 0

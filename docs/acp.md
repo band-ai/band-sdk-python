@@ -281,3 +281,41 @@ cleanup. Explicit caller cancellation and provider timeouts remain effective.
   credential-redacted; values under credential-named fields are redacted in full.
 - The ACP Python client drains queued update handlers before surfacing a prompt error, so
   a slow client handler can still delay its own `prompt()`.
+
+## Native OMP transport
+
+`band.integrations.omprpc.OmpRpcClient` speaks OMP's native RPC v2 protocol,
+including structured ask questions and answers. It is separate from the ACP
+transport; adding it does not deprecate or remove the public `OmpACPAdapter`.
+
+Event callbacks run serially with a bounded backlog. Exhausting that backlog
+fails the owning prompt with `OmpProcessError` and starts cleanup rather than
+silently dropping events and reporting success. The wire reader does not wait
+for callback capacity, so callbacks can still issue correlated commands and
+answer native UI requests while delivery is held.
+
+An observed root-process exit also retires the transport when descendants still
+hold stdout open. Command errors, including an error reported after prompt
+admission, raise `OmpRpcError` without retiring an otherwise usable process.
+Host-tool and UI callbacks admitted while a settled turn drains share its
+original callback-exit deadline; an unfinished callback fails the turn and starts
+cleanup. SDK debug logs report stderr byte counts, never the child's raw stderr.
+
+Explicit MCP transports use `band.integrations.ompprocess.OmpMcpTransport`.
+Native session metadata uses `band.converters.omp.OmpMetadataKey.ROOM` and
+`OmpMetadataKey.SESSION`.
+
+A `create_process` factory customizes creation without bypassing containment.
+On Windows it launches the existing helper; the client still owns the Job
+containing the native process and its descendants, including during cancelled
+or incomplete startup.
+To hold or observe the owned launch, wrap `spawn_owned_process` and delegate to
+its bound original (or override it and call `super()`). Do not pass that wrapper
+as `create_process`: that factory runs below the ownership boundary. The owned
+method retains the process before returning, so wrapper failure still reaps it.
+
+On POSIX, process-group capture rechecks a reaped leader's identity after
+enumerating members, before retaining that group. A reused leader PID does not
+transfer custody to an unrelated session. Platforms without process-group support
+use their existing Job and environment-marker ownership instead of probing that
+PID as a group identity.
