@@ -11,7 +11,6 @@ from band.integrations.ompwire import OmpPromptStatus
 from band.runtime.tools import BandTool
 from band.testing import failure_reports
 from tests.adapters.omp.declinekit import (
-    ConcurrentDeclineTools,
     CustomDeclineInput,
     DeclineTools,
     custom_decline,
@@ -24,14 +23,14 @@ from tests.adapters.omp.kit import run_turn
 
 
 class TestTerminalDecline:
-    async def test_concurrent_declines_share_one_owned_stop(
-        self, tmp_path: Path
-    ) -> None:
-        tools = ConcurrentDeclineTools()
+    async def test_queued_declines_share_one_owned_stop(self, tmp_path: Path) -> None:
+        tools = DeclineTools()
         async with declining_adapter(tmp_path, DeclineScenario.CONCURRENT) as adapter:
             await run_turn(adapter, tools)
 
-            assert tools.started == 2
+            assert [call["tool_name"] for call in tools.tool_calls] == [
+                BandTool.NO_REPLY
+            ]
             assert len(stop_commands(tmp_path)) == 1
             assert len(tool_results(tmp_path)) == 1
             assert failure_reports(tools) == []

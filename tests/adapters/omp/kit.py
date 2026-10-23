@@ -6,7 +6,6 @@ import asyncio
 import json
 import sys
 from collections.abc import Callable
-from contextvars import copy_context
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -588,7 +587,7 @@ def _complete_future_from_task(pending: asyncio.Future, finished: asyncio.Task) 
 
 
 class LaterTurnReaderUiRuntime(RecordingRuntime):
-    """Dispatch later-turn UI from the start()-era reader using the prompt context."""
+    """Dispatch later-turn UI from the start()-era reader, not the prompt task."""
 
     def __init__(self, *_args, **_kwargs):
         super().__init__(*_args, **_kwargs)
@@ -604,8 +603,8 @@ class LaterTurnReaderUiRuntime(RecordingRuntime):
             job = await self._jobs.get()
             if job is None:
                 return
-            callback, request, done, context = job
-            task = asyncio.create_task(callback(request), context=context)
+            callback, request, done = job
+            task = asyncio.create_task(callback(request))
             task.add_done_callback(partial(_complete_future_from_task, done))
             await done
 
@@ -619,7 +618,7 @@ class LaterTurnReaderUiRuntime(RecordingRuntime):
                 title="Approve tool?",
                 options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
             )
-            await self._jobs.put((on_ui, request, done, copy_context()))
+            await self._jobs.put((on_ui, request, done))
             await done
         await PendingRuntime.prompt(
             self, _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui

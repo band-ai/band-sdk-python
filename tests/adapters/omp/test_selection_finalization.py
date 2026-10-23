@@ -18,7 +18,7 @@ from tests.adapters.omp.kit import (
     retained_selection,
     run_turn,
 )
-from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, ObservedRoomGate
+from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, ObservedMailbox
 from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
 
 __all__ = ["launches"]
@@ -32,8 +32,8 @@ class TestSelectionFinalization:
         runtime = HeldCloseRuntime()
         launches.runtime_factory = lambda: runtime
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        gate = ObservedRoomGate()
-        adapter._locks["room-123"] = gate
+        gate = ObservedMailbox()
+        adapter._mailbox = gate
         await run_turn(adapter, FakeAgentTools())
         cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         await runtime.closing.arrived()

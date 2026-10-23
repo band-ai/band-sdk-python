@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from collections.abc import AsyncIterator
@@ -25,22 +24,6 @@ CustomDeclineInput = create_model(f"{BandTool.NO_REPLY}Input")
 
 def custom_decline() -> str:
     return "Custom observation completed"
-
-
-class ConcurrentDeclineTools(FakeAgentTools):
-    def __init__(self) -> None:
-        super().__init__()
-        self.started = 0
-        self.both_started = asyncio.Event()
-
-    async def execute_tool_call_structured(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> ToolCallOutcome:
-        self.started += 1
-        if self.started == 2:
-            self.both_started.set()
-        await self.both_started.wait()
-        return await super().execute_tool_call_structured(tool_name, arguments)
 
 
 class DeclineTools(FakeAgentTools):

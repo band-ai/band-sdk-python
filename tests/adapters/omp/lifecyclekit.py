@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Self
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
-from band.adapters.omp import RoomGate
+from band.runtime.mailbox import RoomMailbox
 from tests.adapters.hold import Hold
 from tests.adapters.omp.kit import RecordingRuntime
 
@@ -58,13 +59,16 @@ class SignallingCloseRuntime(RecordingRuntime):
         self.physical_close.set()
 
 
-class ObservedRoomGate(RoomGate):
-    """Report entry attempts while preserving production callback reentry."""
+Result = TypeVar("Result")
+
+
+class ObservedMailbox(RoomMailbox):
+    """Report submissions while preserving production mailbox scheduling."""
 
     def __init__(self) -> None:
         super().__init__()
         self.attempted = asyncio.Event()
 
-    async def __aenter__(self) -> Self:
+    async def ask(self, room_id: str, run: Callable[[], Awaitable[Result]]) -> Result:
         self.attempted.set()
-        return await super().__aenter__()
+        return await super().ask(room_id, run)

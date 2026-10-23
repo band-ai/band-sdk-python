@@ -1,4 +1,4 @@
-"""Same-task permission callbacks may reenter room selection without deadlock."""
+"""Permission callbacks may apply a model selection without deadlock."""
 
 from __future__ import annotations
 

@@ -19,7 +19,7 @@ from tests.adapters.omp.kit import (
     launches,
     run_turn,
 )
-from tests.adapters.omp.lifecyclekit import ObservedRoomGate
+from tests.adapters.omp.lifecyclekit import ObservedMailbox
 
 __all__ = ["launches"]
 
@@ -92,8 +92,8 @@ class TestSelectionCancellation:
         runtime = SelectionGateRuntime()
         launches.runtime_factory = lambda: runtime
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        gate = ObservedRoomGate()
-        adapter._locks["room-123"] = gate
+        gate = ObservedMailbox()
+        adapter._mailbox = gate
         await run_turn(adapter, FakeAgentTools())
         runtime.held_command = OmpCommandName.GET_AVAILABLE_THINKING_LEVELS
         selecting = asyncio.create_task(

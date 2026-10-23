@@ -8,12 +8,12 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import ExitStack
-from contextvars import ContextVar
+from contextvars import Context
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
-from typing import ClassVar, Literal, Self, cast
+from typing import ClassVar, Literal, Self, TypeVar, cast
 from uuid import uuid4
 
 from band_sdk_core import AgentFailure
@@ -53,6 +53,7 @@ from band.core.protocols import (
 from band.core.retention import (
     ReleaseCause,
     ReleaseOutcome,
+    Residency,
     RetainedRoom,
     RoomRetention,
     RoomRetentionConfig,
@@ -121,6 +122,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.formatters import messages_before
+from band.runtime.mailbox import RoomMailbox
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -162,40 +164,7 @@ _APPROVAL_FIELD_NAMES = {
     **{key.replace("_", " "): key for key in OMP_DEVICE_PATH_KEYS},
 }
 OMP_PERMISSION_CANCELLED = PERMISSION_CANCELLED_TEXT
-_held_room_gates: ContextVar[frozenset[object]] = ContextVar(
-    "omp_held_room_gates", default=frozenset()
-)
-
-
-class RoomGate:
-    """Serialize different occupancies while nested and callback tasks reenter."""
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._owner: object | None = None
-        self._depth = 0
-
-    async def __aenter__(self) -> Self:
-        occupancy = self._owner
-        if occupancy is not None and occupancy in _held_room_gates.get():
-            self._depth += 1
-            return self
-        await self._lock.acquire()
-        occupancy = object()
-        self._owner = occupancy
-        self._depth = 1
-        _held_room_gates.set(_held_room_gates.get() | {occupancy})
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        self._depth -= 1
-        if self._depth:
-            return
-        occupancy = self._owner
-        self._owner = None
-        if occupancy is not None:
-            _held_room_gates.set(_held_room_gates.get() - {occupancy})
-        self._lock.release()
+T = TypeVar("T")
 
 
 def _selection_after(
@@ -415,8 +384,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             workspace_resolver_for(self.config.cwd, workspace_for_room)
         )
         self._rooms: dict[str, OmpRoom] = {}
-        self._locks: dict[str, RoomGate] = {}
-        self._selection_locks: dict[str, asyncio.Lock] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._mailbox = RoomMailbox()
         self._room_selections: dict[str, ModelSelection] = {}
         self._retention = RoomRetention(
             RoomRetentionConfig(transition_timeout_s=self.config.turn_timeout_s)
@@ -534,9 +503,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             servers = {BAND_MCP_SERVER_NAME: protected, **servers}
         return MappingProxyType(servers)
 
-    def _room_gate(self, room_id: str) -> RoomGate:
-        return self._locks.setdefault(room_id, RoomGate())
-
     def _room(self, room_id: str) -> OmpRoom:
         room = self._rooms.get(room_id)
         if room is None:
@@ -551,6 +517,13 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         return room
 
     async def _prepare_room(self, room: OmpRoom, history: OmpSessionState) -> None:
+        await self._exclusive(
+            room.room_id, partial(self._prepare_connection, room, history)
+        )
+
+    async def _prepare_connection(
+        self, room: OmpRoom, history: OmpSessionState
+    ) -> None:
         if room.runtime is not None:
             return
         room.history = history
@@ -579,6 +552,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             if plugin:
                 command.extend(omp_mcp_arguments(plugin))
             room.runtime = OmpRpcClient(command, env=self._spawn_env(selection))
+            room.runtime.schedule_callback = partial(self._exclusive, room_id)
             room.retiring = False
             await room.client.start()
             if plugin:
@@ -628,7 +602,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             )
             if not dialog.enabled:
                 raise RuntimeError("OMP refused the structured ask dialog")
-            await self._select_model(room, selection)
+            await self._select_model(
+                room, self._room_selections.get(room_id, selection)
+            )
             await self._refresh_state(room)
         finally:
             room.servers = {}
@@ -711,22 +687,44 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        async with (
-            self._room_gate(room_id),
-            self._selection_locks.setdefault(room_id, asyncio.Lock()),
+        await self._exclusive(
+            room_id, partial(self._apply_selection, room_id, selection)
+        )
+
+    async def _apply_selection(self, room_id: str, selection: ModelSelection) -> None:
+        room = self._rooms.get(room_id)
+        if (
+            room is not None
+            and room.runtime is not None
+            and room.retained.snapshot.state == Residency.RESIDENT
+            and not room.retained.closing
+            and not room.retiring
         ):
-            room = self._rooms.get(room_id)
-            if (
-                room is not None
-                and room.runtime is not None
-                and not room.retained.closing
-                and not room.retiring
-            ):
-                await self._select_model(room, selection)
-            self._room_selections[room_id] = _selection_after(
-                self._room_selections.get(room_id, self.model_selection),
-                selection,
-            )
+            await self._select_model(room, selection)
+        self._room_selections[room_id] = _selection_after(
+            self._room_selections.get(room_id, self.model_selection), selection
+        )
+
+    async def _exclusive(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
+        """Serialize provider mutations, inlining reentry from the current job."""
+        if self._mailbox.occupying(room_id):
+            return await run()
+        started = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def job() -> T:
+            started.set()
+            try:
+                return await run()
+            finally:
+                finished.set()
+
+        try:
+            return await self._mailbox.ask(room_id, job)
+        except asyncio.CancelledError:
+            if started.is_set():
+                await finished.wait()
+            raise
 
     def _build_system_context(self) -> str:
         prompt = render_system_prompt(
@@ -872,17 +870,13 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         is_session_bootstrap: bool,
     ) -> None:
         room_id = room.room_id
-        async with self._room_gate(room_id):
+        async with self._locks.setdefault(room_id, asyncio.Lock()):
             if room.retained.closing:
                 raise asyncio.CancelledError
             task = asyncio.current_task()
             assert task is not None
             room.operation = task
-            if room.retiring:
-                room.retained.recover(
-                    generation=room.retained.generation,
-                    reason="Native model selection was interrupted",
-                )
+            await self._exclusive(room_id, partial(self._recover_room, room))
             deadline = asyncio.timeout(self.config.turn_timeout_s)
             try:
                 async with deadline:
@@ -936,6 +930,14 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             finally:
                 if room.operation is task:
                     room.operation = None
+
+    async def _recover_room(self, room: OmpRoom) -> None:
+        if room.retiring:
+            Context().run(
+                room.retained.recover,
+                generation=room.retained.generation,
+                reason="Native model selection was interrupted",
+            )
 
     async def _prompt_room(
         self,
@@ -991,23 +993,27 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             await room.client.prompt(
                 prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
             )
-            room.bootstrapped = True
-            await self._refresh_state(room)
-            closing = "\n\n".join(turn.closing_text)
-            if (
-                Emit.THOUGHTS in self.features.emit
-                and not tools.turn.replied
-                and has_visible_content(closing)
-            ):
-                await send_event_safe(tools, closing, MessageType.THOUGHT)
-            await send_event_safe(
-                tools,
-                "OMP session",
-                MessageType.TASK,
-                metadata=self._session_task_metadata(room_id, room),
-            )
+            await self._exclusive(room_id, partial(self._finish_turn, room, turn))
         finally:
             turn.closed = True
+
+    async def _finish_turn(self, room: OmpRoom, turn: OmpTurn) -> None:
+        room_id, tools = room.room_id, turn.tools
+        room.bootstrapped = True
+        await self._refresh_state(room)
+        closing = "\n\n".join(turn.closing_text)
+        if (
+            Emit.THOUGHTS in self.features.emit
+            and not tools.turn.replied
+            and has_visible_content(closing)
+        ):
+            await send_event_safe(tools, closing, MessageType.THOUGHT)
+        await send_event_safe(
+            tools,
+            "OMP session",
+            MessageType.TASK,
+            metadata=self._session_task_metadata(room_id, room),
+        )
 
     async def _execute_tool(
         self, call: OmpHostToolCall, tools: AgentToolsProtocol
@@ -1354,7 +1360,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             fired = retire_provider_timeout(room.deadline)
             if fired and room.operation is not None:
                 room.retained.begin_settlement(room.operation)
-        room.disposal = room.retained.request_disposal()
+        # Retention transitions outlive the provider job that requests cleanup.
+        room.disposal = Context().run(room.retained.request_disposal)
         return room.disposal
 
     async def _join_disposal(self, room: OmpRoom) -> None:
@@ -1371,33 +1378,46 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             room.clear_selection = False
 
     async def _release_room(self, room: OmpRoom, cause: ReleaseCause) -> ReleaseOutcome:
-        async with self._room_gate(room.room_id):
-            room.retiring = True
-            try:
-                if room.runtime is not None:
-                    await room.client.close()
-                room.resources.close()
-            except BaseException:
-                room.clear_selection = False
-                raise
-            room.runtime = None
-            self._finalize_selection(room)
+        return await self._exclusive(
+            room.room_id, partial(self._close_connection, room)
+        )
+
+    async def _close_connection(self, room: OmpRoom) -> ReleaseOutcome:
+        room.retiring = True
+        try:
+            if room.runtime is not None:
+                await room.client.close()
+            room.resources.close()
+        except BaseException:
+            room.clear_selection = False
+            raise
+        room.runtime = None
+        self._finalize_selection(room)
         return ReleaseOutcome.RELEASED
 
     async def _dispose_room(self, room: OmpRoom) -> None:
-        async with self._room_gate(room.room_id):
-            self._finalize_selection(room)
-            room.servers = {}
-            self._workspaces.release(room.room_id)
-            if self._rooms.get(room.room_id) is room:
-                del self._rooms[room.room_id]
+        await self._exclusive(room.room_id, partial(self._forget_room, room))
+
+    async def _forget_room(self, room: OmpRoom) -> None:
+        self._finalize_selection(room)
+        room.servers = {}
+        self._workspaces.release(room.room_id)
+        if self._rooms.get(room.room_id) is room:
+            del self._rooms[room.room_id]
 
     async def on_cleanup(self, room_id: str) -> None:
         room = self._room(room_id)
         if not room.retiring:
             room.clear_selection = True
+        inside_job = self._mailbox.occupying(room_id)
+        if inside_job and room.operation is not None:
+            room.retained.begin_settlement(room.operation)
         attempt = self._request_disposal(room)
-        if attempt is not None and not room.retained.enrolls(asyncio.current_task()):
+        if (
+            attempt is not None
+            and not inside_job
+            and not room.retained.enrolls(asyncio.current_task())
+        ):
             await report_owned(attempt, None)
 
     def _cleanup_rooms(self) -> Iterable[Awaitable[None]]:

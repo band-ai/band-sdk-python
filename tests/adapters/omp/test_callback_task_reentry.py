@@ -1,4 +1,4 @@
-"""RPC callback tasks may reenter room selection without deadlock."""
+"""RPC callback tasks may apply a model selection without deadlock."""
 
 from __future__ import annotations
 

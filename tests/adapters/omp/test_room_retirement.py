@@ -22,7 +22,11 @@ from tests.adapters.omp.kit import (
     start_blocked_turn,
     start_cleanup,
 )
-from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, SignallingCloseRuntime
+from tests.adapters.omp.lifecyclekit import (
+    HeldCloseRuntime,
+    ObservedMailbox,
+    SignallingCloseRuntime,
+)
 
 __all__ = ["launches"]
 
@@ -287,41 +291,54 @@ class TestRoomRetirement:
         self, launches: Launches, tmp_path: Path
     ):
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        room_lock = SignallingLock()
-        adapter._locks["room-123"] = room_lock
-        await room_lock.acquire()  # another holder keeps the retirement from closing
+        mailbox = ObservedMailbox()
+        adapter._mailbox = mailbox
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold() -> None:
+            entered.set()
+            await release.wait()
+
+        held = asyncio.create_task(mailbox.ask("room-123", hold))
+        await entered.wait()
+        mailbox.attempted.clear()
         retirement = asyncio.create_task(adapter.on_cleanup("room-123"))
-        await asyncio.wait_for(room_lock.contended.wait(), 1)
-        assert room_runtime(adapter, "room-123") is None
-
-        shutdown = await start_cleanup(adapter, shutdown=True)
-
-        assert not shutdown.done()  # it joined the in-flight retirement
-        room_lock.release()
-        await asyncio.wait_for(asyncio.gather(retirement, shutdown), 1)
-        assert launches.runtimes == []
+        try:
+            await mailbox.attempted.wait()
+            assert room_runtime(adapter, "room-123") is None
+            shutdown = await start_cleanup(adapter, shutdown=True)
+            assert not shutdown.done()
+            release.set()
+            await asyncio.gather(held, retirement, shutdown)
+            assert launches.runtimes == []
+        finally:
+            release.set()
+            await asyncio.gather(held, retirement, return_exceptions=True)
+            await adapter.cleanup_all()
 
     @pytest.mark.asyncio
-    async def test_retirement_never_cancels_work_after_the_captured_turn_finished(
+    async def test_retirement_never_cancels_the_callers_work_after_a_completed_turn(
         self, tmp_path: Path, monkeypatch
     ):
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         unrelated = asyncio.Event()
         continued = asyncio.Event()
+        turn_returned = asyncio.Event()
         runtime = PendingRuntime()
         monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **k: runtime)
 
         async def caller():
             await run_turn(adapter, FakeAgentTools())
+            turn_returned.set()
             await unrelated.wait()  # the caller's own work after its turn
             continued.set()
 
         wrapper = asyncio.create_task(caller())
         await asyncio.wait_for(runtime.yielded.wait(), 1)
-        # Cleanup captures the live turn; the turn then finishes before retirement runs.
-        cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         runtime.finish.set()
-        await asyncio.wait_for(cleanup, 1)
+        await turn_returned.wait()
+        await adapter.on_cleanup("room-123")
 
         assert not wrapper.cancelled() and not wrapper.done()
         assert runtime.closed and not adapter._workspaces.rooms

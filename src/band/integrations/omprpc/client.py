@@ -8,6 +8,7 @@ import os
 from binascii import Error as Base64Error
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, TypeVar, cast
 
 from pydantic import JsonValue, ValidationError
@@ -136,6 +137,9 @@ class OmpRpcClient:
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
         self._write_tasks: set[asyncio.Task[None]] = set()
+        self.schedule_callback: (
+            Callable[[Callable[[], Awaitable[None]]], Awaitable[None]] | None
+        ) = None
 
     async def start(self) -> None:
         """Start the supplied command and require the native RPC protocol."""
@@ -558,7 +562,10 @@ class OmpRpcClient:
                         "OMP host tool arrived without an active prompt"
                     )
                 self._start_callback(
-                    turn, OmpCallbackKind.TOOL, call.id, self._handle_tool(turn, call)
+                    turn,
+                    OmpCallbackKind.TOOL,
+                    call.id,
+                    partial(self._handle_tool, turn, call),
                 )
             case OmpFrameType.HOST_TOOL_CANCEL:
                 cancellation = OmpHostToolCancel.model_validate(payload)
@@ -595,7 +602,10 @@ class OmpRpcClient:
                     write.add_done_callback(self._consume_task)
                     return
                 self._start_callback(
-                    turn, OmpCallbackKind.UI, request.id, self._handle_ui(turn, request)
+                    turn,
+                    OmpCallbackKind.UI,
+                    request.id,
+                    partial(self._handle_ui, turn, request),
                 )
             case event_type if event_type in _EVENT_TYPES:
                 event = OmpEvent.model_validate(payload)
@@ -644,27 +654,28 @@ class OmpRpcClient:
         turn: PromptRun,
         kind: OmpCallbackKind,
         request_id: str,
-        callback: Coroutine[object, object, None],
+        callback: Callable[[], Awaitable[None]],
     ) -> None:
         if self._closing or turn.failure.done() or turn.stop_after_tool_id is not None:
-            callback.close()
             return
         key = (kind, request_id)
-        task = asyncio.create_task(callback, context=turn.context.copy())
         if key in turn.callbacks:
-            task.cancel()
             raise OmpProtocolError("OMP callback request id was reused")
+        task = asyncio.create_task(self._run_callback(callback))
         turn.callbacks[key] = task
         turn.callback_tasks.add(task)
         task.add_done_callback(lambda done: self._callback_finished(turn, key, done))
 
+    async def _run_callback(self, run: Callable[[], Awaitable[None]]) -> None:
+        if self.schedule_callback is None:
+            await run()
+            return
+        await self.schedule_callback(run)
+
     def _callback_still_active(
         self, turn: PromptRun, kind: OmpCallbackKind, request_id: str
     ) -> bool:
-        return (
-            not self._closing
-            and turn.callbacks.get((kind, request_id)) is asyncio.current_task()
-        )
+        return not self._closing and (kind, request_id) in turn.callbacks
 
     @staticmethod
     def _cancel_callback(
