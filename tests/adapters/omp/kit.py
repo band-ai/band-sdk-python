@@ -9,9 +9,13 @@ from pathlib import Path
 
 import psutil
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import (
+    OMP_SESSION_DIRECTORY,
+    OmpAdapter,
+    OmpAdapterConfig,
+)
 from band.converters.omp import OmpSessionState
 from band.core.delivery import DeliveryFailedError
 from band.core.model_catalog import ModelSelection
@@ -33,6 +37,11 @@ from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools
 from band.testing.fake_tools import events_of_type
 from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.omppermissionpeer import (
+    DENIED_PATH,
+    NATIVE_EVENT_ID,
+    NATIVE_FAILURE_OUTPUT,
+)
 from tests.integrations.omprpc.kit import process_is_alive
 from tests.paths import REPO_ROOT
 
@@ -77,6 +86,23 @@ class PendingRuntime:
 
     async def close(self):
         self.closed = True
+
+
+class CancelDuringFailureTools(FakeAgentTools):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send_failure(self, failure):
+        self.entered.set()
+        await self.release.wait()
+        return await super().send_failure(failure)
+
+
+class FetchBoomTools(FakeAgentTools):
+    async def fetch_room_context(self, **_kwargs):
+        raise RuntimeError("context unavailable")
 
 
 class FailedDeliveryTools(FakeAgentTools):
@@ -168,6 +194,11 @@ class BoomCloseRuntime(PendingRuntime):
         raise OSError("process still alive")
 
 
+class BoomCloseDeliveryRuntime(BoomCloseRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        raise DeliveryFailedError(RuntimeError("delivery rejected"))
+
+
 class HangAfterPromptRuntime(PendingRuntime):
     def __init__(self, *_args, **_kwargs):
         super().__init__(*_args, **_kwargs)
@@ -226,6 +257,66 @@ class StringMessageRuntime(PendingRuntime):
         )
 
 
+class ThinkingBlockRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.MESSAGE_END,
+                message=OmpMessage(
+                    role="assistant",
+                    content=[
+                        OmpContent(type="thinking", thinking="Internal reasoning"),
+                        OmpContent(type="text", text="Visible answer"),
+                    ],
+                ),
+            )
+        )
+
+
+class UnencodableCallRuntime(PendingRuntime):
+    def __init__(self, arguments: dict[str, JsonValue], *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.arguments = arguments
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.TOOL_START,
+                toolCallId=NATIVE_EVENT_ID,
+                toolName="read",
+                args=self.arguments,
+            )
+        )
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.TOOL_END,
+                toolCallId=NATIVE_EVENT_ID,
+                toolName="read",
+                isError=True,
+                result=OmpToolResult(
+                    content=[OmpContent(type="text", text=NATIVE_FAILURE_OUTPUT)]
+                ),
+            )
+        )
+
+
+class CustomHostToolRuntime(RecordingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.tool_result: OmpToolResult | None = None
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        self.tool_result = await on_tool(
+            OmpHostToolCall(
+                id="call",
+                toolCallId="echo",
+                toolName="echo",
+                arguments={"text": "ping"},
+            )
+        )
+        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+
 class MismatchThinkingRuntime(RecordingRuntime):
     async def request(self, command, **parameters):
         result = await super().request(command, **parameters)
@@ -252,7 +343,7 @@ class LiveTitleRuntime(PendingRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         await on_ui(
             OmpUIRequest(
-                id="ui-wire-id",
+                id=NATIVE_EVENT_ID,
                 method=OmpUIMethod.SELECT,
                 title=self.title,
                 options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
@@ -271,6 +362,28 @@ class PermissionThenReplyRuntime(RecordingRuntime):
             )
         )
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+
+class OtherTaskUiRuntime(PermissionThenReplyRuntime):
+    """Dispatch UI on another task, matching OmpRpcClient._start_callback."""
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        request = OmpUIRequest(
+            id="ui",
+            method=OmpUIMethod.SELECT,
+            title="Approve tool?",
+            options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+        )
+        ui_task = asyncio.create_task(on_ui(request))
+        try:
+            await ui_task
+        except asyncio.CancelledError:
+            ui_task.cancel()
+            await asyncio.gather(ui_task, return_exceptions=True)
+            raise
+        await PendingRuntime.prompt(
+            self, _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
 
 
 class SelectingResolver:
@@ -316,7 +429,7 @@ class DocumentationRuntime(PendingRuntime):
 class RepeatedRuntime(PendingRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         request = OmpUIRequest(
-            id="ui-wire-id", method=OmpUIMethod.SELECT, title="A question"
+            id=NATIVE_EVENT_ID, method=OmpUIMethod.SELECT, title="A question"
         )
         for _ in range(2):
             response = await on_ui(request)
@@ -324,19 +437,19 @@ class RepeatedRuntime(PendingRuntime):
         await on_event(
             OmpEvent(
                 type=OmpEventType.TOOL_START,
-                toolCallId="ui-wire-id",
+                toolCallId=NATIVE_EVENT_ID,
                 toolName="read",
-                args={"path": "denied.txt"},
+                args={"path": DENIED_PATH},
             )
         )
         await on_event(
             OmpEvent(
                 type=OmpEventType.TOOL_END,
-                toolCallId="ui-wire-id",
+                toolCallId=NATIVE_EVENT_ID,
                 toolName="read",
                 isError=True,
                 result=OmpToolResult(
-                    content=[OmpContent(type="text", text="Native tool failed")]
+                    content=[OmpContent(type="text", text=NATIVE_FAILURE_OUTPUT)]
                 ),
             )
         )
@@ -362,7 +475,7 @@ async def run_turn(
 
 
 def native_session_file(workspace: Path) -> Path:
-    directory = workspace / ".band-omp-sessions"
+    directory = workspace / OMP_SESSION_DIRECTORY
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = directory / "saved.jsonl"
     path.write_text("{}", encoding="utf-8")
@@ -479,7 +592,7 @@ async def owned_rpc_turn(
                 "OMP_TEST_PERMISSION_TITLE": title,
                 "OMP_TEST_NATIVE_NAME": native_name,
                 "OMP_TEST_NATIVE_ARGUMENTS": json.dumps(
-                    {"path": "denied.txt"}
+                    {"path": DENIED_PATH}
                     if native_arguments is None
                     else native_arguments
                 ),

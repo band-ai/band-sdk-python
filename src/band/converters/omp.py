@@ -18,6 +18,7 @@ class OmpMetadataKey(StrEnum):
     ROOM = "omp_room_id"
     SESSION = "omp_session_file"
     SESSION_ID = "omp_session_id"
+    REQUEST_ID = "omp_request_id"
 
 
 class OmpSessionState(BaseModel):

@@ -56,8 +56,8 @@ XD_MCP_PREFIX = "mcp__"
 # OMP's own test (xdev.ts HELP_CONTENT_RE) for a device write that shows the
 # tool's docs instead of running it.
 _XD_HELP_CONTENT = re.compile(r"^\s*(\?|help)?\s*$", re.IGNORECASE)
-# OMP's ACP tool kinds for a device write and a read (acp-event-mapper.ts
-# mapToolKind).
+# Device-write vs read kinds shared by native host-tool projection and ACP
+# mapping (acp-event-mapper.ts mapToolKind).
 OMP_DEVICE_KIND_EXECUTE = "execute"
 OMP_DEVICE_KIND_READ = "read"
 OMP_DEVICE_PATH_KEYS = ("path", "file_path", "target")

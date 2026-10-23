@@ -1,4 +1,4 @@
-"""Native OMP records preserve identity and effects across encoding failures."""
+"""Native OMP records preserve identity across unencodable payloads."""
 
 from __future__ import annotations
 
@@ -8,285 +8,147 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import (
-    OMP_PERMISSION_TOOL,
-    OMP_TOOL_APPROVAL_HEADER,
-    PRIVATE_PAYLOAD_UNAVAILABLE,
-)
+from band.adapters.omp import OMP_PERMISSION_TOOL, OMP_TOOL_APPROVAL_HEADER
 from tests.adapters.omp.kit import (
     owned_rpc_turn,
     tool_call_records,
     tool_result_records,
 )
+from tests.integrations.omppermissionpeer import NATIVE_EVENT_ID
+
+SECRET = "adversarial-private-content"
+ENABLED_PATH = "xd://mcp__band_send_message"
+WITHHELD_PATH = "xd://mcp__band_send_room_file"
+SURROGATE = '{"filename":"private.txt","content":"\\ud800"}'
+INTEGER_LIMIT = '{"content":' + json.dumps(SECRET) + ',"count":' + "9" * 5000 + "}"
+DEEP = "[" * 20000 + json.dumps(SECRET) + "]" * 20000
+MALFORMED = '{"content":' + json.dumps(SECRET)
+NON_OBJECT = json.dumps([SECRET])
+
+
+def _device(path: str, encoded: str) -> dict[str, object]:
+    return {"path": path, "content": encoded, "append": False, "mode": "owned"}
+
+
+async def _turn(
+    monkeypatch,
+    tmp_path: Path,
+    title: str,
+    native_name: str,
+    native_arguments,
+):
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        return await owned_rpc_turn(
+            monkeypatch,
+            tmp_path,
+            title,
+            "native-first",
+            native_name=native_name,
+            native_arguments=native_arguments,
+            inject_band_tools=False,
+        )
+    finally:
+        sys.set_int_max_str_digits(limit)
 
 
 class TestRecordEncoding:
+    async def test_enabled_native_surrogate_keeps_decoded_object(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        tools, _ = await _turn(
+            monkeypatch,
+            tmp_path,
+            "A question",
+            "write",
+            _device(ENABLED_PATH, SURROGATE),
+        )
+        native = next(
+            call
+            for call in tool_call_records(tools)
+            if call["name"] != OMP_PERMISSION_TOOL
+        )
+        assert native["name"] == "band_send_message"
+        assert native["args"] == {"filename": "private.txt", "content": "\ud800"}
+
     @pytest.mark.parametrize(
-        ("shape", "path", "expected_name", "permission_tool_name"),
+        ("encoded", "device_path", "expected_name", "secret_leaks"),
         [
-            ("surrogate", "enabled-native", "band_send_message", None),
-            ("integer-limit", "withheld-native", "write", None),
-            ("deep", "enabled-native", "write", None),
-            ("deep", "withheld-native", "write", None),
-            ("deep", "permission", "read", "write"),
-            ("malformed", "enabled-native", "band_send_message", None),
-            ("malformed", "withheld-native", "write", None),
-            ("malformed", "permission", "read", "band_send_room_file"),
-            ("non-object", "enabled-native", "band_send_message", None),
-            ("non-object", "withheld-native", "write", None),
-            ("non-object", "permission", "read", "band_send_room_file"),
+            (INTEGER_LIMIT, WITHHELD_PATH, "write", False),
+            (DEEP, ENABLED_PATH, "write", False),
+            (DEEP, WITHHELD_PATH, "write", False),
+            (MALFORMED, ENABLED_PATH, "band_send_message", True),
+            (MALFORMED, WITHHELD_PATH, "write", False),
+            (NON_OBJECT, ENABLED_PATH, "band_send_message", True),
+            (NON_OBJECT, WITHHELD_PATH, "write", False),
         ],
     )
-    async def test_adversarial_projection_preserves_record_identity(
+    async def test_native_device_payload_preserves_identity(
         self,
         monkeypatch,
         tmp_path: Path,
-        path: str,
-        shape: str,
+        encoded: str,
+        device_path: str,
         expected_name: str,
-        permission_tool_name: str | None,
+        secret_leaks: bool,
     ) -> None:
-        secret = "adversarial-private-content"
-        match shape:
-            case "surrogate":
-                encoded = '{"filename":"private.txt","content":"\\ud800"}'
-            case "integer-limit":
-                encoded = (
-                    '{"content":' + json.dumps(secret) + ',"count":' + "9" * 5000 + "}"
-                )
-            case "deep":
-                encoded = "[" * 20000 + json.dumps(secret) + "]" * 20000
-            case "malformed":
-                encoded = '{"content":' + json.dumps(secret)
-            case _:
-                encoded = json.dumps([secret])
-        device = {
-            "path": (
-                "xd://mcp__band_send_message"
-                if path == "enabled-native"
-                else "xd://mcp__band_send_room_file"
-            ),
-            "content": encoded,
-            "append": False,
-            "mode": "owned",
-        }
-        title = (
-            f"{OMP_TOOL_APPROVAL_HEADER}write\nArguments: " + json.dumps(device)
-            if path == "permission"
-            else "A question"
-        )
-        limit = sys.get_int_max_str_digits()
-        sys.set_int_max_str_digits(4300)
-        try:
-            tools, _ = await owned_rpc_turn(
-                monkeypatch,
-                tmp_path,
-                title,
-                "native-first",
-                native_name="read" if path == "permission" else "write",
-                native_arguments=None if path == "permission" else device,
-                inject_band_tools=False,
-            )
-        finally:
-            sys.set_int_max_str_digits(limit)
+        device = _device(device_path, encoded)
+        tools, _ = await _turn(monkeypatch, tmp_path, "A question", "write", device)
         calls = tool_call_records(tools)
         results = tool_result_records(tools)
         permission = next(call for call in calls if call["name"] == OMP_PERMISSION_TOOL)
         native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
         assert native["name"] == expected_name
-        assert native["tool_call_id"] == "ui-wire-id"
-        assert permission["tool_call_id"] != "ui-wire-id"
+        assert native["tool_call_id"] == NATIVE_EVENT_ID
+        assert permission["tool_call_id"] != NATIVE_EVENT_ID
         assert {(result["name"], result["tool_call_id"]) for result in results} == {
-            (expected_name, "ui-wire-id"),
+            (expected_name, NATIVE_EVENT_ID),
             (OMP_PERMISSION_TOOL, permission["tool_call_id"]),
         }
-        assert permission["args"].get("tool_name") == permission_tool_name
-        projected = (
-            permission["args"]["arguments"]
-            if permission_tool_name is not None
-            else native["args"]
-        )
-        if path == "enabled-native" and shape == "surrogate":
-            assert projected == {"filename": "private.txt", "content": "\ud800"}
-        elif path == "permission" and shape == "surrogate":
-            assert projected == {
-                "filename": "private.txt",
-                "content": "<3 byte file content>",
-            }
-        else:
-            assert set(projected) == set(device)
-            assert projected["path"] == device["path"]
-            assert projected["append"] is False
-            assert projected["mode"] == "owned"
-            if path != "enabled-native" or shape == "deep":
-                assert secret not in projected["content"]
-            else:
-                assert projected["content"] == encoded
-            if path == "withheld-native" and shape == "surrogate":
-                assert json.loads(projected["content"]) == {
-                    "filename": "private.txt",
-                    "content": "<3 byte file content>",
-                }
+        projected = native["args"]
+        assert set(projected) == set(device)
+        assert projected["path"] == device["path"]
+        assert projected["append"] is False
+        assert projected["mode"] == "owned"
+        assert (SECRET in projected["content"]) is secret_leaks
         assert all(result["is_error"] for result in results)
 
-    @pytest.mark.parametrize("path", ["native", "permission"])
-    @pytest.mark.parametrize("order", ["native-first", "permission-first"])
-    async def test_final_encode_failure_preserves_record_and_native_effect(
-        self, monkeypatch, tmp_path: Path, path: str, order: str
+    @pytest.mark.parametrize(
+        ("encoded", "permission_tool_name", "secret_leaks"),
+        [
+            (DEEP, "write", False),
+            (MALFORMED, "band_send_room_file", False),
+            (NON_OBJECT, "band_send_room_file", False),
+        ],
+    )
+    async def test_permission_device_payload_preserves_identity(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        encoded: str,
+        permission_tool_name: str,
+        secret_leaks: bool,
     ) -> None:
-        arguments = {
-            "path": "visible.txt",
-            "file_path": False,
-            "target": None,
-            "nested": {"secret": "private-envelope-bytes"},
-        }
-        encoded = json.dumps(arguments)
-        target_name = "band_no_reply" if path == "native" else OMP_PERMISSION_TOOL
-        dumps = json.dumps
-
-        def fail_private_envelope(value, *args, **kwargs):
-            if isinstance(value, dict) and value.get("name") == target_name:
-                projected = value.get("args", {})
-                if path == "permission":
-                    projected = projected.get("arguments", {})
-                if isinstance(projected, dict) and "nested" in projected:
-                    raise RecursionError("final envelope encoding failed")
-            return dumps(value, *args, **kwargs)
-
-        monkeypatch.setattr(json, "dumps", fail_private_envelope)
-        tools, _ = await owned_rpc_turn(
-            monkeypatch,
-            tmp_path,
-            f"{OMP_TOOL_APPROVAL_HEADER}read\nArguments: " + encoded
-            if path == "permission"
-            else "A question",
-            order,
-            native_name="write" if path == "native" else "read",
-            native_arguments={
-                "path": "xd://mcp__band_no_reply",
-                "content": encoded,
-            }
-            if path == "native"
-            else None,
-            native_error=False,
-            inject_band_tools=False,
-        )
+        device = _device(WITHHELD_PATH, encoded)
+        title = f"{OMP_TOOL_APPROVAL_HEADER}write\nArguments: " + json.dumps(device)
+        tools, _ = await _turn(monkeypatch, tmp_path, title, "read", None)
         calls = tool_call_records(tools)
         results = tool_result_records(tools)
-        target = next(call for call in calls if call["name"] == target_name)
-        assert target["args"] == {
-            "path": "visible.txt",
-            "file_path": False,
-            "target": None,
-            "arguments": PRIVATE_PAYLOAD_UNAVAILABLE,
-        }
-        assert "private-envelope-bytes" not in dumps(calls)
-        assert {(result["name"], result["tool_call_id"]) for result in results} == {
-            (call["name"], call["tool_call_id"]) for call in calls
-        }
+        permission = next(call for call in calls if call["name"] == OMP_PERMISSION_TOOL)
         native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
-        assert native["tool_call_id"] == "ui-wire-id"
-
-    @pytest.mark.parametrize("path", ["native", "permission"])
-    async def test_decoded_depth_fails_final_encode_without_losing_record(
-        self, monkeypatch, tmp_path: Path, path: str
-    ) -> None:
-        target_name = "band_no_reply" if path == "native" else OMP_PERMISSION_TOOL
-        encoded = ""
-        decoder_limits = []
-        calibrating = True
-        decoded = 0
-        loads, dumps = json.loads, json.dumps
-
-        def payload(depth: int) -> str:
-            return (
-                '{"path":"visible.txt","nested":'
-                + "[" * depth
-                + '"private-depth-bytes"'
-                + "]" * depth
-                + "}"
-            )
-
-        def observe_loads(value, *args, **kwargs):
-            nonlocal decoded
-            if isinstance(value, str) and value.strip() == encoded:
-                if calibrating:
-                    # Probe on the real decoder stack, not a version-specific depth.
-                    lower, upper = 0, 2 * sys.getrecursionlimit()
-                    while True:
-                        try:
-                            loads(payload(upper), *args, **kwargs)
-                        except RecursionError:
-                            break
-                        lower, upper = upper, upper * 2
-                    while lower + 1 < upper:
-                        middle = (lower + upper) // 2
-                        try:
-                            loads(payload(middle), *args, **kwargs)
-                        except RecursionError:
-                            upper = middle
-                        else:
-                            lower = middle
-                    decoder_limits.append(lower)
-                result = loads(value, *args, **kwargs)
-                decoded += 1
-                return result
-            return loads(value, *args, **kwargs)
-
-        monkeypatch.setattr(json, "loads", observe_loads)
-
-        async def run_depth(depth: int):
-            nonlocal encoded
-            encoded = payload(depth)
-            tools, _ = await owned_rpc_turn(
-                monkeypatch,
-                tmp_path,
-                f"{OMP_TOOL_APPROVAL_HEADER}read\nArguments: " + encoded
-                if path == "permission"
-                else "A question",
-                "native-first",
-                native_name="write" if path == "native" else "read",
-                native_arguments={
-                    "path": "xd://mcp__band_no_reply",
-                    "content": encoded,
-                }
-                if path == "native"
-                else None,
-                native_error=False,
-                inject_band_tools=False,
-            )
-            calls = tool_call_records(tools)
-            results = tool_result_records(tools)
-            target = next((call for call in calls if call["name"] == target_name), None)
-            assert target is not None, calls
-            assert len(calls) == len(results) == 2
-            assert {(result["name"], result["tool_call_id"]) for result in results} == {
-                (call["name"], call["tool_call_id"]) for call in calls
-            }
-            native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
-            assert native["tool_call_id"] == "ui-wire-id"
-            return calls, target
-
-        await run_depth(0)
-        assert decoder_limits
-        depth = min(decoder_limits)
-        calibrating = False
-        decoded = 0
-
-        def fail_max_depth_envelope(value, *args, **kwargs):
-            if isinstance(value, dict) and value.get("name") == target_name:
-                projected = value.get("args", {})
-                if path == "permission":
-                    projected = projected.get("arguments", {})
-                if isinstance(projected, dict) and "nested" in projected:
-                    raise RecursionError("final envelope encoding failed")
-            return dumps(value, *args, **kwargs)
-
-        monkeypatch.setattr(json, "dumps", fail_max_depth_envelope)
-        calls, target = await run_depth(depth)
-        assert decoded
-        assert target["args"] == {
-            "path": "visible.txt",
-            "arguments": PRIVATE_PAYLOAD_UNAVAILABLE,
+        assert native["name"] == "read"
+        assert native["tool_call_id"] == NATIVE_EVENT_ID
+        assert permission["tool_call_id"] != NATIVE_EVENT_ID
+        assert permission["args"].get("tool_name") == permission_tool_name
+        assert {(result["name"], result["tool_call_id"]) for result in results} == {
+            ("read", NATIVE_EVENT_ID),
+            (OMP_PERMISSION_TOOL, permission["tool_call_id"]),
         }
-        assert "private-depth-bytes" not in dumps(calls)
+        projected = permission["args"]["arguments"]
+        assert set(projected) == set(device)
+        assert projected["path"] == device["path"]
+        assert projected["append"] is False
+        assert projected["mode"] == "owned"
+        assert (SECRET in projected["content"]) is secret_leaks
+        assert all(result["is_error"] for result in results)

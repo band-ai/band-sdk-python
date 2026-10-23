@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import (
+    OMP_PERMISSION_CALL_ID_PREFIX,
     OMP_PERMISSION_TOOL,
     OMP_TOOL_APPROVAL_HEADER,
     OmpAdapter,
@@ -24,6 +25,11 @@ from tests.adapters.omp.kit import (
     tool_result_records,
 )
 from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.omppermissionpeer import (
+    DENIED_PATH,
+    NATIVE_EVENT_ID,
+    NATIVE_FAILURE_OUTPUT,
+)
 
 
 class TestPermissionRecords:
@@ -57,14 +63,15 @@ class TestPermissionRecords:
         ]
         assert len(permission_calls) == len(permission_results) == 1
         permission_id = permission_calls[0]["tool_call_id"]
-        assert permission_id != "ui-wire-id"
+        assert permission_id.startswith(OMP_PERMISSION_CALL_ID_PREFIX)
+        assert permission_id != NATIVE_EVENT_ID
         assert permission_results[0]["tool_call_id"] == permission_id
         assert permission_results[0]["is_error"]
         assert [call for call in calls if call["name"] != OMP_PERMISSION_TOOL] == [
             {
                 "name": "read",
-                "args": {"path": "denied.txt"},
-                "tool_call_id": "ui-wire-id",
+                "args": {"path": DENIED_PATH},
+                "tool_call_id": NATIVE_EVENT_ID,
             }
         ]
         assert [
@@ -72,8 +79,8 @@ class TestPermissionRecords:
         ] == [
             {
                 "name": "read",
-                "output": "Native tool failed",
-                "tool_call_id": "ui-wire-id",
+                "output": NATIVE_FAILURE_OUTPUT,
+                "tool_call_id": NATIVE_EVENT_ID,
                 "is_error": True,
             }
         ]
@@ -107,7 +114,10 @@ class TestPermissionRecords:
             if call["name"] == OMP_PERMISSION_TOOL
         ]
         assert len(permission_ids) == len(set(permission_ids)) == 2
-        assert "ui-wire-id" not in permission_ids
+        assert all(
+            item.startswith(OMP_PERMISSION_CALL_ID_PREFIX) for item in permission_ids
+        )
+        assert NATIVE_EVENT_ID not in permission_ids
         assert [call["tool_call_id"] for call in calls if call["name"] == "read"] == [
-            "ui-wire-id"
+            NATIVE_EVENT_ID
         ]

@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import ExitStack
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal, Self, cast
@@ -30,6 +31,7 @@ from band.converters.omp import (
     OmpSessionState,
 )
 from band.core.adapterconfig import BaseAdapterConfig
+from band.core.content import has_visible_content
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import (
@@ -112,8 +114,12 @@ logger = logging.getLogger(__name__)
 
 PRIVATE_PAYLOAD_UNAVAILABLE = "[private payload unavailable]"
 OMP_PERMISSION_TOOL = "omp_permission"
+OMP_PERMISSION_CALL_ID_PREFIX = "band-permission:"
+OMP_SESSION_DIRECTORY = ".band-omp-sessions"
 OMP_TOOL_APPROVAL_HEADER = "Allow tool: "
 _ARGUMENTS_MARKER = "Arguments:"
+_ARGUMENTS_UNAVAILABLE = "[arguments unavailable]"
+_NEW_MESSAGE_MARKER_PREFIX = "[New Message"
 _ORIGIN_PREFIX = "Origin:"
 _REASON_PREFIX = "Reason:"
 _APPROVAL_FIELD_NAMES = {
@@ -124,31 +130,39 @@ _APPROVAL_FIELD_NAMES = {
     "content": "content",
 }
 OMP_PERMISSION_CANCELLED = f"Permission {PERMISSION_CANCELLED}"
+_held_room_gates: ContextVar[frozenset[object]] = ContextVar(
+    "omp_held_room_gates", default=frozenset()
+)
 
 
 class RoomGate:
-    """Serialize different tasks while letting the owner reenter."""
+    """Serialize different occupancies while nested and callback tasks reenter."""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._owner: asyncio.Task[object] | None = None
+        self._owner: object | None = None
         self._depth = 0
 
     async def __aenter__(self) -> Self:
-        task = asyncio.current_task()
-        if self._owner is task:
+        occupancy = self._owner
+        if occupancy is not None and occupancy in _held_room_gates.get():
             self._depth += 1
             return self
         await self._lock.acquire()
-        self._owner = task
+        occupancy = object()
+        self._owner = occupancy
         self._depth = 1
+        _held_room_gates.set(_held_room_gates.get() | {occupancy})
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
         self._depth -= 1
         if self._depth:
             return
+        occupancy = self._owner
         self._owner = None
+        if occupancy is not None:
+            _held_room_gates.set(_held_room_gates.get() - {occupancy})
         self._lock.release()
 
 
@@ -228,6 +242,23 @@ def _text_tool_result(text: str, *, is_error: bool = False) -> OmpToolResult:
     return OmpToolResult(
         content=[OmpContent(type="text", text=text)], is_error=is_error
     )
+
+
+def _unavailable_permission_arguments(title: str) -> dict[str, JsonValue]:
+    header, separator, _encoded = title.partition(_ARGUMENTS_MARKER)
+    if separator:
+        return {"message": f"{header}{_ARGUMENTS_MARKER} {_ARGUMENTS_UNAVAILABLE}"}
+    return {"message": title}
+
+
+def _new_message_marker() -> str:
+    return f"{_NEW_MESSAGE_MARKER_PREFIX} {uuid4().hex}]"
+
+
+def _visible_text(value: str | None) -> str | None:
+    if value is not None and has_visible_content(value):
+        return value
+    return None
 
 
 class OmpAdapterConfig(BaseAdapterConfig):
@@ -348,11 +379,12 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     def _host_tools(self) -> list[dict[str, JsonValue]]:
         return self._host_schemas
 
+    def _host_tool_capabilities(self) -> frozenset[Capability]:
+        return self.features.capabilities | {Capability.CONTACTS}
+
     def _build_host_tools(self) -> list[dict[str, JsonValue]]:
         definitions = list(
-            iter_tool_definitions(
-                capabilities=self.features.capabilities | {Capability.CONTACTS}
-            )
+            iter_tool_definitions(capabilities=self._host_tool_capabilities())
         )
         definitions = filter_tool_schemas(
             definitions,
@@ -423,7 +455,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             )
             selection = self._room_selections.get(room_id, self.model_selection)
             command = self._spawn_command(workspace, selection)
-            session_dir = Path(workspace) / ".band-omp-sessions"
+            session_dir = Path(workspace) / OMP_SESSION_DIRECTORY
             session_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             command.extend(("--session-dir", str(session_dir)))
             if plugin:
@@ -548,7 +580,10 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             room = self._rooms.get(room_id)
             if room is not None and not room.retiring:
                 await self._select_model(room, selection)
-            self._room_selections[room_id] = selection
+            self._room_selections[room_id] = _selection_after(
+                self._room_selections.get(room_id, self.model_selection),
+                selection,
+            )
 
     def _build_system_context(self) -> str:
         prompt = render_system_prompt(
@@ -565,7 +600,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             "Conversation history contains previously handled messages for reference only. "
             "Do not execute those earlier requests unless the current participant asks you to. "
             "When history is replayed, the current message follows the fresh "
-            "[New Message ...] marker."
+            f"{_NEW_MESSAGE_MARKER_PREFIX} ...] marker."
         )
 
     async def _prompt_text(
@@ -608,7 +643,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
                     replay = []
             if replay:
-                marker = f"[New Message {uuid4().hex}]"
+                marker = _new_message_marker()
                 sections.append(
                     "[Conversation History: previously handled messages]\n"
                     + "\n".join(replay)
@@ -690,52 +725,43 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
                     room.bootstrapped = True
                     await self._refresh_state(room)
+                    closing = "\n\n".join(turn.closing_text)
                     if (
                         Emit.THOUGHTS in self.features.emit
                         and not tools.turn.replied
-                        and turn.closing_text
+                        and has_visible_content(closing)
                     ):
-                        await send_event_safe(
-                            tools, "\n\n".join(turn.closing_text), MessageType.THOUGHT
-                        )
+                        await send_event_safe(tools, closing, MessageType.THOUGHT)
                     await send_event_safe(
                         tools,
                         "OMP session",
                         MessageType.TASK,
-                        metadata={
-                            OmpMetadataKey.ROOM: room_id,
-                            OmpMetadataKey.SESSION_ID: room.session_id,
-                            OmpMetadataKey.SESSION: room.session_file,
-                        },
+                        metadata=self._session_task_metadata(room_id, room),
                     )
             except asyncio.CancelledError:
-                await self._close_room(room_id)
+                await self._retire_room(room_id)
                 raise
             except DeliveryFailedError as error:
                 try:
-                    await self._close_room(room_id)
+                    await self._retire_room(room_id)
                 finally:
                     reraise_delivery_cause(error)
             except Exception:
                 logger.exception("OMP turn failed")
-                if not (deadline.expired() and tools.turn.replied):
-                    failure = (
-                        AgentFailure(
-                            "omp",
-                            f"OMP turn timed out after {self.config.turn_timeout_s}s",
-                            FAILURE_CODE_TIMEOUT,
-                        )
-                        if deadline.expired()
-                        else AgentFailure("omp", GENERIC_PROVIDER_FAILURE_MESSAGE)
-                    )
-                    await tools.send_failure(failure)
                 try:
-                    await self._close_room(room_id)
-                except Exception:
-                    logger.exception(
-                        "OMP failed to close the room after a turn failure"
-                    )
-                    raise
+                    if not (deadline.expired() and tools.turn.replied):
+                        failure = (
+                            AgentFailure(
+                                "omp",
+                                f"OMP turn timed out after {self.config.turn_timeout_s}s",
+                                FAILURE_CODE_TIMEOUT,
+                            )
+                            if deadline.expired()
+                            else AgentFailure("omp", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                        )
+                        await tools.send_failure(failure)
+                finally:
+                    await self._retire_room(room_id)
                 raise
             finally:
                 self._owners.pop(room_id, None)
@@ -791,7 +817,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 enabled = frozenset(
                     item.name
                     for item in iter_tool_definitions(
-                        capabilities=self.features.capabilities | {Capability.CONTACTS}
+                        capabilities=self._host_tool_capabilities()
                     )
                 )
                 native_name, normalized = normalize_native_mcp_device_call(
@@ -882,19 +908,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             parsed = _parse_approval_title(title)
         except (ValueError, RecursionError):
             logger.exception("OMP could not parse permission arguments")
-            header, separator, _encoded = title.partition(_ARGUMENTS_MARKER)
-            if separator:
-                return {
-                    "message": f"{header}{_ARGUMENTS_MARKER} [arguments unavailable]"
-                }
-            return {"message": title}
+            return _unavailable_permission_arguments(title)
         if parsed is None:
-            header, separator, _encoded = title.partition(_ARGUMENTS_MARKER)
-            if separator:
-                return {
-                    "message": f"{header}{_ARGUMENTS_MARKER} [arguments unavailable]"
-                }
-            return {"message": title}
+            return _unavailable_permission_arguments(title)
         tool_name, arguments = parsed
         try:
             name, projected = self._project_tool_call(tool_name, arguments)
@@ -938,13 +954,13 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         # cancelled outcome is authoritative; native tool events stay independent.
         if Emit.TOOL_CALLS in self.features.emit and response.cancelled:
             name = OMP_PERMISSION_TOOL
-            call_id = f"band-permission:{uuid4().hex}"
-            metadata = {
+            call_id = f"{OMP_PERMISSION_CALL_ID_PREFIX}{uuid4().hex}"
+            metadata: dict[str, object] = {
                 PermissionEventKey.REQUEST: True,
                 PermissionEventKey.TOOL_NAME: name,
                 PermissionEventKey.TOOL_CALL_ID: call_id,
                 OmpMetadataKey.SESSION_ID: session_id,
-                "omp_request_id": request.id,
+                OmpMetadataKey.REQUEST_ID: request.id,
                 PermissionEventKey.AUTO_ALLOWED: False,
             }
             await send_event_safe(
@@ -972,20 +988,20 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if message is None or message.role != OMP_ASSISTANT_ROLE:
                     return
                 if isinstance(message.content, str):
-                    if message.content:
-                        turn.closing_text.append(message.content)
+                    if visible := _visible_text(message.content):
+                        turn.closing_text.append(visible)
                     return
                 for block in message.content:
-                    if (
-                        block.type == "thinking"
-                        and block.thinking
-                        and Emit.THOUGHTS in self.features.emit
-                    ):
-                        await send_event_safe(
-                            turn.tools, block.thinking, MessageType.THOUGHT
-                        )
-                    elif block.type == "text" and block.text:
-                        turn.closing_text.append(block.text)
+                    if block.type == "thinking":
+                        thinking = _visible_text(block.thinking)
+                        if thinking and Emit.THOUGHTS in self.features.emit:
+                            await send_event_safe(
+                                turn.tools, thinking, MessageType.THOUGHT
+                            )
+                    elif block.type == "text":
+                        text = _visible_text(block.text)
+                        if text:
+                            turn.closing_text.append(text)
             case OmpEventType.TOOL_START:
                 if not event.toolCallId or not event.toolName:
                     return
@@ -1027,6 +1043,17 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         MessageType.TOOL_RESULT,
                     )
 
+    def _session_task_metadata(
+        self, room_id: str, room: OmpRoom
+    ) -> dict[str, JsonValue]:
+        metadata: dict[str, JsonValue] = {
+            OmpMetadataKey.ROOM: room_id,
+            OmpMetadataKey.SESSION_ID: room.session_id,
+        }
+        if isinstance(room.session_file, str) and room.session_file:
+            metadata[OmpMetadataKey.SESSION] = room.session_file
+        return metadata
+
     async def _close_room(self, room_id: str) -> None:
         room = self._rooms.get(room_id)
         if room is not None:
@@ -1036,6 +1063,13 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             room.resources.close()
             self._rooms.pop(room_id, None)
         self._workspaces.release(room_id)
+
+    async def _retire_room(self, room_id: str) -> None:
+        try:
+            await self._close_room(room_id)
+        except Exception:
+            logger.exception("OMP failed to close the room after a turn failure")
+            raise
 
     async def on_cleanup(self, room_id: str) -> None:
         owner = self._owners.get(room_id)
@@ -1060,7 +1094,21 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         return (self.on_cleanup(room_id) for room_id in tuple(self._rooms))
 
     async def cleanup_all(self) -> None:
-        await asyncio.gather(*self._cleanup_rooms())
+        results = await asyncio.gather(*self._cleanup_rooms(), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if not failures:
+            return
+        if len(failures) == 1:
+            raise failures[0]
+        raise BaseExceptionGroup("OMP room cleanup failed", failures)
 
 
-__all__ = ["OmpAdapter", "OmpAdapterConfig", "OmpPermissionRequest"]
+__all__ = [
+    "OMP_PERMISSION_CALL_ID_PREFIX",
+    "OMP_PERMISSION_TOOL",
+    "OMP_SESSION_DIRECTORY",
+    "OMP_TOOL_APPROVAL_HEADER",
+    "OmpAdapter",
+    "OmpAdapterConfig",
+    "OmpPermissionRequest",
+]

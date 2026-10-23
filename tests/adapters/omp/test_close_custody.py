@@ -50,7 +50,9 @@ class TestCloseCustody:
         assert runtime.closed
         assert not overlay.exists()
         assert occupied_room_ids(adapter) == set()
-        assert not adapter._workspaces.rooms
+        reclaimed = adapter._workspaces.claim("other-room")
+        assert reclaimed == shared
+        adapter._workspaces.release("other-room")
 
     @pytest.mark.asyncio
     async def test_next_turn_reaps_failed_close_before_starting_a_fresh_runtime(
