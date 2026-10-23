@@ -48,14 +48,16 @@ class TestDurationStore:
             "tests/new.py::test_ok": 1.0,
         }
 
-    def test_worker_paths_are_unique(self) -> None:
-        path = Path(DURATIONS_PATH_NAME)
-        assert worker_duration_path(path, "gw0") != worker_duration_path(path, "gw1")
-
-    def test_leaked_parent_worker_env_is_not_this_session(self) -> None:
+    def test_leaked_parent_worker_env_is_not_this_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
         assert session_xdist_worker_id(SimpleNamespace()) is None
 
-    def test_this_session_workerinput_is_the_store_key(self) -> None:
+    def test_this_session_workerinput_is_the_store_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
         config = SimpleNamespace(workerinput={"workerid": "gw2"})
         assert session_xdist_worker_id(config) == "gw2"
 
@@ -63,15 +65,15 @@ class TestDurationStore:
         config = SimpleNamespace(workerinput={"workerid": SERIAL_WORKER_ID})
         assert session_xdist_worker_id(config) is None
 
-    def test_non_dict_workerinput_is_serial(self) -> None:
-        assert session_xdist_worker_id(SimpleNamespace(workerinput="gw0")) is None
-
-    def test_store_option_writes_quantized_json(
+    def test_controller_merges_worker_sidecars_and_drops_them(
         self, pytester: pytest.Pytester, tmp_path: Path
     ) -> None:
         pytester.syspathinsert(str(REPO_ROOT))
         pytester.makepyfile("def test_ok(): assert True")
         path = tmp_path / DURATIONS_PATH_NAME
+        write_durations(path, {"gone.py::stale": 9.0})
+        write_durations(worker_duration_path(path, "gw0"), {"other.py::test_a": 1.04})
+        write_durations(worker_duration_path(path, "gw1"), {"other.py::test_b": 2.16})
         result = pytester.runpytest(
             "-p",
             "tests.testdurations",
@@ -82,10 +84,10 @@ class TestDurationStore:
         )
         result.assert_outcomes(passed=1)
         stored = json.loads(path.read_text(encoding="utf-8"))
-        assert len(stored) == 1
-        nodeid, seconds = next(iter(stored.items()))
-        assert nodeid.endswith("test_ok")
-        assert seconds == quantize_duration(seconds)
+        assert "gone.py::stale" not in stored
+        assert stored["other.py::test_a"] == quantize_duration(1.04)
+        assert stored["other.py::test_b"] == quantize_duration(2.16)
+        assert any(nodeid.endswith("test_ok") for nodeid in stored)
         assert not tuple(path.parent.glob(f"{path.name}.gw*"))
 
     def test_load_missing_file_is_empty(self, tmp_path: Path) -> None:

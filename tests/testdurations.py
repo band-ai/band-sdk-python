@@ -66,7 +66,11 @@ def pytest_collection_modifyitems(
     durations = load_durations(Path(config.getoption("band_durations_path")))
     if not durations:
         return
-    items.sort(key=lambda item: nodeid_slowness(item.nodeid, durations))
+    by_nodeid = {item.nodeid: item for item in items}
+    items[:] = [
+        by_nodeid[nodeid]
+        for nodeid in slowest_first([item.nodeid for item in items], durations)
+    ]
 
 
 @pytest.hookimpl(wrapper=True)

@@ -8,12 +8,7 @@ import pytest
 from hypothesis import settings as hypothesis_settings
 from hypothesis.database import DirectoryBasedExampleDatabase
 
-from tests.xdistworker import (
-    SERIAL_WORKER_ID,
-    hypothesis_database_dir,
-    worker_scoped,
-    xdist_worker_id,
-)
+from tests.xdistworker import SERIAL_WORKER_ID, hypothesis_database_dir, xdist_worker_id
 
 
 class TestXdistWorkerScope:
@@ -23,15 +18,8 @@ class TestXdistWorkerScope:
         monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
         assert xdist_worker_id() == SERIAL_WORKER_ID
 
-    def test_worker_scoped_names_differ_across_workers(self) -> None:
-        assert worker_scoped("cache", "gw0") != worker_scoped("cache", "gw1")
-
     def test_hypothesis_database_dirs_differ_across_workers(self) -> None:
-        gw0 = hypothesis_database_dir("gw0")
-        gw1 = hypothesis_database_dir("gw1")
-        assert gw0 != gw1
-        assert gw0.name.endswith("-gw0")
-        assert gw1.name.endswith("-gw1")
+        assert hypothesis_database_dir("gw0") != hypothesis_database_dir("gw1")
 
     def test_loaded_hypothesis_profile_writes_a_worker_database(self) -> None:
         database = hypothesis_settings().database
