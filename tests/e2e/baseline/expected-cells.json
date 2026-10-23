@@ -870,6 +870,42 @@
       "reason": null
     },
     {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_tool_narration.py::TestOmpToolNarration::test_omp_band_tool_call_is_narrated",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_permission_cancel.py::TestOmpPermissionCancel::test_omp_native_permission_is_cancelled",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_permission_deny.py::TestOmpPermissionDeny::test_omp_native_permission_is_denied",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
+      "test": "tests/e2e/baseline/smoke/adapters/omp/test_raw_rpc.py::TestOmpRawRpc::test_omp_raw_rpc_prompt_completes",
+      "adapter": "suite",
+      "lanes": [
+        "backends"
+      ],
+      "status": "pass",
+      "reason": null
+    },
+    {
       "test": "tests/e2e/baseline/smoke/adapters/test_omp_acp.py::test_omp_acp_band_tool_call_is_narrated",
       "adapter": "suite",
       "lanes": [
