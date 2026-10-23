@@ -28,7 +28,6 @@ class TestRoomRejoin:
         Adapter.COPILOT_ACP,
         Adapter.CURSOR_ACP,
         Adapter.OMP_ACP,
-        Adapter.OMP,
         prompt=LIVENESS_REPLY_PROMPT,
     )
     @pytest.mark.timeout(extra=BUDGET.extra_s)

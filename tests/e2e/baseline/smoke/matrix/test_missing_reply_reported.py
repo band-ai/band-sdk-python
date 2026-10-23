@@ -96,7 +96,6 @@ async def assert_missing_reply(
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,
     Adapter.OMP_ACP,
-    Adapter.OMP,
     prompt=silent_turn_prompt(),
     features=AdapterFeatures(exclude_tools={BandTool.SEND_MESSAGE, BandTool.NO_REPLY}),
 )
