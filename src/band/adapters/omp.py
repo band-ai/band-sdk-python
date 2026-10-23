@@ -7,10 +7,10 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import ExitStack
-from contextvars import ContextVar
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import ClassVar, Literal, Self, cast
+from typing import ClassVar, Literal, Self, TypeVar, cast
 from uuid import uuid4
 
 from band_sdk_core import AgentFailure
@@ -106,6 +106,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.formatters import messages_before
+from band.runtime.mailbox import RoomMailbox
 from band.runtime.prompts import (
     COMMUNICATION_INSTRUCTIONS,
     TURN_COMPLETION_GUIDANCE,
@@ -141,40 +142,7 @@ _APPROVAL_FIELD_NAMES = {
     **{key.replace("_", " "): key for key in OMP_DEVICE_PATH_KEYS},
 }
 OMP_PERMISSION_CANCELLED = PERMISSION_CANCELLED_TEXT
-_held_room_gates: ContextVar[frozenset[object]] = ContextVar(
-    "omp_held_room_gates", default=frozenset()
-)
-
-
-class RoomGate:
-    """Serialize different occupancies while nested and callback tasks reenter."""
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._owner: object | None = None
-        self._depth = 0
-
-    async def __aenter__(self) -> Self:
-        occupancy = self._owner
-        if occupancy is not None and occupancy in _held_room_gates.get():
-            self._depth += 1
-            return self
-        await self._lock.acquire()
-        occupancy = object()
-        self._owner = occupancy
-        self._depth = 1
-        _held_room_gates.set(_held_room_gates.get() | {occupancy})
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        self._depth -= 1
-        if self._depth:
-            return
-        occupancy = self._owner
-        self._owner = None
-        if occupancy is not None:
-            _held_room_gates.set(_held_room_gates.get() - {occupancy})
-        self._lock.release()
+T = TypeVar("T")
 
 
 def _selection_after(
@@ -369,8 +337,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             workspace_resolver_for(self.config.cwd, workspace_for_room)
         )
         self._rooms: dict[str, OmpRoom] = {}
-        self._locks: dict[str, RoomGate] = {}
-        self._selection_locks: dict[str, asyncio.Lock] = {}
+        self._mailbox = RoomMailbox()
         self._owners: dict[str, asyncio.Task[object]] = {}
         self._room_selections: dict[str, ModelSelection] = {}
         self._host_schemas = self._build_host_tools()
@@ -469,8 +436,10 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             command.extend((OMP_SESSION_DIR_FLAG, str(session_dir)))
             if plugin:
                 command.extend(omp_mcp_arguments(plugin))
+            runtime = OmpRpcClient(command, env=self._spawn_env(selection))
+            runtime.schedule_callback = partial(self._mailbox.ask, room_id)
             room = OmpRoom(
-                OmpRpcClient(command, env=self._spawn_env(selection)),
+                runtime,
                 workspace,
                 resources,
             )
@@ -603,17 +572,24 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        async with (
-            self._locks.setdefault(room_id, RoomGate()),
-            self._selection_locks.setdefault(room_id, asyncio.Lock()),
-        ):
-            room = self._rooms.get(room_id)
-            if room is not None and not room.retiring:
-                await self._select_model(room, selection)
-            self._room_selections[room_id] = _selection_after(
-                self._room_selections.get(room_id, self.model_selection),
-                selection,
-            )
+        await self._exclusive(
+            room_id, partial(self._apply_selection, room_id, selection)
+        )
+
+    async def _apply_selection(self, room_id: str, selection: ModelSelection) -> None:
+        room = self._rooms.get(room_id)
+        if room is not None and not room.retiring:
+            await self._select_model(room, selection)
+        self._room_selections[room_id] = _selection_after(
+            self._room_selections.get(room_id, self.model_selection),
+            selection,
+        )
+
+    async def _exclusive(self, room_id: str, run: Callable[[], Awaitable[T]]) -> T:
+        """Run ``run`` on this room's mailbox worker, inlining when already on it."""
+        if self._mailbox.occupying(room_id):
+            return await run()
+        return await self._mailbox.ask(room_id, run)
 
     def _build_system_context(self) -> str:
         prompt = render_system_prompt(
@@ -715,113 +691,130 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        async with self._locks.setdefault(room_id, RoomGate()):
-            owner = asyncio.current_task()
-            if owner is not None:
-                self._owners[room_id] = owner
-            deadline = asyncio.timeout(self.config.turn_timeout_s)
-            turn: OmpTurn | None = None
-            try:
-                async with deadline:
-                    room = self._rooms.get(room_id)
-                    if room is not None and room.retiring:
-                        await self._close_room(room_id)
-                        room = None
-                    room = room or await self._open_room(
-                        room_id, history if is_session_bootstrap else OmpSessionState()
-                    )
-                    prompt = await self._prompt_text(
-                        room,
+        owner = asyncio.current_task()
+        if owner is not None:
+            self._owners[room_id] = owner
+        deadline = asyncio.timeout(self.config.turn_timeout_s)
+        turn: OmpTurn | None = None
+        try:
+            async with deadline:
+                room = await self._exclusive(
+                    room_id,
+                    partial(
+                        self._prepare_room,
                         room_id,
-                        msg,
-                        tools,
-                        history,
-                        is_session_bootstrap,
-                        participants_msg,
-                        contacts_msg,
-                    )
-                    turn = OmpTurn(tools)
+                        history if is_session_bootstrap else OmpSessionState(),
+                    ),
+                )
+                prompt = await self._prompt_text(
+                    room,
+                    room_id,
+                    msg,
+                    tools,
+                    history,
+                    is_session_bootstrap,
+                    participants_msg,
+                    contacts_msg,
+                )
+                turn = OmpTurn(tools)
 
-                    async def on_event(event: OmpEvent) -> None:
-                        if turn.closed:
-                            return
-                        await self._emit_event(event, turn)
+                async def on_event(event: OmpEvent) -> None:
+                    if turn.closed:
+                        return
+                    await self._emit_event(event, turn)
 
-                    async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
-                        if turn.closed:
-                            return _text_tool_result(
-                                "OMP turn already closed", is_error=True
-                            )
-                        result = await self._execute_tool(call, tools)
-                        if (
-                            call.toolName == BandTool.NO_REPLY
-                            and not result.is_error
-                            and find_custom_tool(self._custom_tools, call.toolName)
-                            is None
-                        ):
-                            room.runtime.stop_after_tool(call.id)
-                        return result
-
-                    async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
-                        if turn.closed:
-                            return OmpUIResponse(cancelled=True)
-                        return await self._permission(
-                            request, room_id, room.session_id, tools
+                async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
+                    if turn.closed:
+                        return _text_tool_result(
+                            "OMP turn already closed", is_error=True
                         )
-
-                    await room.runtime.prompt(
-                        prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
-                    )
-                    room.bootstrapped = True
-                    await self._refresh_state(room)
-                    closing = "\n\n".join(turn.closing_text)
+                    result = await self._execute_tool(call, tools)
                     if (
-                        Emit.THOUGHTS in self.features.emit
-                        and not tools.turn.replied
-                        and has_visible_content(closing)
+                        call.toolName == BandTool.NO_REPLY
+                        and not result.is_error
+                        and find_custom_tool(self._custom_tools, call.toolName) is None
                     ):
-                        await send_event_safe(tools, closing, MessageType.THOUGHT)
-                    await send_event_safe(
-                        tools,
-                        "OMP session",
-                        MessageType.TASK,
-                        metadata=self._session_task_metadata(room_id, room),
+                        room.runtime.stop_after_tool(call.id)
+                    return result
+
+                async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
+                    if turn.closed:
+                        return OmpUIResponse(cancelled=True)
+                    return await self._permission(
+                        request, room_id, room.session_id, tools
                     )
-            except asyncio.CancelledError:
-                await self._retire_room(room_id)
-                raise
-            except DeliveryFailedError as error:
-                try:
-                    await self._retire_room(room_id)
-                finally:
-                    reraise_delivery_cause(error)
-            except Exception:
-                if deadline.expired():
-                    logger.error(
-                        "OMP turn timed out after %ss",
-                        self.config.turn_timeout_s,
-                    )
-                else:
-                    logger.exception("OMP turn failed")
-                if turn is not None:
-                    turn.closed = True
-                try:
-                    if not tools.turn.replied:
-                        failure = (
-                            AgentFailure(
-                                "omp",
-                                f"OMP turn timed out after {self.config.turn_timeout_s}s",
-                                FAILURE_CODE_TIMEOUT,
-                            )
-                            if deadline.expired()
-                            else AgentFailure("omp", GENERIC_PROVIDER_FAILURE_MESSAGE)
-                        )
-                        await tools.send_failure(failure)
-                finally:
-                    await self._retire_room(room_id)
-                raise
+
+                await room.runtime.prompt(
+                    prompt, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+                )
+                await self._exclusive(
+                    room_id, partial(self._finish_turn, room_id, room, turn, tools)
+                )
+        except asyncio.CancelledError:
+            await self._exclusive(room_id, partial(self._retire_room, room_id))
+            raise
+        except DeliveryFailedError as error:
+            try:
+                await self._exclusive(room_id, partial(self._retire_room, room_id))
             finally:
-                self._owners.pop(room_id, None)
+                reraise_delivery_cause(error)
+        except Exception:
+            if deadline.expired():
+                logger.error(
+                    "OMP turn timed out after %ss",
+                    self.config.turn_timeout_s,
+                )
+            else:
+                logger.exception("OMP turn failed")
+            if turn is not None:
+                turn.closed = True
+            try:
+                if not tools.turn.replied:
+                    failure = (
+                        AgentFailure(
+                            "omp",
+                            f"OMP turn timed out after {self.config.turn_timeout_s}s",
+                            FAILURE_CODE_TIMEOUT,
+                        )
+                        if deadline.expired()
+                        else AgentFailure("omp", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    await tools.send_failure(failure)
+            finally:
+                await self._exclusive(room_id, partial(self._retire_room, room_id))
+            raise
+        finally:
+            self._owners.pop(room_id, None)
+
+    async def _prepare_room(self, room_id: str, history: OmpSessionState) -> OmpRoom:
+        room = self._rooms.get(room_id)
+        if room is not None and room.retiring:
+            await self._close_room(room_id)
+            room = None
+        return room or await self._open_room(room_id, history)
+
+    async def _finish_turn(
+        self,
+        room_id: str,
+        room: OmpRoom,
+        turn: OmpTurn,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        room.bootstrapped = True
+        await self._refresh_state(room)
+        closing = "\n\n".join(turn.closing_text)
+        if (
+            Emit.THOUGHTS in self.features.emit
+            and not tools.turn.replied
+            and has_visible_content(closing)
+        ):
+            await send_event_safe(tools, closing, MessageType.THOUGHT)
+        await send_event_safe(
+            tools,
+            "OMP session",
+            MessageType.TASK,
+            metadata=self._session_task_metadata(room_id, room),
+        )
 
     async def _execute_tool(
         self, call: OmpHostToolCall, tools: AgentToolsProtocol
@@ -1147,12 +1140,15 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     logger.error(
                         "OMP cancelled turn ended with an error", exc_info=result
                     )
-        async with self._locks.setdefault(room_id, RoomGate()):
-            room = self._rooms.get(room_id)
-            retrying = room is not None and room.retiring
-            await self._close_room(room_id)
-            if not retrying:
-                self._room_selections.pop(room_id, None)
+        await self._exclusive(room_id, partial(self._cleanup_room, room_id))
+        await self._mailbox.close(room_id)
+
+    async def _cleanup_room(self, room_id: str) -> None:
+        room = self._rooms.get(room_id)
+        retrying = room is not None and room.retiring
+        await self._close_room(room_id)
+        if not retrying:
+            self._room_selections.pop(room_id, None)
 
     def _cleanup_rooms(self) -> Iterable[Awaitable[None]]:
         return (
