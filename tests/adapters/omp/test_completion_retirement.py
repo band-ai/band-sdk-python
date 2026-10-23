@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,7 @@ from tests.integrations.omppeer import COMPLETE
 from tests.integrations.omprpc.kit import (
     COMPLETION_BUDGET_S,
     NO_CALLBACK_GRACE_S,
-    OMP_PEER_SCRIPT,
+    OMP_PEER_COMMAND,
     owned_rpc_process,
     peer_process,
     process_is_alive,
@@ -51,9 +50,7 @@ class TestUnprovenRetirement:
         adapter = OmpAdapter(
             OmpAdapterConfig(
                 command=(
-                    sys.executable,
-                    "-u",
-                    OMP_PEER_SCRIPT,
+                    *OMP_PEER_COMMAND,
                     "--scenario",
                     "drain-stubborn-adapter",
                 ),
