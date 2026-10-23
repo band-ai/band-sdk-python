@@ -11,7 +11,7 @@ from band.runtime.toolactivity import report_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
 
 
 @pytest.mark.looptime
@@ -36,7 +36,7 @@ class TestNonBlockingDelivery:
             activity_platform.activity_release.set()
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         assert observed_before_delivery == [True]
         assert seconds_until_sent == [0]
         assert activity_platform.activity_bodies[1] == tool_body("Bash")
