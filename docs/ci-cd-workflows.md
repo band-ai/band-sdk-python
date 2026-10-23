@@ -39,7 +39,7 @@ the workflow files cannot say for themselves.
 ## Unit pytest parallelism
 
 - **Unit jobs run pytest-xdist worksteal inside the existing OS × Python
-  cells** (`-n auto --dist worksteal --maxprocesses=4`) on every extra and OS.
+  cells** (`-n 4 --dist worksteal`) on every extra and OS.
   No GitHub shard axis. Markdown-docs and E2E collect-only stay serial. Do not
   put `-n` in `addopts` or `PYTEST_ADDOPTS`.
 - **Durations rebalance** (`.github/workflows/pytest-durations.yml`) times that

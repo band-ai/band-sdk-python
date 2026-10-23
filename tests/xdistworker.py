@@ -16,9 +16,10 @@ from hypothesis.database import DirectoryBasedExampleDatabase
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERIAL_WORKER_ID = "master"
-# In-job worker pool for unit CI and the durations refresh. Matches
-# GitHub-hosted 4 vCPU runners. Not a GitHub Actions matrix axis.
-CI_XDIST_FLAGS = ("-n auto", "--dist worksteal", "--maxprocesses=4")
+# In-job worker pool for unit CI and the durations refresh. GitHub-hosted
+# runners are 4 vCPU; `-n auto` only started 2 workers on the main test job.
+# Not a GitHub Actions matrix axis.
+CI_XDIST_FLAGS = ("-n 4", "--dist worksteal")
 
 
 class XdistWorkerSettings(BaseSettings):

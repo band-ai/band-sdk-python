@@ -59,7 +59,7 @@ jobs:
       - name: Store unit-test durations
         run: |
           uv run --all-packages pytest \
-            -n auto --dist worksteal --maxprocesses=4 \
+            -n 4 --dist worksteal \
             --band-store-durations --band-clean-durations \
             --band-durations-path "$DURATIONS_PATH" \
             --ignore=tests/e2e --ignore=tests/integration

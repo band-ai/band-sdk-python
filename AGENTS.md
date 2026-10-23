@@ -292,7 +292,7 @@ uv sync --all-packages --locked --extra dev-parlant
 uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 
 # Run unit tests the way CI does (xdist worksteal; never with --pdb or live gates)
-uv run --all-packages pytest -n auto --dist worksteal --maxprocesses=4 --ignore=tests/e2e --ignore=tests/integration -q
+uv run --all-packages pytest -n 4 --dist worksteal --ignore=tests/e2e --ignore=tests/integration -q
 
 # Run single test
 uv run --all-packages pytest tests/ -k "test_name"
