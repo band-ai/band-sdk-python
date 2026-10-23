@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from band.client.streaming import DeliveryStatus
 from band.core.settlement import SettlementResult
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
@@ -63,20 +64,24 @@ class ConfirmationLink(ControlLink):
             if execution is not None
             else None
         )
-        control.retained_failure = pending is not None and pending["status"] == "failed"
+        control.retained_failure = (
+            pending is not None and pending["status"] == DeliveryStatus.FAILED
+        )
         control.failure_result = result
         control.failure_written.set()
         await control.release_confirmation.wait()
         control.confirmed = result is SettlementResult.ACCEPTED
         return result
 
-    async def mark_processing(self, room_id: str, message_id: str) -> bool:
-        accepted = await super().mark_processing(room_id, message_id)
+    async def mark_processing_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        result = await super().mark_processing_result(room_id, message_id)
         if self.control.failure_written.is_set():
             self.control.retry_admitted_after_confirmation = (
-                accepted and self.control.confirmed
+                result is SettlementResult.ACCEPTED and self.control.confirmed
             )
-        return accepted
+        return result
 
 
 @asynccontextmanager
