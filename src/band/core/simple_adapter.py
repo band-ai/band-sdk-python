@@ -112,6 +112,15 @@ class SimpleAdapter(ABC, Generic[H]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        """Recognize control input without side effects.
+
+        Recognition may inspect pending requests; handling still decides
+        authorization and consumption. Override for read-only discovery;
+        the default does not recognize controls.
+        """
+        return False
+
     def __init__(
         self,
         *,
