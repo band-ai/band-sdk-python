@@ -337,6 +337,13 @@ class IdleBrain(SlackReplyBrain):
         return None
 
 
+class CommandBrain(SlackReplyBrain):
+    """A brain that recognizes ``/approve`` as a control message."""
+
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return msg.content.startswith("/approve")
+
+
 def _posted_events(rest: MagicMock, message_type: MessageType) -> list[Any]:
     return [
         c.kwargs["event"]
