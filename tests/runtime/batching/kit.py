@@ -15,7 +15,7 @@ from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import FrameworkAdapter
 from band.core.settlement import SettlementResult
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter, SimpleAdapter
 from band.core.types import AgentInput
 from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.message_lifecycle import ActionablePage
@@ -405,8 +405,8 @@ class LegacyAdapter(SimpleAdapter[Any]):
     async def on_message(self, *args: Any, **kwargs: Any) -> None: ...
 
 
-class BatchAdapter(LegacyAdapter):
-    supports_batch_input = True
+class BatchAdapter(BatchInputAdapter[Any]):
+    async def on_turn(self, *args: Any, **kwargs: Any) -> None: ...
 
 
 class ControlHandlingAdapter(LegacyAdapter):
