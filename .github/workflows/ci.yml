@@ -73,7 +73,9 @@ jobs:
   test:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy: &suite-strategy
+    # shard lives only on this job. Extra jobs reuse &suite-strategy, which
+    # must not grow a shard axis or they would duplicate path-filtered work.
+    strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
@@ -81,6 +83,7 @@ jobs:
         run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
         # Older Windows interpreters run weekly, manually, and before releases.
         full-windows: ["${{ github.event_name != 'pull_request' || github.head_ref == 'release-please--branches--main' }}"]
+        shard: [1, 2]
         exclude:
         - {run-for: queue, os: windows-latest}
         - {run-for: queue, python-version: '3.11'}
@@ -120,7 +123,17 @@ jobs:
       run: uv run --all-packages pytest tests/e2e/baseline/ --collect-only -q --no-cov
 
     - name: Run tests
-      run: uv run --all-packages pytest
+      run: |
+        # pytest-randomly rejects a hex github.sha as int(); hash() would
+        # disagree across shard jobs. First 8 hex chars are a stable 32-bit seed.
+        seed=$((16#${GITHUB_SHA:0:8}))
+        uv run --all-packages pytest \
+          -n auto --dist worksteal --maxprocesses=4 \
+          --splits 2 --group ${{ matrix.shard }} \
+          --splitting-algorithm least_duration \
+          --durations-path .test_durations \
+          --randomly-seed="$seed" \
+          --ignore=tests/e2e --ignore=tests/integration
 
     - name: Run markdown doc tests
       # Linux-only: doc snippets are OS-independent, and this step relies on
@@ -135,7 +148,19 @@ jobs:
   test-crewai:
     if: *not-draft
     runs-on: ${{ matrix.os }}
-    strategy: *suite-strategy
+    strategy: &suite-strategy
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.12', '3.13']
+        run-for: ["${{ github.event_name == 'merge_group' && 'queue' || 'pr' }}"]
+        full-windows: ["${{ github.event_name != 'pull_request' || github.head_ref == 'release-please--branches--main' }}"]
+        exclude:
+        - {run-for: queue, os: windows-latest}
+        - {run-for: queue, python-version: '3.11'}
+        - {run-for: queue, python-version: '3.13'}
+        - {full-windows: false, os: windows-latest, python-version: '3.11'}
+        - {full-windows: false, os: windows-latest, python-version: '3.12'}
+      fail-fast: false
 
     # Use bash on every OS so the multiline pytest and pyrefly commands stay
     # identical across Linux and Windows.
@@ -180,6 +205,7 @@ jobs:
       # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          -n auto --dist worksteal --maxprocesses=4 \
           tests/adapters/test_crewai_flow_phase3.py \
           tests/adapters/crewaiworker/test_native_settlement.py \
           tests/adapters/crewaiworker/test_flow_admission.py \
@@ -249,6 +275,7 @@ jobs:
         BAND_TEST_EXTRA: "dev-strands-nooa"
       run: |
         uv run --all-packages pytest \
+          -n auto --dist worksteal --maxprocesses=4 \
           tests/adapters/strands/ \
           tests/adapters/nooa/ \
           tests/converters/test_strands.py \
@@ -321,6 +348,7 @@ jobs:
       # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
       run: |
         uv run --all-packages pytest \
+          -n auto --dist worksteal --maxprocesses=4 \
           tests/integrations/parlant/test_catalog.py \
           tests/integrations/parlant/test_chattools.py \
           tests/integrations/parlant/test_contacttools.py \

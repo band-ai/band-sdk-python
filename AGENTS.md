@@ -288,8 +288,11 @@ uv sync --all-packages --locked --extra dev-strands-nooa
 # Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
 uv sync --all-packages --locked --extra dev-parlant
 
-# Run unit tests
+# Run unit tests (serial; use this for --pdb and whenever live gates are on)
 uv run --all-packages pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+
+# Run unit tests the way CI does (xdist worksteal; never with --pdb or live gates)
+uv run --all-packages pytest -n auto --dist worksteal --maxprocesses=4 --ignore=tests/e2e --ignore=tests/integration -q
 
 # Run single test
 uv run --all-packages pytest tests/ -k "test_name"

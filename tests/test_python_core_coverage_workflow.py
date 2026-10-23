@@ -13,13 +13,21 @@ from typing import Any
 import yaml
 
 from tests.paths import REPO_ROOT
+from tests.xdistworker import worker_scoped
 
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/python-core-coverage.yml"
 # The guard script below shells out to a real `uv run`, which needs a real,
 # writable cache dir -- don't trust an inherited $HOME: another test earlier
 # in the same pytest process may have repointed it (e.g. at a container-only
-# path that doesn't exist on this machine).
-_UV_CACHE_DIR = Path(tempfile.gettempdir()) / "band-sdk-python-pin-guard-uv-cache"
+# path that doesn't exist on this machine). Two xdist workers must not share
+# that directory either, so it is scoped to ``PYTEST_XDIST_WORKER``.
+
+
+def pin_guard_uv_cache_dir() -> Path:
+    """Writable uv cache for the pin-guard subprocess, unique per xdist worker."""
+    return Path(tempfile.gettempdir()) / worker_scoped(
+        "band-sdk-python-pin-guard-uv-cache"
+    )
 
 
 def load_workflow() -> dict[str, Any]:
@@ -71,7 +79,10 @@ def _run_pin_guard(version: str) -> subprocess.CompletedProcess[str]:
     script = f'version="{version}"\n{_pin_guard_script(run_text)}'
     return _run_bash(
         script,
-        env={"CORE_TAG_PREFIX": core_tag_prefix, "UV_CACHE_DIR": str(_UV_CACHE_DIR)},
+        env={
+            "CORE_TAG_PREFIX": core_tag_prefix,
+            "UV_CACHE_DIR": str(pin_guard_uv_cache_dir()),
+        },
     )
 
 

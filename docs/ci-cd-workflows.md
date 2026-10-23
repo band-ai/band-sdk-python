@@ -23,7 +23,9 @@ the workflow files cannot say for themselves.
   cancelled or queued behind one another: each one is the verdict for the commit that
   lands, in a concurrency group of its own.
 - **The merge queue runs a slim `ci.yml`:** `lint` plus the `test`, `test-crewai` and
-  `test-parlant` suites on Ubuntu with Python 3.12. `test-strands-nooa`, `packaging`
+  `test-parlant` suites on Ubuntu with Python 3.12. The main `test` job is two
+  pytest-split shards, each with up to four pytest-xdist worksteal workers.
+  `test-strands-nooa`, `packaging`
   and `wheel-extras` stay out of the queue, and
   `python-core-coverage.yml` does not run in the queue. A break that shows only on a lane the
   queue skips reaches `main` and surfaces in the next PR's CI.
@@ -35,6 +37,20 @@ the workflow files cannot say for themselves.
   When adding a supported Python version, update the matrix exclusions so normal
   PRs retain only the newest validated Windows interpreter; the matrix guard
   checks this against the version grid.
+
+## Unit pytest parallelism
+
+- **The `test` job uses pytest-xdist worksteal (`-n auto --maxprocesses=4`) and
+  two pytest-split shards (`least_duration`, `.test_durations`).** Extra jobs
+  (crewai / parlant / strands-nooa) get xdist without shards. Markdown-docs and
+  E2E collect-only stay serial. Do not put `-n` in pytest `addopts` or
+  `PYTEST_ADDOPTS`: local live runs (`E2E_TESTS_ENABLED` and the other suite
+  gates) and `--pdb` must stay single-process. Use `pytest -n0` to debug.
+- **Shard assignment is rebalanced by `pytest-durations.yml`**, Mondays at
+  04:17 UTC (after weekly CI) and on `workflow_dispatch`. It stores durations
+  with `pytest -n0 --store-durations --clean-durations` (never under xdist —
+  pytest-split has no controller/worker guard) and opens an App-token PR on
+  `chore/pytest-durations` only when `.test_durations` drifted.
 
 ## PyPI publish
 

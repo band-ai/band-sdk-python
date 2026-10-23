@@ -32,7 +32,7 @@ from band.integrations.mcp.local_server import (
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools
 from tests.lifecycle import elapsed, held_open, running
-from tests.ports import reserve_port
+from tests.ports import HeldAdjacentPorts, HeldPort
 
 
 class EchoInput(BaseModel):
@@ -50,22 +50,6 @@ def _text_of(result: CallToolResult) -> str:
     block = result.content[0]
     assert isinstance(block, TextContent), block
     return block.text
-
-
-HIGHEST_PORT = 65535
-PORT_PAIR_ATTEMPTS = 100
-
-
-def free_port_pair() -> int:
-    """A port ``p`` the OS just reported free, with ``p + 1`` free too."""
-    for _ in range(PORT_PAIR_ATTEMPTS):
-        port = reserve_port(LOCAL_MCP_HOST)
-        if port == HIGHEST_PORT:
-            continue
-        with socket.socket() as neighbor, suppress(OSError):
-            neighbor.bind((LOCAL_MCP_HOST, port + 1))
-            return port
-    raise AssertionError("no free adjacent port pair")
 
 
 def _registration_named(
@@ -489,29 +473,33 @@ class TestLocalMcpServer:
         apart by port. The scan starts on the avoided port, so only skipping
         it gives the other one."""
         monkeypatch.setattr(local_server_mod.random, "randrange", lambda _span: 0)
-        port = free_port_pair()
-        server = LocalMCPServer(
-            name="test-avoid-port",
-            tool_registrations=[],
-            port_min=port,
-            port_max=port + 1,
-            avoid_port=port,
-        )
-        async with running(server):
-            assert server.port == port + 1
+        with HeldAdjacentPorts(LOCAL_MCP_HOST) as held:
+            port = held.port
+            server = LocalMCPServer(
+                name="test-avoid-port",
+                tool_registrations=[],
+                port_min=port,
+                port_max=port + 1,
+                avoid_port=port,
+            )
+            held.release()
+            async with running(server):
+                assert server.port == port + 1
 
     @pytest.mark.asyncio
     async def test_an_avoided_port_is_taken_when_it_is_the_only_one(self) -> None:
-        port = reserve_port(LOCAL_MCP_HOST)
-        server = LocalMCPServer(
-            name="test-avoid-only-port",
-            tool_registrations=[],
-            port_min=port,
-            port_max=port,
-            avoid_port=port,
-        )
-        async with running(server):
-            assert server.port == port
+        with HeldPort(LOCAL_MCP_HOST) as held:
+            port = held.port
+            server = LocalMCPServer(
+                name="test-avoid-only-port",
+                tool_registrations=[],
+                port_min=port,
+                port_max=port,
+                avoid_port=port,
+            )
+            held.release()
+            async with running(server):
+                assert server.port == port
 
     @pytest.mark.asyncio
     async def test_a_stopped_server_keeps_its_urls(self) -> None:

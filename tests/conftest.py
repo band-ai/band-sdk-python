@@ -15,6 +15,7 @@ return SDK-native types for pattern matching compatibility.
 
 from __future__ import annotations
 
+import logging
 import os
 
 # Must be set before crewai is first imported: its event bus installs a
@@ -35,6 +36,10 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 import pytest
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from tests.xdistworker import configure_hypothesis_worker_database
+
+logger = logging.getLogger(__name__)
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import (
@@ -80,6 +85,9 @@ _ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
 def pytest_configure(config: pytest.Config) -> None:
     """Block ``.env.test``'s adapter-config keys before collection can leak them.
 
+    Also point Hypothesis at a per-worker example database so xdist workers
+    do not share ``.hypothesis/examples``.
+
     ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
     override=False)`` at import time; several subdirectory ``conftest.py``
     modules (e.g. ``tests/docker/conftest.py``,
@@ -99,11 +107,30 @@ def pytest_configure(config: pytest.Config) -> None:
     Skipped entirely when ``E2E_TESTS_ENABLED`` is set: a live E2E run wants
     ``.env.test``'s real values (e.g. ``CODEX_CWD``), not neutralized ones.
     """
+    configure_hypothesis_worker_database()
     if os.environ.get("E2E_TESTS_ENABLED", "").lower() == "true":
         return
     for key in dotenv_values(ENV_TEST_FILE):
         if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
             os.environ[key] = ""
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Print the resolved xdist worker count and dist so CI logs show the probe."""
+    config = session.config
+    workers = getattr(config.option, "numprocesses", None)
+    dist = getattr(config.option, "dist", None)
+    if not workers:
+        return
+    maxprocesses = getattr(config.option, "maxprocesses", None)
+    logger.info(
+        "xdist numprocesses=%s maxprocesses=%s dist=%s", workers, maxprocesses, dist
+    )
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_line(
+            f"xdist numprocesses={workers} maxprocesses={maxprocesses} dist={dist}"
+        )
 
 
 class CollectionGateSettings(BaseSettings):

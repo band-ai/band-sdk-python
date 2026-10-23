@@ -126,3 +126,15 @@ class TestCiMatrix:
     ) -> None:
         matrix = suite_matrices()[suite]
         assert resolved_legs(matrix, event, head_ref) == full_grid(matrix)
+
+    def test_only_the_main_test_job_defines_shards(self) -> None:
+        jobs = ci_jobs()
+        test_matrix = jobs["test"]["strategy"]["matrix"]
+        assert test_matrix["shard"] == [1, 2]
+        unsharded = {key: value for key, value in test_matrix.items() if key != "shard"}
+        for name in suite_matrices():
+            if name == "test":
+                continue
+            extra = jobs[name]["strategy"]["matrix"]
+            assert "shard" not in extra
+            assert extra == unsharded

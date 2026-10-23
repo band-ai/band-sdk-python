@@ -204,6 +204,8 @@ dev = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
+    "pytest-split>=0.10.0",
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
@@ -287,6 +289,8 @@ dev-crewai = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
+    "pytest-split>=0.10.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
     "pytest-cov>=4.0.0",
@@ -322,6 +326,8 @@ dev-parlant = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
+    "pytest-split>=0.10.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
     "pytest-cov>=4.0.0",
@@ -355,6 +361,8 @@ dev-strands-nooa = [
     "hypothesis>=6.130.0",  # model-based lifecycle tests
     "looptime>=0.7",
     "pytest-randomly==5.0.0",
+    "pytest-xdist>=3.2.0",
+    "pytest-split>=0.10.0",
     "pytest-mock>=3.10.0",
     "pytest-httpx>=0.35.0",
     "pytest-cov>=4.0.0",
