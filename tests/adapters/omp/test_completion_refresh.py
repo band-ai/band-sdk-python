@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,7 @@ from tests.baseline.tools import BaselineTools
 from tests.integrations.omppeer import COMPLETE, REFRESH_LOSS_SCENARIO
 from tests.integrations.omprpc.kit import (
     COMPLETION_BUDGET_S,
-    OMP_PEER_SCRIPT,
+    OMP_PEER_COMMAND,
     peer_process,
     process_is_alive,
     state_requests_observed,
@@ -37,9 +36,7 @@ class TestPostPromptRefresh:
                 OmpAdapterConfig(
                     cwd=str(tmp_path),
                     command=(
-                        sys.executable,
-                        "-u",
-                        OMP_PEER_SCRIPT,
+                        *OMP_PEER_COMMAND,
                         "--scenario",
                         REFRESH_LOSS_SCENARIO,
                     ),
