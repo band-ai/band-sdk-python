@@ -105,7 +105,5 @@ def stop_commands(tmp_path: Path) -> list[dict[str, Any]]:
 
 
 def wire_frames(tmp_path: Path) -> list[dict[str, Any]]:
-    return [
-        json.loads(line)
-        for line in (tmp_path / DECLINE_TRANSCRIPT).read_text().splitlines()
-    ]
+    transcript = (tmp_path / DECLINE_TRANSCRIPT).read_text(encoding="utf-8")
+    return [json.loads(line) for line in transcript.splitlines()]
