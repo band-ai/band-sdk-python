@@ -12,6 +12,7 @@ from tests.adapters.opencode.approvals.kit import (
     make_room_approvals,
 )
 from tests.adapters.opencode.helpers import (
+    APPROVAL_REPLY,
     PERMISSION_ID,
     AskFactory,
     FakeOpencodeClient,
@@ -37,7 +38,7 @@ class TestControlRecognition:
     ) -> None:
         client = parked_turn_client(after_approval=model_answer("answer", "Done"))
         adapter = make_adapter(client)
-        reply = make_platform_message(content=f"approve {PERMISSION_ID}")
+        reply = make_platform_message(content=APPROVAL_REPLY)
         assert not adapter.is_control_message(reply)
 
         await park_turn(adapter, tools)
