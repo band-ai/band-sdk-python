@@ -926,39 +926,46 @@ class WebSocketClient:
 
         return await self._require_client().subscribe_to_topic(topic, message_handler)
 
+    async def _leave_topic(self, topic: str) -> None:
+        client = self._require_client()
+        # Server-closed topics are already absent from the transport registry.
+        if topic not in client.get_current_subscriptions():
+            return
+        await client.unsubscribe_from_topic(topic)
+
     async def leave_agent_control_channel(self, agent_id: str):
         """Unsubscribe from agent control topic"""
         topic = AgentTopicKind.Control.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def leave_agent_rooms_channel(self, agent_id: str):
         """Unsubscribe from agent rooms topic"""
         topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def leave_chat_room_channel(self, chat_room_id: str):
         """Unsubscribe from chat room topic"""
         topic = chat_room_topic(chat_room_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def leave_user_rooms_channel(self, user_id: str):
         """Unsubscribe from user rooms topic"""
         topic = f"user_rooms:{user_id}"
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def leave_room_participants_channel(self, chat_room_id: str):
         """Unsubscribe from room participants topic"""
         topic = room_participants_topic(chat_room_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def leave_tasks_channel(self, user_id: str):
         """Unsubscribe from tasks topic"""
         topic = f"tasks:{user_id}"
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def join_agent_contacts_channel(
         self,
@@ -995,7 +1002,7 @@ class WebSocketClient:
         """Unsubscribe from agent contacts topic."""
         topic = AgentTopicKind.Contacts.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self._require_client().unsubscribe_from_topic(topic)
+        return await self._leave_topic(topic)
 
     async def run_forever(self, *, install_signal_handlers: bool = True) -> None:
         """Block until the connection ends; see ``Agent.run_forever``.
