@@ -112,6 +112,7 @@ from band.runtime.prompts import (
     render_system_prompt,
 )
 from band.runtime.tools import (
+    BandTool,
     get_band_tool_category,
     get_tool_description,
     is_image_passthrough_result,
@@ -751,7 +752,15 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                             return _text_tool_result(
                                 "OMP turn already closed", is_error=True
                             )
-                        return await self._execute_tool(call, tools)
+                        result = await self._execute_tool(call, tools)
+                        if (
+                            call.toolName == BandTool.NO_REPLY
+                            and not result.is_error
+                            and find_custom_tool(self._custom_tools, call.toolName)
+                            is None
+                        ):
+                            room.runtime.stop_after_tool(call.id)
+                        return result
 
                     async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
                         if turn.closed:

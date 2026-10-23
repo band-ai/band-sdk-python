@@ -54,6 +54,9 @@ class PromptRun:
         self.callbacks: dict[tuple[OmpCallbackKind, str], asyncio.Task[None]] = {}
         self.callback_tasks: set[asyncio.Task[None]] = set()
         self.event_worker: asyncio.Task[None] | None = None
+        self.stop_after_tool_id: str | None = None
+        self.stop_task: asyncio.Task[None] | None = None
+        self.stopped = False
         # Reader-spawned callbacks must reenter this prompt's occupancy, not start()'s.
         self.context: Context = copy_context()
 

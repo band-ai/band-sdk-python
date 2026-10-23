@@ -31,6 +31,11 @@ class ScriptedOmpClient:
 
     def __init__(self, script: TurnScript) -> None:
         self.script = script
+        self.stop_after_tool_id: str | None = None
+
+    def stop_after_tool(self, call_id: str) -> None:
+        if self.stop_after_tool_id is None:
+            self.stop_after_tool_id = call_id
 
     async def start(self) -> None:
         pass
@@ -58,15 +63,19 @@ class ScriptedOmpClient:
         on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
     ) -> None:
         del message, on_ui
+        self.stop_after_tool_id = None
         for index, call in enumerate(self.script.tool_calls):
+            request_id = f"request-{index}"
             await on_tool(
                 OmpHostToolCall(
-                    id=f"request-{index}",
+                    id=request_id,
                     toolCallId=f"tool-{index}",
                     toolName=call.name,
                     arguments=call.arguments,
                 )
             )
+            if self.stop_after_tool_id == request_id:
+                return
         if self.script.final_text:
             await on_event(
                 OmpEvent.model_validate(

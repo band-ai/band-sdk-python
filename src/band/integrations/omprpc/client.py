@@ -253,6 +253,14 @@ class OmpRpcClient:
             self._ensure_running()
             await self._execute_prompt(message, on_event, on_tool, on_ui)
 
+    def stop_after_tool(self, call_id: str) -> None:
+        """Stop this prompt after acknowledging the successful host tool call."""
+        turn = self._turn
+        if turn is None or (OmpCallbackKind.TOOL, call_id) not in turn.callbacks:
+            raise ValueError("OMP stop requires an active host tool callback")
+        if turn.stop_after_tool_id is None:
+            turn.stop_after_tool_id = call_id
+
     async def close(self) -> None:
         """Finish shared bounded cleanup before propagating caller cancellation."""
         if self._proc is None and self._spawn_task is None:
@@ -293,6 +301,7 @@ class OmpRpcClient:
         *,
         request_id: str | None = None,
         allow_closing: bool = False,
+        preceding_frame: dict[str, JsonValue] | None = None,
     ) -> ReceivedResponse:
         if not allow_closing:
             self._ensure_running()
@@ -307,7 +316,10 @@ class OmpRpcClient:
         )
         self._pending[request_id] = PendingRequest(command, future)
         try:
-            await self._write_frame(frame.root)
+            if preceding_frame is None:
+                await self._write_frame(frame.root)
+            else:
+                await self._write_frames(preceding_frame, frame.root)
             response = await future
             if isinstance(response, (OmpRpcError, OmpProcessError)):
                 raise response
@@ -366,7 +378,12 @@ class OmpRpcClient:
         finally:
             self._turn = None
             await self._cancel_tasks(
-                [work, event_worker, *turn.callback_tasks],
+                [
+                    work,
+                    event_worker,
+                    *turn.callback_tasks,
+                    *([turn.stop_task] if turn.stop_task is not None else []),
+                ],
                 timeout=self.callback_exit_timeout_s,
                 label="callback",
             )
@@ -399,7 +416,12 @@ class OmpRpcClient:
                 error = OmpProcessError(CALLBACKS_UNFINISHED)
                 self._record_failure(error)
                 raise error from None
-        if outcome is not None and outcome.status != OmpPromptStatus.COMPLETED:
+        if turn.stop_task is not None:
+            await asyncio.shield(turn.stop_task)
+        successful_statuses = {OmpPromptStatus.COMPLETED}
+        if turn.stopped:
+            successful_statuses.add(OmpPromptStatus.ABORTED)
+        if outcome is not None and outcome.status not in successful_statuses:
             raise OmpPromptError(
                 outcome.status,
                 outcome.error.message
@@ -407,10 +429,10 @@ class OmpRpcClient:
                 else f"OMP prompt {outcome.status}",
             )
         assistant = turn.last_assistant
-        if assistant is not None and assistant.stopReason in {
-            OmpPromptStatus.ERROR,
-            OmpPromptStatus.ABORTED,
-        }:
+        if assistant is not None and (
+            assistant.stopReason == OmpPromptStatus.ERROR
+            or (assistant.stopReason == OmpPromptStatus.ABORTED and not turn.stopped)
+        ):
             raise OmpPromptError(
                 assistant.stopReason,
                 assistant.errorMessage or f"OMP continuation {assistant.stopReason}",
@@ -459,7 +481,10 @@ class OmpRpcClient:
                 raise error from cause
 
     async def _write_frame(self, frame: dict[str, JsonValue]) -> None:
-        await self._write_line(payload_json(frame))
+        await self._write_frames(frame)
+
+    async def _write_frames(self, *frames: dict[str, JsonValue]) -> None:
+        await self._write_line("\n".join(payload_json(frame) for frame in frames))
 
     async def _read_stdout(self, process: asyncio.subprocess.Process) -> None:
         assert process.stdout is not None
@@ -621,7 +646,7 @@ class OmpRpcClient:
         request_id: str,
         callback: Coroutine[object, object, None],
     ) -> None:
-        if self._closing or turn.failure.done():
+        if self._closing or turn.failure.done() or turn.stop_after_tool_id is not None:
             callback.close()
             return
         key = (kind, request_id)
@@ -660,14 +685,33 @@ class OmpRpcClient:
             turn.fail(error)
 
     async def _handle_tool(self, turn: PromptRun, call: OmpHostToolCall) -> None:
+        if turn.stop_after_tool_id is not None:
+            return
         result = await turn.on_tool(call)
+        if turn.stop_after_tool_id not in (None, call.id):
+            return
         if not self._callback_still_active(turn, OmpCallbackKind.TOOL, call.id):
             return
-        await self._write_frame(
-            OmpHostToolResult.from_tool(call.id, result).model_dump(mode="json")
-        )
+        frame = OmpHostToolResult.from_tool(call.id, result).model_dump(mode="json")
+        if turn.stop_after_tool_id == call.id:
+            turn.stop_task = asyncio.create_task(self._stop_after_result(turn, frame))
+        else:
+            await self._write_frame(frame)
+
+    async def _stop_after_result(
+        self, turn: PromptRun, result: dict[str, JsonValue]
+    ) -> None:
+        # The bridge must consume the result before abort cancels pending tools.
+        try:
+            await self._request_frame(OmpCommandName.ABORT, {}, preceding_frame=result)
+        except (OmpProcessError, OmpRpcError) as error:
+            turn.fail(error)
+            return
+        turn.stopped = True
 
     async def _handle_ui(self, turn: PromptRun, request: OmpUIRequest) -> None:
+        if turn.stop_after_tool_id is not None:
+            return
         response = await turn.on_ui(request)
         if not self._callback_still_active(turn, OmpCallbackKind.UI, request.id):
             return
