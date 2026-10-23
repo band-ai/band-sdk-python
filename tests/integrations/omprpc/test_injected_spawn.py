@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import pytest
 
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import OmpEventType
 from tests.integrations.omprpc.kit import (
-    OMP_PEER_SCRIPT,
+    OMP_PEER_COMMAND,
     FailingOwnedClient,
     Observer,
     owned_rpc_process,
@@ -22,7 +21,7 @@ from tests.integrations.omprpc.kit import (
 class TestInjectedSpawnOwnership:
     async def test_stubborn_injected_process_is_reaped_before_restart(self) -> None:
         client = OmpRpcClient(
-            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", "stubborn"),
+            (*OMP_PEER_COMMAND, "--scenario", "stubborn"),
             create_process=asyncio.create_subprocess_exec,
         )
         process: asyncio.subprocess.Process | None = None
@@ -53,7 +52,7 @@ class TestInjectedSpawnOwnership:
 
     async def test_failed_owned_wrapper_reaps_before_restart(self) -> None:
         client = FailingOwnedClient(
-            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", "basic"),
+            (*OMP_PEER_COMMAND, "--scenario", "basic"),
             create_process=asyncio.create_subprocess_exec,
         )
         process: asyncio.subprocess.Process | None = None

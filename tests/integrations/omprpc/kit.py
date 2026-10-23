@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -30,13 +31,14 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from tests.integrations import omppeer
-from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT, ProcessReceipt
+from tests.integrations.ompgate import GATE_COMMAND, GateRole, ProcessReceipt
+from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT
 from tests.integrations.omprpc.cancellation import HeldCleanup
 
 ClientFactory = Callable[[str], Awaitable[OmpRpcClient]]
 
 # The fake OMP peer every RPC test launches as its subprocess.
-OMP_PEER_SCRIPT = omppeer.__file__
+OMP_PEER_COMMAND = (sys.executable, "-u", "-m", omppeer.__name__)
 
 
 class FailingOwnedClient(OmpRpcClient):
@@ -181,9 +183,7 @@ def descendant_client(
 ) -> OmpRpcClient:
     return OmpRpcClient(
         (
-            sys.executable,
-            "-u",
-            OMP_PEER_SCRIPT,
+            *OMP_PEER_COMMAND,
             "--scenario",
             scenario,
             "--gate-port",
@@ -283,7 +283,7 @@ class ProcessGate:
 
     async def connection(self) -> GatedProcess:
         reader, _ = await self.connections.get()
-        receipt = ProcessReceipt.model_validate_json(await reader.readline())
+        receipt = ProcessReceipt(**json.loads(await reader.readline()))
         process = await asyncio.to_thread(psutil.Process, receipt.pid)
         self.processes.append(process)
         assert await asyncio.to_thread(process.create_time) == receipt.created
@@ -474,11 +474,9 @@ class DeferredSessionSignal:
 @asynccontextmanager
 async def unrelated_gate_child(gate: ProcessGate) -> AsyncIterator[GatedProcess]:
     process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-u",
-        OMP_PEER_SCRIPT,
+        *GATE_COMMAND,
         "--scenario",
-        "gated-child",
+        GateRole.CHILD,
         "--gate-port",
         str(gate.port),
         stdin=asyncio.subprocess.DEVNULL,

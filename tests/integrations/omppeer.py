@@ -7,13 +7,11 @@ import base64
 import json
 import os
 import signal
-import socket
 import subprocess
 import sys
 import threading
 from typing import cast
 
-import psutil
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from band.integrations.ompwire import (
@@ -24,6 +22,7 @@ from band.integrations.ompwire import (
     OmpCommandName,
     OmpPromptStatus,
 )
+from tests.integrations.ompgate import GateRole, start_descendant
 
 PROTOCOL_VERSION = 1
 COMPLETE = "complete"
@@ -65,75 +64,6 @@ class Frame(BaseModel):
     confirmed: bool | None = None
     cancelled: bool | None = None
     count: int = 0
-
-
-class ProcessReceipt(BaseModel):
-    pid: int
-    parent_pid: int
-    created: float
-
-
-def start_descendant(
-    scenario: str,
-    port: int,
-    stdio: str,
-    *,
-    detached: bool = False,
-    spawn_on_eof: bool = False,
-) -> subprocess.Popen[bytes]:
-    return subprocess.Popen(
-        (
-            sys.executable,
-            "-u",
-            __file__,
-            "--scenario",
-            scenario,
-            "--gate-port",
-            str(port),
-            *(("--detached-children",) if detached else ()),
-            *(("--spawn-on-eof",) if spawn_on_eof else ()),
-        ),
-        # A parent's pending pipe read can block Python's stdin initialization on Windows.
-        # Descendants are controlled by the gate socket, not the RPC input pipe.
-        stdin=subprocess.PIPE if spawn_on_eof else subprocess.DEVNULL,
-        stdout=None if stdio == "inherit" else subprocess.DEVNULL,
-        stderr=None if stdio == "inherit" else subprocess.DEVNULL,
-        start_new_session=detached and os.name != "nt",
-    )
-
-
-def hold_process_gate(
-    port: int,
-    *,
-    spawn_child: bool,
-    detached: bool = False,
-    spawn_on_eof: bool = False,
-) -> None:
-    if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-
-    def launch_child() -> subprocess.Popen[bytes] | None:
-        return (
-            start_descendant("gated-child", port, "inherit", detached=detached)
-            if spawn_child
-            else None
-        )
-
-    child = None if spawn_on_eof else launch_child()
-    with socket.create_connection(("127.0.0.1", port), timeout=5) as gate:
-        gate.settimeout(None)
-        receipt = ProcessReceipt(
-            pid=os.getpid(),
-            parent_pid=os.getppid(),
-            created=psutil.Process().create_time(),
-        )
-        gate.sendall((receipt.model_dump_json() + "\n").encode())
-        if spawn_on_eof:
-            sys.stdin.buffer.read()
-            child = launch_child()
-        gate.recv(1)
-    if child is not None:
-        child.wait(timeout=5)
 
 
 def send(frame: dict[str, JsonValue]) -> None:
@@ -862,28 +792,16 @@ def main() -> None:
         "--child-stdio", choices=("inherit", "discard"), default="inherit"
     )
     args = parser.parse_args()
-    if args.scenario in {"gated-parent", "gated-child"}:
-        if args.gate_port is None:
-            raise ValueError("A process gate port is required")
-        hold_process_gate(
-            args.gate_port,
-            spawn_child=args.scenario == "gated-parent",
-            detached=args.detached_children,
-            spawn_on_eof=args.spawn_on_eof,
-        )
-        return
     managed_child: subprocess.Popen[bytes] | None = None
-    if args.scenario in {
+    if args.gate_port is not None and args.scenario in {
         "descendants",
         "no-ready-descendants",
         "lifecycle",
         "eof-descendants",
     }:
-        if args.gate_port is None:
-            raise ValueError("A process gate port is required")
         # The gate, not the peer's stdio EOF, owns these children's lifetime.
         managed_child = start_descendant(
-            "gated-parent",
+            GateRole.PARENT,
             args.gate_port,
             args.child_stdio,
             detached=args.detached_children,

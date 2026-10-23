@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import pytest
 from pydantic import JsonValue
@@ -22,7 +21,7 @@ from tests.integrations.omprpc.backpressure import (
 )
 from tests.integrations.omprpc.cancellation import HeldCleanup
 from tests.integrations.omprpc.kit import (
-    OMP_PEER_SCRIPT,
+    OMP_PEER_COMMAND,
     ClientFactory,
     Observer,
     owned_rpc_process,
@@ -184,7 +183,7 @@ class TestInterruptionAndReaping:
     async def test_close_finishes_while_a_stdin_drain_is_held(self) -> None:
         spawn = BackpressureSpawn()
         client = OmpRpcClient(
-            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", STDIN_BACKPRESSURE),
+            (*OMP_PEER_COMMAND, "--scenario", STDIN_BACKPRESSURE),
             create_process=spawn.create,
         )
         writes: list[asyncio.Task[dict[str, JsonValue]]] = []
