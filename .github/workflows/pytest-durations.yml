@@ -40,10 +40,12 @@ jobs:
           client-id: ${{ secrets.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Checkout main
+      - name: Checkout the dispatched ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: main
+          # On-demand runs use the selected branch so a probe can exercise this
+          # workflow before it is on main. Scheduled runs are always main.
+          ref: ${{ github.ref }}
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure git to use HTTPS for GitHub
@@ -72,6 +74,7 @@ jobs:
             --ignore=tests/e2e --ignore=tests/integration
 
       - name: Open a durations PR when the file drifted
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -94,4 +97,16 @@ jobs:
               --head "$DURATIONS_BRANCH"
           else
             echo "PR for ${DURATIONS_BRANCH} already open; the push updated it."
+          fi
+
+      - name: Report durations drift on a branch probe
+        if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          set -euo pipefail
+          git add -- "$DURATIONS_PATH"
+          if git diff --cached --quiet; then
+            echo "probe: durations unchanged; would not open a PR"
+          else
+            echo "probe: durations drifted; skipping PR because this run is not on the default branch"
+            git diff --cached --stat
           fi
