@@ -38,6 +38,7 @@ from band.converters.omp import (
 from band.core.adapterconfig import BaseAdapterConfig
 from band.core.content import has_visible_content
 from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.exceptions import InvalidToolArgumentsError
 from band.core.model_catalog import ModelSelection
 from band.core.protocols import (
     FAILURE_CODE_TIMEOUT,
@@ -368,6 +369,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         )
         self._rooms: dict[str, OmpRoom] = {}
         self._locks: dict[str, RoomGate] = {}
+        self._selection_locks: dict[str, asyncio.Lock] = {}
         self._owners: dict[str, asyncio.Task[object]] = {}
         self._room_selections: dict[str, ModelSelection] = {}
         self._host_schemas = self._build_host_tools()
@@ -600,7 +602,10 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        async with self._locks.setdefault(room_id, RoomGate()):
+        async with (
+            self._locks.setdefault(room_id, RoomGate()),
+            self._selection_locks.setdefault(room_id, asyncio.Lock()),
+        ):
             room = self._rooms.get(room_id)
             if room is not None and not room.retiring:
                 await self._select_model(room, selection)
@@ -841,6 +846,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             return _text_tool_result(tool_result_text(value))
         except DeliveryFailedError:
             raise
+        except InvalidToolArgumentsError as error:
+            logger.warning("OMP host tool %s rejected invalid arguments", call.toolName)
+            return _text_tool_result(str(error), is_error=True)
         except Exception as error:
             logger.exception("OMP host tool %s failed", call.toolName)
             return _text_tool_result(str(error), is_error=True)

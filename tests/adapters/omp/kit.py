@@ -476,8 +476,14 @@ class UnencodableCallRuntime(PendingRuntime):
 
 
 class CustomHostToolRuntime(RecordingRuntime):
-    def __init__(self, *_args, **_kwargs):
+    def __init__(
+        self,
+        *_args: object,
+        arguments: dict[str, JsonValue] | None = None,
+        **_kwargs: object,
+    ) -> None:
         super().__init__(*_args, **_kwargs)
+        self.arguments = {"text": "ping"} if arguments is None else arguments
         self.tool_result: OmpToolResult | None = None
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
@@ -486,7 +492,7 @@ class CustomHostToolRuntime(RecordingRuntime):
                 id="call",
                 toolCallId="echo",
                 toolName="echo",
-                arguments={"text": "ping"},
+                arguments=self.arguments,
             )
         )
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
