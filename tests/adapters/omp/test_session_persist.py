@@ -11,7 +11,7 @@ from band.converters.omp import OmpHistoryConverter, OmpMetadataKey
 from band.core.types import MessageType
 from band.testing import FakeAgentTools
 from band.testing.fake_tools import events_of_type
-from tests.adapters.omp.kit import RecordingRuntime, run_turn
+from tests.adapters.omp.kit import RecordingRuntime, native_session_file, run_turn
 
 
 class TestSessionPersist:
@@ -42,6 +42,26 @@ class TestSessionPersist:
             assert (
                 state.room_to_session["room-123"]
                 == f"/workspace/{OMP_SESSION_DIRECTORY}/saved.jsonl"
+            )
+        finally:
+            await adapter.cleanup_all()
+
+    @pytest.mark.asyncio
+    async def test_successful_turn_posts_session_file(
+        self, monkeypatch, tmp_path: Path
+    ):
+        runtime = RecordingRuntime()
+        runtime.finish.set()
+        runtime.session_file = str(native_session_file(tmp_path))
+        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
+        tools = FakeAgentTools()
+        try:
+            await run_turn(adapter, tools)
+            posted = events_of_type(tools, MessageType.TASK)
+            assert posted
+            assert (
+                posted[-1]["metadata"][OmpMetadataKey.SESSION] == runtime.session_file
             )
         finally:
             await adapter.cleanup_all()

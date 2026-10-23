@@ -9,6 +9,7 @@ import pytest
 
 from band.integrations.omp import finalize_omp_command
 from band.integrations.ompwire import (
+    OMP_ASSISTANT_ROLE,
     OmpContent,
     OmpEvent,
     OmpEventType,
@@ -47,7 +48,7 @@ class TestOmpRawRpc:
             message = event.message
             if event.type != OmpEventType.MESSAGE_END or message is None:
                 return
-            if message.role != "assistant":
+            if message.role != OMP_ASSISTANT_ROLE:
                 return
             if isinstance(message.content, str):
                 responses.append(message.content)

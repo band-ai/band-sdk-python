@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.integrations.omp import OMP_CWD_FLAG
+from band.integrations.ompprocess import OMP_SESSION_DIR_FLAG
 from band.testing import FakeAgentTools
 from tests.adapters.omp.kit import BoomCloseRuntime, occupied_room_ids, run_turn
 
@@ -22,7 +24,7 @@ class TestCleanupAllFailures:
             cwd = next(
                 command[index + 1]
                 for index, part in enumerate(command)
-                if part in {"--cwd", "--session-dir"}
+                if part in {OMP_CWD_FLAG, OMP_SESSION_DIR_FLAG}
             )
             label = "first" if "room-a" in cwd or len(runtimes) == 0 else "second"
             runtime = BoomCloseRuntime()

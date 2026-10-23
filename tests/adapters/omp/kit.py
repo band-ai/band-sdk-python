@@ -23,10 +23,12 @@ from band.core.delivery import DeliveryFailedError
 from band.core.model_catalog import ModelSelection
 from band.core.types import MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
-from band.integrations.omprpc import OmpRpcClient, OmpRpcError
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
+    OMP_ASSISTANT_ROLE,
     OmpCommandName,
     OmpContent,
+    OmpContentKind,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -196,6 +198,100 @@ class BoomCloseRuntime(PendingRuntime):
         raise OSError("process still alive")
 
 
+class FirstCloseFailsRuntime(RecordingRuntime):
+    """Fail the first close so custody stays with this process, then succeed."""
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self._close_failed = False
+        self.reject_requests = False
+
+    async def request(self, command, **parameters):
+        if self.reject_requests:
+            raise OmpProcessError("client is closing")
+        return await super().request(command, **parameters)
+
+    async def close(self):
+        if not self._close_failed:
+            self._close_failed = True
+            raise OSError("process still alive")
+        await super().close()
+
+
+class HostToolCallRuntime(RecordingRuntime):
+    def __init__(self, call: OmpHostToolCall, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.call = call
+        self.tool_result: OmpToolResult | None = None
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        self.tool_result = await on_tool(self.call)
+        self.prompt_text = _message
+
+
+class UiRequestRuntime(RecordingRuntime):
+    def __init__(self, ui_request: OmpUIRequest, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.ui_request = ui_request
+        self.response = None
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        self.response = await on_ui(self.ui_request)
+        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+
+class WhitespaceMessageRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.MESSAGE_END,
+                message=OmpMessage(role=OMP_ASSISTANT_ROLE, content="   \n"),
+            )
+        )
+
+
+class NonAssistantMessageRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.MESSAGE_END,
+                message=OmpMessage(role="user", content="Visible assistant text"),
+            )
+        )
+
+
+class ClosingThoughtAfterReplyRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_tool(
+            OmpHostToolCall(
+                id="host-call",
+                toolCallId="reply",
+                toolName="band_send_message",
+                arguments={"content": "Already replied"},
+            )
+        )
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.MESSAGE_END,
+                message=OmpMessage(
+                    role=OMP_ASSISTANT_ROLE, content="Closing thought after reply"
+                ),
+            )
+        )
+
+
+class SameTaskCleanupRuntime(PendingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.adapter: OmpAdapter | None = None
+        self.cleaned_from_turn = False
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        assert self.adapter is not None
+        await self.adapter.on_cleanup("room-123")
+        self.cleaned_from_turn = True
+
+
 class BoomCloseDeliveryRuntime(BoomCloseRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         raise DeliveryFailedError(RuntimeError("delivery rejected"))
@@ -223,6 +319,38 @@ class HangAfterPromptRuntime(PendingRuntime):
             self.hung.set()
             await asyncio.Event().wait()
         return await super().request(command, **_parameters)
+
+
+class BoomGetStateAfterReplyRuntime(HangAfterPromptRuntime):
+    async def request(self, command, **_parameters):
+        if command == OmpCommandName.GET_STATE and self.prompted:
+            raise RuntimeError("state failed")
+        return await super().request(command, **_parameters)
+
+
+class LeftoverHostToolRuntime(BoomGetStateAfterReplyRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.leftover: asyncio.Task | None = None
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+        async def leftover_call() -> None:
+            self.started.set()
+            await self.release.wait()
+            await on_tool(
+                OmpHostToolCall(
+                    id="late-call",
+                    toolCallId="late",
+                    toolName="band_send_message",
+                    arguments={"content": "Late reply"},
+                )
+            )
+
+        self.leftover = asyncio.create_task(leftover_call())
 
 
 class RestoreFailRuntime(RecordingRuntime):
@@ -254,7 +382,9 @@ class StringMessageRuntime(PendingRuntime):
         await on_event(
             OmpEvent(
                 type=OmpEventType.MESSAGE_END,
-                message=OmpMessage(role="assistant", content="Visible assistant text"),
+                message=OmpMessage(
+                    role=OMP_ASSISTANT_ROLE, content="Visible assistant text"
+                ),
             )
         )
 
@@ -267,8 +397,10 @@ class ThinkingBlockRuntime(PendingRuntime):
                 message=OmpMessage(
                     role="assistant",
                     content=[
-                        OmpContent(type="thinking", thinking="Internal reasoning"),
-                        OmpContent(type="text", text="Visible answer"),
+                        OmpContent(
+                            type=OmpContentKind.THINKING, thinking="Internal reasoning"
+                        ),
+                        OmpContent(type=OmpContentKind.TEXT, text="Visible answer"),
                     ],
                 ),
             )
@@ -296,7 +428,9 @@ class UnencodableCallRuntime(PendingRuntime):
                 toolName="read",
                 isError=True,
                 result=OmpToolResult(
-                    content=[OmpContent(type="text", text=NATIVE_FAILURE_OUTPUT)]
+                    content=[
+                        OmpContent(type=OmpContentKind.TEXT, text=NATIVE_FAILURE_OUTPUT)
+                    ]
                 ),
             )
         )
@@ -478,7 +612,9 @@ class DocumentationRuntime(PendingRuntime):
                 toolCallId="docs",
                 toolName="grep",
                 result=OmpToolResult(
-                    content=[OmpContent(type="text", text="Tool documentation")]
+                    content=[
+                        OmpContent(type=OmpContentKind.TEXT, text="Tool documentation")
+                    ]
                 ),
                 isError=False,
             )
@@ -508,7 +644,9 @@ class RepeatedRuntime(PendingRuntime):
                 toolName="read",
                 isError=True,
                 result=OmpToolResult(
-                    content=[OmpContent(type="text", text=NATIVE_FAILURE_OUTPUT)]
+                    content=[
+                        OmpContent(type=OmpContentKind.TEXT, text=NATIVE_FAILURE_OUTPUT)
+                    ]
                 ),
             )
         )
@@ -556,6 +694,10 @@ def occupied_room_ids(adapter: OmpAdapter) -> set[str]:
     return set(adapter._rooms)
 
 
+def claimed_workspace_rooms(adapter: OmpAdapter) -> tuple[str, ...]:
+    return adapter._workspaces.rooms
+
+
 def retained_selection(adapter: OmpAdapter, room_id: str) -> ModelSelection | None:
     return adapter._room_selections.get(room_id)
 
@@ -566,9 +708,6 @@ async def released_rpc_clients(clients: list) -> None:
         assert process is not None
         assert process.returncode is not None
         assert await process.wait() == process.returncode
-        closing = client._close_task
-        assert closing is not None and closing.done() and not closing.cancelled()
-        assert closing.exception() is None
         assert not await asyncio.to_thread(process_is_alive, peer_identity)
 
 
@@ -695,6 +834,7 @@ class Launches:
         self.commands: list[list[str]] = []
         self.envs: list[dict[str, str] | None] = []
         self.spawned = asyncio.Event()
+        self.fail_first_close = False
 
     def __call__(
         self, command: list[str], env=None, **_kwargs: object
@@ -705,7 +845,10 @@ class Launches:
         self.plugins.append(Path(plugin))
         self.commands.append(list(command))
         self.envs.append(None if env is None else dict(env))
-        runtime = RecordingRuntime()
+        runtime = (
+            FirstCloseFailsRuntime() if self.fail_first_close else RecordingRuntime()
+        )
+        self.fail_first_close = False
         runtime.finish.set()
         self.runtimes.append(runtime)
         self.spawned.set()

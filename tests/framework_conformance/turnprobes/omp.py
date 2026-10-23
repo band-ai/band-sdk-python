@@ -10,6 +10,7 @@ from pydantic import JsonValue
 
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
+    OmpCommandName,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
@@ -38,9 +39,9 @@ class ScriptedOmpClient:
         self, command: str, **parameters: JsonValue
     ) -> dict[str, JsonValue]:
         match command:
-            case "get_state":
+            case OmpCommandName.GET_STATE:
                 return {"sessionId": "conformance-session", "isSettled": True}
-            case "set_host_tools":
+            case OmpCommandName.SET_HOST_TOOLS:
                 assert parameters["tools"], (
                     "a native session must advertise its host tools"
                 )

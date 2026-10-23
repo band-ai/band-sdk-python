@@ -64,6 +64,7 @@ class PermissionEventKey(StrEnum):
 
 
 PERMISSION_CANCELLED = "cancelled"
+PERMISSION_CANCELLED_TEXT = f"Permission {PERMISSION_CANCELLED}"
 
 
 # Subset of message types accepted by ``band_send_event`` — the non-history

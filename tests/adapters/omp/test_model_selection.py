@@ -80,8 +80,11 @@ class TestModelSelection:
         finally:
             await adapter.cleanup_all()
 
+    @pytest.mark.parametrize("invalid", ["unqualified", "/gpt-4"])
     @pytest.mark.asyncio
-    async def test_invalid_model_is_rejected(self, monkeypatch, tmp_path: Path) -> None:
+    async def test_invalid_model_is_rejected(
+        self, monkeypatch, tmp_path: Path, invalid: str
+    ) -> None:
         runtime = RecordingRuntime()
         runtime.finish.set()
         monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
@@ -93,10 +96,14 @@ class TestModelSelection:
             await run_turn(adapter, FakeAgentTools())
             with pytest.raises(ValueError, match="provider/model"):
                 await adapter.apply_model_selection(
-                    ModelSelection(model="unqualified"),
+                    ModelSelection(model=invalid),
                     room_id="room-123",
                 )
             assert runtime.model == ("openai", "original")
+            assert not any(
+                parameters.get("provider") == ""
+                for parameters in requests_named(runtime, OmpCommandName.SET_MODEL)
+            )
         finally:
             await adapter.cleanup_all()
 
@@ -118,6 +125,7 @@ class TestModelSelection:
                     ModelSelection(reasoning_effort="low"),
                     room_id="room-123",
                 )
+            assert runtime.thinking == "auto"
         finally:
             await adapter.cleanup_all()
 

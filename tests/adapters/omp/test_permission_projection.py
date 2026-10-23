@@ -106,11 +106,25 @@ class TestPermissionProjection:
         assert set(permission["args"]) == {"message"}
         assert permission["args"]["message"] != title
 
+    async def test_owned_permission_projection_keeps_title_without_arguments_marker(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        title = "Approve tool?"
+        tools, _ = await owned_rpc_turn(
+            monkeypatch, tmp_path, title, "permission-first"
+        )
+        permission = next(
+            call
+            for call in tool_call_records(tools)
+            if call["name"] == OMP_PERMISSION_TOOL
+        )
+        assert permission["args"]["message"] == title
+
     @pytest.mark.parametrize(
-        ("native_name", "arguments", "expected_filename"),
+        ("native_name", "arguments", "expected_filename", "settles_turn"),
         [
-            ("mcp__band_create_task", {"subject": "New work"}, None),
-            ("mcp__band_send_room_file", WITHHELD_PAYLOAD, "private.txt"),
+            ("mcp__band_create_task", {"subject": "New work"}, None, False),
+            ("mcp__band_send_room_file", WITHHELD_PAYLOAD, "private.txt", False),
             (
                 "write",
                 {
@@ -119,6 +133,7 @@ class TestPermissionProjection:
                     "append": False,
                 },
                 None,
+                False,
             ),
         ],
     )
@@ -129,6 +144,7 @@ class TestPermissionProjection:
         native_name: str,
         arguments: dict[str, object],
         expected_filename: str | None,
+        settles_turn: bool,
     ) -> None:
         limit = sys.get_int_max_str_digits()
         sys.set_int_max_str_digits(4300)
@@ -162,6 +178,7 @@ class TestPermissionProjection:
         assert set(projected) == set(arguments)
         assert projected.get("filename") == expected_filename
         assert WITHHELD_SECRET not in json.dumps(calls)
+        assert tools.turn.complete is settles_turn
 
     async def test_device_write_keeps_nested_filename(
         self, monkeypatch, tmp_path: Path

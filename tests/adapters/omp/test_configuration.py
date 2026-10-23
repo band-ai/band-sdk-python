@@ -35,3 +35,11 @@ class TestConfiguration:
         )
         assert adapter._spawn_env()["OPENAI_API_KEY"] == "explicit-secret"
         assert "secret" not in repr(adapter.config)
+
+    def test_empty_command_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="requires a command"):
+            OmpAdapterConfig(command=())
+
+    def test_api_key_without_model_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="api_key needs model"):
+            OmpAdapterConfig(api_key="secret")

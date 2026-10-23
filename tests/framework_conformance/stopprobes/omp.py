@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 from pydantic import JsonValue
 
 from band.client.streaming import ControlMode
+from band.integrations.ompwire import OmpCommandName
 from band.testing.fake_tools import FakeAgentTools
 from tests.framework_conformance.stopprobes import (
     ENDING_CONTROLS,
@@ -54,12 +55,10 @@ class HeldOmpClient:
         self, command: str, **parameters: JsonValue
     ) -> dict[str, JsonValue]:
         match command:
-            case "get_state":
+            case OmpCommandName.GET_STATE:
                 return {"sessionId": "stop-probe-session", "isSettled": True}
-            case "set_host_tools":
+            case OmpCommandName.SET_HOST_TOOLS:
                 return {}
-            case "set_ask_dialog":
-                return {"enabled": True}
             case _:
                 raise AssertionError(f"Unexpected OMP command: {command}")
 

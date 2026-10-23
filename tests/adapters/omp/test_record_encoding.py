@@ -73,15 +73,24 @@ class TestRecordEncoding:
         assert native["args"] == {"filename": "private.txt", "content": "\ud800"}
 
     @pytest.mark.parametrize(
-        ("encoded", "device_path", "expected_name", "secret_leaks"),
+        ("encoded", "device_path", "expected_name", "keeps_raw_content"),
         [
             (INTEGER_LIMIT, WITHHELD_PATH, "write", False),
-            (DEEP, ENABLED_PATH, "write", False),
+            (DEEP, ENABLED_PATH, "band_send_message", True),
             (DEEP, WITHHELD_PATH, "write", False),
             (MALFORMED, ENABLED_PATH, "band_send_message", True),
             (MALFORMED, WITHHELD_PATH, "write", False),
             (NON_OBJECT, ENABLED_PATH, "band_send_message", True),
             (NON_OBJECT, WITHHELD_PATH, "write", False),
+        ],
+        ids=[
+            "int-limit-withheld",
+            "deep-enabled",
+            "deep-withheld",
+            "malformed-enabled",
+            "malformed-withheld",
+            "non-object-enabled",
+            "non-object-withheld",
         ],
     )
     async def test_native_device_payload_preserves_identity(
@@ -91,7 +100,7 @@ class TestRecordEncoding:
         encoded: str,
         device_path: str,
         expected_name: str,
-        secret_leaks: bool,
+        keeps_raw_content: bool,
     ) -> None:
         device = _device(device_path, encoded)
         tools, _ = await _turn(monkeypatch, tmp_path, "A question", "write", device)
@@ -111,16 +120,17 @@ class TestRecordEncoding:
         assert projected["path"] == device["path"]
         assert projected["append"] is False
         assert projected["mode"] == "owned"
-        assert (SECRET in projected["content"]) is secret_leaks
+        assert (SECRET in projected["content"]) is keeps_raw_content
         assert all(result["is_error"] for result in results)
 
     @pytest.mark.parametrize(
         ("encoded", "permission_tool_name", "secret_leaks"),
         [
-            (DEEP, "write", False),
+            (DEEP, "band_send_room_file", False),
             (MALFORMED, "band_send_room_file", False),
             (NON_OBJECT, "band_send_room_file", False),
         ],
+        ids=["deep", "malformed", "non-object"],
     )
     async def test_permission_device_payload_preserves_identity(
         self,

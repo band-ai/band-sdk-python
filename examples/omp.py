@@ -48,19 +48,14 @@ def _provider_api_key(settings: Settings) -> str:
     # three most common ones, so an OMP-supported-but-unwired provider gets an
     # actionable message instead of being misreported as unsupported by OMP.
     env_key = omp_provider_api_key_env(omp_model_provider(settings.omp_model))
-    match env_key:
-        case "GEMINI_API_KEY":
-            return settings.gemini_api_key
-        case "ANTHROPIC_API_KEY":
-            return settings.anthropic_api_key
-        case "OPENAI_API_KEY":
-            return settings.openai_api_key
-        case _:
-            raise ValueError(
-                f"{settings.omp_model!r} needs {env_key}, which this example "
-                "doesn't read; add a field for it to Settings, or use "
-                "anthropic/google/openai"
-            )
+    field = env_key.lower()
+    if not hasattr(settings, field):
+        raise ValueError(
+            f"{settings.omp_model!r} needs {env_key}, which this example "
+            "doesn't read; add a field for it to Settings, or use "
+            "anthropic/google/openai"
+        )
+    return getattr(settings, field)
 
 
 async def main() -> None:
