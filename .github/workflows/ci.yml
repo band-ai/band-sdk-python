@@ -373,6 +373,14 @@ jobs:
     - name: Smoke-test the isolated wheel (no extras)
       run: /tmp/test-install/bin/python .github/scripts/wheel-smoke.py
 
+    - name: Build and smoke-test the band-pap wheel (no agent extras)
+      run: |
+        uv build --package band-pap --wheel -o dist-band-pap
+        uv venv /tmp/band-pap-install
+        uv pip install dist/*.whl dist-band-pap/*.whl --python /tmp/band-pap-install/bin/python
+        /tmp/band-pap-install/bin/python .github/scripts/pap-wheel-smoke.py
+        /tmp/band-pap-install/bin/python -m examples.pap.demo
+
     - name: Start the Desktop room view from a fresh resolve
       # The lockfile says nothing about what a user's `uv tool install` picks:
       # a released mcp that broke our API resolved fine here and killed the
