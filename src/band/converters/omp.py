@@ -13,10 +13,11 @@ from band.core.types import MessageType
 
 
 class OmpMetadataKey(StrEnum):
-    """Task-event metadata keys the native adapter writes and this converter reads."""
+    """Metadata keys the native adapter writes on task and permission events."""
 
     ROOM = "omp_room_id"
     SESSION = "omp_session_file"
+    SESSION_ID = "omp_session_id"
 
 
 class OmpSessionState(BaseModel):

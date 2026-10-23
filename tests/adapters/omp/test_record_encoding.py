@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from band.adapters.omp import PRIVATE_PAYLOAD_UNAVAILABLE
 from band.testing.fake_tools import events_of_type
 from tests.adapters.omp.kit import owned_rpc_turn
 
@@ -186,7 +187,7 @@ class TestRecordEncoding:
             "path": "visible.txt",
             "file_path": False,
             "target": None,
-            "arguments": "[private payload unavailable]",
+            "arguments": PRIVATE_PAYLOAD_UNAVAILABLE,
         }
         assert "private-envelope-bytes" not in dumps(calls)
         assert {(result["name"], result["tool_call_id"]) for result in results} == {
@@ -320,6 +321,6 @@ class TestRecordEncoding:
             )
         assert target["args"] == {
             "path": "visible.txt",
-            "arguments": "[private payload unavailable]",
+            "arguments": PRIVATE_PAYLOAD_UNAVAILABLE,
         }
         assert "private-depth-bytes" not in dumps(calls)

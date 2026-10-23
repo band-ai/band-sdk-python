@@ -94,6 +94,8 @@ from band.workspaces import RoomWorkspaces, WorkspaceResolver, workspace_resolve
 
 logger = logging.getLogger(__name__)
 
+PRIVATE_PAYLOAD_UNAVAILABLE = "[private payload unavailable]"
+
 
 class OmpAdapterConfig(BaseAdapterConfig):
     """Native launch settings; each room owns a process and persistent session."""
@@ -306,8 +308,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     room.bootstrapped = not change.cancelled
                 except OmpRpcError:
                     logger.warning(
-                        "OMP session could not be restored for room %s; replaying room history",
-                        room_id,
+                        "OMP session could not be restored; replaying room history",
                     )
                     change = _SessionChange.model_validate(
                         await room.runtime.request("new_session")
@@ -336,25 +337,51 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         room.session_file = state.sessionFile
 
     async def _select_model(self, room: OmpRoom, selection: ModelSelection) -> None:
+        prior = OmpState.model_validate(await room.runtime.request("get_state"))
+        try:
+            await self._apply_native_selection(room, selection)
+        except Exception:
+            await self._restore_native_selection(room, prior)
+            raise
+
+    async def _apply_native_selection(
+        self, room: OmpRoom, selection: ModelSelection
+    ) -> None:
         if selection.model:
             provider, separator, model_id = selection.model.partition("/")
             if not separator or not model_id:
                 raise ValueError("OMP model must be provider/model")
             await room.runtime.request("set_model", provider=provider, modelId=model_id)
         effort = selection.reasoning_effort
-        if effort is not None:
-            if effort != "auto":
-                offered = _ThinkingLevels.model_validate(
-                    await room.runtime.request("get_available_thinking_levels")
+        if effort is None:
+            return
+        if effort != "auto":
+            offered = _ThinkingLevels.model_validate(
+                await room.runtime.request("get_available_thinking_levels")
+            )
+            if effort not in offered.levels:
+                raise ValueError(f"OMP does not offer reasoning effort {effort!r}")
+        await room.runtime.request("set_thinking_level", level=effort)
+        # Native state exposes the effective level, not the automatic selector.
+        if effort != "auto":
+            state = OmpState.model_validate(await room.runtime.request("get_state"))
+            if state.thinkingLevel != effort:
+                raise ValueError("OMP did not apply the requested reasoning effort")
+
+    async def _restore_native_selection(self, room: OmpRoom, prior: OmpState) -> None:
+        try:
+            if prior.model is not None:
+                await room.runtime.request(
+                    "set_model",
+                    provider=prior.model.provider,
+                    modelId=prior.model.id,
                 )
-                if effort not in offered.levels:
-                    raise ValueError(f"OMP does not offer reasoning effort {effort!r}")
-            await room.runtime.request("set_thinking_level", level=effort)
-            # Native state exposes the effective level, not the automatic selector.
-            if effort != "auto":
-                state = OmpState.model_validate(await room.runtime.request("get_state"))
-                if state.thinkingLevel != effort:
-                    raise ValueError("OMP did not apply the requested reasoning effort")
+            if prior.thinkingLevel is not None:
+                await room.runtime.request(
+                    "set_thinking_level", level=prior.thinkingLevel
+                )
+        except Exception:
+            logger.exception("OMP could not restore the previous model selection")
 
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
@@ -417,8 +444,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
                 except Exception:
                     logger.warning(
-                        "Unable to fetch replay history for OMP room %s",
-                        room_id,
+                        "Unable to fetch replay history for OMP",
                         exc_info=True,
                     )
                     replay = []
@@ -498,7 +524,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         MessageType.TASK,
                         metadata={
                             OmpMetadataKey.ROOM: room_id,
-                            "omp_session_id": room.session_id,
+                            OmpMetadataKey.SESSION_ID: room.session_id,
                             OmpMetadataKey.SESSION: room.session_file,
                         },
                     )
@@ -510,7 +536,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 reraise_delivery_cause(error)
             except Exception:
                 await self._close_room(room_id)
-                logger.exception("OMP turn failed in room %s", room_id)
+                logger.exception("OMP turn failed")
                 failure = (
                     AgentFailure(
                         "omp",
@@ -620,9 +646,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             if "content" in native_arguments:
                 return native_name, {
                     **native_arguments,
-                    "content": "[private payload unavailable]",
+                    "content": PRIVATE_PAYLOAD_UNAVAILABLE,
                 }
-            return native_name, {"arguments": "[private payload unavailable]"}
+            return native_name, {"arguments": PRIVATE_PAYLOAD_UNAVAILABLE}
 
     @staticmethod
     def _encode_tool_call(
@@ -637,7 +663,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if name == "omp_permission"
                 else arguments
             )
-            safe: dict[str, JsonValue] = {"arguments": "[private payload unavailable]"}
+            safe: dict[str, JsonValue] = {"arguments": PRIVATE_PAYLOAD_UNAVAILABLE}
             if isinstance(wrapper, dict):
                 for key in ("path", "file_path", "target"):
                     if key not in wrapper:
@@ -711,7 +737,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 "permission_request": True,
                 "tool_name": name,
                 "tool_call_id": call_id,
-                "omp_session_id": session_id,
+                OmpMetadataKey.SESSION_ID: session_id,
                 "omp_request_id": request.id,
                 "auto_allowed": False,
             }

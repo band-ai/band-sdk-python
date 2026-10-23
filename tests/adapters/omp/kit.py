@@ -9,10 +9,11 @@ from pathlib import Path
 
 import psutil
 import pytest
+from pydantic import BaseModel
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
-from band.integrations.omprpc import OmpRpcClient
+from band.integrations.omprpc import OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
     OmpContent,
     OmpEvent,
@@ -25,6 +26,12 @@ from band.testing import FakeAgentTools
 from tests.integrations.acp.conftest import make_platform_message
 from tests.integrations.omprpc.kit import process_is_alive
 from tests.paths import REPO_ROOT
+
+
+class EchoInput(BaseModel):
+    """Echo the supplied text."""
+
+    text: str
 
 
 class PendingRuntime:
@@ -69,6 +76,68 @@ class FailedDeliveryTools(FakeAgentTools):
             value={"error": "delivery rejected"},
             ok=False,
             error_message="delivery rejected",
+        )
+
+
+class HungStartRuntime(PendingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.started = asyncio.Event()
+
+    async def start(self):
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+class RecordingRuntime(PendingRuntime):
+    """Record native commands, the live model, and the prompt text."""
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.calls: list[tuple[str, dict[str, object]]] = []
+        self.prompt_text = ""
+        self.switch_error: OmpRpcError | None = None
+        self.model: tuple[str, str] | None = None
+        self.thinking: str | None = None
+        self.levels: tuple[str, ...] = ("off", "low", "high")
+        self.session_file: str | None = None
+
+    async def request(self, command, **parameters):
+        self.calls.append((command, parameters))
+        if command == "switch_session":
+            if self.switch_error is not None:
+                raise self.switch_error
+            self.session_file = parameters["sessionPath"]
+            return {"cancelled": False}
+        if command == "new_session":
+            self.session_file = None
+            return {"cancelled": False}
+        if command == "set_model":
+            self.model = (parameters["provider"], parameters["modelId"])
+            return {}
+        if command == "get_available_thinking_levels":
+            return {"levels": list(self.levels)}
+        if command == "set_thinking_level":
+            self.thinking = parameters["level"]
+            return {}
+        if command == "get_state":
+            state = {
+                "sessionId": "native-session",
+                "sessionFile": self.session_file,
+                "isSettled": True,
+            }
+            if self.thinking is not None:
+                state["thinkingLevel"] = self.thinking
+            if self.model is not None:
+                provider, model_id = self.model
+                state["model"] = {"id": model_id, "provider": provider}
+            return state
+        return await super().request(command, **parameters)
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        self.prompt_text = _message
+        await super().prompt(
+            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
         )
 
 
@@ -138,16 +207,35 @@ class RepeatedRuntime(PendingRuntime):
         )
 
 
-async def run_turn(adapter, tools, *, bootstrap=True):
+async def run_turn(
+    adapter,
+    tools,
+    *,
+    bootstrap=True,
+    history: OmpSessionState | None = None,
+    room_id: str = "room-123",
+):
     await adapter.run_judged_turn(
         msg=make_platform_message("Finish the background work"),
         tools=tools,
-        history=OmpSessionState(),
+        history=history or OmpSessionState(),
         participants_msg=None,
         contacts_msg=None,
         is_session_bootstrap=bootstrap,
-        room_id="room-123",
+        room_id=room_id,
     )
+
+
+def native_session_file(workspace: Path) -> Path:
+    directory = workspace / ".band-omp-sessions"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / "saved.jsonl"
+    path.write_text("{}", encoding="utf-8")
+    return path
+
+
+def requests_named(runtime: RecordingRuntime, command: str) -> list[dict[str, object]]:
+    return [parameters for name, parameters in runtime.calls if name == command]
 
 
 async def _ready(*_args, **_kwargs) -> None:
