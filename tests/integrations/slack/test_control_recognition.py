@@ -5,13 +5,17 @@ from __future__ import annotations
 import pytest
 
 from tests.adapters.codex.kit import make_platform_message
-from tests.integrations.slack.wrappingkit import CommandBrain, _make_adapter
+from tests.integrations.slack.wrappingkit import (
+    FAKE_CONTROL_COMMAND,
+    CommandBrain,
+    _make_adapter,
+)
 
 
 class TestSlackControlRecognition:
     @pytest.mark.parametrize(
         ("content", "recognized"),
-        [("/approve abc", True), ("an ordinary request", False)],
+        [(f"{FAKE_CONTROL_COMMAND} abc", True), ("an ordinary request", False)],
     )
     def test_wrapper_recognizes_what_its_inner_adapter_does(
         self, content: str, recognized: bool

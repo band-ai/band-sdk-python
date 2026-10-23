@@ -33,6 +33,8 @@ from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.runtime.tools import AgentTools
 from band.testing.platform import platform_connection_stub
 
+FAKE_CONTROL_COMMAND = "/approve"
+
 
 class RawHistoryConverter:
     """Identity converter — returns the raw history list unchanged.
@@ -338,10 +340,10 @@ class IdleBrain(SlackReplyBrain):
 
 
 class CommandBrain(SlackReplyBrain):
-    """A brain that recognizes ``/approve`` as a control message."""
+    """A brain with one recognizable control command."""
 
     def is_control_message(self, msg: PlatformMessage) -> bool:
-        return msg.content.startswith("/approve")
+        return msg.content.startswith(FAKE_CONTROL_COMMAND)
 
 
 def _posted_events(rest: MagicMock, message_type: MessageType) -> list[Any]:
