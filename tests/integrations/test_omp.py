@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from band.integrations.omp import (
@@ -157,6 +159,25 @@ def test_a_malformed_write_to_a_band_tool_keeps_its_identity(content: str) -> No
     assert normalize_omp_mcp_device_call(
         "write", arguments, frozenset({"band_send_message"})
     ) == ("band_send_message", arguments)
+
+
+def test_an_oversized_integer_payload_keeps_the_tool_identity() -> None:
+    """``json.loads`` refuses an integer past the interpreter's digit limit
+    with a bare ``ValueError``; that payload is malformed like any other."""
+    arguments = {
+        "path": "xd://mcp__band_send_message",
+        "content": '{"count":' + "9" * 5000 + "}",
+        "append": False,
+    }
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        projected = normalize_omp_mcp_device_call(
+            "write", arguments, frozenset({"band_send_message"}), kind="execute"
+        )
+    finally:
+        sys.set_int_max_str_digits(limit)
+    assert projected == ("band_send_message", arguments)
 
 
 @pytest.mark.parametrize(
