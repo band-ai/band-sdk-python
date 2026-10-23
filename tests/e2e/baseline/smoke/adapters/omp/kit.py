@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.builders import omp_acp_env, omp_agent_home_dir
@@ -14,8 +15,37 @@ from tests.paths import REPO_ROOT
 
 if TYPE_CHECKING:
     from band.adapters.omp import OmpAdapter, OmpPermissionRequest
+    from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall
 
 BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=1)
+
+
+def permission_probe_file(sandbox: str) -> Path:
+    return Path(sandbox) / "permission-result"
+
+
+def permission_probe_calls(calls: list[ToolCall]) -> list[ToolCall]:
+    from tests.e2e.baseline.smoke.samples.omppermission import (  # noqa: PLC0415 -- this sample imports the optional native adapter
+        FORM_PROBE_TITLE,
+    )
+
+    return [call for call in calls if call.args.get("message") == FORM_PROBE_TITLE]
+
+
+def assert_permission_requests(
+    requests: list[OmpPermissionRequest], room_id: str
+) -> None:
+    from tests.e2e.baseline.smoke.samples.omppermission import (  # noqa: PLC0415 -- this sample imports the optional native adapter
+        FORM_PROBE_TITLE,
+    )
+
+    assert sum(request.title == FORM_PROBE_TITLE for request in requests) == 1
+    assert all(
+        request.room_id == room_id
+        and request.session_id
+        and request.options == (OMP_FORM_APPROVE, OMP_FORM_DENY)
+        for request in requests
+    )
 
 
 def denying_omp_adapter(
@@ -47,7 +77,7 @@ def denying_omp_adapter(
             cwd=sandbox,
             env={
                 **omp_acp_env(settings, omp_agent_home_dir(sandbox)),
-                "OMP_PERMISSION_PROBE_FILE": str(Path(sandbox) / "permission-result"),
+                "OMP_PERMISSION_PROBE_FILE": str(permission_probe_file(sandbox)),
             },
         ),
         resolve_permission=deny,

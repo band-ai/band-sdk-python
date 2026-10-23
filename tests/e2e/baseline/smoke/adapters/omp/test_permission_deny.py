@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
+from band.integrations.omp import OMP_FORM_DENY
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.adapters.omp.kit import (
     BUDGET,
+    assert_permission_requests,
     denying_omp_adapter,
+    permission_probe_calls,
+    permission_probe_file,
     permission_probe_sandbox,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -39,10 +41,6 @@ class TestOmpPermissionDeny:
         user_ops: UserOps,
         reply_capture: CaptureFactory,
     ) -> None:
-        from tests.e2e.baseline.smoke.samples.omppermission import (  # noqa: PLC0415 -- this sample imports the optional native adapter
-            FORM_PROBE_TITLE,
-        )
-
         requests: list[OmpPermissionRequest] = []
         with permission_probe_sandbox() as sandbox:
             adapter = denying_omp_adapter(
@@ -67,20 +65,6 @@ class TestOmpPermissionDeny:
                     tool_calls = await capture.tool_calls(sender_id=agent.id)
 
                 replies.assert_present()
-                assert [
-                    call
-                    for call in tool_calls
-                    if call.args.get("message") == FORM_PROBE_TITLE
-                ] == []
-                assert (
-                    sum(request.title == FORM_PROBE_TITLE for request in requests) == 1
-                )
-                assert all(
-                    request.room_id == room_id
-                    and request.session_id
-                    and request.options == (OMP_FORM_APPROVE, OMP_FORM_DENY)
-                    for request in requests
-                )
-                assert (
-                    Path(sandbox) / "permission-result"
-                ).read_text() == OMP_FORM_DENY
+                assert permission_probe_calls(tool_calls) == []
+                assert_permission_requests(requests, room_id)
+                assert permission_probe_file(sandbox).read_text() == OMP_FORM_DENY
