@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from tests.framework_conformance.venv_job_coverage import job_command
 from tests.paths import REPO_ROOT
+from tests.xdistworker import CI_XDIST_FLAGS
 
-XDIST_FLAGS = ("-n auto", "--dist worksteal", "--maxprocesses=4")
 UNIT_PYTEST_STEPS = (
     ("test", "Run tests"),
     ("test-crewai", "Run crewai tests"),
@@ -18,7 +18,7 @@ class TestUnitJobXdist:
     def test_every_unit_job_runs_worksteal_inside_the_existing_cell(self) -> None:
         for job, step in UNIT_PYTEST_STEPS:
             command = job_command(job, step)
-            for flag in XDIST_FLAGS:
+            for flag in CI_XDIST_FLAGS:
                 assert flag in command, (job, flag)
             assert "--splits" not in command
             assert "matrix.shard" not in command

@@ -53,6 +53,9 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+# Per-worker leftovers from an interrupted durations store; the controller
+# merges these into `.test_durations` and deletes them on a clean finish.
+.test_durations.gw*
 
 # Translations
 *.mo

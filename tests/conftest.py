@@ -75,7 +75,7 @@ from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
-pytest_plugins = ["pytester"]
+pytest_plugins = ["pytester", "tests.testdurations"]
 
 # Env-var prefixes that adapter config classes (CodexAdapterConfig,
 # LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
