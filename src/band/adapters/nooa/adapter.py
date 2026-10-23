@@ -36,7 +36,6 @@ from band.core.handoff import context_handoff
 from band.core.protocols import (
     AgentToolsProtocol,
     generic_provider_failure,
-    send_event_safe,
 )
 from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import (
