@@ -23,8 +23,8 @@ from band.core.delivery import DeliveryFailedError
 from band.core.model_catalog import ModelSelection
 from band.core.types import MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
-from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
     OmpCommandName,

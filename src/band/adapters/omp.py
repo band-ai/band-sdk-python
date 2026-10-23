@@ -908,7 +908,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 active.deadline = None
             except asyncio.CancelledError:
                 active.ending = True
-                await self._retire_after_failure(room_id)
+                await self._retire_room(room_id)
                 raise
             except DeliveryFailedError as error:
                 active.ending = True
@@ -946,14 +946,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 if self._owners.get(room_id) is active:
                     del self._owners[room_id]
                 active.settled.set()
-
-    async def _retire_after_failure(self, room_id: str) -> None:
-        try:
-            await self._close_room(room_id)
-        except Exception:
-            logger.exception(
-                "OMP room %s could not be closed; it stays owned until cleanup", room_id
-            )
 
     async def _execute_tool(
         self, call: OmpHostToolCall, tools: AgentToolsProtocol
@@ -1342,11 +1334,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
 
 
 __all__ = [
-    "McpServerResolver",
     "OMP_PERMISSION_CALL_ID_PREFIX",
     "OMP_PERMISSION_TOOL",
     "OMP_SESSION_DIRECTORY",
     "OMP_TOOL_APPROVAL_HEADER",
+    "McpServerResolver",
     "OmpAdapter",
     "OmpAdapterConfig",
     "OmpPermissionRequest",

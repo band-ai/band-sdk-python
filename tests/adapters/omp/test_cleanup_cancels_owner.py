@@ -54,6 +54,8 @@ class TestCleanupCancelsOwner:
             with pytest.raises(TurnResultAlreadyReported):
                 await run_turn(adapter, tools)
             assert runtime.cleaned_from_turn
+            await adapter.cleanup_all()
+            assert runtime.closed
             assert occupied_room_ids(adapter) == set()
         finally:
             await adapter.cleanup_all()

@@ -9,17 +9,18 @@ from unittest.mock import AsyncMock
 import pytest
 
 import band.integrations.ompprocess as omp_module
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import OMP_SESSION_DIRECTORY, OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
+from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools, failure_reports
 from tests.adapters.omp.kit import (
     BandMcpReplyRuntime,
     Launches,
-    PendingRuntime,
     checkpoint,
     launches,
     remote,
+    requests_named,
     run_turn,
 )
 from tests.integrations.acp.conftest import make_platform_message
@@ -276,12 +277,11 @@ class TestMcpResolution:
         self, launches: Launches, tmp_path: Path
     ):
         session_dir = (
-            Path(os.path.realpath(tmp_path)) / "room-123" / ".band-omp-sessions"
+            Path(os.path.realpath(tmp_path)) / "room-123" / OMP_SESSION_DIRECTORY
         )
         session_dir.mkdir(parents=True)
         saved = session_dir / "saved.jsonl"
         saved.write_text("{}", encoding="utf-8")
-        requests: list[str] = []
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)),
             resolve_mcp_servers=AsyncMock(return_value={"linear": remote("grant-A")}),
@@ -299,22 +299,15 @@ class TestMcpResolution:
                 room_id="room-123",
             )
 
-        original = PendingRuntime.request
-
-        async def recording(self, command, **parameters):
-            requests.append(command)
-            if command == "switch_session":
-                return {"cancelled": False}
-            return await original(self, command, **parameters)
-
-        PendingRuntime.request = recording  # type: ignore[method-assign]
         try:
             await bootstrap_turn()
+            (runtime,) = launches.runtimes
+            assert requests_named(runtime, OmpCommandName.SWITCH_SESSION) == [
+                {"sessionPath": str(saved)}
+            ]
+            assert runtime.session_file == str(saved)
         finally:
-            PendingRuntime.request = original  # type: ignore[method-assign]
-
-        assert "switch_session" in requests
-        await adapter.cleanup_all()
+            await adapter.cleanup_all()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("external", [{}, {"linear": remote("grant-A")}])
