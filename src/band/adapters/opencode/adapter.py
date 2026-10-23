@@ -272,6 +272,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        # A room that was never seen has no ask to answer; looking it up must
+        # not create its state the way handling a control does.
+        room_state = self._rooms.get(msg.room_id)
+        return room_state is not None and room_state.approvals.recognizes_reply(
+            msg.content
+        )
+
     def __init__(
         self,
         config: OpencodeAdapterConfig | None = None,

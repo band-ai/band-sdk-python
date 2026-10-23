@@ -549,6 +549,7 @@ async def deliver_followup(
 
 
 PERMISSION_ID = "req-1"
+APPROVAL_REPLY = f"approve {PERMISSION_ID}"
 FOLLOW_UP = "and then?"
 FIRST_ANSWER = "first answer"
 SECOND_ANSWER = "second answer"
@@ -577,7 +578,7 @@ async def park_turn(adapter: OpencodeAdapter, tools: FakeAgentTools) -> None:
 async def approve(adapter: OpencodeAdapter) -> FakeAgentTools:
     """A person approves the parked ask; returns the approval's own tools."""
     approver_tools = FakeAgentTools()
-    control = agent_input(f"approve {PERMISSION_ID}", approver_tools)
+    control = agent_input(APPROVAL_REPLY, approver_tools)
     assert await adapter.try_handle_control(control.msg, control.tools)
     return approver_tools
 
