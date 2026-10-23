@@ -625,7 +625,7 @@ class OmpRpcClient:
             callback.close()
             return
         key = (kind, request_id)
-        task = asyncio.create_task(callback)
+        task = asyncio.create_task(callback, context=turn.context.copy())
         if key in turn.callbacks:
             task.cancel()
             raise OmpProtocolError("OMP callback request id was reused")

@@ -1,0 +1,50 @@
+"""RPC host callbacks inherit the prompt task's context, not the reader's."""
+
+from __future__ import annotations
+
+import asyncio
+from contextvars import ContextVar
+
+from band.integrations.ompwire import (
+    OmpContent,
+    OmpHostToolCall,
+    OmpToolResult,
+    OmpUIRequest,
+    OmpUIResponse,
+)
+from tests.integrations.omppeer import UI_APPROVE
+from tests.integrations.omprpc.kit import ClientFactory, Observer
+
+PROMPT_TOKEN = ContextVar("omp_rpc_prompt_token", default="reader")
+
+
+class TestCallbackPromptContext:
+    async def test_ui_callback_sees_the_prompt_task_token(
+        self,
+        client_factory: ClientFactory,
+    ) -> None:
+        client = await client_factory("callbacks")
+        observer = Observer()
+        seen: list[str] = []
+
+        async def on_ui(_request: OmpUIRequest) -> OmpUIResponse:
+            seen.append(PROMPT_TOKEN.get())
+            return OmpUIResponse(value=UI_APPROVE)
+
+        async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
+            seen.append(PROMPT_TOKEN.get())
+            return OmpToolResult(content=[OmpContent(type="text", text=call.toolName)])
+
+        token = PROMPT_TOKEN.set("prompt")
+        try:
+            async with asyncio.timeout(5):
+                await client.prompt(
+                    "first",
+                    on_event=observer.on_event,
+                    on_tool=on_tool,
+                    on_ui=on_ui,
+                )
+        finally:
+            PROMPT_TOKEN.reset(token)
+        assert seen
+        assert set(seen) == {"prompt"}

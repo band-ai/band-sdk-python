@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from contextvars import copy_context
+from functools import partial
 from pathlib import Path
 
 import psutil
@@ -384,6 +386,63 @@ class OtherTaskUiRuntime(PermissionThenReplyRuntime):
         await PendingRuntime.prompt(
             self, _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
         )
+
+
+def _complete_future_from_task(pending: asyncio.Future, finished: asyncio.Task) -> None:
+    if finished.cancelled():
+        pending.cancel()
+        return
+    error = finished.exception()
+    if error is not None:
+        pending.set_exception(error)
+        return
+    pending.set_result(finished.result())
+
+
+class LaterTurnReaderUiRuntime(RecordingRuntime):
+    """Dispatch later-turn UI from the start()-era reader using the prompt context."""
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self._jobs: asyncio.Queue = asyncio.Queue()
+        self._reader: asyncio.Task | None = None
+        self.prompts = 0
+
+    async def start(self):
+        self._reader = asyncio.create_task(self._read())
+
+    async def _read(self):
+        while True:
+            job = await self._jobs.get()
+            if job is None:
+                return
+            callback, request, done, context = job
+            task = asyncio.create_task(callback(request), context=context)
+            task.add_done_callback(partial(_complete_future_from_task, done))
+            await done
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        self.prompts += 1
+        if self.prompts >= 2:
+            done = asyncio.get_running_loop().create_future()
+            request = OmpUIRequest(
+                id="ui-later",
+                method=OmpUIMethod.SELECT,
+                title="Approve tool?",
+                options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+            )
+            await self._jobs.put((on_ui, request, done, copy_context()))
+            await done
+        await PendingRuntime.prompt(
+            self, _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
+        )
+
+    async def close(self):
+        if self._reader is not None:
+            await self._jobs.put(None)
+            await self._reader
+            self._reader = None
+        await super().close()
 
 
 class SelectingResolver:
