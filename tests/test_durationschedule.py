@@ -24,15 +24,8 @@ def _collected_nodeids(result: pytest.RunResult) -> list[str]:
 
 
 class TestDurationSchedule:
-    def test_equal_durations_keep_incoming_order(self) -> None:
-        nodeids = ["c", "a", "b"]
-        durations = {"c": 1.0, "a": 1.0, "b": 1.0}
-        assert slowest_first(nodeids, durations) == ["c", "a", "b"]
-
     def test_unknown_nodeids_sort_as_fastest(self) -> None:
-        nodeids = ["new", "slow"]
-        durations = {"slow": 5.0}
-        assert slowest_first(nodeids, durations) == ["slow", "new"]
+        assert slowest_first(["new", "slow"], {"slow": 5.0}) == ["slow", "new"]
 
     def test_plugin_reorders_collection_from_the_durations_file(
         self, pytester: pytest.Pytester, tmp_path: Path

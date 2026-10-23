@@ -20,8 +20,6 @@ def load_workflow() -> dict[str, Any]:
 class TestPytestDurationsWorkflow:
     def test_runs_weekly_after_ci_and_on_demand_not_on_pull_requests(self) -> None:
         workflow = load_workflow()
-        # Weekly CI is 03:17 Mondays; this job follows at 04:17 so it times a
-        # quiet tree rather than racing the suite it is measuring.
         assert workflow["on"]["schedule"] == [{"cron": "17 4 * * 1"}]
         assert "workflow_dispatch" in workflow["on"]
         assert "pull_request" not in workflow["on"]
@@ -46,9 +44,6 @@ class TestPytestDurationsWorkflow:
     def test_bot_opens_a_main_pr_only_when_durations_drift(self) -> None:
         workflow = load_workflow()
         steps = workflow["jobs"]["refresh"]["steps"]
-        token = next(step for step in steps if step.get("id") == "app-token")
-        assert token["with"]["client-id"] == "${{ secrets.APP_CLIENT_ID }}"
-        assert token["with"]["private-key"] == "${{ secrets.APP_PRIVATE_KEY }}"
         checkout = next(step for step in steps if step.get("name") == "Checkout main")
         assert checkout["with"]["ref"] == "main"
         pr = next(

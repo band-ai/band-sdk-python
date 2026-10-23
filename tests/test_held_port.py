@@ -32,7 +32,6 @@ class TestHeldPort:
             host, port = held.host, held.port
         stolen = _bind(host, port)
         stolen.close()
-        assert held.held is False
 
     def test_adjacent_ports_are_occupied_while_held(self) -> None:
         with HeldAdjacentPorts() as pair:

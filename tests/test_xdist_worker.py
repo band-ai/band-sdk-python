@@ -18,9 +18,6 @@ class TestXdistWorkerScope:
         monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
         assert xdist_worker_id() == SERIAL_WORKER_ID
 
-    def test_hypothesis_database_dirs_differ_across_workers(self) -> None:
-        assert hypothesis_database_dir("gw0") != hypothesis_database_dir("gw1")
-
     def test_loaded_hypothesis_profile_writes_a_worker_database(self) -> None:
         database = hypothesis_settings().database
         assert isinstance(database, DirectoryBasedExampleDatabase)

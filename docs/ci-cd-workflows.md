@@ -39,21 +39,12 @@ the workflow files cannot say for themselves.
 ## Unit pytest parallelism
 
 - **Unit jobs run pytest-xdist worksteal inside the existing OS × Python
-  cells** (`-n auto --dist worksteal --maxprocesses=4`). Every extra
-  (`test`, `test-crewai`, `test-parlant`, `test-strands-nooa`) uses those
-  flags on every OS in the matrix, so each runner saturates the 4 vCPUs it
-  already has. They do not add a GitHub Actions shard axis. Markdown-docs
-  and E2E collect-only stay serial. Do not put `-n` in pytest `addopts` or
-  `PYTEST_ADDOPTS`: local live runs (`E2E_TESTS_ENABLED` and the other suite
-  gates) and `--pdb` must stay single-process. Use `pytest -n0` to debug.
-- **Durations rebalance** is `.github/workflows/pytest-durations.yml`:
-  Mondays at 04:17 UTC (after weekly CI) and on `workflow_dispatch` once
-  the file is on `main`. It times the unit suite with the same in-job xdist
-  flags on one Ubuntu runner, writes `.test_durations`, and opens a PR
-  against `main` when the file drifts. A quiet week opens nothing. CI reads
-  that file so historically slow tests start first and the four workers stay
-  busy. This is not extra PR jobs. GitHub does not register a new
-  `workflow_dispatch` file until it is on the default branch.
+  cells** (`-n auto --dist worksteal --maxprocesses=4`) on every extra and OS.
+  No GitHub shard axis. Markdown-docs and E2E collect-only stay serial. Do not
+  put `-n` in `addopts` or `PYTEST_ADDOPTS`.
+- **Durations rebalance** (`.github/workflows/pytest-durations.yml`) times that
+  suite weekly / on demand from `main` and opens a PR when `.test_durations`
+  drifts. Not extra pull-request jobs.
 
 ## PyPI publish
 

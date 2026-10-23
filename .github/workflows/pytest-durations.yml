@@ -1,18 +1,7 @@
-# Weekly (and on-demand) refresh of committed unit-test durations.
-#
-# PR CI does not add GitHub Actions shards. Each existing OS × extra cell
-# already runs xdist on the 4 vCPUs of that runner. This workflow times the
-# suite the same way on one Ubuntu runner, writes `.test_durations`, and
-# opens a PR when the file drifts. A quiet week opens nothing. CI reads the
-# file so historically slow tests start first and the four workers stay busy.
-#
-# Store uses in-job xdist (not serial `-n0`): each worker writes a `.gwN`
-# sidecar and the controller merges, so this job saturates the cores it is
-# already allocated instead of idling three of them for a serial retime.
-#
-# Cut from and PR against main, same as kit-image-rebuild / release-please.
+# Weekly / on-demand refresh of `.test_durations`. Times the unit suite with
+# in-job xdist on one runner and opens a PR from main when the file drifts.
 # GitHub only registers workflow_dispatch once this file is on the default
-# branch; a branch probe cannot start it.
+# branch.
 
 name: pytest-durations
 

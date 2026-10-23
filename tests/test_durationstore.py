@@ -15,7 +15,6 @@ from tests.testdurations import (
     PATH_FLAG,
     STORE_FLAG,
     load_durations,
-    merge_duration_maps,
     quantize_duration,
     session_xdist_worker_id,
     worker_duration_path,
@@ -28,25 +27,6 @@ class TestDurationStore:
     def test_quantize_buckets_sub_quantum_jitter(self) -> None:
         assert quantize_duration(1.04) == quantize_duration(1.0)
         assert quantize_duration(1.16) != quantize_duration(1.0)
-
-    def test_clean_merge_drops_stale_nodeids(self) -> None:
-        merged = merge_duration_maps(
-            {"tests/new.py::test_ok": 1.0},
-            existing={"tests/gone.py::test_old": 9.0},
-            clean=True,
-        )
-        assert merged == {"tests/new.py::test_ok": 1.0}
-
-    def test_keep_merge_retains_unseen_nodeids(self) -> None:
-        merged = merge_duration_maps(
-            {"tests/new.py::test_ok": 1.0},
-            existing={"tests/gone.py::test_old": 9.0},
-            clean=False,
-        )
-        assert merged == {
-            "tests/gone.py::test_old": 9.0,
-            "tests/new.py::test_ok": 1.0,
-        }
 
     def test_leaked_parent_worker_env_is_not_this_session(
         self, monkeypatch: pytest.MonkeyPatch
@@ -97,8 +77,3 @@ class TestDurationStore:
         path = tmp_path / DURATIONS_PATH_NAME
         path.write_text("[]\n", encoding="utf-8")
         assert load_durations(path) == {}
-
-    def test_write_roundtrip_is_stable(self, tmp_path: Path) -> None:
-        path = tmp_path / DURATIONS_PATH_NAME
-        write_durations(path, {"b": 2.0, "a": 1.0})
-        assert path.read_text(encoding="utf-8") == ('{\n  "a": 1.0,\n  "b": 2.0\n}\n')

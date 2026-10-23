@@ -15,7 +15,6 @@ return SDK-native types for pattern matching compatibility.
 
 from __future__ import annotations
 
-import logging
 import os
 
 # Must be set before crewai is first imported: its event bus installs a
@@ -36,10 +35,6 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 import pytest
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from tests.xdistworker import configure_hypothesis_worker_database
-
-logger = logging.getLogger(__name__)
 
 from band.client.rest import AsyncRestClient
 from band.client.streaming import (
@@ -72,6 +67,7 @@ from band.platform.link import BandLink
 from band.runtime.messages import PlatformMessage
 from band.runtime.single_instance import SingleInstanceGuard
 from tests.paths import ENV_TEST_FILE
+from tests.xdistworker import configure_hypothesis_worker_database
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
@@ -113,24 +109,6 @@ def pytest_configure(config: pytest.Config) -> None:
     for key in dotenv_values(ENV_TEST_FILE):
         if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
             os.environ[key] = ""
-
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    """Print the resolved xdist worker count and dist so CI logs show the probe."""
-    config = session.config
-    workers = getattr(config.option, "numprocesses", None)
-    dist = getattr(config.option, "dist", None)
-    if not workers:
-        return
-    maxprocesses = getattr(config.option, "maxprocesses", None)
-    logger.info(
-        "xdist numprocesses=%s maxprocesses=%s dist=%s", workers, maxprocesses, dist
-    )
-    reporter = config.pluginmanager.get_plugin("terminalreporter")
-    if reporter is not None:
-        reporter.write_line(
-            f"xdist numprocesses={workers} maxprocesses={maxprocesses} dist={dist}"
-        )
 
 
 class CollectionGateSettings(BaseSettings):
