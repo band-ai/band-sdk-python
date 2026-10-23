@@ -56,6 +56,27 @@ class EchoInput(BaseModel):
     text: str
 
 
+class EchoDetail(BaseModel):
+    text: str
+    payload: bytes
+
+
+class EchoResult(BaseModel):
+    detail: EchoDetail
+
+
+class StartupGate:
+    """Hold native startup readiness until the test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, *_args: object, **_kwargs: object) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+
 class PendingRuntime:
     def __init__(self, *_args, **_kwargs):
         self.yielded = asyncio.Event()
@@ -178,6 +199,24 @@ class RecordingRuntime(PendingRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         self.prompt_text = _message
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+
+class SelectionGateRuntime(RecordingRuntime):
+    """Hold one native selection command at its request boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held_command: OmpCommandName | None = None
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def request(
+        self, command: str, **parameters: JsonValue
+    ) -> dict[str, JsonValue]:
+        if command == self.held_command:
+            self.entered.set()
+            await self.release.wait()
+        return await super().request(command, **parameters)
 
 
 class AutomaticThinkingRuntime(PendingRuntime):

@@ -67,6 +67,7 @@ from band.integrations.omp import (
     OMP_DEVICE_PATH_KEYS,
     OMP_FORM_APPROVE,
     OMP_FORM_DENY,
+    OMP_THINKING_LEVEL_AUTO,
     finalize_omp_command,
     omp_model_parts,
     validate_omp_command,
@@ -116,6 +117,7 @@ from band.runtime.tools import (
     iter_tool_definitions,
     platform_args_schema,
     redact_tool_call_args,
+    tool_result_text,
     turn_effect,
 )
 from band.workspaces import RoomWorkspaces, WorkspaceResolver, workspace_resolver_for
@@ -306,11 +308,11 @@ class OmpPermissionRequest(BaseModel):
 PermissionResolver = Callable[[OmpPermissionRequest], Awaitable[str | None]]
 
 
-class _ThinkingLevels(BaseModel):
+class ThinkingLevels(BaseModel):
     levels: tuple[str, ...]
 
 
-class _SessionChange(BaseModel):
+class SessionChange(BaseModel):
     cancelled: bool
 
 
@@ -481,7 +483,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 and saved.is_file()
             ):
                 try:
-                    change = _SessionChange.model_validate(
+                    change = SessionChange.model_validate(
                         await room.runtime.request(
                             OmpCommandName.SWITCH_SESSION, sessionPath=candidate
                         )
@@ -496,7 +498,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         "OMP session could not be restored; replaying room history",
                         exc_info=True,
                     )
-                    change = _SessionChange.model_validate(
+                    change = SessionChange.model_validate(
                         await room.runtime.request(OmpCommandName.NEW_SESSION)
                     )
                     if change.cancelled:
@@ -535,12 +537,17 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         before = await self._native_state(room)
         try:
             await self._apply_native_selection(room, selection)
+        except asyncio.CancelledError:
+            room.retiring = True
+            raise
         except Exception:
+            room.retiring = True
             try:
                 await self._restore_native_state(room, before)
             except Exception:
                 logger.exception("OMP could not restore the previous model selection")
-                room.retiring = True
+            else:
+                room.retiring = False
             raise
         else:
             room.applied_selection = _selection_after(room.applied_selection, selection)
@@ -556,15 +563,15 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         effort = selection.reasoning_effort
         if effort is None:
             return
-        if effort != "auto":
-            offered = _ThinkingLevels.model_validate(
+        if effort != OMP_THINKING_LEVEL_AUTO:
+            offered = ThinkingLevels.model_validate(
                 await room.runtime.request(OmpCommandName.GET_AVAILABLE_THINKING_LEVELS)
             )
             if effort not in offered.levels:
                 raise ValueError(f"OMP does not offer reasoning effort {effort!r}")
         await room.runtime.request(OmpCommandName.SET_THINKING_LEVEL, level=effort)
         # Native state exposes the effective level, not the automatic selector.
-        if effort == "auto":
+        if effort == OMP_THINKING_LEVEL_AUTO:
             return
         state = await self._native_state(room)
         if state.thinkingLevel != effort:
@@ -586,7 +593,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         effort = (
             prior.reasoning_effort
             if prior is not None and prior.reasoning_effort is not None
-            else (before.thinkingLevel or "auto")
+            else (before.thinkingLevel or OMP_THINKING_LEVEL_AUTO)
         )
         await room.runtime.request(OmpCommandName.SET_THINKING_LEVEL, level=effort)
 
@@ -831,8 +838,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         OmpContent.model_validate(block) for block in value["content"]
                     ]
                 )
-            text = value if isinstance(value, str) else json.dumps(value, default=str)
-            return _text_tool_result(text)
+            return _text_tool_result(tool_result_text(value))
         except DeliveryFailedError:
             raise
         except Exception as error:

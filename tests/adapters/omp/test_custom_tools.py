@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,9 @@ from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools
 from tests.adapters.omp.kit import (
     CustomHostToolRuntime,
+    EchoDetail,
     EchoInput,
+    EchoResult,
     requests_named,
     run_turn,
 )
@@ -48,3 +51,29 @@ class TestCustomTools:
         assert runtime.tool_result is not None
         assert runtime.tool_result.content[0].text == "echoed:ping"
         assert not runtime.tool_result.is_error
+
+    @pytest.mark.asyncio
+    async def test_nested_model_and_bytes_use_structured_result_encoding(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def echo(inp: EchoInput) -> EchoResult:
+            return EchoResult(detail=EchoDetail(text=inp.text, payload=b"\xff\x00"))
+
+        runtime = CustomHostToolRuntime()
+        runtime.finish.set()
+        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", lambda *a, **kw: runtime)
+        adapter = OmpAdapter(
+            OmpAdapterConfig(cwd=str(tmp_path)),
+            additional_tools=[(EchoInput, echo)],
+            emit=(),
+        )
+        try:
+            await run_turn(adapter, FakeAgentTools())
+        finally:
+            await adapter.cleanup_all()
+
+        assert runtime.tool_result is not None
+        assert not runtime.tool_result.is_error
+        assert json.loads(runtime.tool_result.content[0].text) == {
+            "detail": {"text": "ping", "payload": "_wA="}
+        }

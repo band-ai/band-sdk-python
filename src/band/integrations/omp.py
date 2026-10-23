@@ -16,6 +16,7 @@ from band.runtime.tools import (
 
 OMP_APPROVAL_MODE_FLAG = "--approval-mode"
 OMP_APPROVAL_MODE_ALWAYS_ASK = "always-ask"
+OMP_THINKING_LEVEL_AUTO = "auto"
 OMP_YOLO_FLAG = "--yolo"
 OMP_AUTO_APPROVE_FLAG = "--auto-approve"
 OMP_APPROVAL_MODE_WRITE = "write"
@@ -311,7 +312,7 @@ def normalize_omp_mcp_device_call(
             return name, args
         try:
             parsed = json.loads(content)
-        except ValueError:
+        except (ValueError, RecursionError):
             return canonical, args
         if not isinstance(parsed, dict):
             return canonical, args
