@@ -768,6 +768,9 @@ class SlackAdapter(SimpleAdapter[Any]):
             thread_key,
         )
 
+    def is_control_message(self, msg: PlatformMessage) -> bool:
+        return self._inner.is_control_message(msg)
+
     async def try_handle_control(
         self, msg: PlatformMessage, tools: AgentToolsProtocol
     ) -> bool:
