@@ -13,16 +13,19 @@ from pydantic import BaseModel
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
+from band.core.types import MessageType
 from band.integrations.omprpc import OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
     OmpContent,
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
 )
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools
+from band.testing.fake_tools import events_of_type
 from tests.integrations.acp.conftest import make_platform_message
 from tests.integrations.omprpc.kit import process_is_alive
 from tests.paths import REPO_ROOT
@@ -236,6 +239,20 @@ def requests_named(runtime: RecordingRuntime, command: str) -> list[dict[str, ob
     return [parameters for name, parameters in runtime.calls if name == command]
 
 
+def decoded_events(tools: FakeAgentTools, message_type: str) -> list[dict[str, object]]:
+    return [
+        json.loads(event["content"]) for event in events_of_type(tools, message_type)
+    ]
+
+
+def tool_call_records(tools: FakeAgentTools) -> list[dict[str, object]]:
+    return decoded_events(tools, MessageType.TOOL_CALL)
+
+
+def tool_result_records(tools: FakeAgentTools) -> list[dict[str, object]]:
+    return decoded_events(tools, MessageType.TOOL_RESULT)
+
+
 async def _ready(*_args, **_kwargs) -> None:
     return None
 
@@ -275,14 +292,14 @@ async def owned_rpc_turn(
 
         async def prompt(self, message, *, on_event, on_tool, on_ui):
             async def event(frame):
-                if frame.type in {"tool_execution_start", "tool_execution_end"}:
+                if frame.type in {OmpEventType.TOOL_START, OmpEventType.TOOL_END}:
                     observed.append(frame.type)
                 await on_event(frame)
-                if frame.type == "tool_execution_start" and order == "native-first":
+                if frame.type == OmpEventType.TOOL_START and order == "native-first":
                     await self.request("permission-after-native")
 
             async def ui(request):
-                observed.append("select")
+                observed.append(request.method)
                 return await on_ui(request)
 
             await super().prompt(message, on_event=event, on_tool=on_tool, on_ui=ui)

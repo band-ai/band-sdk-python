@@ -8,8 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from band.testing.fake_tools import events_of_type
-from tests.adapters.omp.kit import owned_rpc_turn
+from band.adapters.omp import OMP_PERMISSION_TOOL, OMP_TOOL_APPROVAL_HEADER
+from tests.adapters.omp.kit import (
+    owned_rpc_turn,
+    tool_call_records,
+    tool_result_records,
+)
 
 
 class TestPermissionProjection:
@@ -40,18 +44,20 @@ class TestPermissionProjection:
         else:
             tool_name = spelling
             wire_arguments = arguments
-        title = f"Allow tool: {tool_name}\nArguments: " + json.dumps(wire_arguments)
+        title = f"{OMP_TOOL_APPROVAL_HEADER}{tool_name}\nArguments: " + json.dumps(
+            wire_arguments
+        )
         tools, _ = await owned_rpc_turn(
             monkeypatch, tmp_path, title, "permission-first"
         )
         permission = next(
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_call")
-            if json.loads(event["content"])["name"] == "omp_permission"
+            call
+            for call in tool_call_records(tools)
+            if call["name"] == OMP_PERMISSION_TOOL
         )
         assert content not in json.dumps(permission)
         projected = permission["args"]
-        assert projected["message"] == f"Allow tool: {tool_name}"
+        assert projected["message"] == f"{OMP_TOOL_APPROVAL_HEADER}{tool_name}"
         assert projected["tool_name"] == expected_name
         assert projected["arguments"]["filename"] == arguments["filename"]
         assert projected["arguments"]["mentions"] == arguments["mentions"]
@@ -69,11 +75,13 @@ class TestPermissionProjection:
         match shape:
             case "invalid-json":
                 title = (
-                    'Allow tool: band_send_room_file\nArguments: {"content":"' + secret
+                    f'{OMP_TOOL_APPROVAL_HEADER}band_send_room_file\nArguments: {{"content":"'
+                    + secret
                 )
             case "array":
-                title = "Allow tool: band_send_room_file\nArguments: " + json.dumps(
-                    [secret]
+                title = (
+                    f"{OMP_TOOL_APPROVAL_HEADER}band_send_room_file\nArguments: "
+                    + json.dumps([secret])
                 )
             case "wrong-header":
                 title = "A question\nArguments: " + json.dumps({"content": secret})
@@ -83,9 +91,9 @@ class TestPermissionProjection:
             monkeypatch, tmp_path, title, "permission-first"
         )
         permission = next(
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_call")
-            if json.loads(event["content"])["name"] == "omp_permission"
+            call
+            for call in tool_call_records(tools)
+            if call["name"] == OMP_PERMISSION_TOOL
         )
         assert secret not in json.dumps(permission)
         assert set(permission["args"]) == {"message"}
@@ -139,14 +147,14 @@ class TestPermissionProjection:
         finally:
             sys.set_int_max_str_digits(limit)
         calls = [
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_call")
-            if json.loads(event["content"])["name"] != "omp_permission"
+            call
+            for call in tool_call_records(tools)
+            if call["name"] != OMP_PERMISSION_TOOL
         ]
         results = [
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_result")
-            if json.loads(event["content"])["name"] != "omp_permission"
+            result
+            for result in tool_result_records(tools)
+            if result["name"] != OMP_PERMISSION_TOOL
         ]
         assert [call["name"] for call in calls] == [native_name]
         assert [result["name"] for result in results] == [native_name]
@@ -174,7 +182,7 @@ class TestPermissionProjection:
     ) -> None:
         secret = "oversized-decoder-file-bytes"
         title = (
-            'Allow tool: band_send_room_file\nArguments: {"content":'
+            f'{OMP_TOOL_APPROVAL_HEADER}band_send_room_file\nArguments: {{"content":'
             + json.dumps(secret)
             + ',"count":'
             + "9" * 5000
@@ -189,13 +197,13 @@ class TestPermissionProjection:
         finally:
             sys.set_int_max_str_digits(limit)
         permission = next(
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_call")
-            if json.loads(event["content"])["name"] == "omp_permission"
+            call
+            for call in tool_call_records(tools)
+            if call["name"] == OMP_PERMISSION_TOOL
         )
         assert set(permission["args"]) == {"message"}
         assert secret not in json.dumps(permission)
         assert "9" * 5000 not in json.dumps(permission)
-        assert len(events_of_type(tools, "tool_result")) == 2
+        assert len(tool_result_records(tools)) == 2
         assert not tools.turn.complete
         assert tools.chat == []

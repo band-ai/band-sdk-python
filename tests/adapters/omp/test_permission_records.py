@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import OmpAdapter, OmpAdapterConfig
+from band.adapters.omp import (
+    OMP_PERMISSION_TOOL,
+    OMP_TOOL_APPROVAL_HEADER,
+    OmpAdapter,
+    OmpAdapterConfig,
+)
 from band.converters.omp import OmpSessionState
+from band.integrations.ompwire import OmpEventType
 from band.testing import FakeAgentTools
-from band.testing.fake_tools import events_of_type
-from tests.adapters.omp.kit import RepeatedRuntime, _cancel, _ready, owned_rpc_turn
+from tests.adapters.omp.kit import (
+    RepeatedRuntime,
+    _cancel,
+    _ready,
+    owned_rpc_turn,
+    tool_call_records,
+    tool_result_records,
+)
 from tests.integrations.acp.conftest import make_platform_message
 
 
@@ -21,37 +32,36 @@ class TestPermissionRecords:
         self, monkeypatch, tmp_path: Path, order: str
     ) -> None:
         tools, observed = await owned_rpc_turn(
-            monkeypatch, tmp_path, "Allow tool: read", order
+            monkeypatch, tmp_path, f"{OMP_TOOL_APPROVAL_HEADER}read", order
         )
         assert observed == (
-            ["tool_execution_start", "select", "tool_execution_end"]
+            [OmpEventType.TOOL_START, "select", OmpEventType.TOOL_END]
             if order == "native-first"
-            else ["select", "tool_execution_start", "tool_execution_end"]
+            else ["select", OmpEventType.TOOL_START, OmpEventType.TOOL_END]
         )
-        calls = [
-            json.loads(event["content"]) for event in events_of_type(tools, "tool_call")
+        calls = tool_call_records(tools)
+        results = tool_result_records(tools)
+        permission_calls = [
+            call for call in calls if call["name"] == OMP_PERMISSION_TOOL
         ]
-        results = [
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_result")
-        ]
-        permission_calls = [call for call in calls if call["name"] == "omp_permission"]
         permission_results = [
-            result for result in results if result["name"] == "omp_permission"
+            result for result in results if result["name"] == OMP_PERMISSION_TOOL
         ]
         assert len(permission_calls) == len(permission_results) == 1
         permission_id = permission_calls[0]["tool_call_id"]
         assert permission_id != "ui-wire-id"
         assert permission_results[0]["tool_call_id"] == permission_id
         assert permission_results[0]["is_error"]
-        assert [call for call in calls if call["name"] != "omp_permission"] == [
+        assert [call for call in calls if call["name"] != OMP_PERMISSION_TOOL] == [
             {
                 "name": "read",
                 "args": {"path": "denied.txt"},
                 "tool_call_id": "ui-wire-id",
             }
         ]
-        assert [result for result in results if result["name"] != "omp_permission"] == [
+        assert [
+            result for result in results if result["name"] != OMP_PERMISSION_TOOL
+        ] == [
             {
                 "name": "read",
                 "output": "Native tool failed",
@@ -84,11 +94,11 @@ class TestPermissionRecords:
             )
         finally:
             await adapter.cleanup_all()
-        calls = [
-            json.loads(event["content"]) for event in events_of_type(tools, "tool_call")
-        ]
+        calls = tool_call_records(tools)
         permission_ids = [
-            call["tool_call_id"] for call in calls if call["name"] == "omp_permission"
+            call["tool_call_id"]
+            for call in calls
+            if call["name"] == OMP_PERMISSION_TOOL
         ]
         assert len(permission_ids) == len(set(permission_ids)) == 2
         assert "ui-wire-id" not in permission_ids

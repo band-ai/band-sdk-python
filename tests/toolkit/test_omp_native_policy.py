@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.omp import OmpPermissionRequest
+from band.adapters.omp import OMP_TOOL_APPROVAL_HEADER, OmpPermissionRequest
 from tests.e2e.baseline.smoke.samples.omppermission import (
     FORM_PROBE_TITLE,
     deny_probe_allow_completion,
@@ -16,31 +16,43 @@ class TestNativeProbePolicy:
         ("title", "options", "expected"),
         [
             (
-                "Allow tool: band_send_message\nArguments: {}",
+                f"{OMP_TOOL_APPROVAL_HEADER}band_send_message\nArguments: {{}}",
                 ("Approve", "Deny"),
                 "Approve",
             ),
             (
-                "Allow tool: band_no_reply\nArguments: {}",
+                f"{OMP_TOOL_APPROVAL_HEADER}band_no_reply\nArguments: {{}}",
                 ("Approve", "Deny"),
                 "Approve",
             ),
             (
-                "Allow tool: write\nArguments: band_send_message",
+                f"{OMP_TOOL_APPROVAL_HEADER}write\nArguments: band_send_message",
                 ("Approve", "Deny"),
                 None,
             ),
-            ("Allow tool: eval", ("Approve", "Deny"), None),
-            ("Allow tool: band_send_event", ("Approve", "Deny"), None),
-            ("Allow tool: mcp__other_band_send_message", ("Approve", "Deny"), None),
-            ("Allow tool: band_send_message suffix", ("Approve", "Deny"), None),
-            ("Description\nAllow tool: band_send_message", ("Approve", "Deny"), None),
+            (f"{OMP_TOOL_APPROVAL_HEADER}eval", ("Approve", "Deny"), None),
+            (f"{OMP_TOOL_APPROVAL_HEADER}band_send_event", ("Approve", "Deny"), None),
             (
-                "Allow tool: band_send_message\r\nArguments: {}",
+                f"{OMP_TOOL_APPROVAL_HEADER}mcp__other_band_send_message",
                 ("Approve", "Deny"),
                 None,
             ),
-            ("Allow tool: band_send_message", ("Always", "Deny"), None),
+            (
+                f"{OMP_TOOL_APPROVAL_HEADER}band_send_message suffix",
+                ("Approve", "Deny"),
+                None,
+            ),
+            (
+                f"Description\n{OMP_TOOL_APPROVAL_HEADER}band_send_message",
+                ("Approve", "Deny"),
+                None,
+            ),
+            (
+                f"{OMP_TOOL_APPROVAL_HEADER}band_send_message\r\nArguments: {{}}",
+                ("Approve", "Deny"),
+                None,
+            ),
+            (f"{OMP_TOOL_APPROVAL_HEADER}band_send_message", ("Always", "Deny"), None),
         ],
     )
     async def test_grants_only_named_completion(

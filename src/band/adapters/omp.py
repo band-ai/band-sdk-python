@@ -47,6 +47,7 @@ from band.core.types import (
     FeatureKwargs,
     MessageType,
     PlatformMessage,
+    ToolEventKey,
 )
 from band.integrations.omp import finalize_omp_command, validate_omp_command
 from band.integrations.ompprocess import (
@@ -61,8 +62,11 @@ from band.integrations.ompprocess import (
 )
 from band.integrations.omprpc import OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
+    OMP_ASSISTANT_ROLE,
+    OmpCommandName,
     OmpContent,
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpState,
     OmpToolResult,
@@ -95,6 +99,26 @@ from band.workspaces import RoomWorkspaces, WorkspaceResolver, workspace_resolve
 logger = logging.getLogger(__name__)
 
 PRIVATE_PAYLOAD_UNAVAILABLE = "[private payload unavailable]"
+OMP_PERMISSION_TOOL = "omp_permission"
+OMP_TOOL_APPROVAL_HEADER = "Allow tool: "
+_ARGUMENTS_MARKER = "Arguments:"
+
+
+def _omp_host_tool(
+    name: JsonValue, description: JsonValue, parameters: JsonValue
+) -> dict[str, JsonValue]:
+    return {
+        "name": name,
+        "description": description,
+        "parameters": parameters,
+        "loadMode": "essential",
+    }
+
+
+def _text_tool_result(text: str, *, is_error: bool = False) -> OmpToolResult:
+    return OmpToolResult(
+        content=[OmpContent(type="text", text=text)], is_error=is_error
+    )
 
 
 class OmpAdapterConfig(BaseAdapterConfig):
@@ -229,23 +253,21 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         tools: list[dict[str, JsonValue]] = []
         if self.config.inject_band_tools:
             tools.extend(
-                {
-                    "name": item.name,
-                    "description": get_tool_description(item.name),
-                    "parameters": platform_args_schema(item.name).model_json_schema(),
-                    "loadMode": "essential",
-                }
+                _omp_host_tool(
+                    item.name,
+                    get_tool_description(item.name),
+                    platform_args_schema(item.name).model_json_schema(),
+                )
                 for item in definitions
             )
         for schema in custom_tools_to_schemas(self._custom_tools, "openai"):
             function = schema["function"]
             tools.append(
-                {
-                    "name": function["name"],
-                    "description": function.get("description", ""),
-                    "parameters": function["parameters"],
-                    "loadMode": "essential",
-                }
+                _omp_host_tool(
+                    function["name"],
+                    function.get("description", ""),
+                    function["parameters"],
+                )
             )
         names = [tool["name"] for tool in tools]
         if len(set(names)) != len(names):
@@ -294,10 +316,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             if plugin:
                 await omp_mcp_ready(room.runtime, plugin, self.config.mcp_servers)
             candidate = history.room_to_session.get(room_id)
+            saved = Path(candidate) if candidate else None
             if (
-                candidate
-                and Path(candidate).resolve().is_relative_to(session_dir.resolve())
-                and Path(candidate).is_file()
+                saved is not None
+                and saved.resolve().is_relative_to(session_dir.resolve())
+                and saved.is_file()
             ):
                 try:
                     change = _SessionChange.model_validate(
@@ -331,13 +354,18 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 self._workspaces.release(room_id)
             raise
 
+    async def _native_state(self, room: OmpRoom) -> OmpState:
+        return OmpState.model_validate(
+            await room.runtime.request(OmpCommandName.GET_STATE)
+        )
+
     async def _refresh_state(self, room: OmpRoom) -> None:
-        state = OmpState.model_validate(await room.runtime.request("get_state"))
+        state = await self._native_state(room)
         room.session_id = state.sessionId
         room.session_file = state.sessionFile
 
     async def _select_model(self, room: OmpRoom, selection: ModelSelection) -> None:
-        prior = OmpState.model_validate(await room.runtime.request("get_state"))
+        prior = await self._native_state(room)
         try:
             await self._apply_native_selection(room, selection)
         except Exception:
@@ -363,10 +391,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 raise ValueError(f"OMP does not offer reasoning effort {effort!r}")
         await room.runtime.request("set_thinking_level", level=effort)
         # Native state exposes the effective level, not the automatic selector.
-        if effort != "auto":
-            state = OmpState.model_validate(await room.runtime.request("get_state"))
-            if state.thinkingLevel != effort:
-                raise ValueError("OMP did not apply the requested reasoning effort")
+        if effort == "auto":
+            return
+        state = await self._native_state(room)
+        if state.thinkingLevel != effort:
+            raise ValueError("OMP did not apply the requested reasoning effort")
 
     async def _restore_native_selection(self, room: OmpRoom, prior: OmpState) -> None:
         try:
@@ -556,13 +585,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     ) -> OmpToolResult:
         allowed = {item["name"] for item in self._host_tools()}
         if call.toolName not in allowed:
-            return OmpToolResult(
-                content=[
-                    OmpContent(
-                        type="text", text="Tool is not available in this session"
-                    )
-                ],
-                is_error=True,
+            return _text_tool_result(
+                "Tool is not available in this session", is_error=True
             )
         try:
             custom = find_custom_tool(self._custom_tools, call.toolName)
@@ -575,14 +599,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     call.toolName, call.arguments
                 )
                 if not outcome.ok:
-                    return OmpToolResult(
-                        content=[
-                            OmpContent(
-                                type="text",
-                                text=outcome.error_message or str(outcome.value),
-                            )
-                        ],
-                        is_error=True,
+                    return _text_tool_result(
+                        outcome.error_message or str(outcome.value), is_error=True
                     )
                 value = outcome.value
             if is_image_passthrough_result(call.toolName, value):
@@ -592,14 +610,12 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     ]
                 )
             text = value if isinstance(value, str) else json.dumps(value, default=str)
-            return OmpToolResult(content=[OmpContent(type="text", text=text)])
+            return _text_tool_result(text)
         except DeliveryFailedError:
             raise
         except Exception as error:
             logger.exception("OMP host tool %s failed", call.toolName)
-            return OmpToolResult(
-                content=[OmpContent(type="text", text=str(error))], is_error=True
-            )
+            return _text_tool_result(str(error), is_error=True)
 
     def _project_tool_call(
         self,
@@ -642,7 +658,6 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             # Keep the withheld device's path, other fields and string payload.
             return native_name, {**native_arguments, "content": json.dumps(redacted)}
         except Exception:  # noqa: BLE001 - privacy failures must not discard native records
-            # Never retry failed privacy work or let it discard the native pair.
             if "content" in native_arguments:
                 return native_name, {
                     **native_arguments,
@@ -654,13 +669,17 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
     def _encode_tool_call(
         name: str, arguments: dict[str, JsonValue], call_id: str
     ) -> str:
-        envelope = {"name": name, "args": arguments, "tool_call_id": call_id}
+        envelope = {
+            ToolEventKey.NAME: name,
+            ToolEventKey.ARGS: arguments,
+            ToolEventKey.TOOL_CALL_ID: call_id,
+        }
         try:
             return json.dumps(envelope)
         except Exception:  # noqa: BLE001 - final encoding must not discard tool records
             wrapper = (
                 arguments.get("arguments", {})
-                if name == "omp_permission"
+                if name == OMP_PERMISSION_TOOL
                 else arguments
             )
             safe: dict[str, JsonValue] = {"arguments": PRIVATE_PAYLOAD_UNAVAILABLE}
@@ -677,16 +696,29 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         or (isinstance(value, int) and value.bit_length() <= 1024)
                     ):
                         safe[key] = value
-            envelope["args"] = safe
+            envelope[ToolEventKey.ARGS] = safe
             return json.dumps(envelope)
+
+    @staticmethod
+    def _encode_tool_result(
+        name: str, output: str, call_id: str | None, *, is_error: bool
+    ) -> str:
+        return json.dumps(
+            {
+                ToolEventKey.NAME: name,
+                ToolEventKey.OUTPUT: output,
+                ToolEventKey.TOOL_CALL_ID: call_id,
+                ToolEventKey.IS_ERROR: is_error,
+            }
+        )
 
     def _permission_arguments(self, title: str) -> dict[str, JsonValue]:
         """Project a UI title through the native tool normalization owner."""
-        header, separator, encoded = title.partition("Arguments:")
+        header, separator, encoded = title.partition(_ARGUMENTS_MARKER)
         if not separator:
             return {"message": title}
-        if header.startswith("Allow tool: ") and header.endswith("\n"):
-            tool_name = header.removeprefix("Allow tool: ").removesuffix("\n")
+        if header.startswith(OMP_TOOL_APPROVAL_HEADER) and header.endswith("\n"):
+            tool_name = header.removeprefix(OMP_TOOL_APPROVAL_HEADER).removesuffix("\n")
             if tool_name and tool_name == tool_name.strip() and "\n" not in tool_name:
                 try:
                     arguments = json.loads(encoded)
@@ -699,7 +731,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         }
                 except (ValueError, RecursionError):
                     pass
-        return {"message": f"{header}Arguments: [arguments unavailable]"}
+        return {"message": f"{header}{_ARGUMENTS_MARKER} [arguments unavailable]"}
 
     async def _permission(
         self,
@@ -731,7 +763,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         # A selected UI value has no generic approval/denial meaning. Only the
         # cancelled outcome is authoritative; native tool events stay independent.
         if Emit.TOOL_CALLS in self.features.emit and response.cancelled:
-            name = "omp_permission"
+            name = OMP_PERMISSION_TOOL
             call_id = f"band-permission:{uuid4().hex}"
             metadata = {
                 "permission_request": True,
@@ -751,13 +783,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             )
             await send_event_safe(
                 tools,
-                json.dumps(
-                    {
-                        "name": name,
-                        "output": "Permission cancelled",
-                        "tool_call_id": call_id,
-                        "is_error": True,
-                    }
+                self._encode_tool_result(
+                    name, "Permission cancelled", call_id, is_error=True
                 ),
                 MessageType.TOOL_RESULT,
                 {**metadata, "permission_outcome": "cancelled"},
@@ -766,11 +793,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
 
     async def _emit_event(self, event: OmpEvent, turn: OmpTurn) -> None:
         match event.type:
-            case "message_end":
+            case OmpEventType.MESSAGE_END:
                 message = event.message
                 if (
                     message is None
-                    or message.role != "assistant"
+                    or message.role != OMP_ASSISTANT_ROLE
                     or isinstance(message.content, str)
                 ):
                     return
@@ -785,7 +812,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         )
                     elif block.type == "text" and block.text:
                         turn.closing_text.append(block.text)
-            case "tool_execution_start":
+            case OmpEventType.TOOL_START:
                 if not event.toolCallId or not event.toolName:
                     return
                 args = event.args if isinstance(event.args, dict) else {}
@@ -799,7 +826,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                         self._encode_tool_call(name, arguments, event.toolCallId),
                         MessageType.TOOL_CALL,
                     )
-            case "tool_execution_end":
+            case OmpEventType.TOOL_END:
                 call = turn.calls.pop(event.toolCallId or "", None)
                 if call is None:
                     return
@@ -817,13 +844,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     )
                     await send_event_safe(
                         turn.tools,
-                        json.dumps(
-                            {
-                                "name": name,
-                                "output": output,
-                                "tool_call_id": event.toolCallId,
-                                "is_error": bool(event.isError),
-                            }
+                        self._encode_tool_result(
+                            name,
+                            output,
+                            event.toolCallId,
+                            is_error=bool(event.isError),
                         ),
                         MessageType.TOOL_RESULT,
                     )

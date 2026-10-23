@@ -8,6 +8,7 @@ from band.integrations.omp import (
     omp_model_provider,
     omp_provider_api_key_env,
 )
+from band.integrations.ompprocess import DEFAULT_OMP_COMMAND
 from tests.e2e.baseline.settings import BaselineSettings
 
 
@@ -24,10 +25,6 @@ def omp_command(settings: BaselineSettings) -> tuple[str, ...]:
 
 def native_omp_command(settings: BaselineSettings) -> tuple[str, ...]:
     """The executable and arguments used by native OMP RPC probes."""
-    from band.integrations.ompprocess import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
-        DEFAULT_OMP_COMMAND,
-    )
-
     override = settings.backends.omp_command.strip()
     return tuple(override.split()) if override else DEFAULT_OMP_COMMAND
 

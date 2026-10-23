@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, patch
 from pydantic import JsonValue
 
 from band.integrations.ompwire import (
+    OMP_ASSISTANT_ROLE,
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -68,9 +70,9 @@ class ScriptedOmpClient:
             await on_event(
                 OmpEvent.model_validate(
                     {
-                        "type": "message_end",
+                        "type": OmpEventType.MESSAGE_END,
                         "message": {
-                            "role": "assistant",
+                            "role": OMP_ASSISTANT_ROLE,
                             "content": [
                                 {"type": "text", "text": self.script.final_text}
                             ],

@@ -8,9 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import PRIVATE_PAYLOAD_UNAVAILABLE
-from band.testing.fake_tools import events_of_type
-from tests.adapters.omp.kit import owned_rpc_turn
+from band.adapters.omp import (
+    OMP_PERMISSION_TOOL,
+    OMP_TOOL_APPROVAL_HEADER,
+    PRIVATE_PAYLOAD_UNAVAILABLE,
+)
+from tests.adapters.omp.kit import (
+    owned_rpc_turn,
+    tool_call_records,
+    tool_result_records,
+)
 
 
 class TestRecordEncoding:
@@ -58,7 +65,7 @@ class TestRecordEncoding:
             "mode": "owned",
         }
         title = (
-            "Allow tool: write\nArguments: " + json.dumps(device)
+            f"{OMP_TOOL_APPROVAL_HEADER}write\nArguments: " + json.dumps(device)
             if path == "permission"
             else "A question"
         )
@@ -76,15 +83,10 @@ class TestRecordEncoding:
             )
         finally:
             sys.set_int_max_str_digits(limit)
-        calls = [
-            json.loads(event["content"]) for event in events_of_type(tools, "tool_call")
-        ]
-        results = [
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_result")
-        ]
-        permission = next(call for call in calls if call["name"] == "omp_permission")
-        native = next(call for call in calls if call["name"] != "omp_permission")
+        calls = tool_call_records(tools)
+        results = tool_result_records(tools)
+        permission = next(call for call in calls if call["name"] == OMP_PERMISSION_TOOL)
+        native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
         expected_name = (
             "read"
             if path == "permission"
@@ -99,7 +101,7 @@ class TestRecordEncoding:
         assert permission["tool_call_id"] != "ui-wire-id"
         assert {(result["name"], result["tool_call_id"]) for result in results} == {
             (expected_name, "ui-wire-id"),
-            ("omp_permission", permission["tool_call_id"]),
+            (OMP_PERMISSION_TOOL, permission["tool_call_id"]),
         }
         if path == "permission":
             assert permission["args"]["tool_name"] == (
@@ -145,7 +147,7 @@ class TestRecordEncoding:
             "nested": {"secret": "private-envelope-bytes"},
         }
         encoded = json.dumps(arguments)
-        target_name = "band_no_reply" if path == "native" else "omp_permission"
+        target_name = "band_no_reply" if path == "native" else OMP_PERMISSION_TOOL
         dumps = json.dumps
 
         def fail_private_envelope(value, *args, **kwargs):
@@ -161,7 +163,7 @@ class TestRecordEncoding:
         tools, _ = await owned_rpc_turn(
             monkeypatch,
             tmp_path,
-            "Allow tool: read\nArguments: " + encoded
+            f"{OMP_TOOL_APPROVAL_HEADER}read\nArguments: " + encoded
             if path == "permission"
             else "A question",
             order,
@@ -175,13 +177,8 @@ class TestRecordEncoding:
             native_error=False,
             inject_band_tools=False,
         )
-        calls = [
-            json.loads(event["content"]) for event in events_of_type(tools, "tool_call")
-        ]
-        results = [
-            json.loads(event["content"])
-            for event in events_of_type(tools, "tool_result")
-        ]
+        calls = tool_call_records(tools)
+        results = tool_result_records(tools)
         target = next(call for call in calls if call["name"] == target_name)
         assert target["args"] == {
             "path": "visible.txt",
@@ -193,7 +190,7 @@ class TestRecordEncoding:
         assert {(result["name"], result["tool_call_id"]) for result in results} == {
             (call["name"], call["tool_call_id"]) for call in calls
         }
-        native = next(call for call in calls if call["name"] != "omp_permission")
+        native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
         assert native["tool_call_id"] == "ui-wire-id"
         assert tools.turn.complete is (path == "native")
         assert tools.chat == []
@@ -202,7 +199,7 @@ class TestRecordEncoding:
     async def test_decoded_depth_fails_final_encode_without_losing_record(
         self, monkeypatch, tmp_path: Path, path: str
     ) -> None:
-        target_name = "band_no_reply" if path == "native" else "omp_permission"
+        target_name = "band_no_reply" if path == "native" else OMP_PERMISSION_TOOL
         encoded = ""
         decoder_limits = []
         calibrating = True
@@ -263,7 +260,7 @@ class TestRecordEncoding:
             tools, _ = await owned_rpc_turn(
                 monkeypatch,
                 tmp_path,
-                "Allow tool: read\nArguments: " + encoded
+                f"{OMP_TOOL_APPROVAL_HEADER}read\nArguments: " + encoded
                 if path == "permission"
                 else "A question",
                 "native-first",
@@ -277,21 +274,15 @@ class TestRecordEncoding:
                 native_error=False,
                 inject_band_tools=False,
             )
-            calls = [
-                json.loads(event["content"])
-                for event in events_of_type(tools, "tool_call")
-            ]
-            results = [
-                json.loads(event["content"])
-                for event in events_of_type(tools, "tool_result")
-            ]
+            calls = tool_call_records(tools)
+            results = tool_result_records(tools)
             target = next((call for call in calls if call["name"] == target_name), None)
             assert target is not None, calls
             assert len(calls) == len(results) == 2
             assert {(result["name"], result["tool_call_id"]) for result in results} == {
                 (call["name"], call["tool_call_id"]) for call in calls
             }
-            native = next(call for call in calls if call["name"] != "omp_permission")
+            native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
             assert native["tool_call_id"] == "ui-wire-id"
             assert tools.turn.complete is (path == "native")
             assert tools.chat == []

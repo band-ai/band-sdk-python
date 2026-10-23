@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+from band.adapters.omp import OMP_TOOL_APPROVAL_HEADER, OmpPermissionRequest
 from band.runtime.tools.types import BandTool
 
-if TYPE_CHECKING:
-    from band.adapters.omp import OmpPermissionRequest
-
 FORM_PROBE_TITLE = "Approve the E2E form probe?"
-
-# OMP's native permission dialog puts this header on the first line only.
-OMP_TOOL_APPROVAL_HEADER = "Allow tool: "
 COMPLETION_TITLES = frozenset(
     f"{OMP_TOOL_APPROVAL_HEADER}{tool}"
     for tool in (BandTool.SEND_MESSAGE, BandTool.NO_REPLY)
