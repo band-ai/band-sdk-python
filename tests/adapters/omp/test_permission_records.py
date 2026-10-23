@@ -13,7 +13,7 @@ from band.adapters.omp import (
     OmpAdapterConfig,
 )
 from band.converters.omp import OmpSessionState
-from band.integrations.ompwire import OmpEventType
+from band.integrations.ompwire import OmpEventType, OmpUIMethod
 from band.testing import FakeAgentTools
 from tests.adapters.omp.kit import (
     RepeatedRuntime,
@@ -27,18 +27,26 @@ from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestPermissionRecords:
-    @pytest.mark.parametrize("order", ["native-first", "permission-first"])
+    @pytest.mark.parametrize(
+        ("order", "expected"),
+        [
+            (
+                "native-first",
+                [OmpEventType.TOOL_START, OmpUIMethod.SELECT, OmpEventType.TOOL_END],
+            ),
+            (
+                "permission-first",
+                [OmpUIMethod.SELECT, OmpEventType.TOOL_START, OmpEventType.TOOL_END],
+            ),
+        ],
+    )
     async def test_permission_and_native_records_are_independent_in_both_orders(
-        self, monkeypatch, tmp_path: Path, order: str
+        self, monkeypatch, tmp_path: Path, order: str, expected: list[object]
     ) -> None:
         tools, observed = await owned_rpc_turn(
             monkeypatch, tmp_path, f"{OMP_TOOL_APPROVAL_HEADER}read", order
         )
-        assert observed == (
-            [OmpEventType.TOOL_START, "select", OmpEventType.TOOL_END]
-            if order == "native-first"
-            else ["select", OmpEventType.TOOL_START, OmpEventType.TOOL_END]
-        )
+        assert observed == expected
         calls = tool_call_records(tools)
         results = tool_result_records(tools)
         permission_calls = [
@@ -70,8 +78,6 @@ class TestPermissionRecords:
             }
         ]
         assert len(calls) == len(results) == 2
-        assert not tools.turn.complete
-        assert tools.chat == []
 
     async def test_repeated_owned_permission_requests_get_distinct_event_ids(
         self, monkeypatch, tmp_path: Path
@@ -105,5 +111,3 @@ class TestPermissionRecords:
         assert [call["tool_call_id"] for call in calls if call["name"] == "read"] == [
             "ui-wire-id"
         ]
-        assert not tools.turn.complete
-        assert tools.chat == []

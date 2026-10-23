@@ -8,7 +8,12 @@ import pytest
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.omp.kit import HungStartRuntime, PendingRuntime, run_turn
+from tests.adapters.omp.kit import (
+    HungStartRuntime,
+    PendingRuntime,
+    occupied_room_ids,
+    run_turn,
+)
 from tests.toolkit.clock import binary_clock_resolution
 from tests.toolkit.timecontrol import controlled_clock
 
@@ -37,7 +42,7 @@ class TestProcessCleanup:
             with pytest.raises(TimeoutError):
                 await turn
         assert runtime.closed
-        assert not adapter._rooms
+        assert occupied_room_ids(adapter) == set()
         assert [
             (failure["provider"], failure.get("code"))
             for failure in reported_failures(tools)
@@ -65,7 +70,7 @@ class TestProcessCleanup:
             with pytest.raises(TimeoutError):
                 await turn
         assert runtime.closed
-        assert not adapter._rooms
+        assert occupied_room_ids(adapter) == set()
         assert [
             (failure["provider"], failure.get("code"))
             for failure in reported_failures(tools)

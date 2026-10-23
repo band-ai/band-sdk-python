@@ -41,15 +41,26 @@ from band.core.protocols import (
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
+    PERMISSION_CANCELLED,
     AdapterFeatures,
     Capability,
     Emit,
     FeatureKwargs,
     MessageType,
+    PermissionEventKey,
     PlatformMessage,
     ToolEventKey,
 )
-from band.integrations.omp import finalize_omp_command, validate_omp_command
+from band.integrations.omp import (
+    OMP_APPROVAL_MODE_ALWAYS_ASK,
+    OMP_DEVICE_KIND_EXECUTE,
+    OMP_DEVICE_KIND_READ,
+    OMP_DEVICE_PATH_KEYS,
+    OMP_FORM_APPROVE,
+    OMP_FORM_DENY,
+    finalize_omp_command,
+    validate_omp_command,
+)
 from band.integrations.ompprocess import (
     DEFAULT_OMP_COMMAND,
     OmpMcpServer,
@@ -70,6 +81,7 @@ from band.integrations.ompwire import (
     OmpHostToolCall,
     OmpState,
     OmpToolResult,
+    OmpUIMethod,
     OmpUIRequest,
     OmpUIResponse,
 )
@@ -102,6 +114,103 @@ PRIVATE_PAYLOAD_UNAVAILABLE = "[private payload unavailable]"
 OMP_PERMISSION_TOOL = "omp_permission"
 OMP_TOOL_APPROVAL_HEADER = "Allow tool: "
 _ARGUMENTS_MARKER = "Arguments:"
+_ORIGIN_PREFIX = "Origin:"
+_REASON_PREFIX = "Reason:"
+_APPROVAL_FIELD_NAMES = {
+    "path": "path",
+    "file path": "file_path",
+    "file_path": "file_path",
+    "target": "target",
+    "content": "content",
+}
+OMP_PERMISSION_CANCELLED = f"Permission {PERMISSION_CANCELLED}"
+
+
+class RoomGate:
+    """Serialize different tasks while letting the owner reenter."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task[object] | None = None
+        self._depth = 0
+
+    async def __aenter__(self) -> Self:
+        task = asyncio.current_task()
+        if self._owner is task:
+            self._depth += 1
+            return self
+        await self._lock.acquire()
+        self._owner = task
+        self._depth = 1
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        self._depth -= 1
+        if self._depth:
+            return
+        self._owner = None
+        self._lock.release()
+
+
+def _selection_after(
+    prior: ModelSelection | None, selection: ModelSelection
+) -> ModelSelection:
+    return ModelSelection(
+        model=selection.model if selection.model else (prior.model if prior else None),
+        reasoning_effort=(
+            selection.reasoning_effort
+            if selection.reasoning_effort is not None
+            else (prior.reasoning_effort if prior else None)
+        ),
+    )
+
+
+def _parse_approval_title(title: str) -> tuple[str, dict[str, JsonValue]] | None:
+    """Split a live ``formatApprovalPrompt`` title into tool name and fields."""
+    first, separator, body = title.partition("\n")
+    if not first.startswith(OMP_TOOL_APPROVAL_HEADER):
+        return None
+    tool_name = first.removeprefix(OMP_TOOL_APPROVAL_HEADER)
+    if not tool_name or tool_name != tool_name.strip():
+        return None
+    if not separator:
+        return tool_name, {}
+    arguments: dict[str, JsonValue] = {}
+    lines = body.split("\n")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith((_ORIGIN_PREFIX, _REASON_PREFIX)):
+            index += 1
+            continue
+        if line.startswith(_ARGUMENTS_MARKER):
+            encoded = line.partition(_ARGUMENTS_MARKER)[2].lstrip()
+            parsed = json.loads(encoded)
+            if not isinstance(parsed, dict):
+                raise ValueError("OMP approval arguments must be an object")
+            arguments.update(cast(dict[str, JsonValue], parsed))
+            index += 1
+            continue
+        label, colon, value = line.partition(":")
+        field = _APPROVAL_FIELD_NAMES.get(label.strip().lower())
+        if not colon or field is None:
+            index += 1
+            continue
+        parts = [value.lstrip()]
+        index += 1
+        while index < len(lines):
+            nxt = lines[index]
+            if nxt.startswith((_ORIGIN_PREFIX, _REASON_PREFIX, _ARGUMENTS_MARKER)):
+                break
+            next_field = _APPROVAL_FIELD_NAMES.get(
+                nxt.partition(":")[0].strip().lower()
+            )
+            if next_field is not None and ":" in nxt:
+                break
+            parts.append(nxt)
+            index += 1
+        arguments[field] = "\n".join(parts).strip("\n")
+    return tool_name, arguments
 
 
 def _omp_host_tool(
@@ -134,7 +243,7 @@ class OmpAdapterConfig(BaseAdapterConfig):
     model: str | None = None
     reasoning_effort: str | None = None
     api_key: str | None = Field(default=None, repr=False)
-    approval_mode: Literal["always-ask", "yolo"] = "always-ask"
+    approval_mode: Literal["always-ask", "yolo"] = OMP_APPROVAL_MODE_ALWAYS_ASK
 
     @field_validator("command")
     @classmethod
@@ -180,6 +289,7 @@ class OmpRoom:
     session_file: str | None = None
     bootstrapped: bool = False
     retiring: bool = False
+    applied_selection: ModelSelection | None = None
 
 
 @dataclass
@@ -220,7 +330,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             workspace_resolver_for(self.config.cwd, workspace_for_room)
         )
         self._rooms: dict[str, OmpRoom] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks: dict[str, RoomGate] = {}
         self._owners: dict[str, asyncio.Task[object]] = {}
         self._room_selections: dict[str, ModelSelection] = {}
         self._host_schemas = self._build_host_tools()
@@ -274,17 +384,26 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             raise ValueError("OMP host tools must have unique names")
         return tools
 
-    def _spawn_env(self) -> dict[str, str] | None:
+    def _spawn_model(self, selection: ModelSelection | None) -> str | None:
+        if selection is not None and selection.model:
+            return selection.model
+        return self.config.model
+
+    def _spawn_env(
+        self, selection: ModelSelection | None = None
+    ) -> dict[str, str] | None:
         return omp_runtime_env(
             env=self.config.env,
-            model=self.config.model,
+            model=self._spawn_model(selection),
             api_key=self.config.api_key,
         )
 
-    def _spawn_command(self, workspace: str | None) -> list[str]:
+    def _spawn_command(
+        self, workspace: str | None, selection: ModelSelection | None = None
+    ) -> list[str]:
         command = finalize_omp_command(
             self.config.command,
-            model=self.config.model,
+            model=self._spawn_model(selection),
             approval_mode=self.config.approval_mode,
         )
         return (
@@ -302,14 +421,17 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     system_prompt=self._build_system_context(),
                 )
             )
-            command = self._spawn_command(workspace)
+            selection = self._room_selections.get(room_id, self.model_selection)
+            command = self._spawn_command(workspace, selection)
             session_dir = Path(workspace) / ".band-omp-sessions"
             session_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             command.extend(("--session-dir", str(session_dir)))
             if plugin:
                 command.extend(omp_mcp_arguments(plugin))
             room = OmpRoom(
-                OmpRpcClient(command, env=self._spawn_env()), workspace, resources
+                OmpRpcClient(command, env=self._spawn_env(selection)),
+                workspace,
+                resources,
             )
             self._rooms[room_id] = room
             await room.runtime.start()
@@ -325,27 +447,36 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 try:
                     change = _SessionChange.model_validate(
                         await room.runtime.request(
-                            "switch_session", sessionPath=candidate
+                            OmpCommandName.SWITCH_SESSION, sessionPath=candidate
                         )
                     )
                     room.bootstrapped = not change.cancelled
+                    if change.cancelled:
+                        logger.warning(
+                            "OMP session restore was cancelled; replaying room history"
+                        )
                 except OmpRpcError:
                     logger.warning(
                         "OMP session could not be restored; replaying room history",
+                        exc_info=True,
                     )
                     change = _SessionChange.model_validate(
-                        await room.runtime.request("new_session")
+                        await room.runtime.request(OmpCommandName.NEW_SESSION)
                     )
                     if change.cancelled:
                         raise RuntimeError(
                             "OMP refused to create a replacement session"
                         )
+            elif saved is not None:
+                logger.warning(
+                    "OMP session candidate was not a file in the room session "
+                    "directory; replaying room history"
+                )
             await room.runtime.request(
-                "set_host_tools", tools=cast(list[JsonValue], self._host_tools())
+                OmpCommandName.SET_HOST_TOOLS,
+                tools=cast(list[JsonValue], self._host_tools()),
             )
-            await self._select_model(
-                room, self._room_selections.get(room_id, self.model_selection)
-            )
+            await self._select_model(room, selection)
             await self._refresh_state(room)
             return room
         except BaseException:
@@ -365,12 +496,17 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         room.session_file = state.sessionFile
 
     async def _select_model(self, room: OmpRoom, selection: ModelSelection) -> None:
-        prior = await self._native_state(room)
         try:
             await self._apply_native_selection(room, selection)
         except Exception:
-            await self._restore_native_selection(room, prior)
+            try:
+                await self._restore_applied_selection(room)
+            except Exception:
+                logger.exception("OMP could not restore the previous model selection")
+                room.retiring = True
             raise
+        else:
+            room.applied_selection = _selection_after(room.applied_selection, selection)
 
     async def _apply_native_selection(
         self, room: OmpRoom, selection: ModelSelection
@@ -379,17 +515,19 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             provider, separator, model_id = selection.model.partition("/")
             if not separator or not model_id:
                 raise ValueError("OMP model must be provider/model")
-            await room.runtime.request("set_model", provider=provider, modelId=model_id)
+            await room.runtime.request(
+                OmpCommandName.SET_MODEL, provider=provider, modelId=model_id
+            )
         effort = selection.reasoning_effort
         if effort is None:
             return
         if effort != "auto":
             offered = _ThinkingLevels.model_validate(
-                await room.runtime.request("get_available_thinking_levels")
+                await room.runtime.request(OmpCommandName.GET_AVAILABLE_THINKING_LEVELS)
             )
             if effort not in offered.levels:
                 raise ValueError(f"OMP does not offer reasoning effort {effort!r}")
-        await room.runtime.request("set_thinking_level", level=effort)
+        await room.runtime.request(OmpCommandName.SET_THINKING_LEVEL, level=effort)
         # Native state exposes the effective level, not the automatic selector.
         if effort == "auto":
             return
@@ -397,25 +535,16 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         if state.thinkingLevel != effort:
             raise ValueError("OMP did not apply the requested reasoning effort")
 
-    async def _restore_native_selection(self, room: OmpRoom, prior: OmpState) -> None:
-        try:
-            if prior.model is not None:
-                await room.runtime.request(
-                    "set_model",
-                    provider=prior.model.provider,
-                    modelId=prior.model.id,
-                )
-            if prior.thinkingLevel is not None:
-                await room.runtime.request(
-                    "set_thinking_level", level=prior.thinkingLevel
-                )
-        except Exception:
-            logger.exception("OMP could not restore the previous model selection")
+    async def _restore_applied_selection(self, room: OmpRoom) -> None:
+        prior = room.applied_selection
+        if prior is None:
+            return
+        await self._apply_native_selection(room, prior)
 
     async def apply_model_selection(
         self, selection: ModelSelection, *, room_id: str
     ) -> None:
-        async with self._locks.setdefault(room_id, asyncio.Lock()):
+        async with self._locks.setdefault(room_id, RoomGate()):
             room = self._rooms.get(room_id)
             if room is not None and not room.retiring:
                 await self._select_model(room, selection)
@@ -466,8 +595,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             replay = history.replay_messages
             if not bootstrap:
                 try:
-                    context = await tools.fetch_room_context(room_id=room_id)
-                    raw = messages_before(context.get("data") or [], msg.id)
+                    raw = messages_before(
+                        await self._fetch_room_messages(tools, room_id), msg.id
+                    )
                     replay = build_replay_messages(
                         [item for item in raw if item.get("id") != msg.id]
                     )
@@ -486,6 +616,27 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 live = f"{marker}\n{live}"
         return "\n\n".join([*sections, live])
 
+    async def _fetch_room_messages(
+        self, tools: AgentToolsProtocol, room_id: str
+    ) -> list[dict[str, object]]:
+        page = 1
+        collected: list[dict[str, object]] = []
+        while True:
+            context = await tools.fetch_room_context(room_id=room_id, page=page)
+            data = context.get("data") or []
+            if not data:
+                break
+            collected.extend(data)
+            meta = context.get("meta") or {}
+            total_pages = meta.get("total_pages")
+            if isinstance(total_pages, int):
+                if page >= total_pages:
+                    break
+            elif len(data) < int(meta.get("page_size") or len(data)):
+                break
+            page += 1
+        return collected
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -497,7 +648,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        async with self._locks.setdefault(room_id, asyncio.Lock()):
+        async with self._locks.setdefault(room_id, RoomGate()):
             owner = asyncio.current_task()
             if owner is not None:
                 self._owners[room_id] = owner
@@ -561,21 +712,30 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 await self._close_room(room_id)
                 raise
             except DeliveryFailedError as error:
-                await self._close_room(room_id)
-                reraise_delivery_cause(error)
+                try:
+                    await self._close_room(room_id)
+                finally:
+                    reraise_delivery_cause(error)
             except Exception:
-                await self._close_room(room_id)
                 logger.exception("OMP turn failed")
-                failure = (
-                    AgentFailure(
-                        "omp",
-                        f"OMP turn timed out after {self.config.turn_timeout_s}s",
-                        FAILURE_CODE_TIMEOUT,
+                if not (deadline.expired() and tools.turn.replied):
+                    failure = (
+                        AgentFailure(
+                            "omp",
+                            f"OMP turn timed out after {self.config.turn_timeout_s}s",
+                            FAILURE_CODE_TIMEOUT,
+                        )
+                        if deadline.expired()
+                        else AgentFailure("omp", GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
-                    if deadline.expired()
-                    else AgentFailure("omp", GENERIC_PROVIDER_FAILURE_MESSAGE)
-                )
-                await tools.send_failure(failure)
+                    await tools.send_failure(failure)
+                try:
+                    await self._close_room(room_id)
+                except Exception:
+                    logger.exception(
+                        "OMP failed to close the room after a turn failure"
+                    )
+                    raise
                 raise
             finally:
                 self._owners.pop(room_id, None)
@@ -624,7 +784,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         *,
         preserve_native_semantics: bool = False,
     ) -> tuple[str, dict[str, JsonValue]]:
-        kind = "execute" if tool_name == "write" else "read"
+        kind = OMP_DEVICE_KIND_EXECUTE if tool_name == "write" else OMP_DEVICE_KIND_READ
         native_name, native_arguments = tool_name, arguments
         try:
             if preserve_native_semantics:
@@ -657,7 +817,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                 return native_name, native_arguments
             # Keep the withheld device's path, other fields and string payload.
             return native_name, {**native_arguments, "content": json.dumps(redacted)}
-        except Exception:  # noqa: BLE001 - privacy failures must not discard native records
+        except Exception:
+            # Privacy failures must not discard native records.
+            logger.exception("OMP could not project a native tool payload")
             if "content" in native_arguments:
                 return native_name, {
                     **native_arguments,
@@ -676,7 +838,9 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         }
         try:
             return json.dumps(envelope)
-        except Exception:  # noqa: BLE001 - final encoding must not discard tool records
+        except Exception:
+            # Final encoding must not discard tool records.
+            logger.exception("OMP could not encode a tool record")
             wrapper = (
                 arguments.get("arguments", {})
                 if name == OMP_PERMISSION_TOOL
@@ -684,7 +848,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             )
             safe: dict[str, JsonValue] = {"arguments": PRIVATE_PAYLOAD_UNAVAILABLE}
             if isinstance(wrapper, dict):
-                for key in ("path", "file_path", "target"):
+                for key in OMP_DEVICE_PATH_KEYS:
                     if key not in wrapper:
                         continue
                     value = wrapper[key]
@@ -714,24 +878,34 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
 
     def _permission_arguments(self, title: str) -> dict[str, JsonValue]:
         """Project a UI title through the native tool normalization owner."""
-        header, separator, encoded = title.partition(_ARGUMENTS_MARKER)
-        if not separator:
+        try:
+            parsed = _parse_approval_title(title)
+        except (ValueError, RecursionError):
+            logger.exception("OMP could not parse permission arguments")
+            header, separator, _encoded = title.partition(_ARGUMENTS_MARKER)
+            if separator:
+                return {
+                    "message": f"{header}{_ARGUMENTS_MARKER} [arguments unavailable]"
+                }
             return {"message": title}
-        if header.startswith(OMP_TOOL_APPROVAL_HEADER) and header.endswith("\n"):
-            tool_name = header.removeprefix(OMP_TOOL_APPROVAL_HEADER).removesuffix("\n")
-            if tool_name and tool_name == tool_name.strip() and "\n" not in tool_name:
-                try:
-                    arguments = json.loads(encoded)
-                    if isinstance(arguments, dict):
-                        name, projected = self._project_tool_call(tool_name, arguments)
-                        return {
-                            "message": header.removesuffix("\n"),
-                            "tool_name": name,
-                            "arguments": projected,
-                        }
-                except (ValueError, RecursionError):
-                    pass
-        return {"message": f"{header}{_ARGUMENTS_MARKER} [arguments unavailable]"}
+        if parsed is None:
+            header, separator, _encoded = title.partition(_ARGUMENTS_MARKER)
+            if separator:
+                return {
+                    "message": f"{header}{_ARGUMENTS_MARKER} [arguments unavailable]"
+                }
+            return {"message": title}
+        tool_name, arguments = parsed
+        try:
+            name, projected = self._project_tool_call(tool_name, arguments)
+            return {
+                "message": f"{OMP_TOOL_APPROVAL_HEADER}{tool_name}",
+                "tool_name": name,
+                "arguments": projected,
+            }
+        except Exception:
+            logger.exception("OMP could not project permission arguments")
+            return {"message": f"{OMP_TOOL_APPROVAL_HEADER}{tool_name}"}
 
     async def _permission(
         self,
@@ -740,7 +914,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         session_id: str,
         tools: AgentToolsProtocol,
     ) -> OmpUIResponse:
-        if request.method != "select":
+        if request.method != OmpUIMethod.SELECT:
             return OmpUIResponse(cancelled=True)
         options = tuple(request.options or ())
         choice = None
@@ -753,8 +927,8 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
                     options=options,
                 )
             )
-        elif options == ("Approve", "Deny"):
-            choice = "Approve"
+        elif options == (OMP_FORM_APPROVE, OMP_FORM_DENY):
+            choice = OMP_FORM_APPROVE
         response = (
             OmpUIResponse(value=choice)
             if choice is not None and choice in options
@@ -766,12 +940,12 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             name = OMP_PERMISSION_TOOL
             call_id = f"band-permission:{uuid4().hex}"
             metadata = {
-                "permission_request": True,
-                "tool_name": name,
-                "tool_call_id": call_id,
+                PermissionEventKey.REQUEST: True,
+                PermissionEventKey.TOOL_NAME: name,
+                PermissionEventKey.TOOL_CALL_ID: call_id,
                 OmpMetadataKey.SESSION_ID: session_id,
                 "omp_request_id": request.id,
-                "auto_allowed": False,
+                PermissionEventKey.AUTO_ALLOWED: False,
             }
             await send_event_safe(
                 tools,
@@ -784,10 +958,10 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             await send_event_safe(
                 tools,
                 self._encode_tool_result(
-                    name, "Permission cancelled", call_id, is_error=True
+                    name, OMP_PERMISSION_CANCELLED, call_id, is_error=True
                 ),
                 MessageType.TOOL_RESULT,
-                {**metadata, "permission_outcome": "cancelled"},
+                {**metadata, PermissionEventKey.OUTCOME: PERMISSION_CANCELLED},
             )
         return response
 
@@ -795,11 +969,11 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         match event.type:
             case OmpEventType.MESSAGE_END:
                 message = event.message
-                if (
-                    message is None
-                    or message.role != OMP_ASSISTANT_ROLE
-                    or isinstance(message.content, str)
-                ):
+                if message is None or message.role != OMP_ASSISTANT_ROLE:
+                    return
+                if isinstance(message.content, str):
+                    if message.content:
+                        turn.closing_text.append(message.content)
                     return
                 for block in message.content:
                     if (
@@ -867,8 +1041,15 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
         owner = self._owners.get(room_id)
         if owner is not None and owner is not asyncio.current_task():
             owner.cancel()
-            await asyncio.gather(owner, return_exceptions=True)
-        async with self._locks.setdefault(room_id, asyncio.Lock()):
+            results = await asyncio.gather(owner, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    logger.error(
+                        "OMP cancelled turn ended with an error", exc_info=result
+                    )
+        async with self._locks.setdefault(room_id, RoomGate()):
             room = self._rooms.get(room_id)
             retrying = room is not None and room.retiring
             await self._close_room(room_id)

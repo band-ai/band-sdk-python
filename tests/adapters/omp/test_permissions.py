@@ -7,38 +7,43 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.adapters.omp import OmpAdapter
-from band.integrations.ompwire import OmpUIRequest
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
+from band.integrations.ompwire import OmpUIMethod, OmpUIRequest
 from band.testing import FakeAgentTools
 
 
 class TestPermissions:
+    @pytest.mark.parametrize(
+        ("method", "options", "expected_value", "expected_cancelled"),
+        [
+            (
+                OmpUIMethod.SELECT,
+                [OMP_FORM_APPROVE, OMP_FORM_DENY],
+                OMP_FORM_APPROVE,
+                False,
+            ),
+            (OmpUIMethod.SELECT, ["personal", "work"], None, True),
+            ("notify", [OMP_FORM_APPROVE, OMP_FORM_DENY], None, True),
+        ],
+        ids=["default-approve", "unrelated-options", "non-select"],
+    )
     @pytest.mark.asyncio
-    async def test_permission_defaults_only_allow_native_approval_choices(self):
-        adapter = OmpAdapter()
-        approved = await adapter._permission(
+    async def test_permission_defaults_match_offered_native_choices(
+        self, method, options, expected_value, expected_cancelled
+    ):
+        response = await OmpAdapter()._permission(
             OmpUIRequest(
                 id="approval",
-                method="select",
+                method=method,
                 title="Approve tool?",
-                options=["Approve", "Deny"],
+                options=options,
             ),
             "room",
             "session",
             FakeAgentTools(),
         )
-        unrelated = await adapter._permission(
-            OmpUIRequest(
-                id="question",
-                method="select",
-                title="Choose an account",
-                options=["personal", "work"],
-            ),
-            "room",
-            "session",
-            FakeAgentTools(),
-        )
-        assert approved.value == "Approve"
-        assert unrelated.cancelled
+        assert response.value == expected_value
+        assert response.cancelled is expected_cancelled
 
     @pytest.mark.asyncio
     async def test_permission_resolver_cannot_invent_an_unoffered_choice(self):
@@ -46,9 +51,9 @@ class TestPermissions:
         response = await adapter._permission(
             OmpUIRequest(
                 id="approval",
-                method="select",
+                method=OmpUIMethod.SELECT,
                 title="Approve tool?",
-                options=["Approve", "Deny"],
+                options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
             ),
             "room",
             "session",

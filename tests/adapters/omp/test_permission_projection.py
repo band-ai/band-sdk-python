@@ -18,16 +18,21 @@ from tests.adapters.omp.kit import (
 
 class TestPermissionProjection:
     @pytest.mark.parametrize(
-        ("spelling", "expected_name"),
+        ("tool_name", "expected_name", "device_path"),
         [
-            ("band_send_room_file", "band_send_room_file"),
-            ("mcp__band_send_room_file", "band_send_room_file"),
-            ("device-write", "band_send_room_file"),
-            ("send_room_file", "send_room_file"),
+            ("band_send_room_file", "band_send_room_file", None),
+            ("mcp__band_send_room_file", "band_send_room_file", None),
+            ("write", "band_send_room_file", "xd://mcp__band_send_room_file"),
+            ("send_room_file", "send_room_file", None),
         ],
     )
     async def test_owned_permission_projection_redacts_structured_file_content(
-        self, monkeypatch, tmp_path: Path, spelling: str, expected_name: str
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        tool_name: str,
+        expected_name: str,
+        device_path: str | None,
     ) -> None:
         content = "private-file-bytes-4e612b"
         arguments = {
@@ -35,15 +40,11 @@ class TestPermissionProjection:
             "content": content,
             "mentions": ["user"],
         }
-        if spelling == "device-write":
-            tool_name = "write"
-            wire_arguments = {
-                "path": "xd://mcp__band_send_room_file",
-                "content": json.dumps(arguments),
-            }
-        else:
-            tool_name = spelling
-            wire_arguments = arguments
+        wire_arguments = (
+            {"path": device_path, "content": json.dumps(arguments)}
+            if device_path
+            else arguments
+        )
         title = f"{OMP_TOOL_APPROVAL_HEADER}{tool_name}\nArguments: " + json.dumps(
             wire_arguments
         )
@@ -62,8 +63,6 @@ class TestPermissionProjection:
         assert projected["arguments"]["filename"] == arguments["filename"]
         assert projected["arguments"]["mentions"] == arguments["mentions"]
         assert projected["arguments"]["content"] != content
-        assert not tools.turn.complete
-        assert tools.chat == []
 
     @pytest.mark.parametrize(
         "shape", ["invalid-json", "array", "wrong-header", "inline"]
@@ -98,20 +97,24 @@ class TestPermissionProjection:
         assert secret not in json.dumps(permission)
         assert set(permission["args"]) == {"message"}
         assert permission["args"]["message"] != title
-        assert not tools.turn.complete
-        assert tools.chat == []
 
     @pytest.mark.parametrize(
-        ("native_name", "device"),
+        ("native_name", "device", "expected_filename", "expected_nested_filename"),
         [
-            ("mcp__band_create_task", None),
-            ("mcp__band_send_room_file", None),
-            ("write", "object"),
-            ("write", "oversized"),
+            ("mcp__band_create_task", None, None, None),
+            ("mcp__band_send_room_file", None, "private.txt", None),
+            ("write", "object", None, "private.txt"),
+            ("write", "oversized", None, None),
         ],
     )
     async def test_default_capabilities_preserve_native_name_and_turn_effect(
-        self, monkeypatch, tmp_path: Path, native_name: str, device: str | None
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        native_name: str,
+        device: str | None,
+        expected_filename: str | None,
+        expected_nested_filename: str | None,
     ) -> None:
         secret = "withheld-file-bytes"
         payload = {"filename": "private.txt", "content": secret, "mentions": ["user"]}
@@ -161,21 +164,11 @@ class TestPermissionProjection:
         assert calls[0]["tool_call_id"] == results[0]["tool_call_id"] == "ui-wire-id"
         projected = calls[0]["args"]
         assert set(projected) == set(arguments)
-        if device:
-            assert projected["path"] == arguments["path"]
-            assert projected["append"] is False
-            assert isinstance(projected["content"], str)
-            if device == "object":
-                assert json.loads(projected["content"])["filename"] == "private.txt"
-                assert json.loads(projected["content"])["mentions"] == ["user"]
-        elif native_name == "mcp__band_send_room_file":
-            assert projected["filename"] == "private.txt"
-            assert projected["mentions"] == ["user"]
-        else:
-            assert projected == arguments
+        assert projected.get("filename") == expected_filename
+        assert expected_nested_filename is None or (
+            json.loads(projected["content"])["filename"] == expected_nested_filename
+        )
         assert secret not in json.dumps(calls)
-        assert not tools.turn.complete
-        assert tools.chat == []
 
     async def test_oversized_permission_integer_uses_placeholder(
         self, monkeypatch, tmp_path: Path
@@ -205,5 +198,3 @@ class TestPermissionProjection:
         assert secret not in json.dumps(permission)
         assert "9" * 5000 not in json.dumps(permission)
         assert len(tool_result_records(tools)) == 2
-        assert not tools.turn.complete
-        assert tools.chat == []

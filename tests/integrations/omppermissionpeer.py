@@ -6,6 +6,8 @@ import json
 import os
 import sys
 
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
+from band.integrations.ompwire import OmpEventType, OmpFrameType, OmpUIMethod
 from tests.integrations.omppeer import Frame, Peer, send
 
 
@@ -18,7 +20,7 @@ class PermissionPeer(Peer):
     def native_start() -> None:
         send(
             {
-                "type": "tool_execution_start",
+                "type": OmpEventType.TOOL_START,
                 "toolCallId": "ui-wire-id",
                 "toolName": os.environ.get("OMP_TEST_NATIVE_NAME", "read"),
                 "args": json.loads(
@@ -31,7 +33,7 @@ class PermissionPeer(Peer):
     def native_end() -> None:
         send(
             {
-                "type": "tool_execution_end",
+                "type": OmpEventType.TOOL_END,
                 "toolCallId": "ui-wire-id",
                 "toolName": os.environ.get("OMP_TEST_NATIVE_NAME", "read"),
                 "isError": os.environ.get("OMP_TEST_NATIVE_ERROR", "1") == "1",
@@ -54,11 +56,11 @@ class PermissionPeer(Peer):
     def ask_ui() -> None:
         send(
             {
-                "type": "extension_ui_request",
+                "type": OmpFrameType.UI_REQUEST,
                 "id": "ui-wire-id",
-                "method": "select",
+                "method": OmpUIMethod.SELECT,
                 "title": os.environ["OMP_TEST_PERMISSION_TITLE"],
-                "options": ["Approve", "Deny"],
+                "options": [OMP_FORM_APPROVE, OMP_FORM_DENY],
             }
         )
 
@@ -77,7 +79,7 @@ class PermissionPeer(Peer):
             self.respond(frame)
             self.ask_ui()
             return
-        if frame.type == "extension_ui_response":
+        if frame.type == OmpFrameType.UI_RESPONSE:
             if frame.id != "ui-wire-id" or not frame.cancelled:
                 raise AssertionError("The scripted UI decision must be cancelled")
             if self.order == "permission-first":

@@ -34,11 +34,18 @@ class OmpHistoryConverter(HistoryConverter[OmpSessionState]):
         sessions: dict[str, str] = {}
         for message in raw:
             match message.get("message_type"), message.get("metadata"):
-                case MessageType.TASK, {
-                    OmpMetadataKey.ROOM: str(room),
-                    OmpMetadataKey.SESSION: str(session),
-                } if session:
-                    sessions[room] = session
+                case MessageType.TASK, dict() as metadata:
+                    room = metadata.get(OmpMetadataKey.ROOM)
+                    if (
+                        not isinstance(room, str)
+                        or OmpMetadataKey.SESSION not in metadata
+                    ):
+                        continue
+                    session = metadata.get(OmpMetadataKey.SESSION)
+                    if isinstance(session, str) and session:
+                        sessions[room] = session
+                    else:
+                        sessions.pop(room, None)
         return OmpSessionState(
             room_to_session=sessions, replay_messages=build_replay_messages(raw)
         )

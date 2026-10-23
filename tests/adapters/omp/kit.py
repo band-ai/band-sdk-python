@@ -13,14 +13,20 @@ from pydantic import BaseModel
 
 from band.adapters.omp import OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
+from band.core.delivery import DeliveryFailedError
+from band.core.model_catalog import ModelSelection
 from band.core.types import MessageType
+from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.omprpc import OmpRpcClient, OmpRpcError
 from band.integrations.ompwire import (
+    OmpCommandName,
     OmpContent,
     OmpEvent,
     OmpEventType,
     OmpHostToolCall,
+    OmpMessage,
     OmpToolResult,
+    OmpUIMethod,
     OmpUIRequest,
 )
 from band.runtime.tools import ToolCallOutcome
@@ -48,7 +54,7 @@ class PendingRuntime:
         return None
 
     async def request(self, command, **_parameters):
-        if command == "get_state":
+        if command == OmpCommandName.GET_STATE:
             return {
                 "sessionId": "native-session",
                 "sessionFile": None,
@@ -100,6 +106,8 @@ class RecordingRuntime(PendingRuntime):
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.prompt_text = ""
         self.switch_error: OmpRpcError | None = None
+        self.switch_cancelled = False
+        self.new_session_cancelled = False
         self.model: tuple[str, str] | None = None
         self.thinking: str | None = None
         self.levels: tuple[str, ...] = ("off", "low", "high")
@@ -107,23 +115,23 @@ class RecordingRuntime(PendingRuntime):
 
     async def request(self, command, **parameters):
         self.calls.append((command, parameters))
-        if command == "switch_session":
+        if command == OmpCommandName.SWITCH_SESSION:
             if self.switch_error is not None:
                 raise self.switch_error
             self.session_file = parameters["sessionPath"]
-            return {"cancelled": False}
-        if command == "new_session":
+            return {"cancelled": self.switch_cancelled}
+        if command == OmpCommandName.NEW_SESSION:
             self.session_file = None
-            return {"cancelled": False}
-        if command == "set_model":
+            return {"cancelled": self.new_session_cancelled}
+        if command == OmpCommandName.SET_MODEL:
             self.model = (parameters["provider"], parameters["modelId"])
             return {}
-        if command == "get_available_thinking_levels":
+        if command == OmpCommandName.GET_AVAILABLE_THINKING_LEVELS:
             return {"levels": list(self.levels)}
-        if command == "set_thinking_level":
+        if command == OmpCommandName.SET_THINKING_LEVEL:
             self.thinking = parameters["level"]
             return {}
-        if command == "get_state":
+        if command == OmpCommandName.GET_STATE:
             state = {
                 "sessionId": "native-session",
                 "sessionFile": self.session_file,
@@ -144,9 +152,9 @@ class RecordingRuntime(PendingRuntime):
 
 class AutomaticThinkingRuntime(PendingRuntime):
     async def request(self, command, **parameters):
-        if command == "get_available_thinking_levels":
+        if command == OmpCommandName.GET_AVAILABLE_THINKING_LEVELS:
             return {"levels": ["off", "low", "high"]}
-        if command == "get_state":
+        if command == OmpCommandName.GET_STATE:
             return {
                 "sessionId": "native-session",
                 "isSettled": True,
@@ -155,11 +163,135 @@ class AutomaticThinkingRuntime(PendingRuntime):
         return await super().request(command, **parameters)
 
 
+class BoomCloseRuntime(PendingRuntime):
+    async def close(self):
+        raise OSError("process still alive")
+
+
+class HangAfterPromptRuntime(PendingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.prompted = False
+        self.hung = asyncio.Event()
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_tool(
+            OmpHostToolCall(
+                id="host-call",
+                toolCallId="reply",
+                toolName="band_send_message",
+                arguments={"content": "Already replied"},
+            )
+        )
+        self.prompted = True
+
+    async def request(self, command, **_parameters):
+        if command == OmpCommandName.GET_STATE and self.prompted:
+            self.hung.set()
+            await asyncio.Event().wait()
+        return await super().request(command, **_parameters)
+
+
+class RestoreFailRuntime(RecordingRuntime):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.fail_restore_model = False
+
+    async def request(self, command, **parameters):
+        if (
+            command == OmpCommandName.SET_MODEL
+            and self.fail_restore_model
+            and parameters.get("provider") == "openai"
+            and parameters.get("modelId") == "original"
+        ):
+            raise RuntimeError("restore set_model failed")
+        return await super().request(command, **parameters)
+
+
+class AutoEffectiveRuntime(RecordingRuntime):
+    async def request(self, command, **parameters):
+        result = await super().request(command, **parameters)
+        if command == OmpCommandName.GET_STATE and self.thinking == "auto":
+            result = {**result, "thinkingLevel": "high"}
+        return result
+
+
+class StringMessageRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_event(
+            OmpEvent(
+                type=OmpEventType.MESSAGE_END,
+                message=OmpMessage(role="assistant", content="Visible assistant text"),
+            )
+        )
+
+
+class MismatchThinkingRuntime(RecordingRuntime):
+    async def request(self, command, **parameters):
+        result = await super().request(command, **parameters)
+        if command == OmpCommandName.GET_STATE and self.thinking not in (None, "auto"):
+            result = {**result, "thinkingLevel": "off"}
+        return result
+
+
+class CrashPromptRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        raise RuntimeError("provider crashed")
+
+
+class DeliveryCrashRuntime(PendingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        raise DeliveryFailedError(RuntimeError("delivery rejected"))
+
+
+class LiveTitleRuntime(PendingRuntime):
+    def __init__(self, title: str, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.title = title
+
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_ui(
+            OmpUIRequest(
+                id="ui-wire-id",
+                method=OmpUIMethod.SELECT,
+                title=self.title,
+                options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+            )
+        )
+
+
+class PermissionThenReplyRuntime(RecordingRuntime):
+    async def prompt(self, _message, *, on_event, on_tool, on_ui):
+        await on_ui(
+            OmpUIRequest(
+                id="ui",
+                method=OmpUIMethod.SELECT,
+                title="Approve tool?",
+                options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+            )
+        )
+        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+
+
+class SelectingResolver:
+    def __init__(self) -> None:
+        self.adapter: OmpAdapter | None = None
+        self.called = asyncio.Event()
+
+    async def __call__(self, _request) -> None:
+        assert self.adapter is not None
+        self.called.set()
+        await self.adapter.apply_model_selection(
+            ModelSelection(model="openai/other", reasoning_effort="low"),
+            room_id="room-123",
+        )
+
+
 class DocumentationRuntime(PendingRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         await on_event(
             OmpEvent(
-                type="tool_execution_start",
+                type=OmpEventType.TOOL_START,
                 toolCallId="docs",
                 toolName="grep",
                 args={
@@ -170,7 +302,7 @@ class DocumentationRuntime(PendingRuntime):
         )
         await on_event(
             OmpEvent(
-                type="tool_execution_end",
+                type=OmpEventType.TOOL_END,
                 toolCallId="docs",
                 toolName="grep",
                 result=OmpToolResult(
@@ -183,13 +315,15 @@ class DocumentationRuntime(PendingRuntime):
 
 class RepeatedRuntime(PendingRuntime):
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
-        request = OmpUIRequest(id="ui-wire-id", method="select", title="A question")
+        request = OmpUIRequest(
+            id="ui-wire-id", method=OmpUIMethod.SELECT, title="A question"
+        )
         for _ in range(2):
             response = await on_ui(request)
             assert response.cancelled
         await on_event(
             OmpEvent(
-                type="tool_execution_start",
+                type=OmpEventType.TOOL_START,
                 toolCallId="ui-wire-id",
                 toolName="read",
                 args={"path": "denied.txt"},
@@ -197,7 +331,7 @@ class RepeatedRuntime(PendingRuntime):
         )
         await on_event(
             OmpEvent(
-                type="tool_execution_end",
+                type=OmpEventType.TOOL_END,
                 toolCallId="ui-wire-id",
                 toolName="read",
                 isError=True,
@@ -235,8 +369,35 @@ def native_session_file(workspace: Path) -> Path:
     return path
 
 
-def requests_named(runtime: RecordingRuntime, command: str) -> list[dict[str, object]]:
+def requests_named(
+    runtime: RecordingRuntime, command: str | OmpCommandName
+) -> list[dict[str, object]]:
     return [parameters for name, parameters in runtime.calls if name == command]
+
+
+def room_runtime(adapter: OmpAdapter, room_id: str) -> object | None:
+    room = adapter._rooms.get(room_id)
+    return None if room is None else room.runtime
+
+
+def occupied_room_ids(adapter: OmpAdapter) -> set[str]:
+    return set(adapter._rooms)
+
+
+def retained_selection(adapter: OmpAdapter, room_id: str) -> ModelSelection | None:
+    return adapter._room_selections.get(room_id)
+
+
+async def released_rpc_clients(clients: list) -> None:
+    for client, peer_identity in clients:
+        process = client._proc
+        assert process is not None
+        assert process.returncode is not None
+        assert await process.wait() == process.returncode
+        closing = client._close_task
+        assert closing is not None and closing.done() and not closing.cancelled()
+        assert closing.exception() is None
+        assert not await asyncio.to_thread(process_is_alive, peer_identity)
 
 
 def decoded_events(tools: FakeAgentTools, message_type: str) -> list[dict[str, object]]:
@@ -347,17 +508,8 @@ async def owned_rpc_turn(
     finally:
         await adapter.cleanup_all()
     assert clients
-    for client, peer_identity in clients:
-        process = client._proc
-        assert process is not None
-        assert process.returncode is not None
-        assert await process.wait() == process.returncode
-        closing = client._close_task
-        assert closing is not None and closing.done() and not closing.cancelled()
-        assert closing.exception() is None
-        # The retained helper can differ from the native interpreter on Windows.
-        assert not await asyncio.to_thread(process_is_alive, peer_identity)
-    assert adapter._rooms == {}
+    await released_rpc_clients(clients)
+    assert occupied_room_ids(adapter) == set()
     return tools, observed
 
 
@@ -365,17 +517,23 @@ class Launches:
     """Record native runtime instances and the startup overlays they own."""
 
     def __init__(self) -> None:
-        self.runtimes: list[PendingRuntime] = []
+        self.runtimes: list[RecordingRuntime] = []
         self.servers: list[dict[str, object]] = []
         self.plugins: list[Path] = []
+        self.commands: list[list[str]] = []
+        self.envs: list[dict[str, str] | None] = []
         self.spawned = asyncio.Event()
 
-    def __call__(self, command: list[str], **_kwargs: object) -> PendingRuntime:
+    def __call__(
+        self, command: list[str], env=None, **_kwargs: object
+    ) -> RecordingRuntime:
         plugin = command[command.index("--plugin-dir") + 1]
         overlay = json.loads((Path(plugin) / ".mcp.json").read_text(encoding="utf-8"))
         self.servers.append(overlay["mcpServers"])
         self.plugins.append(Path(plugin))
-        runtime = PendingRuntime()
+        self.commands.append(list(command))
+        self.envs.append(None if env is None else dict(env))
+        runtime = RecordingRuntime()
         runtime.finish.set()
         self.runtimes.append(runtime)
         self.spawned.set()

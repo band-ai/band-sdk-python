@@ -58,8 +58,9 @@ XD_MCP_PREFIX = "mcp__"
 _XD_HELP_CONTENT = re.compile(r"^\s*(\?|help)?\s*$", re.IGNORECASE)
 # OMP's ACP tool kinds for a device write and a read (acp-event-mapper.ts
 # mapToolKind).
-_ACP_KIND_EXECUTE = "execute"
-_ACP_KIND_READ = "read"
+OMP_DEVICE_KIND_EXECUTE = "execute"
+OMP_DEVICE_KIND_READ = "read"
+OMP_DEVICE_PATH_KEYS = ("path", "file_path", "target")
 
 OMP_FORM_APPROVE = "Approve"
 OMP_FORM_DENY = "Deny"
@@ -285,7 +286,7 @@ def normalize_omp_mcp_device_call(
     """
     args = dict(arguments)
     path: str | None = None
-    for key in ("path", "file_path", "target"):
+    for key in OMP_DEVICE_PATH_KEYS:
         value = args.get(key)
         if isinstance(value, str) and value.startswith(XD_URL_PREFIX):
             path = value
@@ -294,10 +295,12 @@ def normalize_omp_mcp_device_call(
     if path is not None:
         canonical = normalize_omp_mcp_tool_name(path, own_names, namespace=namespace)
         content = args.get("content")
-        if canonical is None or kind == _ACP_KIND_READ:
+        if canonical is None or kind == OMP_DEVICE_KIND_READ:
             return name, args
         if not isinstance(content, str):
-            return (canonical, args) if kind == _ACP_KIND_EXECUTE else (name, args)
+            return (
+                (canonical, args) if kind == OMP_DEVICE_KIND_EXECUTE else (name, args)
+            )
         if _XD_HELP_CONTENT.match(content):
             return name, args
         try:

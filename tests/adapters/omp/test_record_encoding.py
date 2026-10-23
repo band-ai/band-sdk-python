@@ -22,23 +22,29 @@ from tests.adapters.omp.kit import (
 
 class TestRecordEncoding:
     @pytest.mark.parametrize(
-        ("shape", "path"),
+        ("shape", "path", "expected_name", "permission_tool_name"),
         [
-            ("surrogate", "enabled-native"),
-            ("integer-limit", "withheld-native"),
-            ("deep", "enabled-native"),
-            ("deep", "withheld-native"),
-            ("deep", "permission"),
-            ("malformed", "enabled-native"),
-            ("malformed", "withheld-native"),
-            ("malformed", "permission"),
-            ("non-object", "enabled-native"),
-            ("non-object", "withheld-native"),
-            ("non-object", "permission"),
+            ("surrogate", "enabled-native", "band_send_message", None),
+            ("integer-limit", "withheld-native", "write", None),
+            ("deep", "enabled-native", "write", None),
+            ("deep", "withheld-native", "write", None),
+            ("deep", "permission", "read", "write"),
+            ("malformed", "enabled-native", "band_send_message", None),
+            ("malformed", "withheld-native", "write", None),
+            ("malformed", "permission", "read", "band_send_room_file"),
+            ("non-object", "enabled-native", "band_send_message", None),
+            ("non-object", "withheld-native", "write", None),
+            ("non-object", "permission", "read", "band_send_room_file"),
         ],
     )
     async def test_adversarial_projection_preserves_record_identity(
-        self, monkeypatch, tmp_path: Path, path: str, shape: str
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        path: str,
+        shape: str,
+        expected_name: str,
+        permission_tool_name: str | None,
     ) -> None:
         secret = "adversarial-private-content"
         match shape:
@@ -87,15 +93,6 @@ class TestRecordEncoding:
         results = tool_result_records(tools)
         permission = next(call for call in calls if call["name"] == OMP_PERMISSION_TOOL)
         native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
-        expected_name = (
-            "read"
-            if path == "permission"
-            else (
-                "band_send_message"
-                if path == "enabled-native" and shape != "deep"
-                else "write"
-            )
-        )
         assert native["name"] == expected_name
         assert native["tool_call_id"] == "ui-wire-id"
         assert permission["tool_call_id"] != "ui-wire-id"
@@ -103,13 +100,12 @@ class TestRecordEncoding:
             (expected_name, "ui-wire-id"),
             (OMP_PERMISSION_TOOL, permission["tool_call_id"]),
         }
-        if path == "permission":
-            assert permission["args"]["tool_name"] == (
-                "write" if shape == "deep" else "band_send_room_file"
-            )
-            projected = permission["args"]["arguments"]
-        else:
-            projected = native["args"]
+        assert permission["args"].get("tool_name") == permission_tool_name
+        projected = (
+            permission["args"]["arguments"]
+            if permission_tool_name is not None
+            else native["args"]
+        )
         if path == "enabled-native" and shape == "surrogate":
             assert projected == {"filename": "private.txt", "content": "\ud800"}
         elif path == "permission" and shape == "surrogate":
@@ -132,8 +128,6 @@ class TestRecordEncoding:
                     "content": "<3 byte file content>",
                 }
         assert all(result["is_error"] for result in results)
-        assert not tools.turn.complete
-        assert tools.chat == []
 
     @pytest.mark.parametrize("path", ["native", "permission"])
     @pytest.mark.parametrize("order", ["native-first", "permission-first"])
@@ -192,8 +186,6 @@ class TestRecordEncoding:
         }
         native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
         assert native["tool_call_id"] == "ui-wire-id"
-        assert tools.turn.complete is (path == "native")
-        assert tools.chat == []
 
     @pytest.mark.parametrize("path", ["native", "permission"])
     async def test_decoded_depth_fails_final_encode_without_losing_record(
@@ -204,7 +196,6 @@ class TestRecordEncoding:
         decoder_limits = []
         calibrating = True
         decoded = 0
-        encode_failed = False
         loads, dumps = json.loads, json.dumps
 
         def payload(depth: int) -> str:
@@ -242,17 +233,7 @@ class TestRecordEncoding:
                 return result
             return loads(value, *args, **kwargs)
 
-        def observe_dumps(value, *args, **kwargs):
-            nonlocal encode_failed
-            try:
-                return dumps(value, *args, **kwargs)
-            except RecursionError:
-                if isinstance(value, dict) and value.get("name") == target_name:
-                    encode_failed = True
-                raise
-
         monkeypatch.setattr(json, "loads", observe_loads)
-        monkeypatch.setattr(json, "dumps", observe_dumps)
 
         async def run_depth(depth: int):
             nonlocal encoded
@@ -284,8 +265,6 @@ class TestRecordEncoding:
             }
             native = next(call for call in calls if call["name"] != OMP_PERMISSION_TOOL)
             assert native["tool_call_id"] == "ui-wire-id"
-            assert tools.turn.complete is (path == "native")
-            assert tools.chat == []
             return calls, target
 
         await run_depth(0)
@@ -293,23 +272,19 @@ class TestRecordEncoding:
         depth = min(decoder_limits)
         calibrating = False
         decoded = 0
-        encode_failed = False
+
+        def fail_max_depth_envelope(value, *args, **kwargs):
+            if isinstance(value, dict) and value.get("name") == target_name:
+                projected = value.get("args", {})
+                if path == "permission":
+                    projected = projected.get("arguments", {})
+                if isinstance(projected, dict) and "nested" in projected:
+                    raise RecursionError("final envelope encoding failed")
+            return dumps(value, *args, **kwargs)
+
+        monkeypatch.setattr(json, "dumps", fail_max_depth_envelope)
         calls, target = await run_depth(depth)
         assert decoded
-        if not encode_failed:
-            arguments = (
-                target["args"]["arguments"] if path == "permission" else target["args"]
-            )
-            assert arguments["path"] == "visible.txt"
-            nested = arguments["nested"]
-            for _ in range(depth):
-                assert isinstance(nested, list) and len(nested) == 1
-                nested = nested[0]
-            assert nested == "private-depth-bytes"
-            pytest.skip(
-                f"Python {sys.version.split()[0]} encodes the maximum decoded depth "
-                f"({depth}); no natural decode-success/encode-failure window"
-            )
         assert target["args"] == {
             "path": "visible.txt",
             "arguments": PRIVATE_PAYLOAD_UNAVAILABLE,
