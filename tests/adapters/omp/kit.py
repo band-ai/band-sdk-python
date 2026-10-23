@@ -788,6 +788,8 @@ async def owned_rpc_turn(
     native_arguments=None,
     native_error: bool = True,
     inject_band_tools: bool = True,
+    tools: FakeAgentTools | None = None,
+    judged: bool = False,
 ):
     observed = []
     clients = []
@@ -850,22 +852,26 @@ async def owned_rpc_turn(
         OmpAdapterConfig(cwd=str(tmp_path), inject_band_tools=inject_band_tools),
         resolve_permission=_cancel,
     )
-    tools = FakeAgentTools()
+    tools = tools if tools is not None else FakeAgentTools()
+    turn_input = {
+        "msg": make_platform_message("Handle the permission request"),
+        "tools": tools,
+        "history": OmpSessionState(),
+        "participants_msg": None,
+        "contacts_msg": None,
+        "is_session_bootstrap": True,
+        "room_id": "room",
+    }
     try:
-        await adapter.on_message(
-            make_platform_message("Handle the permission request"),
-            tools,
-            OmpSessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room",
-        )
+        if judged:
+            await adapter.run_judged_turn(**turn_input)
+        else:
+            await adapter.on_message(**turn_input)
     finally:
         await adapter.cleanup_all()
-    assert clients
-    await released_rpc_clients(clients)
-    assert occupied_room_ids(adapter) == set()
+        assert clients
+        await released_rpc_clients(clients)
+        assert occupied_room_ids(adapter) == set()
     return tools, observed
 
 
