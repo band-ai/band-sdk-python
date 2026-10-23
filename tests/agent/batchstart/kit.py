@@ -10,8 +10,9 @@ import httpx
 
 from band.core.exceptions import InputNotAccepted
 from band.core.protocols import AgentToolsProtocol
-from band.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import BatchInputAdapter
 from band.core.types import AgentInput
+from band.core.types import PlatformMessage as AdapterMessage
 from band.platform.event import PlatformEvent
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
@@ -46,10 +47,8 @@ class Turn:
     bootstrap: bool
 
 
-class QueuedAdapter(SimpleAdapter[Any]):
+class QueuedAdapter(BatchInputAdapter[Any]):
     """A batch adapter that refuses its first offer and accepts every later one."""
-
-    supports_batch_input = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -57,30 +56,9 @@ class QueuedAdapter(SimpleAdapter[Any]):
         self.turns: list[Turn] = []
         self.contents: list[tuple[str, ...]] = []
 
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        history: Any,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        await self.on_turn(
-            (msg,),
-            tools,
-            history,
-            participants_msg,
-            contacts_msg,
-            is_session_bootstrap=is_session_bootstrap,
-            room_id=room_id,
-        )
-
     async def on_turn(
         self,
-        messages: Sequence[PlatformMessage],
+        messages: Sequence[AdapterMessage],
         tools: AgentToolsProtocol,
         history: Any,
         participants_msg: str | None,
@@ -141,11 +119,11 @@ class ProjectedControlAdapter(QueuedAdapter):
         super().__init__()
         self.controls: list[str] = []
 
-    def is_control_message(self, msg: PlatformMessage) -> bool:
+    def is_control_message(self, msg: AdapterMessage) -> bool:
         return msg.content == f"{PROJECTED_PREFIX}{CONTROL_CONTENT}"
 
     async def try_handle_control(
-        self, msg: PlatformMessage, tools: AgentToolsProtocol
+        self, msg: AdapterMessage, tools: AgentToolsProtocol
     ) -> bool:
         if not self.is_control_message(msg):
             return False
