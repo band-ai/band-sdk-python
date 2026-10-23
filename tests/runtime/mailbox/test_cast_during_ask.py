@@ -14,15 +14,15 @@ class TestCastDuringAsk:
         hold = JobHold()
         hold.hold()
         order: list[str] = []
-        workers: list[asyncio.Task[object] | None] = []
+        occupied_here: list[bool] = []
 
         async def occupied() -> None:
-            workers.append(asyncio.current_task())
+            occupied_here.append(mailbox.occupying("room-1"))
             order.append("ask")
             await hold.pause()
 
         async def follow_up() -> None:
-            workers.append(asyncio.current_task())
+            occupied_here.append(mailbox.occupying("room-1"))
             order.append("cast")
             finished.set()
 
@@ -35,6 +35,5 @@ class TestCastDuringAsk:
         await waiting
         await finished.wait()
         assert order == ["ask", "cast"]
-        assert workers[0] is not None
-        assert workers[1] is workers[0]
+        assert occupied_here == [True, True]
         await mailbox.close("room-1")

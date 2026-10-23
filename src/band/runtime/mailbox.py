@@ -7,7 +7,8 @@ they do not copy task context onto child tasks.
 
 ``ask`` from the room's own worker raises. Occupancy ("this prompt is active")
 is not the worker ("one mutation now"): a prompt waiter lives outside the
-mailbox so host-tool and UI jobs can run.
+mailbox so host-tool and UI jobs can run. Cancelling ``ask`` cancels the
+in-flight job so a hung start cannot pin the worker.
 """
 
 from __future__ import annotations
@@ -33,12 +34,14 @@ class NestedMailboxAsk(BandError):
 class _Job:
     run: Callable[[], Awaitable[Any]]
     result: asyncio.Future[Any] | None
+    running: asyncio.Task[Any] | None = None
 
 
 @dataclass
 class _Room:
     queue: asyncio.Queue[_Job | None] = field(default_factory=asyncio.Queue)
     worker: asyncio.Task[None] | None = None
+    current: _Job | None = None
 
 
 class RoomMailbox:
@@ -48,9 +51,15 @@ class RoomMailbox:
         self._rooms: dict[str, _Room] = {}
 
     def occupying(self, room_id: str) -> bool:
-        """True only while this task *is* the room's worker."""
+        """True on the worker or the job it is currently running."""
         room = self._rooms.get(room_id)
-        return room is not None and room.worker is asyncio.current_task()
+        if room is None:
+            return False
+        me = asyncio.current_task()
+        if room.worker is me:
+            return True
+        current = room.current
+        return current is not None and current.running is me
 
     def cast(self, room_id: str, run: Callable[[], Awaitable[None]]) -> None:
         """Enqueue ``run`` and return immediately."""
@@ -68,14 +77,19 @@ class RoomMailbox:
         """Enqueue ``run`` and wait for its result.
 
         Raises ``NestedMailboxAsk`` when the caller is this room's worker.
+        Cancelling the waiter cancels the in-flight job.
         """
         if self.occupying(room_id):
             raise NestedMailboxAsk(
                 f"Room {room_id} mailbox asked itself and would wait forever"
             )
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
-        self._submit(room_id, run, result=future)
-        return await future
+        job = self._submit(room_id, run, result=future)
+        try:
+            return await future
+        except asyncio.CancelledError:
+            self._abandon(job)
+            raise
 
     async def close(self, room_id: str) -> None:
         """Drain queued jobs, then stop the worker."""
@@ -96,7 +110,7 @@ class RoomMailbox:
         room_id: str,
         run: Callable[[], Awaitable[Any]],
         result: asyncio.Future[Any] | None,
-    ) -> None:
+    ) -> _Job:
         room = self._rooms.get(room_id)
         if room is None:
             room = _Room()
@@ -105,7 +119,16 @@ class RoomMailbox:
             room.worker = asyncio.create_task(
                 self._run(room_id, room), name=f"room-mailbox:{room_id}"
             )
-        room.queue.put_nowait(_Job(run, result))
+        job = _Job(run, result)
+        room.queue.put_nowait(job)
+        return job
+
+    @staticmethod
+    def _abandon(job: _Job) -> None:
+        if job.running is not None and not job.running.done():
+            job.running.cancel()
+        elif job.result is not None and not job.result.done():
+            job.result.cancel()
 
     async def _run(self, room_id: str, room: _Room) -> None:
         try:
@@ -114,7 +137,7 @@ class RoomMailbox:
                 if job is None:
                     return
                 try:
-                    await self._execute(room_id, job)
+                    await self._execute(room_id, room, job)
                 finally:
                     room.queue.task_done()
                 if room.queue.empty():
@@ -129,18 +152,29 @@ class RoomMailbox:
                     self._run(room_id, room), name=f"room-mailbox:{room_id}"
                 )
 
-    async def _execute(self, room_id: str, job: _Job) -> None:
+    async def _execute(self, room_id: str, room: _Room, job: _Job) -> None:
         if job.result is not None and job.result.cancelled():
             return
+        room.current = job
+        job.running = asyncio.create_task(job.run())
         try:
-            value = await job.run()
+            value = await job.running
         except BaseException as error:
             if job.result is not None and not job.result.done():
                 job.result.set_exception(error)
             elif job.result is None:
                 logger.exception("Room mailbox %s cast failed", room_id)
-            if isinstance(error, asyncio.CancelledError):
+            worker = asyncio.current_task()
+            if (
+                isinstance(error, asyncio.CancelledError)
+                and worker is not None
+                and worker.cancelling()
+            ):
                 raise
             return
+        finally:
+            if room.current is job:
+                room.current = None
+            job.running = None
         if job.result is not None and not job.result.done():
             job.result.set_result(value)

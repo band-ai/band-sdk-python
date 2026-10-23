@@ -17,11 +17,9 @@ class TestClose:
         mailbox = RoomMailbox()
         hold = JobHold()
         hold.hold()
-        workers: list[asyncio.Task[object] | None] = []
         drained = asyncio.Event()
 
         async def occupied() -> None:
-            workers.append(asyncio.current_task())
             await hold.pause()
 
         async def queued() -> None:
@@ -36,12 +34,10 @@ class TestClose:
         await drained.wait()
         await closing
 
-        async def later() -> None:
-            workers.append(asyncio.current_task())
+        async def later() -> str:
+            return "ok"
 
-        await mailbox.ask("room-1", later)
-        assert workers[0] is not None
-        assert workers[1] is not workers[0]
+        assert await mailbox.ask("room-1", later) == "ok"
         await mailbox.close("room-1")
 
     async def test_close_from_the_worker_raises(self) -> None:
