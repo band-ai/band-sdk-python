@@ -177,11 +177,6 @@ _WORKER_POOL_FLAGS = frozenset(
         "--numprocesses",
         "--dist",
         "--maxprocesses",
-        "--splits",
-        "--group",
-        "--splitting-algorithm",
-        "--durations-path",
-        "--randomly-seed",
     }
 )
 
