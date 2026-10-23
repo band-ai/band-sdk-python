@@ -54,7 +54,7 @@ class TestRpcLifecycleTrees:
             ),
         ],
     )
-    async def test_interrupted_operations_reap_each_tree_before_replacement(
+    async def test_interrupted_operations_reap_owned_trees_and_recover(
         self, process_gate: ProcessGate, steps: list[Step], detached: bool
     ) -> None:
         await play(steps, gate=process_gate, detached=detached)

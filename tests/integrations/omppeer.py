@@ -44,6 +44,7 @@ SETTLED_CALLBACK_SCENARIO = "settled-during-callback"
 SETTLED_CALLBACK_ID = "host-held"
 LATE_CALLBACK_ID = "host-late"
 STDIN_BACKPRESSURE = "stdin-backpressure"
+LIFECYCLE_SCENARIO = "lifecycle"
 
 
 def burst_message_id(number: int) -> str:
@@ -234,7 +235,7 @@ class Peer:
         self.settled = False
         self.state_requested = False
         if (
-            self.prompt_count > 1 and self.scenario != "lifecycle"
+            self.prompt_count > 1 and self.scenario != LIFECYCLE_SCENARIO
         ) or frame.message == FOLLOW_UP_PROMPT:
             self.finish(frame)
             return
@@ -796,7 +797,7 @@ def main() -> None:
     if args.gate_port is not None and args.scenario in {
         "descendants",
         "no-ready-descendants",
-        "lifecycle",
+        LIFECYCLE_SCENARIO,
         "eof-descendants",
     }:
         # The gate, not the peer's stdio EOF, owns these children's lifetime.

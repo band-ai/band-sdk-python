@@ -9,11 +9,16 @@ from dataclasses import dataclass
 from enum import StrEnum
 from unittest.mock import patch
 
+from hypothesis import Phase
 from hypothesis import strategies as st
 
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import OmpEventType
-from tests.integrations.omppeer import BACKGROUND_COMPLETE, CRASH_EXIT
+from tests.integrations.omppeer import (
+    BACKGROUND_COMPLETE,
+    CRASH_EXIT,
+    LIFECYCLE_SCENARIO,
+)
 from tests.integrations.omprpc.kit import (
     OMP_PEER_COMMAND,
     GatedProcess,
@@ -24,13 +29,16 @@ from tests.integrations.omprpc.kit import (
     descendant_liveness,
     descendants_started_with,
     owned_rpc_process,
+    process_gate_session,
     prompt_task,
     queue_prompt,
     second_prompt,
 )
 
-# A healthy step takes milliseconds; a hung one fails its example within this.
+# Readiness and cancellation use barriers; this only bounds a hung operation.
 STEP_GUARD_S = 15
+MODEL_GUARD_S = 600
+MODEL_PHASES = (Phase.reuse, Phase.generate)
 
 
 class Step(StrEnum):
@@ -46,7 +54,8 @@ class Step(StrEnum):
     CANCEL_CLOSE_RESTART = "cancel close during held spawn while a restart waits"
 
 
-sequences = st.lists(st.sampled_from(Step), min_size=1, max_size=6)
+def operation_sequences(*, min_steps: int = 1) -> st.SearchStrategy[list[Step]]:
+    return st.lists(st.sampled_from(Step), min_size=min_steps, max_size=6)
 
 
 @dataclass
@@ -73,9 +82,9 @@ class RpcLifecycle:
     def __init__(self, gate: ProcessGate | None, *, detached: bool = False) -> None:
         self.gate = gate
         self.client = (
-            descendant_client(gate, scenario="lifecycle", detached=detached)
+            descendant_client(gate, scenario=LIFECYCLE_SCENARIO, detached=detached)
             if gate is not None
-            else OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", "lifecycle"))
+            else OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", LIFECYCLE_SCENARIO))
         )
         self.live = False
         self.active: asyncio.Task[None] | None = None
@@ -299,3 +308,8 @@ async def play(
                 await session.take(step)
         async with asyncio.timeout(STEP_GUARD_S):
             await session.assert_custody_survives()
+
+
+async def play_tree(steps: list[Step], *, detached: bool) -> None:
+    async with process_gate_session() as gate:
+        await play(steps, gate=gate, detached=detached)

@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import signal
 import socket
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 import psutil
+from pydantic import BaseModel
 
 GATE_COMMAND = (sys.executable, "-u", __file__)
 
@@ -22,8 +21,7 @@ class GateRole(StrEnum):
     CHILD = "gated-child"
 
 
-@dataclass(frozen=True)
-class ProcessReceipt:
+class ProcessReceipt(BaseModel):
     pid: int
     parent_pid: int
     created: float
@@ -80,7 +78,7 @@ def hold_process_gate(
             parent_pid=os.getppid(),
             created=psutil.Process().create_time(),
         )
-        gate.sendall((json.dumps(asdict(receipt)) + "\n").encode())
+        gate.sendall((receipt.model_dump_json() + "\n").encode())
         if spawn_on_eof:
             sys.stdin.buffer.read()
             child = launch_child()

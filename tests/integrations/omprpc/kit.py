@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import signal
 import sys
@@ -283,7 +282,7 @@ class ProcessGate:
 
     async def connection(self) -> GatedProcess:
         reader, _ = await self.connections.get()
-        receipt = ProcessReceipt(**json.loads(await reader.readline()))
+        receipt = ProcessReceipt.model_validate_json(await reader.readline())
         process = await asyncio.to_thread(psutil.Process, receipt.pid)
         self.processes.append(process)
         assert await asyncio.to_thread(process.create_time) == receipt.created

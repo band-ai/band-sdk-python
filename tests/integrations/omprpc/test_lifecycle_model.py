@@ -5,24 +5,25 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from hypothesis import Phase, given, settings
+from hypothesis import given, settings
 
 from tests.integrations.omprpc.lifecycle import (
+    MODEL_GUARD_S,
+    MODEL_PHASES,
     Step,
+    operation_sequences,
     play,
-    sequences,
 )
 
 
 class TestRpcLifecycleModel:
-    # Descendant containment belongs to the real-tree regression scenarios.
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(MODEL_GUARD_S)
     @settings(
         max_examples=20,
         deadline=None,
-        phases=(Phase.reuse, Phase.generate),
+        phases=MODEL_PHASES,
     )
-    @given(steps=sequences)
+    @given(steps=operation_sequences())
     def test_generated_operations_preserve_settlement_and_restart(
         self, steps: list[Step]
     ) -> None:
