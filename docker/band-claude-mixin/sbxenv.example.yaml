@@ -1,0 +1,15 @@
+schemaVersion: "1"
+name: band-claude
+agent: sbx-kit-claude
+workspace: ./demo-workspace
+kits:
+  - docker.io/docker/sbx-kit-claude:2.1.278
+  - .
+secrets:
+  band:
+    ref: op://Private/Band/agent-api-key
+bindings:
+  band:
+    apiKey:
+      domains:
+        - app.band.ai

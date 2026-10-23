@@ -59,6 +59,9 @@ jobs:
       # would break every fresh kit workspace.
       run: uv lock --check --directory docker/band_python_kit/echo-agent
 
+    - name: Verify the Claude mixin lock is in sync with its pyproject
+      run: uv lock --check --directory docker/band-claude-mixin
+
     - name: Install dependencies
       # --all-packages: a plain `uv sync` installs only the root project, not
       # workspace members that aren't a root dependency (packages/band-mcp) --

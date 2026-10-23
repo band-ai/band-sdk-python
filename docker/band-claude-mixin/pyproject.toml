@@ -1,0 +1,10 @@
+[project]
+name = "band-claude-mixin"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "band-sdk[claude-sdk]==5.0.0",
+    "claude-agent-sdk==0.2.168",
+    "httpx==0.28.1",
+    "pydantic-settings>=2,<3",
+]
