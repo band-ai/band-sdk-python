@@ -10,9 +10,10 @@ import pytest
 from pydantic import BaseModel, model_validator
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
-from band.core.types import Emit
+from band.core.types import Emit, MessageType
 from band.runtime.custom_tools import declares_turn_effect
 from band.runtime.tools import ToolCallOutcome, TurnEffect
+from band.testing.fake_tools import events_of_type
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     FakeCopilotSession,
@@ -421,7 +422,9 @@ class TestSendRoomFileArgsRedaction:
         assert raw_content not in call_event["content"]
 
     @pytest.mark.asyncio
-    async def test_lone_surrogate_file_content_is_redacted_without_losing_event(self):
+    async def test_lone_surrogate_file_content_is_redacted_without_losing_event(
+        self,
+    ) -> None:
         client = FakeCopilotClient()
         adapter = await make_started_adapter(client, emit=Emit.TOOL_CALLS)
         tools = _SendRoomFileFakeTools()
@@ -434,11 +437,8 @@ class TestSendRoomFileArgsRedaction:
                 arguments={"content": "\ud800", "filename": "notes.txt"},
             )
         )
-        call = json.loads(
-            next(e for e in tools.events_sent if e["message_type"] == "tool_call")[
-                "content"
-            ]
-        )
+        (call_event,) = events_of_type(tools, MessageType.TOOL_CALL)
+        call = json.loads(call_event["content"])
         assert call["tool_call_id"] == "surrogate-file"
         assert call["name"] == "band_send_room_file"
         assert call["args"] == {
