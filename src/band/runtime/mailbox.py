@@ -155,8 +155,11 @@ class RoomMailbox:
     async def _execute(self, room_id: str, room: _Room, job: _Job) -> None:
         if job.result is not None and job.result.cancelled():
             return
+        async def run_job() -> Any:
+            return await job.run()
+
         room.current = job
-        job.running = asyncio.create_task(job.run())
+        job.running = asyncio.create_task(run_job())
         try:
             value = await job.running
         except BaseException as error:
