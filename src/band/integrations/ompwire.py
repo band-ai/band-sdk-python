@@ -22,6 +22,14 @@ OMP_NATIVE_PROTOCOL_VERSION: Final = 2
 OMP_ASSISTANT_ROLE = "assistant"
 
 
+class OmpContentKind(StrEnum):
+    """Content-block kinds native events and host-tool results mint or match."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    THINKING = "thinking"
+
+
 class OmpCommandName(StrEnum):
     """Name SDK-issued commands without restricting arbitrary native requests."""
 
@@ -30,6 +38,18 @@ class OmpCommandName(StrEnum):
     GET_STATE = "get_state"
     GET_AVAILABLE_COMMANDS = "get_available_commands"
     ABORT = "abort"
+    SWITCH_SESSION = "switch_session"
+    NEW_SESSION = "new_session"
+    SET_HOST_TOOLS = "set_host_tools"
+    SET_MODEL = "set_model"
+    GET_AVAILABLE_THINKING_LEVELS = "get_available_thinking_levels"
+    SET_THINKING_LEVEL = "set_thinking_level"
+
+
+class OmpUIMethod(StrEnum):
+    """UI request methods the native host answers."""
+
+    SELECT = "select"
 
 
 class OmpPromptStatus(StrEnum):
@@ -131,9 +151,9 @@ class OmpToolResult(OmpWireModel):
     def validate_content(self) -> OmpToolResult:
         for content in self.content:
             match content.type:
-                case "text" if content.text is not None:
+                case OmpContentKind.TEXT if content.text is not None:
                     continue
-                case "image" if (
+                case OmpContentKind.IMAGE if (
                     content.data is not None and content.mimeType is not None
                 ):
                     continue

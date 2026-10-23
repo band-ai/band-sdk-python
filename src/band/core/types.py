@@ -53,6 +53,20 @@ class ToolEventKey(StrEnum):
     IS_ERROR = "is_error"
 
 
+class PermissionEventKey(StrEnum):
+    """Canonical metadata keys for a cancelled permission record pair."""
+
+    REQUEST = "permission_request"
+    TOOL_NAME = "tool_name"
+    TOOL_CALL_ID = "tool_call_id"
+    AUTO_ALLOWED = "auto_allowed"
+    OUTCOME = "permission_outcome"
+
+
+PERMISSION_CANCELLED = "cancelled"
+PERMISSION_CANCELLED_TEXT = f"Permission {PERMISSION_CANCELLED}"
+
+
 # Subset of message types accepted by ``band_send_event`` — the non-history
 # event kinds. Derived from MessageType so the taxonomy stays single-sourced.
 EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]

@@ -13,10 +13,12 @@ from band.core.types import MessageType
 
 
 class OmpMetadataKey(StrEnum):
-    """Task-event metadata keys the native adapter writes and this converter reads."""
+    """Metadata keys the native adapter writes on task and permission events."""
 
     ROOM = "omp_room_id"
     SESSION = "omp_session_file"
+    SESSION_ID = "omp_session_id"
+    REQUEST_ID = "omp_request_id"
 
 
 class OmpSessionState(BaseModel):
@@ -33,11 +35,18 @@ class OmpHistoryConverter(HistoryConverter[OmpSessionState]):
         sessions: dict[str, str] = {}
         for message in raw:
             match message.get("message_type"), message.get("metadata"):
-                case MessageType.TASK, {
-                    OmpMetadataKey.ROOM: str(room),
-                    OmpMetadataKey.SESSION: str(session),
-                } if session:
-                    sessions[room] = session
+                case MessageType.TASK, dict() as metadata:
+                    room = metadata.get(OmpMetadataKey.ROOM)
+                    if (
+                        not isinstance(room, str)
+                        or OmpMetadataKey.SESSION not in metadata
+                    ):
+                        continue
+                    session = metadata.get(OmpMetadataKey.SESSION)
+                    if isinstance(session, str) and session:
+                        sessions[room] = session
+                    else:
+                        sessions.pop(room, None)
         return OmpSessionState(
             room_to_session=sessions, replay_messages=build_replay_messages(raw)
         )

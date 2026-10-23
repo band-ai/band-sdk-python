@@ -1,4 +1,4 @@
-"""OMP (oh-my-pi) vocabulary for the ACP client adapter."""
+"""OMP (oh-my-pi) vocabulary shared by the native adapter and ACP client adapter."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from band.runtime.tools import (
 
 OMP_APPROVAL_MODE_FLAG = "--approval-mode"
 OMP_APPROVAL_MODE_ALWAYS_ASK = "always-ask"
+OMP_THINKING_LEVEL_AUTO = "auto"
 OMP_YOLO_FLAG = "--yolo"
 OMP_AUTO_APPROVE_FLAG = "--auto-approve"
 OMP_APPROVAL_MODE_WRITE = "write"
@@ -56,10 +57,12 @@ XD_MCP_PREFIX = "mcp__"
 # OMP's own test (xdev.ts HELP_CONTENT_RE) for a device write that shows the
 # tool's docs instead of running it.
 _XD_HELP_CONTENT = re.compile(r"^\s*(\?|help)?\s*$", re.IGNORECASE)
-# OMP's ACP tool kinds for a device write and a read (acp-event-mapper.ts
-# mapToolKind).
-_ACP_KIND_EXECUTE = "execute"
-_ACP_KIND_READ = "read"
+# Device-write vs read kinds shared by native host-tool projection and ACP
+# mapping (acp-event-mapper.ts mapToolKind).
+OMP_DEVICE_KIND_EXECUTE = "execute"
+OMP_DEVICE_KIND_READ = "read"
+OMP_DEVICE_PATH_KEYS = ("path", "file_path", "target")
+OMP_DEVICE_CONTENT_KEY = "content"
 
 OMP_FORM_APPROVE = "Approve"
 OMP_FORM_DENY = "Deny"
@@ -92,15 +95,20 @@ _APPROVAL_MODE_EQ = re.compile(
 )
 
 
-def omp_model_provider(model: str) -> str:
-    """Return the provider segment of a provider-qualified OMP model id."""
+def omp_model_parts(model: str) -> tuple[str, str]:
+    """Split a provider-qualified OMP model id into ``(provider, model_id)``."""
     trimmed = model.strip()
     if not trimmed:
         raise ValueError("OMP model must be a non-empty provider-qualified id")
-    provider, _, _rest = trimmed.partition("/")
-    if not provider or not _rest:
+    provider, separator, model_id = trimmed.partition("/")
+    if not provider or not separator or not model_id:
         raise ValueError(f'OMP model must look like "provider/model", got "{model}"')
-    return provider.lower()
+    return provider.lower(), model_id
+
+
+def omp_model_provider(model: str) -> str:
+    """Return the provider segment of a provider-qualified OMP model id."""
+    return omp_model_parts(model)[0]
 
 
 def omp_provider_api_key_env(provider: str) -> str:
@@ -285,7 +293,7 @@ def normalize_omp_mcp_device_call(
     """
     args = dict(arguments)
     path: str | None = None
-    for key in ("path", "file_path", "target"):
+    for key in OMP_DEVICE_PATH_KEYS:
         value = args.get(key)
         if isinstance(value, str) and value.startswith(XD_URL_PREFIX):
             path = value
@@ -293,16 +301,18 @@ def normalize_omp_mcp_device_call(
 
     if path is not None:
         canonical = normalize_omp_mcp_tool_name(path, own_names, namespace=namespace)
-        content = args.get("content")
-        if canonical is None or kind == _ACP_KIND_READ:
+        content = args.get(OMP_DEVICE_CONTENT_KEY)
+        if canonical is None or kind == OMP_DEVICE_KIND_READ:
             return name, args
         if not isinstance(content, str):
-            return (canonical, args) if kind == _ACP_KIND_EXECUTE else (name, args)
+            return (
+                (canonical, args) if kind == OMP_DEVICE_KIND_EXECUTE else (name, args)
+            )
         if _XD_HELP_CONTENT.match(content):
             return name, args
         try:
             parsed = json.loads(content)
-        except ValueError:
+        except (ValueError, RecursionError):
             return canonical, args
         if not isinstance(parsed, dict):
             return canonical, args

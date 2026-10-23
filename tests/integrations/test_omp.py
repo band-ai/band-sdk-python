@@ -14,7 +14,6 @@ from band.integrations.omp import (
     OMP_ELICITATION_CALL_ID_PREFIX,
     OMP_FORM_APPROVE,
     OMP_FORM_DENY,
-    OMP_PINNED_PACKAGE,
     XD_MCP_PREFIX,
     finalize_omp_command,
     is_omp_approve_deny_form,
@@ -26,7 +25,6 @@ from band.integrations.omp import (
     omp_provider_env,
     validate_omp_command,
 )
-from tests.paths import CI_SCRIPTS
 
 
 def test_default_command_is_safe_after_finalize() -> None:
@@ -259,8 +257,3 @@ def test_default_command_uses_approval_mode_constants() -> None:
         OMP_APPROVAL_MODE_FLAG,
         OMP_APPROVAL_MODE_ALWAYS_ASK,
     )
-
-
-def test_setup_omp_script_pins_same_package() -> None:
-    script = (CI_SCRIPTS / "setup-omp.sh").read_text()
-    assert OMP_PINNED_PACKAGE in script

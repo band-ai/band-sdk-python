@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 OMP_MODE_FLAG = "--mode"
 OMP_RPC_MODE = "rpc"
 OMP_RPC_UI_MODE = "rpc-ui"
+OMP_SESSION_DIR_FLAG = "--session-dir"
 DEFAULT_OMP_COMMAND: tuple[str, ...] = ("omp", OMP_MODE_FLAG, OMP_RPC_MODE)
 RELATIVE_MCP_COMMAND_PREFIXES = ("./", "../", ".\\", "..\\")
 

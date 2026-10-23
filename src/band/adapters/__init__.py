@@ -16,6 +16,7 @@ Install the extra you need::
     uv add band-sdk[codex]
     uv add band-sdk[google_adk]
     uv add band-sdk[opencode]
+    uv add band-sdk[omp]
     uv add band-sdk[slack]
     uv add band-sdk[strands]
     uv add band-sdk[nooa]
@@ -120,6 +121,9 @@ if TYPE_CHECKING:
     from band.adapters.nooa import NooaAdapter as NooaAdapter
     from band.adapters.nooa import NooaAdapterConfig as NooaAdapterConfig
     from band.adapters.nooa import NooaRoomAgent as NooaRoomAgent
+    from band.adapters.omp import OmpAdapter as OmpAdapter
+    from band.adapters.omp import OmpAdapterConfig as OmpAdapterConfig
+    from band.adapters.omp import OmpPermissionRequest as OmpPermissionRequest
     from band.adapters.omp_acp import (
         OmpACPAdapter as OmpACPAdapter,
     )
@@ -172,6 +176,7 @@ __all__, __getattr__ = lazy_exports(
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
     cursor_acp=["CursorACPAdapter", "CursorACPAdapterConfig"],
     omp_acp=["OmpACPAdapter", "OmpACPAdapterConfig"],
+    omp=["OmpAdapter", "OmpAdapterConfig", "OmpPermissionRequest"],
     parlant=["ParlantAdapter", "ParlantAdapterConfig"],
     crewai=["CrewAIAdapter", "CrewAIAdapterConfig"],
     crewai_flow=["CrewAIFlowAdapter", "CrewAIFlowAdapterConfig"],

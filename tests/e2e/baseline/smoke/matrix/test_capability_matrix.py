@@ -354,6 +354,7 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.COPILOT_ACP,
     Adapter.CURSOR_ACP,
     Adapter.OMP_ACP,
+    Adapter.OMP,
     Adapter.CODEX,
     Adapter.PYDANTIC_AI,
     Adapter.CREWAI,

@@ -43,6 +43,48 @@ class TestOmpHistoryConverter:
             "room-2": "/sessions/other.jsonl",
         }
 
+    def test_task_without_session_key_keeps_the_resume_candidate(self) -> None:
+        state = OmpHistoryConverter().convert(
+            [
+                {
+                    "message_type": MessageType.TASK,
+                    "metadata": {
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: "/sessions/saved.jsonl",
+                    },
+                },
+                {
+                    "message_type": MessageType.TASK,
+                    "metadata": {
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION_ID: "native-session",
+                    },
+                },
+            ]
+        )
+        assert state.room_to_session["room-1"] == "/sessions/saved.jsonl"
+
+    def test_empty_session_clears_the_resume_candidate(self) -> None:
+        state = OmpHistoryConverter().convert(
+            [
+                {
+                    "message_type": MessageType.TASK,
+                    "metadata": {
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: "/sessions/saved.jsonl",
+                    },
+                },
+                {
+                    "message_type": MessageType.TASK,
+                    "metadata": {
+                        OmpMetadataKey.ROOM: "room-1",
+                        OmpMetadataKey.SESSION: None,
+                    },
+                },
+            ]
+        )
+        assert "room-1" not in state.room_to_session
+
     def test_unusable_metadata_is_ignored(self) -> None:
         state = OmpHistoryConverter().convert(
             [
