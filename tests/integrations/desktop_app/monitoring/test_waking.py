@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.tools import RoomTool
 from tests.integrations.desktop_app.conftest import (
     ROOM_ID,
@@ -16,6 +17,8 @@ from tests.integrations.desktop_app.conftest import (
 )
 from tests.integrations.desktop_app.monitoring.kit import WaitingBroker
 from tests.toolkit.clock import binary_clock_resolution
+from tests.toolkit.tasks import background
+from tests.toolkit.timecontrol import controlled_clock
 
 # All I/O is in memory, so long-poll deadlines can advance virtually.
 pytestmark = pytest.mark.looptime(resolution=binary_clock_resolution())
@@ -32,10 +35,42 @@ class TestWaking:
             )
 
             await broker.waiting.wait()
+            broker.waiting.clear()
+            another = tasks.create_task(
+                broker.wait(
+                    ROOM_ID, after_version=broker.version(ROOM_ID), timeout_seconds=1
+                )
+            )
+            await broker.waiting.wait()
             assert not waiter.done()
+            assert not another.done()
             await broker.publish(ROOM_ID)
 
         assert await waiter is True
+        assert await another is True
+
+    @pytest.mark.parametrize("timeout_seconds", [1, MAX_ROOM_EVENT_TIMEOUT_S])
+    async def test_a_quiet_wait_expires_at_its_deadline(
+        self, timeout_seconds: int
+    ) -> None:
+        broker = WaitingBroker()
+        async with (
+            controlled_clock() as clock,
+            background(
+                broker.wait(
+                    ROOM_ID,
+                    after_version=broker.version(ROOM_ID),
+                    timeout_seconds=timeout_seconds,
+                )
+            ) as waiting,
+        ):
+            await broker.waiting.wait()
+            await clock.elapse(timeout_seconds / 2)
+            assert not waiting.done()
+
+            await clock.elapse(timeout_seconds / 2)
+            assert waiting.done()
+            assert await waiting is False
 
     async def test_an_event_mid_wait_hydrates_the_new_context(self, room: Any) -> None:
         broker = WaitingBroker()
