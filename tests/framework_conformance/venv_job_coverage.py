@@ -176,7 +176,6 @@ _WORKER_POOL_FLAGS = frozenset(
         "-n",
         "--numprocesses",
         "--dist",
-        "--maxprocesses",
     }
 )
 
