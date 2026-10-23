@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import AsyncIterator
 
 import pytest
@@ -12,7 +11,7 @@ pytest.importorskip("psutil", reason="psutil not installed (band-sdk[omp])")
 
 from band.integrations.omprpc import OmpRpcClient
 from tests.integrations.omprpc.kit import (
-    OMP_PEER_SCRIPT,
+    OMP_PEER_COMMAND,
     ClientFactory,
     ProcessGate,
     process_gate_session,
@@ -26,9 +25,7 @@ async def client_factory() -> AsyncIterator[ClientFactory]:
     async def build(scenario: str) -> OmpRpcClient:
         client = OmpRpcClient(
             (
-                sys.executable,
-                "-u",
-                OMP_PEER_SCRIPT,
+                *OMP_PEER_COMMAND,
                 "--scenario",
                 scenario,
             )

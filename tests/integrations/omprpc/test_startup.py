@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 
 import pytest
 
@@ -16,7 +15,7 @@ from band.integrations.omprpc import (
 )
 from tests.integrations.omppeer import OVERSIZE_AFTER_READY
 from tests.integrations.omprpc.kit import (
-    OMP_PEER_SCRIPT,
+    OMP_PEER_COMMAND,
     ClientFactory,
     SpawnBarrier,
     owned_rpc_process,
@@ -30,9 +29,7 @@ class TestStartupNegotiation:
         barrier = SpawnBarrier(asyncio.create_subprocess_exec)
         client = OmpRpcClient(
             (
-                sys.executable,
-                "-u",
-                OMP_PEER_SCRIPT,
+                *OMP_PEER_COMMAND,
                 "--scenario",
                 "no-ready",
             ),
@@ -76,9 +73,7 @@ class TestStartupNegotiation:
                 await client_factory(scenario)
 
     async def test_negotiated_frame_limit_applies_before_the_next_line(self) -> None:
-        client = OmpRpcClient(
-            (sys.executable, "-u", OMP_PEER_SCRIPT, "--scenario", OVERSIZE_AFTER_READY)
-        )
+        client = OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", OVERSIZE_AFTER_READY))
         try:
             with pytest.raises(OmpProtocolError):
                 await client.start()

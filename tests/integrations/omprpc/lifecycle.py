@@ -1,11 +1,4 @@
-"""A live ``OmpRpcClient`` driven step by step against a real RPC peer.
-
-This is the model for ``test_lifecycle_model.py``, not a collected test.
-Hypothesis picks a short sequence of ``Step`` values — the operations a host
-can issue — and ``RpcLifecycle.take`` applies each one to one client and the
-process tree it owns. After the sequence, the client must still start, finish
-a turn, and reap descendants.
-"""
+"""Drive a real RPC client through generated operations and process-tree regressions."""
 
 from __future__ import annotations
 
@@ -16,12 +9,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from unittest.mock import patch
 
+from hypothesis import Phase
 from hypothesis import strategies as st
 
-from band.integrations.omprpc import OmpProcessError
+from band.integrations.omprpc import OmpProcessError, OmpRpcClient
 from band.integrations.ompwire import OmpEventType
-from tests.integrations.omppeer import BACKGROUND_COMPLETE, CRASH_EXIT
+from tests.integrations.omppeer import (
+    BACKGROUND_COMPLETE,
+    CRASH_EXIT,
+    LIFECYCLE_SCENARIO,
+)
 from tests.integrations.omprpc.kit import (
+    OMP_PEER_COMMAND,
     GatedProcess,
     Observer,
     ProcessGate,
@@ -36,8 +35,10 @@ from tests.integrations.omprpc.kit import (
     second_prompt,
 )
 
-# A healthy step takes milliseconds; a hung one fails its example within this.
+# Readiness and cancellation use barriers; this only bounds a hung operation.
 STEP_GUARD_S = 15
+MODEL_GUARD_S = 600
+MODEL_PHASES = (Phase.reuse, Phase.generate)
 
 
 class Step(StrEnum):
@@ -53,7 +54,8 @@ class Step(StrEnum):
     CANCEL_CLOSE_RESTART = "cancel close during held spawn while a restart waits"
 
 
-sequences = st.lists(st.sampled_from(Step), min_size=1, max_size=6)
+def operation_sequences(*, min_steps: int = 1) -> st.SearchStrategy[list[Step]]:
+    return st.lists(st.sampled_from(Step), min_size=min_steps, max_size=6)
 
 
 @dataclass
@@ -77,9 +79,13 @@ async def announced_operation(
 class RpcLifecycle:
     """One RPC client, the process trees it has owned, and at most one admitted turn."""
 
-    def __init__(self, gate: ProcessGate, *, detached: bool) -> None:
+    def __init__(self, gate: ProcessGate | None, *, detached: bool = False) -> None:
         self.gate = gate
-        self.client = descendant_client(gate, scenario="lifecycle", detached=detached)
+        self.client = (
+            descendant_client(gate, scenario=LIFECYCLE_SCENARIO, detached=detached)
+            if gate is not None
+            else OmpRpcClient((*OMP_PEER_COMMAND, "--scenario", LIFECYCLE_SCENARIO))
+        )
         self.live = False
         self.active: asyncio.Task[None] | None = None
         self.observer: Observer | None = None
@@ -88,6 +94,8 @@ class RpcLifecycle:
         self.children: list[GatedProcess] = []
 
     async def record_children(self) -> list[GatedProcess]:
+        if self.gate is None:
+            return []
         children = await descendants_started_with(self.gate, self.roots[-1])
         self.children.extend(children)
         return children
@@ -281,10 +289,27 @@ class RpcLifecycle:
 
 
 @asynccontextmanager
-async def rpc_lifecycle(*, detached: bool) -> AsyncIterator[RpcLifecycle]:
+async def rpc_lifecycle(
+    *, gate: ProcessGate | None = None, detached: bool = False
+) -> AsyncIterator[RpcLifecycle]:
+    session = RpcLifecycle(gate, detached=detached)
+    try:
+        yield session
+    finally:
+        await session.cleanup()
+
+
+async def play(
+    steps: list[Step], *, gate: ProcessGate | None = None, detached: bool = False
+) -> None:
+    async with rpc_lifecycle(gate=gate, detached=detached) as session:
+        for step in steps:
+            async with asyncio.timeout(STEP_GUARD_S):
+                await session.take(step)
+        async with asyncio.timeout(STEP_GUARD_S):
+            await session.assert_custody_survives()
+
+
+async def play_tree(steps: list[Step], *, detached: bool) -> None:
     async with process_gate_session() as gate:
-        session = RpcLifecycle(gate, detached=detached)
-        try:
-            yield session
-        finally:
-            await session.cleanup()
+        await play(steps, gate=gate, detached=detached)

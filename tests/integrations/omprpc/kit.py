@@ -30,13 +30,14 @@ from band.integrations.ompwire import (
     OmpUIResponse,
 )
 from tests.integrations import omppeer
-from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT, ProcessReceipt
+from tests.integrations.ompgate import GATE_COMMAND, GateRole, ProcessReceipt
+from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT
 from tests.integrations.omprpc.cancellation import HeldCleanup
 
 ClientFactory = Callable[[str], Awaitable[OmpRpcClient]]
 
 # The fake OMP peer every RPC test launches as its subprocess.
-OMP_PEER_SCRIPT = omppeer.__file__
+OMP_PEER_COMMAND = (sys.executable, "-u", "-m", omppeer.__name__)
 
 
 class FailingOwnedClient(OmpRpcClient):
@@ -181,9 +182,7 @@ def descendant_client(
 ) -> OmpRpcClient:
     return OmpRpcClient(
         (
-            sys.executable,
-            "-u",
-            OMP_PEER_SCRIPT,
+            *OMP_PEER_COMMAND,
             "--scenario",
             scenario,
             "--gate-port",
@@ -474,11 +473,9 @@ class DeferredSessionSignal:
 @asynccontextmanager
 async def unrelated_gate_child(gate: ProcessGate) -> AsyncIterator[GatedProcess]:
     process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-u",
-        OMP_PEER_SCRIPT,
+        *GATE_COMMAND,
         "--scenario",
-        "gated-child",
+        GateRole.CHILD,
         "--gate-port",
         str(gate.port),
         stdin=asyncio.subprocess.DEVNULL,
