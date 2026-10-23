@@ -136,9 +136,7 @@ class RecordingRuntime(PendingRuntime):
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         self.prompt_text = _message
-        await super().prompt(
-            _message, on_event=on_event, on_tool=on_tool, on_ui=on_ui
-        )
+        await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
 
 
 class AutomaticThinkingRuntime(PendingRuntime):
