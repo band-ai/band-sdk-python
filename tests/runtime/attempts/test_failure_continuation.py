@@ -16,23 +16,27 @@ from tests.runtime.recovery.kit import (
     Harness,
     Route,
 )
+from tests.runtime.recovery.preparation import ROOM_PREPARATIONS, RoomPreparation
 
 pytestmark = pytest.mark.looptime
 
 
 @pytest.mark.parametrize("fault", list(Fault))
-@pytest.mark.parametrize("replace", [False, True], ids=["original", "replacement"])
+@pytest.mark.parametrize("prepare_room", ROOM_PREPARATIONS)
 class TestFailureContinuation:
     @pytest.mark.parametrize("route", list(Route))
     async def test_an_unknown_failed_write_preserves_the_execution_budget(
-        self, retrying_room: Harness, fault: Fault, replace: bool, route: Route
+        self,
+        retrying_room: Harness,
+        fault: Fault,
+        prepare_room: RoomPreparation,
+        route: Route,
     ) -> None:
         room = retrying_room
         room.peer.fail_terminals(fault, *room.members)
         await room.start(route)
         await room.advance(RESYNC_SECONDS)
-        if replace:
-            await room.replace_room()
+        await prepare_room(room)
 
         room.peer.post(CONTROL)
         await room.advance(RESYNC_SECONDS)
@@ -51,13 +55,12 @@ class TestFailureContinuation:
         assert len(room.peer.reports) == 1
 
     async def test_a_confirmed_failure_allows_a_later_successful_attempt(
-        self, retrying_room: Harness, fault: Fault, replace: bool
+        self, retrying_room: Harness, fault: Fault, prepare_room: RoomPreparation
     ) -> None:
         room = retrying_room
         room.peer.fail_terminals(fault, *room.members)
         await room.start(Route.BACKLOG)
-        if replace:
-            await room.replace_room()
+        await prepare_room(room)
         assert room.model_turns == [room.members]
 
         room.adapter.ending = Ending.DECLINES

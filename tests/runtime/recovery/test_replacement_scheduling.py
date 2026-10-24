@@ -17,22 +17,22 @@ from tests.runtime.recovery.kit import (
     Harness,
     Route,
 )
+from tests.runtime.recovery.preparation import ROOM_PREPARATIONS, RoomPreparation
 
 pytestmark = pytest.mark.looptime
 
 
 @pytest.mark.parametrize(("shape", "ending"), TURNS)
 @pytest.mark.parametrize("fault", list(Fault))
-@pytest.mark.parametrize("replace", [False, True], ids=["original", "replacement"])
+@pytest.mark.parametrize("prepare_room", ROOM_PREPARATIONS)
 class TestReplacementScheduling:
     async def test_rest_controls_remain_discoverable_during_an_outage(
-        self, harness: Harness, fault: Fault, replace: bool
+        self, harness: Harness, fault: Fault, prepare_room: RoomPreparation
     ) -> None:
         harness.peer.fail_terminals(fault, *harness.members)
         await harness.start(Route.BACKLOG)
         await harness.advance(RESYNC_SECONDS)
-        if replace:
-            await harness.replace_room()
+        await prepare_room(harness)
 
         harness.peer.post(CONTROL)
         await harness.advance(RESYNC_SECONDS)
@@ -43,13 +43,16 @@ class TestReplacementScheduling:
         assert harness.ctx.claims.pending_ack_ids(ROOM_ID) == list(harness.members)
 
     async def test_live_ordinary_input_waits_until_the_terminal_writes_recover(
-        self, harness: Harness, ending: Ending, fault: Fault, replace: bool
+        self,
+        harness: Harness,
+        ending: Ending,
+        fault: Fault,
+        prepare_room: RoomPreparation,
     ) -> None:
         harness.peer.fail_terminals(fault, *harness.members)
         await harness.start(Route.BACKLOG)
         await harness.advance(RESYNC_SECONDS)
-        if replace:
-            await harness.replace_room()
+        await prepare_room(harness)
 
         harness.peer.post(FOLLOWER)
         await harness.push(FOLLOWER)
