@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from contextvars import Context, copy_context
 from enum import StrEnum
 
 from band.integrations.omprpc.errors import BACKLOG_EXCEEDED, OmpProcessError
@@ -57,8 +56,6 @@ class PromptRun:
         self.stop_after_tool_id: str | None = None
         self.stop_task: asyncio.Task[None] | None = None
         self.stopped = False
-        # Reader-spawned callbacks must reenter this prompt's occupancy, not start()'s.
-        self.context: Context = copy_context()
 
     def fail(self, error: BaseException) -> None:
         if not self.failure.done():

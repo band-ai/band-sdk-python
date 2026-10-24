@@ -136,6 +136,9 @@ class OmpRpcClient:
         self._write_lock = asyncio.Lock()
         self._prompt_lock = asyncio.Lock()
         self._write_tasks: set[asyncio.Task[None]] = set()
+        self.schedule_callback: (
+            Callable[[Callable[[], Awaitable[None]]], Awaitable[None]] | None
+        ) = None
 
     async def start(self) -> None:
         """Start the supplied command and require the native RPC protocol."""
@@ -650,7 +653,11 @@ class OmpRpcClient:
             callback.close()
             return
         key = (kind, request_id)
-        task = asyncio.create_task(callback, context=turn.context.copy())
+
+        async def run() -> None:
+            await callback
+
+        task = asyncio.create_task(self._run_callback(run))
         if key in turn.callbacks:
             task.cancel()
             raise OmpProtocolError("OMP callback request id was reused")
@@ -658,13 +665,16 @@ class OmpRpcClient:
         turn.callback_tasks.add(task)
         task.add_done_callback(lambda done: self._callback_finished(turn, key, done))
 
+    async def _run_callback(self, run: Callable[[], Awaitable[None]]) -> None:
+        if self.schedule_callback is None:
+            await run()
+            return
+        await self.schedule_callback(run)
+
     def _callback_still_active(
         self, turn: PromptRun, kind: OmpCallbackKind, request_id: str
     ) -> bool:
-        return (
-            not self._closing
-            and turn.callbacks.get((kind, request_id)) is asyncio.current_task()
-        )
+        return not self._closing and (kind, request_id) in turn.callbacks
 
     @staticmethod
     def _cancel_callback(

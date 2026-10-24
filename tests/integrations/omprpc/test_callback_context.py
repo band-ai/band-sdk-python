@@ -1,4 +1,4 @@
-"""RPC host callbacks inherit the prompt task's context, not the reader's."""
+"""Reader-spawned host callbacks do not inherit the prompt task's context."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from tests.integrations.omprpc.kit import ClientFactory, Observer
 PROMPT_TOKEN = ContextVar("omp_rpc_prompt_token", default="reader")
 
 
-class TestCallbackPromptContext:
-    async def test_ui_callback_sees_the_prompt_task_token(
+class TestCallbackWithoutPromptContext:
+    async def test_ui_and_tool_callbacks_keep_the_reader_token(
         self,
         client_factory: ClientFactory,
     ) -> None:
@@ -47,4 +47,4 @@ class TestCallbackPromptContext:
         finally:
             PROMPT_TOKEN.reset(token)
         assert seen
-        assert set(seen) == {"prompt"}
+        assert set(seen) == {"reader"}
