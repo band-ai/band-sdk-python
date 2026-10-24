@@ -98,6 +98,36 @@ class TestOmpPermissionActivity:
             await pending.second
             assert not pending.recorder.waiting
 
+    async def test_cancelling_the_final_permission_clears_the_wait(
+        self, tmp_path: Path
+    ) -> None:
+        async with concurrent_permissions(tmp_path) as pending:
+            pending.resolver.responses["first"].set_result(OMP_FORM_APPROVE)
+            await pending.first
+            assert pending.recorder.waiting
+
+            pending.second.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending.second
+
+            assert not pending.recorder.waiting
+
+    async def test_failing_the_final_permission_clears_the_wait(
+        self, tmp_path: Path
+    ) -> None:
+        async with concurrent_permissions(tmp_path) as pending:
+            pending.resolver.responses["first"].set_result(OMP_FORM_APPROVE)
+            await pending.first
+            assert pending.recorder.waiting
+
+            pending.resolver.responses["second"].set_exception(
+                RuntimeError(PERMISSION_FAILURE)
+            )
+            with pytest.raises(RuntimeError, match=PERMISSION_FAILURE):
+                await pending.second
+
+            assert not pending.recorder.waiting
+
     @pytest.mark.parametrize(
         "second_room",
         ["other-room", "room"],

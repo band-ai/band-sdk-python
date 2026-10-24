@@ -92,6 +92,24 @@ class TestOmpToolActivity:
 
         assert recorder.events[-1] == SHOWN_REASONING
 
+    async def test_finishing_newest_tool_restores_the_newest_remaining_call(
+        self, tmp_path: Path
+    ) -> None:
+        adapter = make_adapter(tmp_path, EMIT_ON)
+        recorder = ActivityRecorder()
+        turn = OmpTurn(tools=recorder.observing(FakeAgentTools()))
+
+        await adapter._emit_event(tool_start("oldest", "Read"), turn)
+        await adapter._emit_event(tool_start("middle", "Bash"), turn)
+        await adapter._emit_event(tool_start("newest", "Write"), turn)
+
+        await adapter._emit_event(tool_end("newest", "Write"), turn)
+        assert recorder.events[-1] == shown_tool("Bash")
+        await adapter._emit_event(tool_end("middle", "Bash"), turn)
+        assert recorder.events[-1] == shown_tool("Read")
+        await adapter._emit_event(tool_end("oldest", "Read"), turn)
+        assert recorder.events[-1] == SHOWN_REASONING
+
     async def test_end_of_untracked_call_changes_nothing(self, tmp_path: Path) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
         recorder = ActivityRecorder()
