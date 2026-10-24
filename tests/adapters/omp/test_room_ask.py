@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
+from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -16,7 +17,23 @@ from band.core.protocols import TurnResultAlreadyReported
 from band.integrations.ompwire import OmpCommandName, OmpFrameType
 from band.runtime.tools import AgentTools
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
-from tests.adapters.omp.askkit import ask_frames, ask_turn
+from tests.adapters.omp.askkit import (
+    AskStartupObserver,
+    ask_frames,
+    ask_turn,
+    room_ask_adapter,
+)
+from tests.adapters.omp.kit import (
+    claimed_workspace_rooms,
+    occupied_room_ids,
+    room_runtime,
+)
+from tests.integrations.ompaskpeer import (
+    ASK_QUESTION_IDS,
+    ASK_REQUEST_ID,
+    REFUSED_DIALOG,
+    RESUMED_REPLY,
+)
 
 
 @pytest.mark.asyncio
@@ -44,15 +61,15 @@ class TestOmpRoomAsk:
             assert tools.turn.replied
             assert not failure_reports(tools)
             [response] = await ask_frames(ask_adapter, OmpFrameType.UI_RESPONSE)
-            assert response["id"] == "ask-1"
+            assert response["id"] == ASK_REQUEST_ID
             assert "cancelled" not in response
             answers = cast(list[dict[str, JsonValue]], response["answers"])
-            assert [answer["id"] for answer in answers] == ["storage", "targets"]
+            assert [answer["id"] for answer in answers] == list(ASK_QUESTION_IDS)
             assert all(answer["selectedOptions"] == [] for answer in answers)
             assert all(answer["customInput"] for answer in answers)
             assert "later" in str(answers[0]["customInput"])
 
-            runtime = ask_adapter._rooms["room-123"].runtime
+            runtime = room_runtime(ask_adapter, "room-123")
             resumed = FakeAgentTools()
             resumed.fetch_room_context = AsyncMock(return_value={"data": []})
             resumed.execute_tool_call_structured = partial(
@@ -61,11 +78,8 @@ class TestOmpRoomAsk:
             await ask_turn(
                 ask_adapter, resumed, bootstrap=False, content="Use SQLite for Dev."
             )
-            assert ask_adapter._rooms["room-123"].runtime is runtime
-            assert (
-                resumed.messages_sent[0]["content"]
-                == "The answer resumed this session."
-            )
+            assert room_runtime(ask_adapter, "room-123") is runtime
+            assert resumed.messages_sent[0]["content"] == RESUMED_REPLY
             assert resumed.turn.replied
             prompts = await ask_frames(ask_adapter, OmpCommandName.PROMPT)
             assert len(prompts) == 2
@@ -92,7 +106,7 @@ class TestOmpRoomAsk:
             [response] = await ask_frames(ask_adapter, OmpFrameType.UI_RESPONSE)
             assert "cancelled" not in response
             answers = cast(list[dict[str, JsonValue]], response["answers"])
-            assert [answer["id"] for answer in answers] == ["storage", "targets"]
+            assert [answer["id"] for answer in answers] == list(ASK_QUESTION_IDS)
             assert all(str(error) in str(answer["customInput"]) for answer in answers)
         finally:
             await ask_adapter.cleanup_all()
@@ -107,7 +121,7 @@ class TestOmpRoomAsk:
                 await ask_turn(ask_adapter, tools)
             assert not tools.turn.replied
             assert not failure_reports(tools)
-            assert "room-123" not in ask_adapter._rooms
+            assert "room-123" not in occupied_room_ids(ask_adapter)
         finally:
             await ask_adapter.cleanup_all()
 
@@ -125,8 +139,27 @@ class TestOmpRoomAsk:
             assert not tools.turn.replied
             assert not tools.messages_sent
             assert not failure_reports(tools)
-            assert "room-123" not in ask_adapter._rooms
+            assert "room-123" not in occupied_room_ids(ask_adapter)
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
             await ask_adapter.cleanup_all()
+
+    async def test_refused_dialog_releases_startup_without_prompting(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        observer = AskStartupObserver()
+        monkeypatch.setattr("band.adapters.omp.OmpRpcClient", observer)
+        adapter = room_ask_adapter(tmp_path, REFUSED_DIALOG)
+        tools = FakeAgentTools()
+        try:
+            with pytest.raises(RuntimeError, match="refused the structured ask dialog"):
+                await ask_turn(adapter, tools)
+            assert not observer.prompted
+            assert not tools.messages_sent
+            assert not tools.turn.replied
+            assert occupied_room_ids(adapter) == set()
+            assert claimed_workspace_rooms(adapter) == ()
+            await observer.assert_released()
+        finally:
+            await adapter.cleanup_all()

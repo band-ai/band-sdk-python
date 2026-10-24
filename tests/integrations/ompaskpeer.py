@@ -8,6 +8,9 @@ from typing import cast
 from pydantic import JsonValue
 
 from band.integrations.ompwire import (
+    OMP_FRAME_BYTES,
+    OMP_NATIVE_PROTOCOL_VERSION,
+    OMP_REASSEMBLED_BYTES,
     OmpCommandName,
     OmpEventType,
     OmpFrameType,
@@ -15,10 +18,15 @@ from band.integrations.ompwire import (
 )
 from tests.integrations.omppeer import Frame, Peer, send
 
+ASK_REQUEST_ID = "ask-1"
+ASK_QUESTION_IDS = ("storage", "targets")
+RESUMED_REPLY = "The answer resumed this session."
+REFUSED_DIALOG = "refused-dialog"
+
 
 class AskPeer(Peer):
     @staticmethod
-    def ask(request_id: str = "ask-1") -> None:
+    def ask(request_id: str = ASK_REQUEST_ID) -> None:
         send(
             {
                 "type": OmpFrameType.UI_REQUEST,
@@ -26,7 +34,7 @@ class AskPeer(Peer):
                 "method": OmpUIMethod.ASK,
                 "questions": [
                     {
-                        "id": "storage",
+                        "id": ASK_QUESTION_IDS[0],
                         "question": "Database?",
                         "header": "Storage",
                         "options": [
@@ -40,7 +48,7 @@ class AskPeer(Peer):
                         "recommended": 0,
                     },
                     {
-                        "id": "targets",
+                        "id": ASK_QUESTION_IDS[1],
                         "question": "Deploy where?",
                         "options": [{"label": "Dev"}, {"label": "Prod"}],
                         "multi": True,
@@ -72,7 +80,7 @@ class AskPeer(Peer):
                     "toolCallId": "reply-2",
                     "toolName": "band_send_message",
                     "arguments": {
-                        "content": "The answer resumed this session.",
+                        "content": RESUMED_REPLY,
                         "mentions": ["peer-456"],
                     },
                 }
@@ -89,7 +97,7 @@ class AskPeer(Peer):
             )
         match frame.type:
             case OmpCommandName.SET_ASK_DIALOG:
-                enabled = self.scenario != "refused-dialog"
+                enabled = self.scenario != REFUSED_DIALOG
                 self.respond(frame, {"enabled": enabled})
                 return
             case OmpFrameType.UI_RESPONSE | OmpFrameType.HOST_TOOL_RESULT:
@@ -130,9 +138,9 @@ def main() -> None:
         {
             "type": OmpFrameType.READY,
             "protocolVersion": 1,
-            "supportedProtocolVersions": [1, 2],
-            "maxFrameBytes": 1024 * 1024,
-            "maxReassembledFrameBytes": 64 * 1024 * 1024,
+            "supportedProtocolVersions": [1, OMP_NATIVE_PROTOCOL_VERSION],
+            "maxFrameBytes": OMP_FRAME_BYTES,
+            "maxReassembledFrameBytes": OMP_REASSEMBLED_BYTES,
         }
     )
     for line in sys.stdin:
