@@ -372,6 +372,26 @@ the existing retry policy.
 One-shot invocations also require accepted claims and completion. They raise on
 refusal instead of returning `DONE`; a drain records only accepted messages.
 
+## Singleton scheduling
+
+`Scheduler` owns ingress, discovery, ordering and dispatch; `DeliveryLifecycle`
+owns eligibility, admission and terminal transport. `ExecutionContext` and
+`TurnScope` supervise the handler and freeze its outcome. Shared core owns local
+claims, pending terminal obligations and retry continuations.
+
+An original's payload, its latest observed delivery eligibility and its local
+event position are separate facts. Synchronized live input keeps receive order;
+recovery reconciles chronological backlog while respecting known local event
+boundaries and confirmed retry continuations. These rules do not add a REST
+read for each live arrival.
+
+Handler completion, permission to advance ordinary scheduling and permission to
+release a retained original are separate decisions. An unconfirmed terminal
+write gates ordinary work while controls and housekeeping remain discoverable.
+Parking can lift that gate while retaining a retry's original. Internal
+`ADVANCED` therefore does not prove durable remote completion; see
+[terminal intents and settlement](#terminal-intents-and-settlement).
+
 ## Admission
 
 `ExecutionContext` selects and schedules originals. Its `DeliveryLifecycle`
