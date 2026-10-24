@@ -329,6 +329,9 @@ class Room(Waiting):
     ctx: ExecutionContext
     turns: Turns
 
+    async def quiesce(self) -> None:
+        await self.suspended(self.ctx)
+
     async def deliver(self, *events: MessageEvent) -> None:
         for event in events:
             await self.ctx.on_event(event)

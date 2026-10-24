@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from tests.platform.settlement.kit import ROOM_ID
 from tests.runtime.recovery.kit import (
     RESYNC_SECONDS,
     Entrance,
     Fault,
     Harness,
-    Route,
 )
 
 CYCLE_SECONDS = 30.0
@@ -22,7 +22,9 @@ async def run_past_the_watchdog(
     """
     if outage is not None:
         harness.peer.fail_terminals(outage)
-    await harness.start(Route.BACKLOG)
+    harness.store_members()
+    await harness.runtime.rooms.admit(ROOM_ID)
+    await harness.adapter.model_entered.wait()
     await harness.advance(CYCLE_SECONDS + 1)
     if outage is not None:
         harness.heal()
