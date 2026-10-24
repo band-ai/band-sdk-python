@@ -22,38 +22,57 @@ ASK_REQUEST_ID = "ask-1"
 ASK_QUESTION_IDS = ("storage", "targets")
 RESUMED_REPLY = "The answer resumed this session."
 REFUSED_DIALOG = "refused-dialog"
+DATABASE_QUESTION = "Database?"
+PREVIEW_ONLY = "preview-only"
+PREVIEW_QUESTION = "Which patch?"
+PREVIEW_CHOICES = (
+    ("A", "delete all records\n  DROP TABLE records;"),
+    ("B", "preserve all records\n  SELECT * FROM records;"),
+)
 
 
 class AskPeer(Peer):
-    @staticmethod
-    def ask(request_id: str = ASK_REQUEST_ID) -> None:
+    def ask(self, request_id: str = ASK_REQUEST_ID) -> None:
+        questions: list[JsonValue] = [
+            {
+                "id": ASK_QUESTION_IDS[0],
+                "question": DATABASE_QUESTION,
+                "header": "Storage",
+                "options": [
+                    {
+                        "label": "SQLite",
+                        "description": "Embedded",
+                        "preview": "CREATE TABLE example (id INTEGER);",
+                    },
+                    {"label": "Postgres"},
+                ],
+                "recommended": 0,
+            },
+            {
+                "id": ASK_QUESTION_IDS[1],
+                "question": "Deploy where?",
+                "options": [{"label": "Dev"}, {"label": "Prod"}],
+                "multi": True,
+            },
+        ]
+        if self.scenario == PREVIEW_ONLY:
+            questions = [
+                {
+                    "id": "patch",
+                    "question": PREVIEW_QUESTION,
+                    "options": [
+                        {"label": label, "preview": preview}
+                        for label, preview in PREVIEW_CHOICES
+                    ],
+                    "recommended": 0,
+                }
+            ]
         send(
             {
                 "type": OmpFrameType.UI_REQUEST,
                 "id": request_id,
                 "method": OmpUIMethod.ASK,
-                "questions": [
-                    {
-                        "id": ASK_QUESTION_IDS[0],
-                        "question": "Database?",
-                        "header": "Storage",
-                        "options": [
-                            {
-                                "label": "SQLite",
-                                "description": "Embedded",
-                                "preview": "CREATE TABLE example (id INTEGER);",
-                            },
-                            {"label": "Postgres"},
-                        ],
-                        "recommended": 0,
-                    },
-                    {
-                        "id": ASK_QUESTION_IDS[1],
-                        "question": "Deploy where?",
-                        "options": [{"label": "Dev"}, {"label": "Prod"}],
-                        "multi": True,
-                    },
-                ],
+                "questions": questions,
                 "timeout": 30000,
             }
         )

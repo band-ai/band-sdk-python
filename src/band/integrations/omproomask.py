@@ -9,6 +9,7 @@ ask would instead abort the whole prompt.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from textwrap import indent
 
 from band.integrations.ompwire import OmpAskAnswer, OmpAskOption, OmpAskQuestion
 
@@ -44,26 +45,32 @@ def _render_question(question: OmpAskQuestion, number: int | None) -> str:
     header = (question.header or "").strip()
     if header:
         heading = f"**{header}:** {heading}"
-    if number is not None:
-        heading = f"{number}. {heading}"
-    indent = "   " if number is not None else ""
-    lines = [heading]
+    number_prefix = "" if number is None else f"{number}. "
+    indentation = " " * len(number_prefix)
+    lines = [f"{number_prefix}{heading}"]
     lines.extend(
-        f"{indent}- {_render_option(option, recommended=index == question.recommended)}"
+        _render_option(
+            option,
+            recommended=index == question.recommended,
+            indentation=indentation,
+        )
         for index, option in enumerate(question.options)
     )
     if question.multi and question.options:
-        lines.append(f"{indent}Pick any that apply.")
+        lines.append(f"{indentation}Pick any that apply.")
     return "\n".join(lines)
 
 
-def _render_option(option: OmpAskOption, *, recommended: bool) -> str:
-    text = option.label
+def _render_option(option: OmpAskOption, *, recommended: bool, indentation: str) -> str:
+    option_prefix = f"{indentation}- "
+    text = f"{option_prefix}{option.label}"
     description = (option.description or "").strip()
     if description:
         text += f": {description}"
     if recommended:
         text += " (recommended)"
+    if option.preview and option.preview.strip():
+        text += "\n\n" + indent(option.preview, " " * len(option_prefix))
     return text
 
 

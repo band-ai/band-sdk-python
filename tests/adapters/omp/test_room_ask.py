@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 from pathlib import Path
+from textwrap import indent
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -20,6 +21,7 @@ from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
 from tests.adapters.omp.askkit import (
     AskStartupObserver,
     ask_frames,
+    ask_session_changes,
     ask_turn,
     room_ask_adapter,
 )
@@ -31,6 +33,10 @@ from tests.adapters.omp.kit import (
 from tests.integrations.ompaskpeer import (
     ASK_QUESTION_IDS,
     ASK_REQUEST_ID,
+    DATABASE_QUESTION,
+    PREVIEW_CHOICES,
+    PREVIEW_ONLY,
+    PREVIEW_QUESTION,
     REFUSED_DIALOG,
     RESUMED_REPLY,
 )
@@ -48,7 +54,7 @@ class TestOmpRoomAsk:
             assert posted["mentions"] == [{"id": "peer-456", "name": "Test Peer"}]
             for text in (
                 "Storage",
-                "Database?",
+                DATABASE_QUESTION,
                 "SQLite",
                 "Embedded",
                 "recommended",
@@ -69,6 +75,7 @@ class TestOmpRoomAsk:
             assert all(answer["customInput"] for answer in answers)
             assert "later" in str(answers[0]["customInput"])
 
+            session_changes = await ask_session_changes(ask_adapter)
             runtime = room_runtime(ask_adapter, "room-123")
             resumed = FakeAgentTools()
             resumed.fetch_room_context = AsyncMock(return_value={"data": []})
@@ -79,6 +86,7 @@ class TestOmpRoomAsk:
                 ask_adapter, resumed, bootstrap=False, content="Use SQLite for Dev."
             )
             assert room_runtime(ask_adapter, "room-123") is runtime
+            assert await ask_session_changes(ask_adapter) == session_changes
             assert resumed.messages_sent[0]["content"] == RESUMED_REPLY
             assert resumed.turn.replied
             prompts = await ask_frames(ask_adapter, OmpCommandName.PROMPT)
@@ -129,7 +137,7 @@ class TestOmpRoomAsk:
         self, ask_adapter: OmpAdapter
     ) -> None:
         tools = FakeAgentTools()
-        held = tools.hold_message("Database?")
+        held = tools.hold_message(DATABASE_QUESTION)
         running = asyncio.create_task(ask_turn(ask_adapter, tools))
         try:
             await held.sending.wait()
@@ -161,5 +169,20 @@ class TestOmpRoomAsk:
             assert occupied_room_ids(adapter) == set()
             assert claimed_workspace_rooms(adapter) == ()
             await observer.assert_released()
+        finally:
+            await adapter.cleanup_all()
+
+    async def test_preview_only_choices_reach_the_room(self, tmp_path: Path) -> None:
+        adapter = room_ask_adapter(tmp_path, PREVIEW_ONLY)
+        tools = FakeAgentTools()
+        try:
+            await ask_turn(adapter, tools)
+            [posted] = tools.messages_sent
+            assert PREVIEW_QUESTION in posted["content"]
+            for label, preview in PREVIEW_CHOICES:
+                assert f"- {label}" in posted["content"]
+                assert indent(preview, "  ") in posted["content"]
+            assert tools.turn.replied
+            assert not failure_reports(tools)
         finally:
             await adapter.cleanup_all()

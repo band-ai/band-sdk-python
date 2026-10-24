@@ -39,7 +39,9 @@ class TestOmpRoomQuestions:
                         header=" Storage ",
                         options=[
                             OmpAskOption(label="SQLite", description=" Embedded "),
-                            OmpAskOption(label="Postgres", description="  "),
+                            OmpAskOption(
+                                label="Postgres", description="  ", preview=" \n "
+                            ),
                         ],
                         recommended=0,
                         multi=True,
@@ -61,10 +63,67 @@ class TestOmpRoomQuestions:
                 ],
                 "1. Database?\n   - SQLite\n\n2. Deploy where?",
             ),
+            (
+                [
+                    OmpAskQuestion(
+                        id="patch",
+                        question="Which patch?",
+                        options=[
+                            OmpAskOption(
+                                label="A",
+                                preview="delete records\n  DROP TABLE records;",
+                            )
+                        ],
+                    )
+                ],
+                "Which patch?\n- A\n\n  delete records\n    DROP TABLE records;",
+            ),
+            (
+                [
+                    OmpAskQuestion(id="first", question="First?"),
+                    OmpAskQuestion(
+                        id="patch",
+                        question="Which patch?",
+                        options=[
+                            OmpAskOption(
+                                label="A",
+                                preview="delete records\n  DROP TABLE records;",
+                            )
+                        ],
+                    ),
+                ],
+                "1. First?\n\n2. Which patch?\n   - A\n\n     delete records\n       DROP TABLE records;",
+            ),
         ],
-        ids=["empty", "plain", "described-recommended-multi", "numbered"],
+        ids=[
+            "empty",
+            "plain",
+            "described-recommended-multi",
+            "numbered",
+            "preview",
+            "numbered-preview",
+        ],
     )
     def test_rendered_layout(
         self, questions: list[OmpAskQuestion], expected: str
     ) -> None:
         assert render_room_questions(questions) == expected
+
+    def test_multi_digit_question_keeps_preview_under_its_option(self) -> None:
+        questions = [
+            OmpAskQuestion(id=f"q{number}", question="Earlier question")
+            for number in range(1, 10)
+        ]
+        questions.append(
+            OmpAskQuestion(
+                id="patch",
+                question="Which patch?",
+                options=[OmpAskOption(label="A", preview="Patch:\n  keep records")],
+            )
+        )
+
+        rendered = render_room_questions(questions)
+
+        assert rendered.endswith(
+            "10. Which patch?\n    - A\n\n      Patch:\n        keep records"
+        )

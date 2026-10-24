@@ -347,8 +347,9 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   native-only output and failed tools followed by narration still reach the
   missing-reply verdict.
 - **Questions go to the room.** Each session enables OMP's structured ask dialog
-  with `set_ask_dialog`. An `ask` posts the model's questions, options and recommended
-  choice together, mentioning the requester; the post counts as the turn's reply.
+  with `set_ask_dialog`. An `ask` posts the model's questions, options (including
+  descriptions and previews), and recommended choice together, mentioning the
+  requester; the post counts as the turn's reply.
   The native tool receives an immediate acknowledgement, not a fabricated answer:
   the participant's answer arrives as a later message in the same native session.
   A room processes messages serially, so waiting inside the turn would prevent

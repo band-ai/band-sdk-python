@@ -46,10 +46,16 @@ async def ask_turn(
 
 
 async def ask_frames(
-    adapter: OmpAdapter, frame_type: OmpCommandName | OmpFrameType
+    adapter: OmpAdapter, *frame_types: OmpCommandName | OmpFrameType
 ) -> list[dict[str, JsonValue]]:
     frames = await checkpoint_frames(adapter._rooms["room-123"].client)
-    return [frame for frame in frames if frame["type"] == frame_type]
+    return [frame for frame in frames if frame["type"] in frame_types]
+
+
+async def ask_session_changes(adapter: OmpAdapter) -> list[dict[str, JsonValue]]:
+    return await ask_frames(
+        adapter, OmpCommandName.NEW_SESSION, OmpCommandName.SWITCH_SESSION
+    )
 
 
 def room_ask_adapter(tmp_path: Path, scenario: str = "ask") -> OmpAdapter:
