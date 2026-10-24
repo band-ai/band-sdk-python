@@ -22,7 +22,7 @@ from tests.adapters.omp.kit import (
     start_blocked_turn,
     start_cleanup,
 )
-from tests.adapters.omp.lifecyclekit import SignallingCloseRuntime
+from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, SignallingCloseRuntime
 
 __all__ = ["launches"]
 
@@ -59,26 +59,16 @@ class TestRoomRetirement:
     async def test_cleanup_settles_a_turn_queued_behind_a_blocked_resolution(
         self, launches: Launches, tmp_path: Path
     ):
-        entered = asyncio.Event()
-        calls = 0
-        blocking = True
-
-        async def resolve(_workspace: str):
-            nonlocal calls
-            calls += 1
-            entered.set()
-            if blocking:
-                await asyncio.Event().wait()
-            return {}
+        resolver = SettlingResolver()
+        resolver.settle.set()
 
         adapter = OmpAdapter(
-            OmpAdapterConfig(cwd=str(tmp_path)), resolve_mcp_servers=resolve, emit=()
+            OmpAdapterConfig(cwd=str(tmp_path)), resolve_mcp_servers=resolver, emit=()
         )
         room_lock = SignallingLock()
         adapter._locks["room-123"] = room_lock
         first = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
-        await asyncio.wait_for(entered.wait(), 1)
-        blocking = False  # anything that resolves from here on would launch
+        await asyncio.wait_for(resolver.entered.wait(), 1)
         queued = asyncio.create_task(run_turn(adapter, FakeAgentTools()))
         await asyncio.wait_for(
             room_lock.contended.wait(), 1
@@ -87,13 +77,13 @@ class TestRoomRetirement:
         await asyncio.wait_for(adapter.cleanup_all(), 1)
 
         assert first.done() and queued.done()
-        assert calls == 1 and launches.runtimes == []
+        assert resolver.calls == 1 and launches.runtimes == []
         assert not adapter._workspaces.rooms
         for task in (first, queued):
             with pytest.raises(asyncio.CancelledError):
                 await task
         await run_turn(adapter, FakeAgentTools())  # a later explicit turn recovers
-        assert calls == 2 and len(launches.runtimes) == 1
+        assert resolver.calls == 2 and len(launches.runtimes) == 1
         await adapter.cleanup_all()
 
     @pytest.mark.asyncio
@@ -170,33 +160,23 @@ class TestRoomRetirement:
     async def test_cleanup_all_joins_a_retirement_blocked_in_native_close(
         self, launches: Launches, tmp_path: Path
     ):
+        runtime = HeldCloseRuntime()
+        launches.runtime_factory = lambda: runtime
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
         await run_turn(adapter, FakeAgentTools())  # a settled turn leaves a live room
-        (runtime,) = launches.runtimes
-        closing = asyncio.Event()
-        finish_close = asyncio.Event()
-        closes = 0
-
-        async def close():
-            nonlocal closes
-            closes += 1
-            closing.set()
-            await finish_close.wait()
-            runtime.closed = True
-
-        runtime.close = close  # type: ignore[method-assign]
         room_cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
-        await asyncio.wait_for(closing.wait(), 1)
+        await runtime.closing.arrived()
         shutdown = asyncio.create_task(adapter.cleanup_all())
         with pytest.raises(asyncio.CancelledError):  # no new turn during teardown
             await asyncio.wait_for(run_turn(adapter, FakeAgentTools()), 1)
 
         assert not shutdown.done() and "room-123" in adapter._workspaces.rooms
-        finish_close.set()
+        runtime.closing.released.set()
         await asyncio.wait_for(asyncio.gather(room_cleanup, shutdown), 1)
 
-        assert closes == 1 and runtime.closed
+        assert runtime.close_calls == 1 and runtime.closed
         assert len(launches.runtimes) == 1 and not adapter._workspaces.rooms
+        launches.runtime_factory = RecordingRuntime
         await run_turn(adapter, FakeAgentTools())
         assert len(launches.runtimes) == 2
         await adapter.cleanup_all()

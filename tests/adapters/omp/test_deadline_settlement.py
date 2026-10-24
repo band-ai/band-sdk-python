@@ -49,10 +49,7 @@ class TestDeadlineSettlement:
             with pytest.raises(TimeoutError):
                 await first
             assert resolver.cancellations == 1 and releases and all(releases)
-            assert [
-                (failure["provider"], failure.get("code"))
-                for failure in reported_failures(tools)
-            ] == [("omp", "timeout")]
+            assert timeout_reports(tools) == [("omp", "timeout")]
             assert launches.runtimes == []
 
     @pytest.mark.asyncio
@@ -140,10 +137,7 @@ class TestDeadlineSettlement:
 
             assert resolver.cancellations == 1 and resolver.settled
             assert releases and all(releases)
-            assert [
-                (failure["provider"], failure.get("code"))
-                for failure in reported_failures(tools)
-            ] == [("omp", "timeout")]
+            assert timeout_reports(tools) == [("omp", "timeout")]
             assert launches.runtimes == []
 
     @pytest.mark.asyncio

@@ -11,7 +11,12 @@ import pytest
 import band.integrations.ompprocess as omp_module
 from band.adapters.omp import OMP_SESSION_DIRECTORY, OmpAdapter, OmpAdapterConfig
 from band.converters.omp import OmpSessionState
-from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
+from band.integrations.ompprocess import (
+    OmpMcpServer,
+    OmpMcpTransport,
+    OmpStartupError,
+    omp_mcp_ready,
+)
 from band.integrations.ompwire import OmpCommandName
 from band.testing import FakeAgentTools, failure_reports
 from tests.adapters.omp.kit import (
@@ -23,6 +28,7 @@ from tests.adapters.omp.kit import (
     requests_named,
     run_turn,
 )
+from tests.adapters.omp.readiness import ReceiptRuntime
 from tests.integrations.acp.conftest import make_platform_message
 
 __all__ = ["launches"]
@@ -78,26 +84,30 @@ class TestMcpResolution:
     async def test_a_resolved_set_replaces_static_servers_even_when_empty(
         self, launches: Launches, tmp_path: Path, monkeypatch
     ):
-        ready = AsyncMock()
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", ready)
+        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", omp_mcp_ready)
+        launches.runtime_factory = lambda: ReceiptRuntime(launches.plugins[-1], ())
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path), mcp_servers={"stale": remote("old")}),
             resolve_mcp_servers=AsyncMock(return_value={}),
             emit=(),
         )
 
-        await run_turn(adapter, FakeAgentTools())
+        tools = FakeAgentTools()
+        await run_turn(adapter, tools)
 
         assert launches.servers == [{}]
-        assert ready.await_args.args[2] == {}  # readiness expects the same empty set
+        assert launches.runtimes[0].prompt_text
+        assert tools.turn.replied
         await adapter.cleanup_all()
 
     @pytest.mark.asyncio
     async def test_readiness_checks_the_same_snapshot_the_overlay_carries(
         self, launches: Launches, tmp_path: Path, monkeypatch
     ):
-        ready = AsyncMock()
-        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", ready)
+        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", omp_mcp_ready)
+        launches.runtime_factory = lambda: ReceiptRuntime(
+            launches.plugins[-1], ("linear",)
+        )
         snapshots = iter([{"linear": remote("grant-A")}, {"linear": remote("grant-B")}])
 
         async def resolve(_workspace: str):
@@ -106,15 +116,51 @@ class TestMcpResolution:
         adapter = OmpAdapter(
             OmpAdapterConfig(cwd=str(tmp_path)), resolve_mcp_servers=resolve, emit=()
         )
-        await run_turn(adapter, FakeAgentTools())
+        tools = FakeAgentTools()
+        await run_turn(adapter, tools)
 
-        assert ready.await_count == 1
-        assert ready.await_args.args[2] == {"linear": remote("grant-A")}
+        assert launches.runtimes[0].prompt_text
+        assert tools.turn.replied
         assert (
             launches.servers[0]["linear"]["headers"]["Authorization"]
             == "Bearer grant-A"
         )
         await adapter.cleanup_all()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("receipt_servers", "error"),
+        [
+            pytest.param(("stale",), "unexpected", id="stale-server"),
+            pytest.param((), "every configured", id="missing-server"),
+            pytest.param(None, "no valid", id="missing-receipt"),
+        ],
+    )
+    async def test_invalid_resolved_receipts_prevent_user_inference(
+        self,
+        launches: Launches,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        receipt_servers: tuple[str, ...] | None,
+        error: str,
+    ) -> None:
+        monkeypatch.setattr("band.adapters.omp.omp_mcp_ready", omp_mcp_ready)
+        launches.runtime_factory = lambda: ReceiptRuntime(
+            launches.plugins[-1], receipt_servers
+        )
+        adapter = OmpAdapter(
+            OmpAdapterConfig(cwd=str(tmp_path), mcp_servers={"stale": remote("old")}),
+            resolve_mcp_servers=AsyncMock(return_value={"linear": remote("grant-A")}),
+            emit=(),
+        )
+        tools = FakeAgentTools()
+        try:
+            with pytest.raises(OmpStartupError, match=error):
+                await run_turn(adapter, tools)
+            assert launches.runtimes[0].prompt_text == ""
+            assert not tools.turn.replied and failure_reports(tools)
+        finally:
+            await adapter.cleanup_all()
 
     @pytest.mark.asyncio
     async def test_a_failed_resolution_launches_nothing_and_a_later_one_recovers(

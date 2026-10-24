@@ -38,8 +38,10 @@ class HeldCloseRuntime(RecordingRuntime):
     def __init__(self) -> None:
         super().__init__()
         self.closing = Hold()
+        self.close_calls = 0
 
     async def close(self) -> None:
+        self.close_calls += 1
         await self.closing.wait()
         await super().close()
 
