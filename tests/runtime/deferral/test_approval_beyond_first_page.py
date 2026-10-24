@@ -1,3 +1,5 @@
+"""An approval hidden beyond the first page still releases the ordered work."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,22 +9,33 @@ import pytest
 from band.platform.event import ReconnectedEvent
 from band.platform.link import BandLink
 from band.runtime.sessionconfig import SessionConfig
-from tests.conftest import make_message_event
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.deferral.kit import ApprovalAdapter
 from tests.runtime.helpers import (
     AGENT_ID,
-    ROOM_ID,
     LifecyclePlatform,
     rest_client_over,
     run_through,
 )
 
+# A due periodic wake scans the room's pages. The live case has no wake: one landing
+# before the approval, or before B is retried, would page needlessly.
+PERIODIC_WAKE_SECONDS = 0.01
+NO_WAKE_SECONDS = 3600.0
+
 
 class TestApprovalBeyondFirstPage:
-    @pytest.mark.parametrize("recovery", ["live", "missed", "reconnect", "startup"])
+    @pytest.mark.parametrize(
+        ("recovery", "wake_seconds", "must_page_to_find_it"),
+        [
+            ("live", NO_WAKE_SECONDS, False),
+            ("missed", PERIODIC_WAKE_SECONDS, True),
+            ("reconnect", PERIODIC_WAKE_SECONDS, True),
+            ("startup", PERIODIC_WAKE_SECONDS, True),
+        ],
+    )
     async def test_approval_beyond_first_page_releases_ordered_work(
-        self, recovery: str
+        self, recovery: str, wake_seconds: float, must_page_to_find_it: bool
     ) -> None:
         peer = LifecyclePlatform(page_size=3)
         deferred = [f"D{i}" for i in range(7)]
@@ -39,8 +52,8 @@ class TestApprovalBeyondFirstPage:
                 config=SessionConfig(
                     enable_context_hydration=False,
                     enable_working_state=False,
-                    idle_resync_seconds=0.01,
-                    idle_resync_max_seconds=0.01,
+                    idle_resync_seconds=wake_seconds,
+                    idle_resync_max_seconds=wake_seconds,
                     max_message_retries=1,
                 ),
             )
@@ -51,9 +64,7 @@ class TestApprovalBeyondFirstPage:
 
             async def ordinary_traffic() -> None:
                 while not traffic.is_set():
-                    await ctx.on_event(
-                        make_message_event(room_id=ROOM_ID, msg_id=deferred[0])
-                    )
+                    await ctx.on_event(peer.event(deferred[0]))
                     await asyncio.sleep(0.001)
 
             traffic_task: asyncio.Task[None] | None = None
@@ -62,7 +73,7 @@ class TestApprovalBeyondFirstPage:
                 original_tools = adapter.active_tools
                 if recovery != "startup":
                     peer.add_message("B")
-                await ctx.on_event(make_message_event(room_id=ROOM_ID, msg_id="B"))
+                await ctx.on_event(peer.event("B"))
                 await wait_for_condition(lambda: "B" in adapter.attempted)
                 assert peer.marked("processed") == ["A"]
                 assert peer.marked("failed") == []
@@ -72,19 +83,15 @@ class TestApprovalBeyondFirstPage:
                 peer.add_message("C")
                 peer.messages[-1]["content"] = "approve"
                 if recovery == "live":
-                    await ctx.on_event(
-                        make_message_event(
-                            room_id=ROOM_ID, msg_id="C", content="approve"
-                        )
-                    )
+                    await ctx.on_event(peer.event("C", content="approve"))
+                    # The pass that retries B, queued ahead of any traffic.
+                    await ctx.request_resync()
                 elif recovery == "reconnect":
                     await ctx.on_event(ReconnectedEvent())
                 # Sustained ordinary delivery cannot rewind an in-progress scan.
                 traffic_task = asyncio.create_task(ordinary_traffic())
                 for message_id in live_deferred:
-                    await ctx.on_event(
-                        make_message_event(room_id=ROOM_ID, msg_id=message_id)
-                    )
+                    await ctx.on_event(peer.event(message_id))
                 await wait_for_condition(
                     lambda: deferred[-1] in peer.marked("processed"), timeout=3
                 )
@@ -98,11 +105,11 @@ class TestApprovalBeyondFirstPage:
                     *deferred,
                 ]
                 assert peer.marked("failed") == []
-                assert any(cursor is not None for cursor in peer.actionable_cursors)
+                # A live approval is retained locally, so only recovery must page for it.
+                paged = any(cursor is not None for cursor in peer.actionable_cursors)
+                assert paged is must_page_to_find_it
                 # A terminal duplicate cannot reopen or reapply the approval.
-                await ctx.on_event(
-                    make_message_event(room_id=ROOM_ID, msg_id="C", content="approve")
-                )
+                await ctx.on_event(peer.event("C", content="approve"))
                 await asyncio.sleep(0)
                 assert adapter.controls == ["C"]
             finally:

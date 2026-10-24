@@ -36,6 +36,16 @@ the workflow files cannot say for themselves.
   PRs retain only the newest validated Windows interpreter; the matrix guard
   checks this against the version grid.
 
+## Unit pytest parallelism
+
+- **Unit jobs run pytest-xdist worksteal inside the existing OS × Python
+  cells** (`-n 4 --dist worksteal`) on every extra and OS.
+  No GitHub shard axis. Markdown-docs and E2E collect-only stay serial. Do not
+  put `-n` in `addopts` or `PYTEST_ADDOPTS`.
+- **Durations rebalance** (`.github/workflows/pytest-durations.yml`) times that
+  suite weekly / on demand from `main` and opens a PR when `.test_durations`
+  drifts. Not extra pull-request jobs.
+
 ## PyPI publish
 
 - **Trusted publishing binds to the top-level filename `band-publish.yml`** (with environment

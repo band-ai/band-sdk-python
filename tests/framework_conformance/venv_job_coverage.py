@@ -169,7 +169,38 @@ def is_skipped(item: pytest.Item) -> bool:
     )
 
 
+# Flags that spawn workers or partition the suite. Coverage tests collect
+# nodeids serially; passing these through to pytester would start xdist.
+_WORKER_POOL_FLAGS = frozenset(
+    {
+        "-n",
+        "--numprocesses",
+        "--dist",
+    }
+)
+
+
 def pytest_arguments(command: str) -> list[str]:
-    """Read selectors after the workflow's pytest executable."""
+    """Read selectors after the workflow's pytest executable.
+
+    Worker-pool flags stay in the YAML (CI actually parallelizes); they are
+    stripped here so coverage tests can collect the same nodeids serially.
+    """
     tokens = shlex.split(command)
-    return tokens[tokens.index("pytest") + 1 :]
+    return _without_worker_pool_flags(tokens[tokens.index("pytest") + 1 :])
+
+
+def _without_worker_pool_flags(args: list[str]) -> list[str]:
+    stripped: list[str] = []
+    skip_value = False
+    for token in args:
+        if skip_value:
+            skip_value = False
+            continue
+        name, eq, _value = token.partition("=")
+        if name in _WORKER_POOL_FLAGS:
+            if not eq:
+                skip_value = True
+            continue
+        stripped.append(token)
+    return stripped

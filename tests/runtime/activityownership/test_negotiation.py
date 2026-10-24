@@ -17,7 +17,7 @@ from tests.activitysupport import (
     tool_body,
 )
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
 
 
 @pytest.mark.looptime
@@ -35,7 +35,7 @@ class TestTurnNegotiation:
             await activity_platform.shown(report_tool_activity(tools, "Bash"))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         assert activity_platform.activity_bodies == [
             BOOLEAN_BODY,
             tool_body("Bash"),
@@ -57,8 +57,8 @@ class TestTurnNegotiation:
             await activity_platform.bodies_reach(4)
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="first"))
-        await ctx._process_event(make_message_event(msg_id="second"))
+        await deliver_event(ctx, make_message_event(msg_id="first"))
+        await deliver_event(ctx, make_message_event(msg_id="second"))
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
             tool_body("Bash"),

@@ -13,6 +13,7 @@ from tests.runtime.activity.kit import ActivityPeer, activity_context
 from tests.runtime.helpers import (
     ROOM_ID,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityOwnership:
@@ -35,7 +36,7 @@ class TestActivityOwnership:
 
         observer = AsyncMock()
         async with activity_context(peer, handler, observer, enabled=False) as ctx:
-            scope = await ctx._begin_scope()
+            scope = await ctx.begin_delivery()
             async with asyncio.TaskGroup() as tasks:
                 report = tasks.create_task(ctx._report_working_state(True))
                 await peer.entered.wait()
@@ -43,7 +44,7 @@ class TestActivityOwnership:
                     case "play":
                         await ctx.resume_room()
                     case "replacement":
-                        scope = await ctx._begin_scope()
+                        scope = await ctx.begin_delivery()
                     case "shutdown":
                         await ctx.stop()
                         peer.release.set()
@@ -52,7 +53,8 @@ class TestActivityOwnership:
                         return
                 event = make_message_event(msg_id="newer")
                 assert scope is not None
-                turn = tasks.create_task(ctx._run_cycle(scope, event, "newer"))
+                scope.originals = (event,)
+                turn = tasks.create_task(ctx.execute_delivery(scope, event))
                 await started.wait()
                 peer.release.set()
                 assert await report
@@ -75,7 +77,7 @@ class TestActivityOwnership:
             asyncio.TaskGroup() as tasks,
         ):
             turn = tasks.create_task(
-                ctx._process_event(make_message_event(msg_id="trigger"))
+                attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             )
             await handler.started.wait()
             await ctx.resume_room()

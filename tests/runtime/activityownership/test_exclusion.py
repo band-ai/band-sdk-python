@@ -14,7 +14,11 @@ from band.runtime.toolactivity import (
 )
 from band.runtime.tools.agent import AgentTools
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform, past_a_keep_alive
+from tests.runtime.activityownership.kit import (
+    ActivityPlatform,
+    deliver_event,
+    past_a_keep_alive,
+)
 from tests.runtime.helpers import ROOM_ID
 
 
@@ -39,6 +43,6 @@ class TestExcludedReporting:
             await end_tool_activity(tools)
 
         ctx = execution(handler, **settings)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         await past_a_keep_alive()
         assert not activity_platform.activity_bodies

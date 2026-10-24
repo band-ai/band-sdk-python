@@ -53,6 +53,7 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 VALIDATION_ERROR_CODE = "validation_error"
 PROCESSING_ATTEMPT_POINTER = "/processing_attempt"
 NOT_FOUND_ERROR_CODE = "not_found"
+ACTIONABLE_PAGE_SIZE = 100
 
 
 def _accepted_response(
@@ -100,7 +101,7 @@ def _names_missing_resource(body: object) -> bool:
 
 
 def _failure_result(error: Exception) -> SettlementResult:
-    """Classify a failed terminal write from the public status and error body.
+    """Classify a failed status write from the public status and error body.
 
     ``ParsingError`` (a body that misses the generated schema) is
     UNCONFIRMED: the envelope checks below would reject that body too.
@@ -170,7 +171,6 @@ def _platform_message(item: ChatMessage, room_id: str) -> PlatformMessage:
     )
 
 
-ACTIONABLE_PAGE_SIZE = 100
 WriteKey = tuple[str, DeliveryStatus]
 FailureCause = tuple[type[Exception], int | None]
 # Diagnostic suppression stays bounded; evicted intents warn again on retry.
@@ -203,27 +203,32 @@ class MessageLifecycle:
     async def mark_processing(
         self, rest: AsyncRestClient, room_id: str, message_id: str
     ) -> bool:
-        """
-        Mark message as being processed on the server.
+        """Mark message as being processed on the server."""
+        result = await self.mark_processing_result(rest, room_id, message_id)
+        return result is SettlementResult.ACCEPTED
+
+    async def mark_processing_result(
+        self, rest: AsyncRestClient, room_id: str, message_id: str
+    ) -> SettlementResult:
+        """Open a processing attempt and report what the platform answered.
 
         This does NOT remove it from /next: the actionable set excludes only
         'processed', so a crashed or stopped attempt stays replayable. Only
         mark_processed clears the message from /next.
         """
         logger.debug("Marking message %s as processing", message_id)
-        try:
-            response = await rest.agent_api_messages.with_raw_response.mark_agent_message_processing(
-                chat_id=room_id,
-                id=message_id,
-                request_options=DEFAULT_REQUEST_OPTIONS,
-            )
-            _accepted_response(response, stopped_room_id=room_id)
-        except RoomExecutionStoppedError:
-            raise
-        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
-            logger.warning("Failed to mark message %s as processing: %s", message_id, e)
-            return False
-        return True
+        return await self._settle(
+            lambda: (
+                rest.agent_api_messages.with_raw_response.mark_agent_message_processing(
+                    chat_id=room_id,
+                    id=message_id,
+                    request_options=DEFAULT_REQUEST_OPTIONS,
+                )
+            ),
+            room_id=room_id,
+            message_id=message_id,
+            action=DeliveryStatus.PROCESSING,
+        )
 
     async def mark_processed(
         self, rest: AsyncRestClient, room_id: str, message_id: str

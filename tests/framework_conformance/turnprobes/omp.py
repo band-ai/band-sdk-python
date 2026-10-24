@@ -51,6 +51,9 @@ class ScriptedOmpClient:
                     "a native session must advertise its host tools"
                 )
                 return {}
+            case OmpCommandName.SET_ASK_DIALOG:
+                assert parameters == {"enabled": True}
+                return {"enabled": True}
             case _:
                 raise AssertionError(f"Unexpected OMP command: {command}")
 

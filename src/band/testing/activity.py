@@ -41,5 +41,11 @@ class ActivityRecorder:
     async def set_manual_wait(self, waiting: bool) -> None:
         self.events.append({"waiting": waiting})
 
+    @property
+    def waiting(self) -> bool:
+        """Whether the last reported wait says a person is being waited on."""
+        waits = [event["waiting"] for event in self.events if "waiting" in event]
+        return bool(waits) and waits[-1]
+
     def assert_completed_tool(self, name: str) -> None:
         assert self.events == [shown_tool(name), SHOWN_REASONING]

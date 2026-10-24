@@ -11,7 +11,7 @@ from band.runtime.tools import BandTool
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import HeldReplyPlatform
+from tests.runtime.activityownership.kit import HeldReplyPlatform, deliver_event
 from tests.runtime.helpers import IDLE, KEEP_ALIVE
 
 REPLY = "Found you"
@@ -38,7 +38,7 @@ class TestBandToolWireActivity:
             assert outcome.ok, outcome.error_message
 
         ctx = execution(handler)
-        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        turn = asyncio.create_task(deliver_event(ctx, make_message_event()))
         await activity_platform.reply_entered.wait()
         shown = await activity_platform.body_at(1)
         activity_platform.release.set()

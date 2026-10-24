@@ -42,7 +42,6 @@ from pydantic.json_schema import SkipJsonSchema
 from band.core.exceptions import BandToolError, MessagePostError, MessagePostKind
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.turn import Turn
 from band.core.types import Capability, EventMessageType, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -572,12 +571,13 @@ def build_tool_registration(
 RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
 
-def room_turn(get_tools: RoomToolResolver | None, chat_id: str | None) -> Turn | None:
-    """The turn of the room ``chat_id`` names, if the tool is room-bound."""
+def room_tools(
+    get_tools: RoomToolResolver | None, chat_id: str | None
+) -> AgentToolsProtocol | None:
+    """The tools of the room ``chat_id`` names, if the tool is room-bound."""
     if get_tools is None or chat_id is None:
         return None
-    tools = get_tools(chat_id)
-    return tools.turn if tools is not None else None
+    return get_tools(chat_id)
 
 
 def build_custom_tool_registration(
@@ -609,8 +609,11 @@ def build_custom_tool_registration(
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         chat_id = kwargs.pop(CHAT_ID_FIELD_NAME, None)
-        turn = room_turn(get_tools, chat_id)
-        result = await execute_custom_tool(tool_def, kwargs, turn=turn)
+        tools = room_tools(get_tools, chat_id)
+        async with tool_activity(tools, tool_name):
+            result = await execute_custom_tool(
+                tool_def, kwargs, turn=tools.turn if tools is not None else None
+            )
         return tool_result_text(result)
 
     return MCPToolRegistration(

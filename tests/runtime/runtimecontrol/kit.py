@@ -6,8 +6,9 @@ import asyncio
 
 from band.client.streaming import AgentControlPayload, ControlMode
 from band.platform.link import BandLink
-from band.runtime.execution import ExecutionContext, ResyncRequest
+from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
+from band.runtime.scheduler import ResyncRequest
 
 
 def control_payload(mode: str, scope: str = "agent", **kw) -> AgentControlPayload:

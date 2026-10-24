@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
-from band_rest.core import http_client
 
 from band.client.streaming import DeliveryStatus
 from band.platform.link import BandLink
@@ -15,12 +14,6 @@ from tests.platform.settlement.kit import (
     accepted,
     link_over,
 )
-
-
-@pytest.fixture(autouse=True)
-def instant_retries(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the generated client's retry count but not its multi-second backoff."""
-    monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
 
 
 @pytest.fixture(params=[DeliveryStatus.PROCESSED, DeliveryStatus.FAILED])

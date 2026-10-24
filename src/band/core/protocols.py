@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         TaskListState,
     )
     from band.core.turn import Turn
-    from band.core.types import AgentInput, Capability
+    from band.core.types import AgentInput, Capability, PlatformMessage
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
     from band.runtime.tools import (
@@ -530,3 +530,27 @@ class Preprocessor(Protocol):
             AgentInput if event should be processed, None to skip
         """
         ...
+
+
+@runtime_checkable
+class MessageProjector(Protocol):
+    """The read-only message projection shared by recognition and preprocessing."""
+
+    def message(
+        self, ctx: ExecutionContext, event: PlatformEvent, agent_id: str
+    ) -> PlatformMessage | None:
+        """Project an original without I/O, context consumption or delivery writes."""
+        ...
+
+
+@runtime_checkable
+class ControlRecognizer(Protocol):
+    """Read-only recognition of a message the adapter would handle as a control.
+
+    Recognition may read existing pending-request state (a free-text answer to
+    a pending question is a control) but never creates state, claims a request,
+    posts, consumes context or writes delivery status; the adapter's control
+    handler remains the authority for authorization and consumption.
+    """
+
+    def is_control_message(self, msg: PlatformMessage) -> bool: ...

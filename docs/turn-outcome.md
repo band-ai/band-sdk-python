@@ -372,6 +372,127 @@ the existing retry policy.
 One-shot invocations also require accepted claims and completion. They raise on
 refusal instead of returning `DONE`; a drain records only accepted messages.
 
+## Singleton scheduling
+
+`Scheduler` owns ingress, discovery, ordering and dispatch; `DeliveryLifecycle`
+owns eligibility, admission and terminal transport. `ExecutionContext` and
+`TurnScope` supervise the handler and freeze its outcome. Shared core owns local
+claims, pending terminal obligations and retry continuations.
+
+An original's payload, its latest observed delivery eligibility and its local
+event position are separate facts. Synchronized live input keeps receive order;
+recovery reconciles chronological backlog while respecting known local event
+boundaries and confirmed retry continuations. These rules do not add a REST
+read for each live arrival.
+
+Handler completion, permission to advance ordinary scheduling and permission to
+release a retained original are separate decisions. An unconfirmed terminal
+write gates ordinary work while controls and housekeeping remain discoverable.
+Parking can lift that gate while retaining a retry's original. Internal
+`ADVANCED` therefore does not prove durable remote completion; see
+[terminal intents and settlement](#terminal-intents-and-settlement).
+
+## Admission
+
+`ExecutionContext` selects and schedules originals. Its `DeliveryLifecycle`
+coordinates ordinary and control attempts through the same admission order:
+
+1. Claim every original's ID locally. A conflict releases this attempt's claims
+   and defers it.
+2. Prepare context and recheck delivery eligibility. Core's `ClaimRegistry`
+   owns duplicate, pending-write, ownership and retry decisions; an original
+   already reported processed is skipped. Ordinary work provisionally charges
+   one execution attempt per original.
+3. Mark each original processing, in order, under one control revision, and
+   recheck ownership after every await. Any refusal, error, cancellation or newer
+   revision defers the whole selection and refunds its provisional charges:
+   no model call, terminal write or execution attempt is consumed.
+4. Only after the last acceptance, synchronously admit the scope, refresh
+   context if needed and invoke the handler once. A control
+   is handled individually without charging ordinary model work.
+
+INTERRUPT before step 4 consumes nothing, even if the platform already accepted
+a delayed mark; a late response cannot revive that scope. After step 4 an
+accepted INTERRUPT consumes every original, even before the handler starts.
+STOP and shutdown leave originals recoverable at every point.
+
+## Terminal intents and settlement
+
+At the synchronous point where a handler has finished or been stopped, before any
+cleanup, activity-report or acknowledgement await, the scope fixes the one write
+each of its originals owes and stores it in the runtime's `ClaimRegistry`
+(`band-sdk-core`), keyed by room and original ID. The first stored intent wins;
+storing another for the same original changes nothing.
+
+| What ended the scope | Stored intent for every original |
+| --- | --- |
+| Handler returned, including a detached early release | `processed` |
+| Accepted INTERRUPT after admission | `processed` |
+| STOP, shutdown, `InputNotAccepted`, or a stopped handler | none; the originals stay recoverable |
+| Handler raised, or `max_cycle_seconds` expired | `failed` with the generic provider-failure message (never exception text), plus its post-confirmation continuation |
+
+A failed turn is reported to the room once, when `report_turn_failures_to_room`
+is on and the adapter has not already reported it. Once an intent is
+stored, a later STOP or refusal only defers its write: it never turns `processed`
+into `failed` and never reruns the model.
+
+With execution retries left, a FAILED attempt retains its charged count and a
+retry continuation alongside the write. The SDK retries only that write while its
+result is unknown. Confirmation restores the charge into the current execution's
+tracker and permits the next configured attempt; it does not mark the input
+completed. Exhaustion instead finishes the input. Context replacement preserves
+this continuation, including when ordinary retry history was evicted while the
+write was pending.
+
+The write goes through `mark_processed_result` or `mark_failed_result` and is
+classified by [`SettlementResult`](rest-client.md#lifecycle-acceptance):
+
+| Result | Effect on the stored intent |
+| --- | --- |
+| `ACCEPTED` | Apply the stored continuation once: finish the input, or permit its next configured attempt with prior failures still charged. |
+| `UNCONFIRMED` | Retained and retried on the reconciliation cadence, at most once per interval. Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
+| `NOT_FOUND` with the room still readable | Retired as inferred missing: its intent is dropped locally and its original released. Nothing is written and nothing re-executes it. |
+| `NOT_FOUND` with the room unreadable, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
+| HTTP 204 | `RoomExecutionStoppedError`: the intent is retained and retried later, uncharged. |
+
+`NOT_FOUND` alone is not a diagnosis: the platform returns the same 404 for a
+missing or soft-deleted message and for lost room access. After a 404 the SDK
+reads `/next` once. A successful read observes current room access, and the SDK
+infers deletion. The write and probe are not atomic: if access is removed and
+restored between them, the SDK can retire an original that still exists. Local
+retirement is neither proof of deletion nor successful terminal settlement.
+A failed read leaves the cause ambiguous, and the intent parks. A processing
+claim answered 404 follows the same rule: an inferred missing original leaves
+the retained line, and one in an unreadable room is retried later.
+
+Every recovery entrance (the reconciliation pass, the control probe, `/next`
+backlog and a live duplicate delivery) retries through one helper that reads the
+stored intent: `processed` writes `mark_processed_result`, `failed` writes
+`mark_failed_result` with the stored error. None of them reopens processing or
+reaches the handler.
+
+Each settlement request carries a local obligation token. A stale response cannot
+clear a newer obligation, and a retired execution cannot restore retry state into
+its obsolete tracker. These are in-process ownership checks; the platform does
+not provide an exclusive processing lease or conditional terminal writes.
+
+### What a settled turn leaves for the scheduler
+
+Three rules follow from the stored state alone, whatever ended the turn:
+
+- **Outcome.** An admitted turn with no stored intent leaves its originals
+  recoverable. One with an intent has advanced only when none of its originals
+  still owes a write the platform has neither accepted nor refused; otherwise it
+  retries later. Success, failure and INTERRUPT follow the same rule.
+- **Ordinary input.** While any write in the room is owed, ordinary input waits.
+  The scheduler reads this on every step, so a write that becomes owed mid-pass
+  (a reconnect unparking it) holds the next input too. Parked writes do not
+  block, and control discovery keeps running.
+- **Retained line.** An original leaves the retained line when its turn
+  advanced, or when no turn will run it and it is not kept for a pending retry.
+  A roster event leaves once it has begun, since its update and callback already
+  ran; one the room could not begin waits for the next wake.
+
 ## Cancellation ownership
 
 Each runtime handler and SDK-managed Claude, Codex or OpenCode worker has one task owner.

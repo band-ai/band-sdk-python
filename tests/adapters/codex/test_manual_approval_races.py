@@ -7,9 +7,9 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from band.adapters.codex import (
-    NO_APPROVALS_TO_RESOLVE_MESSAGE,
     CodexCommand,
 )
+from band.runtime.decisions import APPROVAL_NOT_PENDING_TEMPLATE
 from band.testing import events_of_type
 from tests.adapters.codex.kit import (
     ROOM_ID,
@@ -94,7 +94,9 @@ class TestManualApprovalRaces:
         async with timeout_notice:
             assert await room.reply(
                 CodexCommand.APPROVE, requested_approval_token(room.tools)
-            ) == (NO_APPROVALS_TO_RESOLVE_MESSAGE)
+            ) == APPROVAL_NOT_PENDING_TEMPLATE.format(
+                token=requested_approval_token(room.tools)
+            )
 
         assert await decision == "decline"  # approval_timeout_decision
 
@@ -116,7 +118,7 @@ class TestManualApprovalRaces:
         assert claimed is not None
 
         assert await room.reply(CodexCommand.APPROVE, token_a) == (
-            f"Approval `{token_a}` is no longer pending."
+            APPROVAL_NOT_PENDING_TEMPLATE.format(token=token_a)
         )
         refused = room.ask("approval-a", request_id=3)
         redelivery = room.ask("approval-b", request_id=4)

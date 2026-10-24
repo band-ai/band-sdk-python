@@ -1,12 +1,12 @@
+"""Doubles for unaccepted work sharing the host scheduler with active-turn controls."""
+
 from __future__ import annotations
 
 from typing import Any
 
 from band.core.exceptions import InputNotAccepted
 from band.core.simple_adapter import SimpleAdapter
-from tests.runtime.helpers import (
-    ROOM_ID,
-)
+from tests.runtime.helpers import ROOM_ID
 
 
 class ApprovalAdapter(SimpleAdapter[Any]):
@@ -19,6 +19,9 @@ class ApprovalAdapter(SimpleAdapter[Any]):
         self.attempted: list[str] = []
         self.controls: list[str] = []
         self.reject = False
+
+    def is_control_message(self, msg: Any) -> bool:
+        return msg.content == "approve"
 
     async def try_handle_control(self, msg: Any, tools: Any) -> bool:
         if msg.content != "approve":
@@ -40,6 +43,24 @@ class ApprovalAdapter(SimpleAdapter[Any]):
         else:
             self.completed.append(msg.id)
             tools.turn.settle()
+
+
+class FailureThenBusyAdapter(ApprovalAdapter):
+    """An execution failure makes its next attempts temporarily unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.busy = False
+        self.busy_attempts = 0
+        self.failure_attempts = 0
+
+    async def on_message(self, msg: Any, tools: Any, *args: Any, **kwargs: Any) -> None:
+        if self.busy:
+            self.busy_attempts += 1
+            raise InputNotAccepted()
+        self.failure_attempts += 1
+        self.busy = True
+        raise OSError("provider transport uncertainty")
 
 
 def envelope(message_id: str) -> dict[str, Any]:

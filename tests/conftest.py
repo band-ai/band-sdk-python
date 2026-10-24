@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import os
 
+from tests.xdistworker import (
+    configure_hypothesis_worker_database,
+    configure_parlant_worker_home,
+    restore_parlant_worker_home,
+)
+
+if os.environ.get("E2E_TESTS_ENABLED", "").lower() != "true":
+    configure_parlant_worker_home()
+
 # Must be set before crewai is first imported: its event bus installs a
 # global OpenTelemetry provider and a live exporter thread at import time.
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
@@ -33,6 +42,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
+from band_rest.core import http_client
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -51,6 +61,7 @@ from band.client.streaming import (
     RoomRemovedPayload,
 )
 from band.client.streaming.client import RECONNECT_POLICY
+from band.core.settlement import SettlementResult
 from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -70,7 +81,7 @@ from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
-pytest_plugins = ["pytester"]
+pytest_plugins = ["pytester", "tests.testdurations"]
 
 # Env-var prefixes that adapter config classes (CodexAdapterConfig,
 # LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
@@ -79,6 +90,9 @@ _ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
 
 def pytest_configure(config: pytest.Config) -> None:
     """Block ``.env.test``'s adapter-config keys before collection can leak them.
+
+    Also point Hypothesis at a per-worker example database so xdist workers
+    do not share ``.hypothesis/examples``.
 
     ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
     override=False)`` at import time; several subdirectory ``conftest.py``
@@ -99,11 +113,17 @@ def pytest_configure(config: pytest.Config) -> None:
     Skipped entirely when ``E2E_TESTS_ENABLED`` is set: a live E2E run wants
     ``.env.test``'s real values (e.g. ``CODEX_CWD``), not neutralized ones.
     """
+    configure_hypothesis_worker_database()
     if os.environ.get("E2E_TESTS_ENABLED", "").lower() == "true":
         return
     for key in dotenv_values(ENV_TEST_FILE):
         if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
             os.environ[key] = ""
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Restore the caller's Parlant setting after all local servers stop."""
+    restore_parlant_worker_home()
 
 
 class CollectionGateSettings(BaseSettings):
@@ -212,6 +232,16 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     # the lock fd (and its process-registry entry) for the whole session.
     for guard in created:
         guard.release()
+
+
+@pytest.fixture(autouse=True)
+def instant_retries(request, monkeypatch):
+    """Keep the generated client's retry count but not its multi-second backoff.
+
+    Live tests (e2e/integration) keep the real backoff against a real platform.
+    """
+    if not {"e2e", "integration"} & set(request.node.path.parts):
+        monkeypatch.setattr(http_client, "_retry_timeout", lambda **_: 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -403,6 +433,30 @@ def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
 # =============================================================================
 # Event Factory Helpers (must return SDK-native types for pattern matching)
 # =============================================================================
+
+
+def mirror_settlement_results(link: MagicMock) -> MagicMock:
+    """Give a mock link the detailed status writes the runtime reads.
+
+    Every processing claim is accepted. Runtime tests script
+    ``mark_processed``/``mark_failed``; the detailed terminal results are
+    ACCEPTED exactly when the boolean mock is truthy. Wire-level classification
+    is covered through the real client in ``tests/platform/settlement``.
+    """
+
+    def settled(accepted: object) -> SettlementResult:
+        return SettlementResult.ACCEPTED if accepted else SettlementResult.UNCONFIRMED
+
+    async def processed(*args: Any, **kwargs: Any) -> SettlementResult:
+        return settled(await link.mark_processed(*args, **kwargs))
+
+    async def failed(*args: Any, **kwargs: Any) -> SettlementResult:
+        return settled(await link.mark_failed(*args, **kwargs))
+
+    link.mark_processing_result = AsyncMock(return_value=SettlementResult.ACCEPTED)
+    link.mark_processed_result = AsyncMock(side_effect=processed)
+    link.mark_failed_result = AsyncMock(side_effect=failed)
+    return link
 
 
 def make_message_event(

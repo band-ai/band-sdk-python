@@ -18,6 +18,7 @@ from tests.runtime.helpers import (
     ActivityReport,
     running_execution,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestActivityCleanup:
@@ -43,7 +44,7 @@ class TestActivityCleanup:
         async with activity_context(peer, handler, observer, enabled=False) as ctx:
             async with asyncio.TaskGroup() as tasks:
                 turn = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await started.wait()
                 peer.stopped = True
@@ -60,7 +61,9 @@ class TestActivityCleanup:
             assert peer.requested("failed") == []
 
     @pytest.mark.looptime
-    async def test_activity_refusal_preserves_native_stop_cleanup(self) -> None:
+    async def test_activity_refusal_preserves_native_stop_cleanup(
+        self,
+    ) -> None:
         peer = ActivityPeer()
         started = asyncio.Event()
         reports_at_cleanup: list[ActivityReport] = []
@@ -79,7 +82,7 @@ class TestActivityCleanup:
         async with activity_context(peer, handler, observer) as ctx:
             async with asyncio.TaskGroup() as tasks:
                 turn = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await started.wait()
                 peer.stopped = True
@@ -119,7 +122,7 @@ class TestActivityCleanup:
 
         async with activity_context(peer, handler, AsyncMock(), enabled=False) as ctx:
             turn = asyncio.create_task(
-                ctx._process_event(make_message_event(msg_id="trigger"))
+                attempt_delivery(ctx, make_message_event(msg_id="trigger"))
             )
             await cleaning.wait()
             release.set()

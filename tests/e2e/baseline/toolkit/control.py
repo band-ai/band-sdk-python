@@ -179,11 +179,9 @@ class ObservedExecution(ExecutionContext):
 
     startup_synced: asyncio.Event
 
-    async def _synchronize_with_next(self) -> bool:
-        synced = await super()._synchronize_with_next()
-        if synced:
-            self.startup_synced.set()
-        return synced
+    def finish_startup(self) -> None:
+        super().finish_startup()
+        self.startup_synced.set()
 
 
 class ControlLink(BandLink):
@@ -243,11 +241,13 @@ async def running_control_runtime(
     control: ControlRuntime | None = None,
     forwarded_control_modes: frozenset[ControlMode] = frozenset(ControlMode),
     enable_working_state: bool = True,
+    session_config: SessionConfig | None = None,
+    link_factory: type[ControlLink] = ControlLink,
 ) -> AsyncGenerator[ControlRuntime, None]:
     """Run one controlled agent and leave its room playable on teardown."""
     if control is None:
         control = ControlRuntime(block_cycles=block_cycles)
-    link = ControlLink(
+    link = link_factory(
         agent_id=agent.id,
         api_key=agent.api_key,
         ws_url=settings.endpoints.ws_url,
@@ -265,7 +265,8 @@ async def running_control_runtime(
                 room,
                 link,
                 control.on_execute,
-                config=SessionConfig(
+                config=session_config
+                or SessionConfig(
                     idle_resync_seconds=1,
                     idle_resync_max_seconds=2,
                     enable_working_state=enable_working_state,

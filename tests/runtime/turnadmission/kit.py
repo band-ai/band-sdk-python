@@ -6,7 +6,9 @@ import asyncio
 from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
+from band.platform.event import MessageEvent
 from band.runtime.execution import ExecutionContext
+from band.runtime.originals import is_synthetic
 from tests.runtime.conftest import wait_for_condition
 from tests.runtime.helpers import LifecyclePlatform, synthetic_message
 
@@ -43,13 +45,19 @@ class TurnRecorder(SimpleAdapter[Any]):
 
 
 def queued_synthetic(ctx: ExecutionContext) -> list[str]:
-    return [event.payload.id for event in ctx._pending_synthetic if event.payload]
+    return [
+        event.payload.id
+        for event in ctx.scheduler.pending
+        if isinstance(event, MessageEvent)
+        and event.payload is not None
+        and is_synthetic(event)
+    ]
 
 
 async def started(ctx: ExecutionContext) -> None:
     """Start the room loop and wait out its startup /next synchronization."""
     await ctx.start()
-    await wait_for_condition(lambda: ctx._sync_complete)
+    await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
 
 async def queue_while_stopped(

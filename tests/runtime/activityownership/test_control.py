@@ -15,6 +15,7 @@ from tests.conftest import make_message_event
 from tests.runtime.activityownership.kit import (
     ActivityPlatform,
     ObservedIdle,
+    deliver_event,
     past_a_keep_alive,
 )
 
@@ -50,10 +51,10 @@ class TestControlledTurnDetail:
             workers.append(bind_turn_task(tools, asyncio.create_task(bash(tools))))
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event(msg_id="interrupted"))
+        await deliver_event(ctx, make_message_event(msg_id="interrupted"))
         assert ctx.interrupt()
         await cleanup_entered.wait()
-        await ctx._process_event(make_message_event(msg_id="next"))
+        await deliver_event(ctx, make_message_event(msg_id="next"))
         assert workers[0].task.cancelled()
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
@@ -86,7 +87,7 @@ class TestControlledTurnDetail:
                 raise
 
         ctx = execution(handler)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         assert cancelled.is_set()
         await report_tool_activity(captured[0], "Edit")
         await past_a_keep_alive()
@@ -147,7 +148,7 @@ class TestControlledTurnDetail:
                 raise
 
         ctx = execution(handler)
-        turn = asyncio.create_task(ctx._process_event(make_message_event()))
+        turn = asyncio.create_task(deliver_event(ctx, make_message_event()))
         await activity_platform.bodies_reach(2)
         ctx.interrupt()
         await cleanup_entered.wait()

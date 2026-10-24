@@ -12,7 +12,7 @@ from band.runtime.toolactivity import report_tool_activity
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import IDLE_BODY, REASONING_BODY, tool_body
 from tests.conftest import make_message_event
-from tests.runtime.activityownership.kit import ActivityPlatform
+from tests.runtime.activityownership.kit import ActivityPlatform, deliver_event
 
 CAP_SECONDS = 10.0
 # Keep-alives at 3, 6 and 9 s; the one due at 12 s finds the cap passed.
@@ -35,7 +35,7 @@ class TestDetailCap:
             await set_permission_wait(tools, False)
 
         ctx = execution(handler, max_working_state_seconds=CAP_SECONDS)
-        await ctx._process_event(make_message_event())
+        await deliver_event(ctx, make_message_event())
         assert activity_platform.activity_bodies == [
             REASONING_BODY,
             *[tool_body("Bash")] * 4,

@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Keep-alive validation leaves headroom for a missed or slow refresh.
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
+DEFAULT_MAX_MESSAGE_RETRIES = 1
+
 
 def _require_positive_when_set(name: str, value: float | None) -> None:
     """Shared guard for the optional-timeout fields below: unset (None) means
@@ -36,7 +38,7 @@ class SessionConfig(BaseSettings):
     max_context_messages: int = 100
     # Max attempts per message before permanently failing. band_sdk_core.RetryTracker's
     # constructor validates this range itself -- no second Python-side check.
-    max_message_retries: int = 1
+    max_message_retries: int = DEFAULT_MAX_MESSAGE_RETRIES
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
     # Base reconciliation interval, also used for retries and, unless
     # stopped_resync_seconds is set, for stopped-room probes.

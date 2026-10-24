@@ -75,6 +75,8 @@ class Resident:
     fail_acquire: bool = False
     fail_dispose: bool = False
     resists_cancel: bool = False
+    clear_cancel: bool = False
+    cancellations: int = 0
     # Set once a resistant start took its cancellation and parked to finish.
     resisted: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -94,10 +96,19 @@ class Resident:
         try:
             await opening.wait()
         except asyncio.CancelledError:
+            self.cancellations += 1
             if not self.resists_cancel:
                 raise
+            if self.clear_cancel:
+                task = asyncio.current_task()
+                assert task is not None
+                task.uncancel()
             self.resisted.set()
-            await opening.released.wait()
+            try:
+                await opening.released.wait()
+            except asyncio.CancelledError:
+                self.cancellations += 1
+                raise
 
     async def release(self, cause: ReleaseCause) -> ReleaseOutcome:
         if cause is not ReleaseCause.FINAL:

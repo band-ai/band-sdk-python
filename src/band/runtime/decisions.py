@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Generic, Literal, TypeVar
@@ -15,6 +16,8 @@ import band_sdk_core
 from band_sdk_core import CancelledDecisions, ClaimOutcome
 
 logger = logging.getLogger(__name__)
+
+APPROVAL_NOT_PENDING_TEMPLATE = "Approval `{token}` is no longer pending."
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -163,9 +166,23 @@ class DecisionRegistry(Mapping[str, T]):
     async def wait(
         self, entry: DecisionEntry[T], future: asyncio.Future[R], *, timeout_s: float
     ) -> R | Literal[Timeout.TIMED_OUT]:
-        """The answer to ``entry``, or ``TIMED_OUT`` if the deadline claims it
-        first or it was replaced; a reply that claimed it first is always
-        waited for."""
+        """Wait for an answer and release its registration before returning."""
+        async with self.answering(entry, future, timeout_s=timeout_s) as answer:
+            return answer
+
+    @asynccontextmanager
+    async def answering(
+        self, entry: DecisionEntry[T], future: asyncio.Future[R], *, timeout_s: float
+    ) -> AsyncIterator[R | Literal[Timeout.TIMED_OUT]]:
+        """Retain the decision's ownership until its answer has been delivered."""
+        try:
+            yield await self._wait_for_answer(entry, future, timeout_s=timeout_s)
+        finally:
+            self.forget(entry)
+
+    async def _wait_for_answer(
+        self, entry: DecisionEntry[T], future: asyncio.Future[R], *, timeout_s: float
+    ) -> R | Literal[Timeout.TIMED_OUT]:
         try:
             # asyncio.timeout(), not wait_for: on Python 3.11 wait_for returns
             # an answer that lands in the same tick as a cancel of this task
@@ -183,8 +200,6 @@ class DecisionRegistry(Mapping[str, T]):
                 )
                 return await future
             return Timeout.TIMED_OUT
-        finally:
-            self.forget(entry)
 
     def _holds(self, entry: DecisionEntry[T]) -> bool:
         # Tickets are per registry, so an entry from a registry a room has

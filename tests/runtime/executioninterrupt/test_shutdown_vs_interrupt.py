@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.delivery import TurnOutcome
+from band.runtime.execution import ExecutionContext
 from tests.conftest import BlockingHandler, make_message_event
 from tests.runtime.executioninterrupt.kit import (
     assert_fresh_cycle_still_propagates_shutdown_cancel,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestShutdownVsInterrupt:
@@ -27,7 +29,7 @@ class TestShutdownVsInterrupt:
             "room-123", mock_link, swallow_cancel, agent_id="agent-123"
         )
         first = asyncio.create_task(
-            ctx._process_event(make_message_event(msg_id="swallow"))
+            attempt_delivery(ctx, make_message_event(msg_id="swallow"))
         )
         await first_started.wait()
 
