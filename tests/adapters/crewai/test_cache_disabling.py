@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from band.core.types import Capability
-from tests.adapters.crewai.kit import EchoInput, echo_message
+from tests.adapters.crewai.kit import (
+    EchoInput,
+    echo_message,
+)
 
 
 class TestCacheDisabling:

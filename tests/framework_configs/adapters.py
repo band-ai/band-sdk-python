@@ -291,7 +291,7 @@ def _crewai_factory(**kw: Any) -> Any:
     # Guard the runtime methods in both venvs: without crewai they would fail on its
     # function-local import, and with it they would build a Crew and call an LLM for
     # real. on_cleanup is never guarded (dict.pop + logging, no CrewAI interaction).
-    for method_name in ("on_message", "_invoke_crew"):
+    for method_name in ("on_message", "on_turn", "_invoke_crew"):
         if hasattr(instance, method_name):
             setattr(instance, method_name, _crewai_conformance_guard)
     return instance

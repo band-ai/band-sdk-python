@@ -37,8 +37,7 @@ class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
     Use this to respond to users or other agents. Messages require at least one @mention
-    in the mentions array. When the latest message needs no answer from you, call
-    band_no_reply instead of sending one.
+    in the mentions array.
     """
 
     content: str = Field(..., description="The message content to send")

@@ -34,7 +34,9 @@ class TestSetup:
     ) -> None:
         """Requesting the fixture is the assertion — see its docstring."""
 
-    async def test_startup_fails_loudly_when_server_unreachable(self) -> None:
+    async def test_startup_fails_loudly_when_server_unreachable(
+        self,
+    ) -> None:
         """The default (real-server) path must fail at startup naming the fix."""
 
         adapter = OpencodeAdapter()
@@ -64,7 +66,9 @@ class TestSetup:
         assert first._mcp_server_name == restarted._mcp_server_name
         assert first._mcp_server_name != other._mcp_server_name
 
-    async def test_mcp_registration_uses_band_agent_id_before_startup(self) -> None:
+    async def test_mcp_registration_uses_band_agent_id_before_startup(
+        self,
+    ) -> None:
         class IdentityTools(FakeAgentTools):
             @property
             def agent_id(self) -> str:
@@ -162,7 +166,9 @@ class TestSetup:
             (f"{registered}_*", True),
         ]
 
-    async def test_registers_shared_mcp_backend_on_startup(self) -> None:
+    async def test_registers_shared_mcp_backend_on_startup(
+        self,
+    ) -> None:
         fake_backend = FakeBandMCPBackend()
         fake_client = FakeOpencodeClient(
             prompt_event_sequences=[
@@ -210,7 +216,9 @@ class TestSetup:
         assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
         assert fake_backend.stop_calls == 1
 
-    async def test_mcp_registration_retries_until_connected(self) -> None:
+    async def test_mcp_registration_retries_until_connected(
+        self,
+    ) -> None:
         """A transient non-connected registration result must not be treated as
         success -- the next message retries instead of leaving Band tools
         unregistered for the rest of the process -- while a connected one is kept."""
@@ -423,7 +431,9 @@ class TestSetup:
         assert MEMORY_TOOL_NAMES <= full_tool_names
         assert CONTACT_TOOL_NAMES <= full_tool_names
 
-    def test_own_band_tools_recognized_before_mcp_registration(self) -> None:
+    def test_own_band_tools_recognized_before_mcp_registration(
+        self,
+    ) -> None:
         """The auto-approve check for the adapter's own band tools must not wait on
         MCP registration: a second room's first turn can hit a band-tool permission
         ask while the first room is still registering. The names are derived at
@@ -447,9 +457,9 @@ class TestSetup:
     async def test_turn_system_prompt_carries_room_context(
         self, make_adapter, tools
     ) -> None:
-        """The per-turn system prompt must name the current chat_id (band MCP
-        tool schemas require a chat_id argument, so an untold model cannot
-        call any platform tool) and the requester."""
+        """The per-turn system prompt must name the current chat_id: band MCP
+        tool schemas require a chat_id argument, so an untold model cannot call
+        any platform tool. Senders are named per input, never as one requester."""
         fake_client = idle_client()
         adapter = make_adapter(fake_client)
 
@@ -457,5 +467,4 @@ class TestSetup:
 
         system = fake_client.prompt_calls[0]["system"]
         assert "Current chat_id: room-1" in system
-        assert "Current requester name: Alice" in system
-        assert "Current requester id: user-1" in system
+        assert "Current requester" not in system

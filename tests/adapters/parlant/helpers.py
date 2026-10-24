@@ -9,14 +9,23 @@ from unittest.mock import MagicMock
 
 from pydantic import BaseModel
 
+from tests.runtime.currentrecords import current_records
+
 MESSAGE_KIND = "message"
 AI_AGENT_SOURCE = "ai_agent"
 # The session the mock Application creates, and who sends the sample message.
 SESSION_ID = "session-123"
+SENDER_ID = "user-456"
 SENDER_NAME = "Alice"
 # The Band agent's own name and description, handed to on_started.
 BAND_NAME = "BandName"
 BAND_DESCRIPTION = "Band description"
+
+
+def current_content(posted: str) -> str | None:
+    """The content of the one current input a customer message carries."""
+    (record,) = current_records(posted)
+    return record["content"]
 
 
 class LookupInput(BaseModel):

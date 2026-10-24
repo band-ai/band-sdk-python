@@ -1594,6 +1594,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     SUPPORTED_CAPABILITIES = frozenset(
         {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
+    # The Flow, not a model prompt, consumes the message: its run id, its reply
+    # matching to pending delegations and its ``message``/``requester`` inputs
+    # are all keyed to one original, so a batch is refused.
+    supports_batch_input = False
 
     @property
     def judges_turns(self) -> bool:

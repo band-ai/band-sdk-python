@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -45,15 +46,27 @@ class DefaultPreprocessor(Preprocessor):
         agent_id: str,
     ) -> AgentInput | None:
         """Process platform event into AgentInput."""
-        msg = self.message(ctx, event, agent_id)
-        if msg is None:
+        return await self.process_batch(ctx, (event,), agent_id)
+
+    async def process_batch(
+        self,
+        ctx: ExecutionContext,
+        events: Sequence[PlatformEvent],
+        agent_id: str,
+    ) -> AgentInput | None:
+        """Process one or more deliveries into one AgentInput sharing one context."""
+        messages = tuple(
+            msg for event in events if (msg := self.message(ctx, event, agent_id))
+        )
+        if not messages:
             return None
+        first = messages[0]
 
         is_bootstrap = not ctx.is_llm_initialized
 
         raw_history: list[dict[str, Any]] = []
         if is_bootstrap and ctx.config.enable_context_hydration:
-            raw_history = await self._load_history(ctx, msg)
+            raw_history = await self._load_history(ctx, messages)
 
         participants = ctx.participants
         participants_msg = check_and_format_participants(ctx, mark_sent=False)
@@ -71,13 +84,14 @@ class DefaultPreprocessor(Preprocessor):
         tools = AgentTools.from_context(ctx)
 
         return AgentInput(
-            msg=msg,
+            msg=first,
+            messages=messages,
             tools=tools,
             history=HistoryProvider(raw=raw_history),
             participants_msg=participants_msg,
             contacts_msg=contacts_msg,
             is_session_bootstrap=is_bootstrap,
-            room_id=msg.room_id,
+            room_id=first.room_id,
             commit_context=commit_context,
         )
 
@@ -131,20 +145,14 @@ class DefaultPreprocessor(Preprocessor):
     async def _load_history(
         self,
         ctx: ExecutionContext,
-        msg: PlatformMessage,
+        messages: Sequence[PlatformMessage],
     ) -> list[dict[str, Any]]:
-        """Load platform history for session bootstrap."""
+        """Load platform history for session bootstrap, before the turn's originals."""
         try:
             logger.info("Room %s: Loading history...", ctx.room_id)
             context = await ctx.get_context()
-            # Strictly before the trigger: later entries are pending turns of
-            # their own; replaying them exposes future requests and duplicates
-            # them when their own turn arrives.
-            history = format_history_for_llm(
-                messages_before(context.messages, msg.id),
-                exclude_id=msg.id,
-                participants=ctx.participants,
-            )
+            earlier = messages_before(context.messages, {msg.id for msg in messages})
+            history = format_history_for_llm(earlier, participants=ctx.participants)
             logger.info(
                 "Room %s: Got %s messages",
                 ctx.room_id,

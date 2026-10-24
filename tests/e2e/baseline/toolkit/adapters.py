@@ -46,6 +46,7 @@ it, and ``ci_lanes`` imports it).
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -72,6 +73,7 @@ __all__ = [
     "adapter_lane",
     "assert_registry_covers_discovered",
     "build_adapter",
+    "declares_batch_input",
     "discovered_agent_ids",
     "registered_ids",
     "spec_for",
@@ -99,6 +101,10 @@ class AdapterSpec:
     ``tests/framework_conformance/test_agent_wiring_rules.py`` — marking an
     adapter pending is a deliberate, two-file act with a live-lane follow-up.
 
+    ``supports_batch_input`` is read off the adapter class (see
+    :func:`declares_batch_input`), never recorded here, so it cannot drift from the
+    declaration the runtime itself checks.
+
     ``runs_tool_loop`` marks an adapter that runs an LLM tool loop able to invoke a
     translated local ``ToolSpec`` and emit observable ``tool_call`` events — the
     precondition for a custom-tool scenario. It is deliberately *decoupled* from
@@ -116,6 +122,10 @@ class AdapterSpec:
     build: AdapterBuilder = field(compare=False)
     e2e_pending: str | None = None
     runs_tool_loop: bool = True
+
+    @property
+    def supports_batch_input(self) -> bool:
+        return declares_batch_input(self.id)
 
 
 # Keyed by the adapter's string id (== ``Adapter`` value; ``Adapter`` is a str
@@ -213,6 +223,33 @@ def assert_registry_covers_discovered() -> None:
         )
 
 
+def declares_batch_input(adapter_id: str) -> bool:
+    """Whether the adapter's class declares ``supports_batch_input``.
+
+    Read off the one adapter class its ``band.adapters`` module defines. An adapter
+    whose framework is not installed here cannot be imported, so it declares nothing
+    in this environment; its own lane's environment is where it is selected.
+    """
+    try:
+        module = importlib.import_module(f"band.adapters.{adapter_id}")
+    except ImportError:
+        return False
+    classes = {
+        member
+        for member in vars(module).values()
+        if isinstance(member, type)
+        and issubclass(member, SimpleAdapter)
+        and member is not SimpleAdapter
+        and member.__module__.startswith(module.__name__)
+    }
+    if len(classes) != 1:
+        raise ValueError(
+            f"{module.__name__} must define exactly one adapter class, found "
+            f"{sorted(cls.__name__ for cls in classes)}"
+        )
+    return classes.pop().supports_batch_input
+
+
 def adapter_lane(spec: AdapterSpec) -> Lane:
     """The CI lane an adapter runs in: the unique non-default lane among its deps.
 
@@ -244,6 +281,7 @@ def specs(
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
+    batch_input: bool | None = None,
     lane: Lane | None = None,
     include_pending: bool = False,
 ) -> list[AdapterSpec]:
@@ -255,7 +293,9 @@ def specs(
     *none* of them (the complement, e.g. ``without={Capability.MEMORY}`` for the
     non-memory adapters). ``supports`` and ``without`` are disjoint complementary
     filters. ``runs_tool_loop=True`` keeps only the custom-tool-capable adapters
-    (``False`` the complement); see ``AdapterSpec.runs_tool_loop``. ``lane`` keeps
+    (``False`` the complement); see ``AdapterSpec.runs_tool_loop``. ``batch_input=True``
+    keeps the adapters whose class declares ``supports_batch_input`` (``False`` the
+    complement). ``lane`` keeps
     only adapters whose derived home lane is ``lane`` (see ``adapter_lane``).
     ``e2e_pending`` adapters are excluded unless ``include_pending`` (they define a
     CI lane but run no cells). Stable id order.
@@ -271,6 +311,7 @@ def specs(
         and wanted.issubset(spec.supports)
         and spec.supports.isdisjoint(unwanted)
         and (runs_tool_loop is None or spec.runs_tool_loop == runs_tool_loop)
+        and (batch_input is None or spec.supports_batch_input == batch_input)
         and (lane is None or adapter_lane(spec) == lane)
     ]
     return chosen

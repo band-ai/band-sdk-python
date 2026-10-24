@@ -450,7 +450,7 @@ class CodexApprovalRoom:
             ask := asyncio.create_task(
                 self._ask(
                     tools=self.tools,
-                    msg=make_platform_message(room_id=ROOM_ID),
+                    audience=[{"id": "user-1", "name": "Alice"}],
                     room_id=ROOM_ID,
                     event=event_request(
                         request_id, CodexApprovalMethod.COMMAND_EXECUTION, params

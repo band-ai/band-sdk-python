@@ -86,4 +86,6 @@ class TestRoomTurn:
         await run_turn(adapter, tools, participants_msg="Bob joined the room")
 
         prompt = prompt_text(llm)
-        assert "[System]: Bob joined the room\n\n[Alice]: @Agent hello" in prompt
+        assert (
+            "[System]: Bob joined the room\n\n## Current input messages (1)" in prompt
+        )
