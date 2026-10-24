@@ -126,7 +126,11 @@ from band.runtime.prompts import (
     TURN_COMPLETION_GUIDANCE,
     render_system_prompt,
 )
-from band.runtime.toolactivity import end_tool_activity, report_tool_activity
+from band.runtime.toolactivity import (
+    end_tool_activity,
+    report_tool_activity,
+    suppress_tool_activity,
+)
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     BandTool,
@@ -966,7 +970,10 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
                 if turn.closed:
                     return _text_tool_result("OMP turn already closed", is_error=True)
-                result = await self._execute_tool(call, tools)
+                with suppress_tool_activity(
+                    enabled=Emit.TOOL_CALLS in self.features.emit
+                ):
+                    result = await self._execute_tool(call, tools)
                 if (
                     call.toolName == BandTool.NO_REPLY
                     and not result.is_error

@@ -20,6 +20,7 @@ from band.adapters.omp import (
     OmpAdapter,
     OmpAdapterConfig,
     OmpPermissionRequest,
+    PermissionResolver,
 )
 from band.converters.omp import OmpSessionState
 from band.core.delivery import DeliveryFailedError
@@ -1146,7 +1147,7 @@ EMIT_OFF: tuple[Emit, ...] = ()
 def make_adapter(
     tmp_path: Path,
     emit: tuple[Emit, ...],
-    resolve_permission=None,  # type: ignore[no-untyped-def]
+    resolve_permission: PermissionResolver | None = None,
 ) -> OmpAdapter:
     return OmpAdapter(
         OmpAdapterConfig(cwd=str(tmp_path)),
@@ -1172,15 +1173,15 @@ class GatedPermissionResolver:
 def permission_request(request_id: str) -> OmpUIRequest:
     return OmpUIRequest(
         id=request_id,
-        method="select",
+        method=OmpUIMethod.SELECT,
         title=request_id,
-        options=["Approve", "Deny"],
+        options=[OMP_FORM_APPROVE, OMP_FORM_DENY],
     )
 
 
 def tool_start(call_id: str, name: str, **args: object) -> OmpEvent:
     return OmpEvent(
-        type="tool_execution_start",
+        type=OmpEventType.TOOL_START,
         toolCallId=call_id,
         toolName=name,
         args=args,
@@ -1189,9 +1190,11 @@ def tool_start(call_id: str, name: str, **args: object) -> OmpEvent:
 
 def tool_end(call_id: str, name: str, *, is_error: bool = False) -> OmpEvent:
     return OmpEvent(
-        type="tool_execution_end",
+        type=OmpEventType.TOOL_END,
         toolCallId=call_id,
         toolName=name,
-        result=OmpToolResult(content=[OmpContent(type="text", text="private-result")]),
+        result=OmpToolResult(
+            content=[OmpContent(type=OmpContentKind.TEXT, text="private-result")]
+        ),
         isError=is_error,
     )

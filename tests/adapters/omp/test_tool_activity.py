@@ -1,24 +1,34 @@
-"""Native OMP tool activity is reported independently of narration."""
+"""Native OMP tool activity follows narration and call ownership."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from band.adapters.omp import OmpTurn
 from band.core.types import Emit
-from band.testing.activity import ActivityRecorder
+from band.testing.activity import SHOWN_REASONING, ActivityRecorder, shown_tool
 from band.testing.fake_tools import FakeAgentTools
 from tests.adapters.omp.kit import EMIT_OFF, EMIT_ON, make_adapter, tool_end, tool_start
 
 
 class TestOmpToolActivity:
     @pytest.mark.parametrize(
-        "emit", [EMIT_ON, EMIT_OFF], ids=["narration-on", "narration-off"]
+        ("emit", "expected_activity", "narrated"),
+        [
+            (EMIT_ON, [shown_tool("Bash"), SHOWN_REASONING], True),
+            (EMIT_OFF, [], False),
+        ],
+        ids=["narration-on", "narration-off"],
     )
     async def test_tool_activity_follows_the_narration_switch(
-        self, tmp_path: Path, emit: tuple[Emit, ...]
+        self,
+        tmp_path: Path,
+        emit: tuple[Emit, ...],
+        expected_activity: list[dict[str, Any]],
+        narrated: bool,
     ) -> None:
         adapter = make_adapter(tmp_path, emit)
         recorder = ActivityRecorder()
@@ -30,11 +40,8 @@ class TestOmpToolActivity:
         )
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
 
-        if emit:
-            recorder.assert_completed_tool("Bash")
-        else:
-            assert recorder.events == []
-        assert bool(tools.events_sent) is bool(emit)
+        assert recorder.events == expected_activity
+        assert bool(tools.events_sent) is narrated
 
     async def test_only_the_name_reaches_the_recorder(self, tmp_path: Path) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
@@ -48,36 +55,42 @@ class TestOmpToolActivity:
             ),
             turn,
         )
-        assert recorder.events == [{"kind": "tool_call", "name": "Write"}]
+        assert recorder.events == [shown_tool("Write")]
 
     @pytest.mark.parametrize(
-        ("finished_id", "finished_name", "remaining_id", "remaining_name"),
+        ("first_name", "second_name"),
         [
-            ("call-a", "Read", "call-b", "Bash"),
-            ("call-b", "Bash", "call-a", "Read"),
+            ("Read", "Bash"),
+            ("Bash", "Bash"),
         ],
+        ids=["different-tools", "same-tool"],
+    )
+    @pytest.mark.parametrize(
+        ("finished_id", "remaining_id"),
+        [("call-a", "call-b"), ("call-b", "call-a")],
         ids=["older-finishes-first", "newer-finishes-first"],
     )
     async def test_finishing_one_tool_keeps_the_remaining_tool_visible(
         self,
         tmp_path: Path,
+        first_name: str,
+        second_name: str,
         finished_id: str,
-        finished_name: str,
         remaining_id: str,
-        remaining_name: str,
     ) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
         recorder = ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
         turn = OmpTurn(tools=tools)
+        names = {"call-a": first_name, "call-b": second_name}
 
-        await adapter._emit_event(tool_start("call-a", "Read"), turn)
-        await adapter._emit_event(tool_start("call-b", "Bash"), turn)
-        await adapter._emit_event(tool_end(finished_id, finished_name), turn)
-        assert recorder.events[-1] == {"kind": "tool_call", "name": remaining_name}
-        await adapter._emit_event(tool_end(remaining_id, remaining_name), turn)
+        await adapter._emit_event(tool_start("call-a", first_name), turn)
+        await adapter._emit_event(tool_start("call-b", second_name), turn)
+        await adapter._emit_event(tool_end(finished_id, names[finished_id]), turn)
+        assert recorder.events[-1] == shown_tool(names[remaining_id])
+        await adapter._emit_event(tool_end(remaining_id, names[remaining_id]), turn)
 
-        assert recorder.events[-1] == {"kind": "reasoning"}
+        assert recorder.events[-1] == SHOWN_REASONING
 
     async def test_end_of_untracked_call_changes_nothing(self, tmp_path: Path) -> None:
         adapter = make_adapter(tmp_path, EMIT_ON)
@@ -90,7 +103,7 @@ class TestOmpToolActivity:
 
         await adapter._emit_event(tool_start("call-1", "Bash"), turn)
         await adapter._emit_event(tool_end("unknown", "Ghost"), turn)
-        assert recorder.events == [{"kind": "tool_call", "name": "Bash"}]
+        assert recorder.events == [shown_tool("Bash")]
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
         await adapter._emit_event(tool_end("call-1", "Bash"), turn)
         recorder.assert_completed_tool("Bash")
