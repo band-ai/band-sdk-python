@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from hypothesis import settings as hypothesis_settings
 from hypothesis.database import DirectoryBasedExampleDatabase
@@ -22,7 +21,7 @@ SERIAL_WORKER_ID = "master"
 # Four in-job workers on the existing OS × extra cells. Not a GitHub shard axis.
 CI_XDIST_FLAGS = ("-n 4", "--dist worksteal")
 
-_parlant_home: TemporaryDirectory[str] | None = None
+_parlant_home: Path | None = None
 _previous_parlant_home: str | None = None
 
 
@@ -61,32 +60,35 @@ def configure_hypothesis_worker_database() -> None:
 
 
 def configure_parlant_worker_home() -> None:
-    """Give each pytest process an isolated Parlant store for local servers."""
+    """Give each pytest process an isolated Parlant store for local servers.
+
+    Parlant's file logger holds ``parlant.log`` open until interpreter shutdown,
+    so pytest teardown cannot safely remove its home on Windows.
+    """
     global _parlant_home, _previous_parlant_home
 
     if _parlant_home is not None:
         return
 
     worker = xdist_worker_id()
-    _parlant_home = tempfile.TemporaryDirectory(
-        prefix=worker_scoped("band-parlant-home", worker) + "-"
+    _parlant_home = Path(
+        tempfile.mkdtemp(prefix=worker_scoped("band-parlant-home", worker) + "-")
     )
     _previous_parlant_home = os.environ.get("PARLANT_HOME")
-    os.environ["PARLANT_HOME"] = _parlant_home.name
+    os.environ["PARLANT_HOME"] = str(_parlant_home)
 
 
-def cleanup_parlant_worker_home() -> None:
-    """Restore the caller's Parlant setting and remove this worker's store."""
+def restore_parlant_worker_home() -> None:
+    """Restore the caller's Parlant setting after pytest completes."""
     global _parlant_home, _previous_parlant_home
 
     if _parlant_home is None:
         return
 
-    if os.environ.get("PARLANT_HOME") == _parlant_home.name:
+    if os.environ.get("PARLANT_HOME") == str(_parlant_home):
         if _previous_parlant_home is None:
             os.environ.pop("PARLANT_HOME", None)
         else:
             os.environ["PARLANT_HOME"] = _previous_parlant_home
-    _parlant_home.cleanup()
     _parlant_home = None
     _previous_parlant_home = None

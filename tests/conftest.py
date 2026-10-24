@@ -18,9 +18,9 @@ from __future__ import annotations
 import os
 
 from tests.xdistworker import (
-    cleanup_parlant_worker_home,
     configure_hypothesis_worker_database,
     configure_parlant_worker_home,
+    restore_parlant_worker_home,
 )
 
 if os.environ.get("E2E_TESTS_ENABLED", "").lower() != "true":
@@ -120,8 +120,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    """Remove the temporary Parlant store after all local servers stop."""
-    cleanup_parlant_worker_home()
+    """Restore the caller's Parlant setting after all local servers stop."""
+    restore_parlant_worker_home()
 
 
 class CollectionGateSettings(BaseSettings):
