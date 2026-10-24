@@ -35,6 +35,8 @@ the workflow files cannot say for themselves.
   When adding a supported Python version, update the matrix exclusions so normal
   PRs retain only the newest validated Windows interpreter; the matrix guard
   checks this against the version grid.
+  Shared conformance probe modules must remain importable without adapter-specific
+  extras; acquire optional dependencies only when running their owning probe.
 
 ## Unit pytest parallelism
 

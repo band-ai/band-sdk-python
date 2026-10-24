@@ -376,10 +376,23 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   matching prompt outcome and actual native session settlement
   (`session_settled` or `get_state.isSettled`). An error in a resumed assistant
   message fails the same Band turn. `turn_timeout_s` covers the whole lifecycle.
-  Timeout, errors and cancellation run cleanup for that room's process; a
-  subsequent message starts a fresh native process rather than reusing the
-  failed one. Cancelling a prompt still waiting for admission does not
-  interrupt the active prompt.
+  Timeout, errors and admitted cancellation retire that room's process; a
+  subsequent message starts a fresh native process only after cleanup is proven.
+  Cancelling a prompt still waiting for admission does not interrupt the active
+  prompt.
+  Completion RPC responses and idle-proven completion or final-drain waits have a
+  separate 30-second protection budget, controlled by the native client's
+  `completion_timeout_s`. The adapter uses the same instance budget for its
+  post-prompt state refresh. This is not an inactivity timeout for active
+  generation or background work. Expiry raises
+  `band.integrations.omprpc.OmpCompletionTimeout`: the turn outcome is uncertain,
+  not proof that no work happened, and the SDK does not invent a successful
+  completion. Callers must account for already performed work before replaying it.
+  Callbacks that resist cancellation keep retirement unproven even after every
+  identified native process exits; the room and workspace remain owned until a
+  later cleanup proves those callbacks have finished.
+  Event delivery starts no further callbacks after retirement begins. Once a
+  resistant callback returns, its delivery worker exits so cleanup can be retried.
 - **Process close.** A usable reader gets a best-effort abort request bounded to
   one second, then stdin closes for EOF while output is drained. The root gets
   one second to exit before forced cleanup, which still runs if the root has

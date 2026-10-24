@@ -29,10 +29,17 @@ from band.integrations.ompwire import (
     OmpUIRequest,
     OmpUIResponse,
 )
+from tests.adapters.waiting import spin
 from tests.integrations import omppeer
 from tests.integrations.ompgate import GATE_COMMAND, GateRole, ProcessReceipt
 from tests.integrations.omppeer import COMPLETE, FOLLOW_UP_PROMPT
 from tests.integrations.omprpc.cancellation import HeldCleanup
+from tests.toolkit.timecontrol import ControlledClock, controlled_clock
+
+COMPLETION_BUDGET_S = 8.0
+CALLBACK_SETTLEMENT_BUDGET_S = 2 * COMPLETION_BUDGET_S
+BACKGROUND_WINDOW_S = 4 * COMPLETION_BUDGET_S
+NO_CALLBACK_GRACE_S = 0.0
 
 ClientFactory = Callable[[str], Awaitable[OmpRpcClient]]
 
@@ -546,3 +553,124 @@ class RecycledEnvironment:
         patch.setattr(
             psutil.Process, "create_time", lambda process: self.create_time(process)
         )
+
+
+class BlockedEventObserver(Observer):
+    """Hold the peer's update callback after its result and settlement."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def on_event(self, event: OmpEvent) -> None:
+        if event.type == OmpEventType.MESSAGE_UPDATE:
+            self.entered.set()
+            await self.resume.wait()
+        await super().on_event(event)
+
+
+class StubbornCallbackObserver(Observer):
+    """Hold claimed callback work until the test explicitly releases it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.cancel_seen = asyncio.Event()
+        self.resume = asyncio.Event()
+        self.finished = asyncio.Event()
+        self.retired = asyncio.Event()
+
+    async def hold_callback(self) -> None:
+        owner = asyncio.current_task()
+        assert owner is not None
+        owner.add_done_callback(lambda _task: self.retired.set())
+        self.entered.set()
+        try:
+            while not self.resume.is_set():
+                try:
+                    await self.resume.wait()
+                except asyncio.CancelledError:
+                    self.cancel_seen.set()
+        finally:
+            self.finished.set()
+
+    async def release(self) -> None:
+        self.resume.set()
+        if self.entered.is_set():
+            await self.finished.wait()
+
+
+class StubbornToolObserver(StubbornCallbackObserver):
+    """Keep claimed host work alive until the test explicitly releases it."""
+
+    async def on_tool(self, call: OmpHostToolCall) -> OmpToolResult:
+        await self.hold_callback()
+        return OmpToolResult(content=[])
+
+
+class StubbornEventObserver(StubbornCallbackObserver):
+    """Record callback admission while keeping its event worker alive."""
+
+    async def on_event(self, event: OmpEvent) -> None:
+        await super().on_event(event)
+        await self.hold_callback()
+
+
+async def snapshots_observed(client: OmpRpcClient, count: int = 1) -> None:
+    """Dispatch completed snapshots before advancing a completion deadline."""
+    while cast(int, (await client.request("checkpoint"))["snapshots"]) < count:
+        pass
+    await client.request("checkpoint")
+    await spin()
+
+
+async def state_request_count(client: OmpRpcClient) -> int:
+    return sum(
+        frame["type"] == "get_state" for frame in await checkpoint_frames(client)
+    )
+
+
+async def state_requests_observed(client: OmpRpcClient, count: int = 1) -> None:
+    """Observe a sent state request even when its response is deliberately lost."""
+    while await state_request_count(client) < count:
+        pass
+    await client.request("checkpoint")
+    await spin()
+
+
+async def peer_process(client: OmpRpcClient) -> psutil.Process:
+    checkpoint = await client.request("checkpoint")
+    pid = checkpoint["pid"]
+    assert isinstance(pid, int)
+    process = await asyncio.to_thread(psutil.Process, pid)
+    await asyncio.to_thread(process.create_time)
+    return process
+
+
+@dataclass(frozen=True)
+class CompletionSession:
+    client: OmpRpcClient
+    clock: ControlledClock
+    peer: psutil.Process
+
+
+@asynccontextmanager
+async def completion_session(
+    client_factory: ClientFactory, scenario: str
+) -> AsyncIterator[CompletionSession]:
+    async with controlled_clock() as clock:
+        client = await clock.run_io(client_factory(scenario))
+        try:
+            peer = await peer_process(client)
+            client.completion_timeout_s = COMPLETION_BUDGET_S
+            yield CompletionSession(client, clock, peer)
+        finally:
+            await clock.run_io(client.close())
+
+
+async def background_claim_observed(observer: Observer) -> OmpEvent:
+    while True:
+        event = await observer.wait_for(OmpEventType.AGENT_END)
+        if event.awaitingAsyncWork is True:
+            return event

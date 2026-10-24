@@ -6,6 +6,7 @@ import tempfile
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from pydantic import JsonValue
 
 from band.integrations.ompwire import (
@@ -30,7 +31,12 @@ class ScriptedOmpClient:
     """Replace only the external OMP process, keeping the adapter's turn path real."""
 
     def __init__(self, script: TurnScript) -> None:
+        from band.integrations.omprpc.client import (  # noqa: PLC0415 -- loaded only by the native probe
+            COMPLETION_TIMEOUT_S,
+        )
+
         self.script = script
+        self.completion_timeout_s = COMPLETION_TIMEOUT_S
         self.stop_after_tool_id: str | None = None
 
     def stop_after_tool(self, call_id: str) -> None:
@@ -100,6 +106,7 @@ class ScriptedOmpClient:
 
 
 async def run_omp(script: TurnScript, tools: FakeAgentTools) -> None:
+    pytest.importorskip("psutil")
     from band.adapters.omp import (  # noqa: PLC0415 -- the omp extra is absent from other adapter lanes
         OmpAdapter,
         OmpAdapterConfig,

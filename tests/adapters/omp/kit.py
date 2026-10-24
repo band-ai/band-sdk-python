@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
@@ -20,14 +20,17 @@ from band.adapters.omp import (
     OmpAdapter,
     OmpAdapterConfig,
     OmpPermissionRequest,
+    OmpRoom,
 )
 from band.converters.omp import OmpSessionState
 from band.core.delivery import DeliveryFailedError
 from band.core.model_catalog import ModelSelection
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import Emit, MessageType
 from band.integrations.omp import OMP_FORM_APPROVE, OMP_FORM_DENY
 from band.integrations.ompprocess import OmpMcpServer, OmpMcpTransport
 from band.integrations.omprpc import OmpProcessError, OmpRpcClient, OmpRpcError
+from band.integrations.omprpc.client import COMPLETION_TIMEOUT_S
 from band.integrations.ompwire import (
     OMP_ASSISTANT_ROLE,
     OmpCommandName,
@@ -40,17 +43,25 @@ from band.integrations.ompwire import (
     OmpToolResult,
     OmpUIMethod,
     OmpUIRequest,
+    OmpUIResponse,
 )
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools, reported_failures
 from band.testing.fake_tools import events_of_type
 from tests.integrations.acp.conftest import make_platform_message
+from tests.integrations.omppeer import COMPLETION_REPLY_SCENARIO, DROP_STATE_RESPONSES
 from tests.integrations.omppermissionpeer import (
     DENIED_PATH,
     NATIVE_EVENT_ID,
     NATIVE_FAILURE_OUTPUT,
 )
-from tests.integrations.omprpc.kit import process_is_alive
+from tests.integrations.omprpc.kit import (
+    CALLBACK_SETTLEMENT_BUDGET_S,
+    COMPLETION_BUDGET_S,
+    StubbornCallbackObserver,
+    process_is_alive,
+    state_request_count,
+)
 from tests.paths import REPO_ROOT
 
 
@@ -87,6 +98,7 @@ class PendingRuntime:
         self.finish = asyncio.Event()
         self.closed = False
         self.reply = True
+        self.completion_timeout_s = COMPLETION_TIMEOUT_S
 
     async def start(self):
         return None
@@ -706,15 +718,15 @@ class RepeatedRuntime(PendingRuntime):
 
 
 async def run_turn(
-    adapter,
-    tools,
+    adapter: OmpAdapter,
+    tools: AgentToolsProtocol,
     *,
-    bootstrap=True,
+    bootstrap: bool = True,
     history: OmpSessionState | None = None,
     room_id: str = "room-123",
-):
+) -> None:
     await adapter.run_judged_turn(
-        msg=make_platform_message("Finish the background work"),
+        msg=make_platform_message("Finish the background work", room_id=room_id),
         tools=tools,
         history=history or OmpSessionState(),
         participants_msg=None,
@@ -1195,3 +1207,93 @@ def tool_end(call_id: str, name: str, *, is_error: bool = False) -> OmpEvent:
         result=OmpToolResult(content=[OmpContent(type="text", text="private-result")]),
         isError=is_error,
     )
+
+
+class RefreshClient(OmpRpcClient):
+    """Observe successful real prompt completion before the adapter refresh."""
+
+    def __init__(
+        self,
+        command: Sequence[str],
+        *,
+        lose_refresh: bool,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__(command, env=env)
+        self.completion_timeout_s = COMPLETION_BUDGET_S
+        self.prompt_completed = asyncio.Event()
+        self.state_requests_after_prompt = 0
+        self.lose_refresh = lose_refresh
+
+    async def prompt(
+        self,
+        message: str,
+        *,
+        on_event: Callable[[OmpEvent], Awaitable[None]],
+        on_tool: Callable[[OmpHostToolCall], Awaitable[OmpToolResult]],
+        on_ui: Callable[[OmpUIRequest], Awaitable[OmpUIResponse]],
+    ) -> None:
+        await super().prompt(message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
+        self.state_requests_after_prompt = await state_request_count(self)
+        if self.lose_refresh:
+            await self.request(DROP_STATE_RESPONSES)
+        self.prompt_completed.set()
+
+
+class RefreshClients:
+    """Launch a lossy peer once, then a healthy peer for explicit recovery."""
+
+    def __init__(self) -> None:
+        self.clients: list[RefreshClient] = []
+        self.created: asyncio.Queue[RefreshClient] = asyncio.Queue()
+
+    def __call__(
+        self, command: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> RefreshClient:
+        launch = list(command)
+        if self.clients:
+            launch[launch.index("--scenario") + 1] = COMPLETION_REPLY_SCENARIO
+        client = RefreshClient(launch, lose_refresh=not self.clients, env=env)
+        self.clients.append(client)
+        self.created.put_nowait(client)
+        return client
+
+
+class HoldInput(BaseModel):
+    """Accept the zero-field cancellation-resistant hold tool input."""
+
+
+class StubbornAdapterTool(StubbornCallbackObserver):
+    """Keep real custom-tool work alive until its owner releases it."""
+
+    async def hold(self, _input: HoldInput) -> str:
+        await self.hold_callback()
+        return "released"
+
+
+class RetirementClients:
+    """Launch a stubborn callback peer, then healthy peers for adapter retries."""
+
+    def __init__(self) -> None:
+        self.clients: list[OmpRpcClient] = []
+        self.created: asyncio.Queue[OmpRpcClient] = asyncio.Queue()
+        self.plugins: list[Path] = []
+
+    def __call__(
+        self, command: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> OmpRpcClient:
+        launch = list(command)
+        if self.clients:
+            launch[launch.index("--scenario") + 1] = COMPLETION_REPLY_SCENARIO
+        client = OmpRpcClient(launch, env=env)
+        client.completion_timeout_s = COMPLETION_BUDGET_S
+        client.callback_exit_timeout_s = CALLBACK_SETTLEMENT_BUDGET_S
+        self.plugins.append(Path(launch[launch.index("--plugin-dir") + 1]))
+        self.clients.append(client)
+        self.created.put_nowait(client)
+        return client
+
+
+def owned_room(adapter: OmpAdapter, room_id: str) -> OmpRoom:
+    """Expose the room whose runtime, workspace and startup files remain owned."""
+    return adapter._rooms[room_id]

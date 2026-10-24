@@ -27,6 +27,14 @@ class OmpProtocolError(OmpProcessError):
     """An invalid or incorrectly correlated native RPC frame."""
 
 
+class OmpCompletionTimeout(OmpProcessError):
+    """A completion wait stayed stuck past the budget; the turn outcome is uncertain.
+
+    The answer and its side effects may already have been delivered; only the
+    correlated result, native settlement, or final drain remained unfinished.
+    """
+
+
 class OmpPromptError(RuntimeError):
     """The prompt or its final background continuation failed or was aborted."""
 
