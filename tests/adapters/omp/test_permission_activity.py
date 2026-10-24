@@ -7,16 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from band.adapters.omp import (
-    OmpAdapter,
-    OmpAdapterConfig,
-    OmpPermissionRequest,
-    OmpTurn,
-)
+from band.adapters.omp import OmpTurn
 from band.core.types import Emit
+from band.integrations.omp import OMP_FORM_APPROVE
 from band.integrations.ompwire import OmpUIRequest
 from band.testing.activity import ActivityRecorder
 from band.testing.fake_tools import FakeAgentTools
+from tests.adapters.omp.activitykit import concurrent_permissions
 from tests.adapters.omp.kit import (
     EMIT_OFF,
     EMIT_ON,
@@ -25,11 +22,7 @@ from tests.adapters.omp.kit import (
     permission_request,
 )
 
-
-def waiting(recorder: ActivityRecorder) -> bool:
-    """Whether the last manual-wait observation left the turn waiting."""
-    waits = [event["waiting"] for event in recorder.events if "waiting" in event]
-    return bool(waits) and waits[-1]
+PERMISSION_FAILURE = "permission resolver failed"
 
 
 class TestOmpPermissionActivity:
@@ -42,89 +35,68 @@ class TestOmpPermissionActivity:
         recorder = ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
         turn = OmpTurn(tools=tools)
-        release = asyncio.Event()
-        entered = asyncio.Event()
-        waiting_during: list[bool] = []
-
-        async def resolve(request: OmpPermissionRequest) -> str | None:
-            waiting_during.append(waiting(recorder))
-            entered.set()
-            await release.wait()
-            return "Approve" if request.options == ("Approve", "Deny") else None
-
-        adapter = OmpAdapter(
-            OmpAdapterConfig(cwd=str(tmp_path)),
-            emit=emit,
-            resolve_permission=resolve,
-        )
-        request = OmpUIRequest(
-            id="ui-1",
-            method="select",
-            title='Allow tool: Bash\nArguments: {"command": "private-command"}',
-            options=["Approve", "Deny"],
-        )
+        resolver = GatedPermissionResolver("ui-1")
+        adapter = make_adapter(tmp_path, emit, resolve_permission=resolver)
+        request = permission_request("ui-1")
         running = asyncio.create_task(
             adapter._permission(request, "room", "sess", turn)
         )
         try:
-            await entered.wait()
-            assert waiting(recorder)
-            release.set()
+            await resolver.entered["ui-1"].wait()
+            assert recorder.waiting
+            resolver.responses["ui-1"].set_result(OMP_FORM_APPROVE)
             response = await running
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
 
-        assert response.value == "Approve"
-        assert waiting_during == [True]
-        assert not waiting(recorder)
+        assert response.value == OMP_FORM_APPROVE
+        assert not recorder.waiting
         assert recorder.events == [{"waiting": True}, {"waiting": False}]
         assert not tools.events_sent
 
-    @pytest.mark.parametrize("outcome", ["complete", "cancel", "error"])
-    async def test_concurrent_permissions_keep_waiting_until_the_last_resolver_finishes(
-        self, tmp_path: Path, outcome: str
+    async def test_completed_permission_keeps_the_other_resolver_waiting(
+        self, tmp_path: Path
     ) -> None:
-        recorder = ActivityRecorder()
-        turn = OmpTurn(tools=recorder.observing(FakeAgentTools()))
-        resolver = GatedPermissionResolver("first", "second")
-        adapter = make_adapter(tmp_path, EMIT_OFF, resolve_permission=resolver)
-        first = asyncio.create_task(
-            adapter._permission(permission_request("first"), "room", "sess", turn)
-        )
-        second = asyncio.create_task(
-            adapter._permission(permission_request("second"), "room", "sess", turn)
-        )
-        try:
-            await resolver.entered["first"].wait()
-            await resolver.entered["second"].wait()
+        async with concurrent_permissions(tmp_path) as pending:
+            pending.resolver.responses["first"].set_result(OMP_FORM_APPROVE)
+            await pending.first
 
-            match outcome:
-                case "complete":
-                    resolver.responses["first"].set_result("Approve")
-                    await first
-                case "cancel":
-                    first.cancel()
-                    with pytest.raises(asyncio.CancelledError):
-                        await first
-                case "error":
-                    resolver.responses["first"].set_exception(
-                        RuntimeError("permission resolver failed")
-                    )
-                    with pytest.raises(
-                        RuntimeError, match="permission resolver failed"
-                    ):
-                        await first
+            assert pending.recorder.waiting
+            assert not pending.second.done()
+            pending.resolver.responses["second"].set_result(OMP_FORM_APPROVE)
+            await pending.second
+            assert not pending.recorder.waiting
 
-            assert waiting(recorder)
-            assert not second.done()
-            resolver.responses["second"].set_result("Approve")
-            await second
-            assert not waiting(recorder)
-        finally:
-            first.cancel()
-            second.cancel()
-            await asyncio.gather(first, second, return_exceptions=True)
+    async def test_cancelled_permission_keeps_the_other_resolver_waiting(
+        self, tmp_path: Path
+    ) -> None:
+        async with concurrent_permissions(tmp_path) as pending:
+            pending.first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending.first
+
+            assert pending.recorder.waiting
+            assert not pending.second.done()
+            pending.resolver.responses["second"].set_result(OMP_FORM_APPROVE)
+            await pending.second
+            assert not pending.recorder.waiting
+
+    async def test_failed_permission_keeps_the_other_resolver_waiting(
+        self, tmp_path: Path
+    ) -> None:
+        async with concurrent_permissions(tmp_path) as pending:
+            pending.resolver.responses["first"].set_exception(
+                RuntimeError(PERMISSION_FAILURE)
+            )
+            with pytest.raises(RuntimeError, match=PERMISSION_FAILURE):
+                await pending.first
+
+            assert pending.recorder.waiting
+            assert not pending.second.done()
+            pending.resolver.responses["second"].set_result(OMP_FORM_APPROVE)
+            await pending.second
+            assert not pending.recorder.waiting
 
     @pytest.mark.parametrize(
         "second_room",
@@ -150,14 +122,14 @@ class TestOmpPermissionActivity:
         try:
             await resolver.entered["first"].wait()
             await resolver.entered["second"].wait()
-            resolver.responses["first"].set_result("Approve")
+            resolver.responses["first"].set_result(OMP_FORM_APPROVE)
             await first
 
-            assert not waiting(first_recorder)
-            assert waiting(second_recorder)
-            resolver.responses["second"].set_result("Approve")
+            assert not first_recorder.waiting
+            assert second_recorder.waiting
+            resolver.responses["second"].set_result(OMP_FORM_APPROVE)
             await second
-            assert not waiting(second_recorder)
+            assert not second_recorder.waiting
         finally:
             first.cancel()
             second.cancel()
@@ -170,16 +142,11 @@ class TestOmpPermissionActivity:
         recorder = ActivityRecorder()
         tools = recorder.observing(FakeAgentTools())
         turn = OmpTurn(tools=tools)
-        request = OmpUIRequest(
-            id="ui-1",
-            method="select",
-            title="Allow tool: Bash",
-            options=["Approve", "Deny"],
-        )
+        request = permission_request("ui-1")
 
         response = await adapter._permission(request, "room", "sess", turn)
 
-        assert response.value == "Approve"
+        assert response.value == OMP_FORM_APPROVE
         assert recorder.events == []
 
     async def test_non_select_ui_requests_report_no_wait(self, tmp_path: Path) -> None:
