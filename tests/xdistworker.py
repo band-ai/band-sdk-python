@@ -9,7 +9,10 @@ a process that is not a worker.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from hypothesis import settings as hypothesis_settings
 from hypothesis.database import DirectoryBasedExampleDatabase
@@ -18,6 +21,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 SERIAL_WORKER_ID = "master"
 # Four in-job workers on the existing OS × extra cells. Not a GitHub shard axis.
 CI_XDIST_FLAGS = ("-n 4", "--dist worksteal")
+
+_parlant_home: TemporaryDirectory[str] | None = None
+_previous_parlant_home: str | None = None
 
 
 class XdistWorkerSettings(BaseSettings):
@@ -52,3 +58,35 @@ def configure_hypothesis_worker_database() -> None:
         database=DirectoryBasedExampleDatabase(hypothesis_database_dir()),
     )
     hypothesis_settings.load_profile("band-xdist")
+
+
+def configure_parlant_worker_home() -> None:
+    """Give each pytest process an isolated Parlant store for local servers."""
+    global _parlant_home, _previous_parlant_home
+
+    if _parlant_home is not None:
+        return
+
+    worker = xdist_worker_id()
+    _parlant_home = tempfile.TemporaryDirectory(
+        prefix=worker_scoped("band-parlant-home", worker) + "-"
+    )
+    _previous_parlant_home = os.environ.get("PARLANT_HOME")
+    os.environ["PARLANT_HOME"] = _parlant_home.name
+
+
+def cleanup_parlant_worker_home() -> None:
+    """Restore the caller's Parlant setting and remove this worker's store."""
+    global _parlant_home, _previous_parlant_home
+
+    if _parlant_home is None:
+        return
+
+    if os.environ.get("PARLANT_HOME") == _parlant_home.name:
+        if _previous_parlant_home is None:
+            os.environ.pop("PARLANT_HOME", None)
+        else:
+            os.environ["PARLANT_HOME"] = _previous_parlant_home
+    _parlant_home.cleanup()
+    _parlant_home = None
+    _previous_parlant_home = None

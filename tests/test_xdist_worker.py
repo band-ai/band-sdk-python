@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -22,3 +23,12 @@ class TestXdistWorkerScope:
         database = hypothesis_settings().database
         assert isinstance(database, DirectoryBasedExampleDatabase)
         assert Path(database.path).resolve() == hypothesis_database_dir().resolve()
+
+    def test_local_parlant_servers_use_a_temporary_worker_home(self) -> None:
+        home = Path(os.environ["PARLANT_HOME"])
+        pytest.importorskip("parlant.sdk")
+        from parlant.bin.server import PARLANT_HOME_DIR  # noqa: PLC0415
+
+        assert home.is_dir()
+        assert home.name.startswith(f"band-parlant-home-{xdist_worker_id()}-")
+        assert PARLANT_HOME_DIR == home

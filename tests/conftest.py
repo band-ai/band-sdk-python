@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import os
 
+from tests.xdistworker import (
+    cleanup_parlant_worker_home,
+    configure_hypothesis_worker_database,
+    configure_parlant_worker_home,
+)
+
+if os.environ.get("E2E_TESTS_ENABLED", "").lower() != "true":
+    configure_parlant_worker_home()
+
 # Must be set before crewai is first imported: its event bus installs a
 # global OpenTelemetry provider and a live exporter thread at import time.
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
@@ -67,7 +76,6 @@ from band.platform.link import BandLink
 from band.runtime.messages import PlatformMessage
 from band.runtime.single_instance import SingleInstanceGuard
 from tests.paths import ENV_TEST_FILE
-from tests.xdistworker import configure_hypothesis_worker_database
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
@@ -109,6 +117,11 @@ def pytest_configure(config: pytest.Config) -> None:
     for key in dotenv_values(ENV_TEST_FILE):
         if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
             os.environ[key] = ""
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Remove the temporary Parlant store after all local servers stop."""
+    cleanup_parlant_worker_home()
 
 
 class CollectionGateSettings(BaseSettings):
