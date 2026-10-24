@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any
 
@@ -55,6 +55,19 @@ async def _show(observer: ActivityObserver, detail: AgentActivityDetail) -> None
         logger.warning("Could not report %s activity", detail.kind, exc_info=True)
 
 
+@contextmanager
+def suppress_tool_activity(*, enabled: bool = True) -> Iterator[None]:
+    """Leave activity reporting to the enclosing owner or native events."""
+    if not enabled:
+        yield
+        return
+    token = _showing_tool.set(True)
+    try:
+        yield
+    finally:
+        _showing_tool.reset(token)
+
+
 @asynccontextmanager
 async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
     """Show ``name`` as the turn's activity until the tool ends.
@@ -67,12 +80,11 @@ async def tool_activity(tools: object, name: str) -> AsyncIterator[None]:
     if observer is None or _showing_tool.get():
         yield
         return
-    token = _showing_tool.set(True)
     try:
-        await _show(observer, tool_detail(name))
-        yield
+        with suppress_tool_activity():
+            await _show(observer, tool_detail(name))
+            yield
     finally:
-        _showing_tool.reset(token)
         await _show(observer, REASONING)
 
 
