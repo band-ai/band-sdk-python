@@ -10,7 +10,7 @@ import httpx
 
 from band.core.turn_lifecycle import TurnTask, bind_turn_task
 from band.platform.activity import API_VERSION_HEADER
-from band.platform.event import PlatformEvent
+from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.activity import set_permission_wait
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
@@ -22,6 +22,18 @@ from band.runtime.toolactivity import (
 from band.runtime.tools.agent import AgentTools
 from tests.activitysupport import SUPPORTED_VERSION
 from tests.runtime.helpers import ALICE, LifecyclePlatform, is_message_post, page
+
+CONTROL_MESSAGE_ID = "approve"
+
+
+def recognizes_control(ctx: ExecutionContext, event: MessageEvent) -> bool:
+    return event.payload.id == CONTROL_MESSAGE_ID
+
+
+async def deliver_event(ctx: ExecutionContext, event: PlatformEvent) -> None:
+    """Run queued input through the consumer's production scheduling pass."""
+    await ctx.on_event(event)
+    await ctx.scheduler.run_pass()
 
 
 def message_content(request: httpx.Request) -> str:

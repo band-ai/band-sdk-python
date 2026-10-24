@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from band.platform.event import PlatformEvent
+from band.platform.event import MessageEvent, PlatformEvent
 from band.platform.link import BandLink
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
@@ -48,6 +48,8 @@ async def execution(
                 [ExecutionContext, PlatformEvent], Awaitable[bool]
             ]
             | None = None,
+            is_message_control: Callable[[ExecutionContext, MessageEvent], bool]
+            | None = None,
             **settings: object,
         ) -> ExecutionContext:
             link = BandLink(agent_id=AGENT_ID, api_key="test-key")
@@ -63,6 +65,7 @@ async def execution(
                 hub_room_id=hub_room_id,
                 on_platform_stop=runtime._on_platform_stop,
                 on_message_control=on_message_control,
+                is_message_control=is_message_control,
                 config=SessionConfig(enable_context_hydration=False, **settings),
             )
             contexts.append(ctx)

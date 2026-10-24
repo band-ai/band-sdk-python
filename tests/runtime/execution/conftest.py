@@ -1,3 +1,5 @@
+"""Execution context fixtures."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -6,6 +8,7 @@ import pytest
 
 from tests.conftest import (
     make_participant_mock,
+    mirror_settlement_results,
 )
 
 
@@ -40,9 +43,9 @@ def mock_link():
     )
 
     # Mock message lifecycle methods (new in BandLink)
-    link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
+    mirror_settlement_results(link)
     link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.report_activity = AsyncMock(return_value=True)

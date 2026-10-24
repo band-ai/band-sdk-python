@@ -20,6 +20,7 @@ from tests.runtime.helpers import (
     LifecyclePlatform,
     rest_client_over,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestAuxiliaryClaimControl:
@@ -42,7 +43,7 @@ class TestAuxiliaryClaimControl:
             ctx = auxiliary_context(rest, handler)
             async with asyncio.TaskGroup() as tasks:
                 processing = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await gate.entered.wait()
                 match control:
@@ -107,7 +108,7 @@ class TestAuxiliaryClaimControl:
                 rest, handler, observer=observer, max_cycle_seconds=60
             )
             processing = asyncio.create_task(
-                ctx._process_event(make_message_event(msg_id="old"))
+                attempt_delivery(ctx, make_message_event(msg_id="old"))
             )
             await gate.entered.wait()
             processing.cancel()
@@ -117,7 +118,7 @@ class TestAuxiliaryClaimControl:
             async with asyncio.TaskGroup() as tasks:
                 if new_scope:
                     newer = tasks.create_task(
-                        ctx._process_event(make_message_event(msg_id="new"))
+                        attempt_delivery(ctx, make_message_event(msg_id="new"))
                     )
                     await new_started.wait()
                 gate.release.set()
@@ -146,7 +147,7 @@ class TestAuxiliaryClaimControl:
             ctx = auxiliary_context(rest, handler)
             async with asyncio.TaskGroup() as tasks:
                 processing = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="trigger"))
+                    attempt_delivery(ctx, make_message_event(msg_id="trigger"))
                 )
                 await gate.entered.wait()
                 with pytest.raises(asyncio.CancelledError):

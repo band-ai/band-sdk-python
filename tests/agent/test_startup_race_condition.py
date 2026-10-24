@@ -75,6 +75,8 @@ class TestStartupRaceCondition:
             agent_id = "agent-123"
             connection = platform_connection_stub(agent_id="agent-123")
             feature_flags = None
+            cleanup_pending = False
+            session_config = SessionConfig()
             _on_execute = None
 
             async def initialize(self) -> None:
@@ -92,6 +94,8 @@ class TestStartupRaceCondition:
                 on_cleanup=None,
                 on_control=None,
                 on_message_control=None,
+                on_execute_batch=None,
+                is_message_control=None,
             ):
                 self._on_execute = on_execute
 

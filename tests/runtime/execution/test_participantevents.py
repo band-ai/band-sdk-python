@@ -8,6 +8,7 @@ from tests.conftest import (
     make_participant_removed_event,
 )
 from tests.runtime.conftest import wait_for_condition
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestExecutionContextParticipantEvents:
@@ -75,7 +76,7 @@ class TestExecutionContextParticipantEvents:
             name="User Two",
             type="User",
         )
-        await ctx._process_event_body(event, None, None)
+        await attempt_delivery(ctx, event)
 
         assert "user-1" in captured
         assert "user-2" in captured

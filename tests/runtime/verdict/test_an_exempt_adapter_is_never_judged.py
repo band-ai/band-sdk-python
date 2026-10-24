@@ -8,15 +8,18 @@ from tests.runtime.helpers import (
     run_through,
     runtime_failures,
 )
-from tests.runtime.verdict.kit import ScriptedAdapter
+from tests.runtime.scheduler.driver import attempt_delivery
+from tests.runtime.verdict.kit import (
+    ScriptedAdapter,
+)
 
 
 class TestAnExemptAdapterIsNeverJudged:
     async def test_an_exempt_adapter_is_never_judged(self, link: MagicMock) -> None:
         ctx = run_through(ScriptedAdapter([], judges=False), link)
 
-        await ctx._process_event(
-            make_message_event(room_id=ROOM_ID, sender_id="user-1")
+        await attempt_delivery(
+            ctx, make_message_event(room_id=ROOM_ID, sender_id="user-1")
         )
 
         link.mark_processed.assert_awaited_once()

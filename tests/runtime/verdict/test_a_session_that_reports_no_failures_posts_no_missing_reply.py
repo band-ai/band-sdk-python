@@ -8,7 +8,9 @@ from tests.runtime.helpers import (
     run_through,
     runtime_failures,
 )
-from tests.runtime.verdict.kit import ScriptedAdapter
+from tests.runtime.verdict.kit import (
+    ScriptedAdapter,
+)
 
 
 class TestASessionThatReportsNoFailuresPostsNoMissingReply:

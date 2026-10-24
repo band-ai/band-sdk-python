@@ -19,6 +19,7 @@ from tests.runtime.helpers import (
     LifecyclePlatform,
     rest_client_over,
 )
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestLateRestRefusals:
@@ -55,7 +56,7 @@ class TestLateRestRefusals:
             )
             async with asyncio.TaskGroup() as tasks:
                 processing = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="interrupted"))
+                    attempt_delivery(ctx, make_message_event(msg_id="interrupted"))
                 )
                 await cleanup_started.wait()
                 peer.stopped = False
@@ -69,7 +70,7 @@ class TestLateRestRefusals:
             )
 
             mock_link.mark_failed.assert_not_awaited()
-            await ctx._process_backlog_message(backlog_message("interrupted"))
+            await attempt_delivery(ctx, backlog_message("interrupted"))
             assert invoked == ["interrupted"]
 
     async def test_late_rest_refusal_preserves_a_pending_explicit_interrupt(
@@ -92,7 +93,7 @@ class TestLateRestRefusals:
             ctx = ExecutionContext("room-123", mock_link, handler)
             async with asyncio.TaskGroup() as tasks:
                 processing = tasks.create_task(
-                    ctx._process_event(make_message_event(msg_id="interrupted"))
+                    attempt_delivery(ctx, make_message_event(msg_id="interrupted"))
                 )
                 await entered.wait()
                 assert ctx.interrupt(kind=ControlMode.INTERRUPT)

@@ -11,7 +11,7 @@ import pytest
 
 from band.adapters.opencode import OpencodeAdapter
 from band.agent import Agent
-from band.runtime.execution import ExecutionContext, TurnOutcome
+from band.runtime.execution import ExecutionContext
 from band.runtime.tools.agent import AgentTools
 from tests.adapters.opencode.helpers import (
     APPROVED_ASK_NOTICES,
@@ -25,9 +25,8 @@ from tests.adapters.opencode.helpers import (
     room_turn,
     turn_finished,
 )
-from tests.conftest import make_message_event
 from tests.mcpbackends import backends_created_by
-from tests.runtime.activityownership.kit import HeldReplyPlatform
+from tests.runtime.activityownership.kit import HeldReplyPlatform, deliver_event
 from tests.runtime.helpers import AGENT_ID, ALICE, IDLE, KEEP_ALIVE, ROOM_ID
 
 
@@ -47,13 +46,13 @@ class TestOpencodeAdmission:
         )
         adapter = OpencodeAdapter(client_factory=lambda _: client, emit=())
         agent = Agent(runtime=MagicMock(agent_id=AGENT_ID), adapter=adapter)
-        activity_platform.add_message("new", content=FOLLOW_UP)
+        activity_platform.add_message("original")
 
         with backends_created_by():
             await adapter.on_started("Test", "Test")
             ctx = execution(agent._on_execute)
             try:
-                await ctx._process_event(make_message_event(msg_id="original"))
+                await deliver_event(ctx, activity_platform.event("original"))
                 approval = make_platform_message(
                     room_id=ROOM_ID,
                     content=f"approve {PERMISSION_ID}",
@@ -65,10 +64,10 @@ class TestOpencodeAdmission:
                 await activity_platform.reply_entered.wait()
                 first_turn = await room_turn(adapter, room_id=ROOM_ID)
 
-                outcome = await ctx._process_event(
-                    make_message_event(msg_id="new", content=FOLLOW_UP)
+                activity_platform.add_message("new", content=FOLLOW_UP)
+                await deliver_event(
+                    ctx, activity_platform.event("new", content=FOLLOW_UP)
                 )
-                assert outcome is TurnOutcome.NOT_ACCEPTED
                 assert activity_platform.marked("processed") == ["original"]
                 assert activity_platform.marked("failed") == []
                 assert len(client.prompt_calls) == 1
@@ -79,7 +78,7 @@ class TestOpencodeAdmission:
                 await ctx._join_activity_completion()
                 assert activity_platform.reports_without_refreshes == [KEEP_ALIVE, IDLE]
 
-                await ctx._reconcile()
+                await ctx.scheduler.run_pass(recovery=True)
                 await ctx._join_activity_completion()
 
                 assert activity_platform.marked("processed") == ["original", "new"]

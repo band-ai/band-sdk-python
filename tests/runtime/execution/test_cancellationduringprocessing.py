@@ -30,7 +30,7 @@ class TestCancellationDuringProcessing:
         await ctx.start()
 
         # Wait for sync to complete
-        await wait_for_condition(lambda: ctx._sync_complete)
+        await wait_for_condition(lambda: ctx.scheduler.sync_complete)
 
         # Enqueue a message to trigger processing
         event = make_message_event(room_id="room-123", msg_id="msg-001", content="Test")

@@ -623,6 +623,13 @@ class BandLink:
     async def mark_processing(self, room_id: str, message_id: str) -> bool:
         return await self._messages.mark_processing(self.rest, room_id, message_id)
 
+    async def mark_processing_result(
+        self, room_id: str, message_id: str
+    ) -> SettlementResult:
+        return await self._messages.mark_processing_result(
+            self.rest, room_id, message_id
+        )
+
     async def mark_processed(self, room_id: str, message_id: str) -> bool:
         return await self._messages.mark_processed(self.rest, room_id, message_id)
 

@@ -6,7 +6,10 @@ import pytest
 
 from band.runtime.execution import ExecutionContext
 from band.runtime.sessionconfig import SessionConfig
-from tests.conftest import make_message_event
+from tests.conftest import (
+    make_message_event,
+)
+from tests.runtime.scheduler.driver import attempt_delivery
 
 
 class TestLruDedupeCache:
@@ -31,7 +34,7 @@ class TestLruDedupeCache:
         """Processed message events should be added to LRU cache."""
         event = make_message_event(msg_id="msg-001")
 
-        await ctx._process_event(event)
+        await attempt_delivery(ctx, event)
 
         assert "msg-001" in ctx.claims.completed_ids(ctx.room_id)
 
@@ -41,11 +44,11 @@ class TestLruDedupeCache:
         event = make_message_event(msg_id="msg-001")
 
         # Process first time
-        await ctx._process_event(event)
+        await attempt_delivery(ctx, event)
         assert ctx._handler_mock.call_count == 1
 
         # Process same event again - should be skipped
-        await ctx._process_event(event)
+        await attempt_delivery(ctx, event)
         assert ctx._handler_mock.call_count == 1  # Still 1
 
     @pytest.mark.asyncio
@@ -55,13 +58,13 @@ class TestLruDedupeCache:
 
         for i in range(limit):
             event = make_message_event(msg_id=f"msg-{i:03d}")
-            await ctx._process_event(event)
+            await attempt_delivery(ctx, event)
 
         assert len(ctx.claims.completed_ids(ctx.room_id)) == limit
         assert "msg-000" in ctx.claims.completed_ids(ctx.room_id)
 
         event_overflow = make_message_event(msg_id=f"msg-{limit:03d}")
-        await ctx._process_event(event_overflow)
+        await attempt_delivery(ctx, event_overflow)
 
         assert len(ctx.claims.completed_ids(ctx.room_id)) == limit
         assert "msg-000" not in ctx.claims.completed_ids(ctx.room_id)
@@ -74,13 +77,13 @@ class TestLruDedupeCache:
 
         for i in range(limit):
             event = make_message_event(msg_id=f"msg-{i:03d}")
-            await ctx._process_event(event)
+            await attempt_delivery(ctx, event)
 
         event0_dup = make_message_event(msg_id="msg-000")
-        await ctx._process_event(event0_dup)
+        await attempt_delivery(ctx, event0_dup)
 
         event_overflow = make_message_event(msg_id=f"msg-{limit:03d}")
-        await ctx._process_event(event_overflow)
+        await attempt_delivery(ctx, event_overflow)
 
         assert "msg-000" in ctx.claims.completed_ids(ctx.room_id)
         assert "msg-001" not in ctx.claims.completed_ids(ctx.room_id)
