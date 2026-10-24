@@ -15,6 +15,7 @@ from tests.adapters.omp.kit import (
     failing_runtime,
     launches,
     remote,
+    room_runtime,
     run_turn,
     settling_adapter,
     start_blocked_turn,
@@ -240,7 +241,8 @@ class TestRoomRetirement:
 
         await asyncio.wait_for(adapter.on_cleanup("room-123"), 1)
 
-        assert turn_returned.is_set() and not wrapper.done()
+        await asyncio.wait_for(turn_returned.wait(), 1)
+        assert not wrapper.done()
         assert resolver.cancellations == 1 and releases and all(releases)
         assert not adapter._workspaces.rooms and launches.runtimes == []
         wrapper.cancel()
@@ -258,7 +260,7 @@ class TestRoomRetirement:
         await room_lock.acquire()  # another holder keeps the retirement from closing
         retirement = asyncio.create_task(adapter.on_cleanup("room-123"))
         await asyncio.wait_for(room_lock.contended.wait(), 1)
-        assert not adapter._rooms and not adapter._owners
+        assert room_runtime(adapter, "room-123") is None
 
         shutdown = await start_cleanup(adapter, shutdown=True)
 

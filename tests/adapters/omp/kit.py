@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Callable
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
@@ -887,6 +888,7 @@ class Launches:
         self.envs: list[dict[str, str] | None] = []
         self.spawned = asyncio.Event()
         self.fail_first_close = False
+        self.runtime_factory: Callable[[], RecordingRuntime] = RecordingRuntime
 
     def __call__(
         self, command: list[str], env=None, **_kwargs: object
@@ -898,7 +900,9 @@ class Launches:
         self.commands.append(list(command))
         self.envs.append(None if env is None else dict(env))
         runtime = (
-            FirstCloseFailsRuntime() if self.fail_first_close else RecordingRuntime()
+            FirstCloseFailsRuntime()
+            if self.fail_first_close
+            else self.runtime_factory()
         )
         self.fail_first_close = False
         runtime.finish.set()

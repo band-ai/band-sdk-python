@@ -418,10 +418,12 @@ negotiate RPC protocol v2 to preserve structured text/image tool results.
   calls it again; a retired room (cancellation, failure, or cleanup) resolves afresh
   on its next start. The callable is runtime-only and never part of
   `OmpAdapterConfig`.
-- **Room retirement.** `on_cleanup` starts one retirement per room, and overlapping
-  `on_cleanup` and `cleanup_all` calls join it. The room's active turn is the
-  current `on_message` call, not the task that made it. A cancellation already
-  requested when that call starts is delivered at its first step, before anything
+- **Room retirement.** Shared Python `RoomRetention` / `RetainedRoom` owns
+  admission, enrolled operations and disposal. OMP owns native startup and
+  deadline outcomes. `on_cleanup` requests shared disposal; overlapping
+  `on_cleanup` and `cleanup_all` calls join that attempt. The enrolled operation
+  spans one `on_message` invocation, independently of its caller's task lifetime.
+  A cancellation already requested when that call starts is delivered at its first step, before anything
   is resolved or launched; one its caller had already received and handled does
   not stop it. Retirement marks the active turn retired, so nothing it resolves
   afterwards can start a process. While the turn is still running, retirement

@@ -36,7 +36,7 @@ class TestCancellationEntry:
             await asyncio.create_task(caller())
 
         assert resolver.calls == 0 and launches.runtimes == []
-        assert not adapter._workspaces.rooms and not adapter._owners
+        assert not adapter._workspaces.rooms
         await run_turn(adapter, FakeAgentTools())  # explicit recovery
         assert len(launches.runtimes) == 1
         await adapter.cleanup_all()
