@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.runtime.delivery.kit import RestPeer, started_session
+from tests.runtime.delivery.kit import JournaledTurns, RestPeer, room_over
 
 pytestmark = pytest.mark.looptime
 
@@ -12,17 +12,14 @@ pytestmark = pytest.mark.looptime
 class TestRefusedInput:
     async def test_refusal_is_not_retried_inside_one_pass(self) -> None:
         peer = RestPeer()
-        async with started_session(peer, accepting=False) as session:
-            await session.quiesce()
-            event = peer.post("busy")
+        turns = JournaledTurns(accepting=False, journal=peer.journal)
+        peer.post("busy")
+        async with room_over(peer, turns.single) as ctx:
+            await ctx.scheduler.run_pass(recovery=True)
+            offered_in_first_pass = list(turns.refused)
 
-            await session.deliver(event)
-            await session.quiesce()
-            offered_in_first_pass = list(session.turns.refused)
-
-            session.turns.accepting = True
-            await session.resync()
-            await session.settled("busy")
+            turns.accepting = True
+            await ctx.scheduler.run_pass(recovery=True)
 
         assert offered_in_first_pass == [("busy",)]
-        assert session.turns.ids == [("busy",)]
+        assert turns.ids == [("busy",)]

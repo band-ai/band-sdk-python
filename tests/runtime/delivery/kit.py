@@ -468,6 +468,9 @@ class Session(Observer):
         for event in events:
             await self.ctx.on_event(event)
 
+    async def quiesce(self) -> None:
+        await self.suspended(self.ctx)
+
     async def resync(self) -> None:
         await self.ctx.request_resync()
         await self.quiesce()

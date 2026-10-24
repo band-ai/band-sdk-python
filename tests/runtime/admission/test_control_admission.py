@@ -26,11 +26,11 @@ class TestControlAdmission:
     @pytest.mark.parametrize("case", SINGLETONS, ids=str)
     @pytest.mark.parametrize(
         "mode",
-        [ControlMode.INTERRUPT, ControlMode.STOP, None],
-        ids=["interrupt", "stop", "shutdown"],
+        [ControlMode.INTERRUPT, ControlMode.STOP],
+        ids=["interrupt", "stop"],
     )
     async def test_a_control_before_processing_confirmation_consumes_nothing(
-        self, case: Case, mode: ControlMode | None, platform: Platform, model: Model
+        self, case: Case, mode: ControlMode, platform: Platform, model: Model
     ) -> None:
         model.accepting = False
         controls = ControlScript(recognized={CONTROL})
@@ -42,10 +42,31 @@ class TestControlAdmission:
             pending = platform.hold(Call.processing(CONTROL))
             await room.deliver(*platform.post(CONTROL))
             await room.reached(pending)
-            if mode is None:
-                await room.ctx.stop()
-            else:
-                await room.signal(mode)
+            await room.signal(mode)
+            pending.release()
+            await room.quiesce()
+
+            assert (
+                platform.statuses,
+                controls.started,
+                platform.writes_to(Endpoint.PROCESSED, Endpoint.FAILED),
+            ) == (dict.fromkeys(QUEUED, DeliveryStatus.PROCESSING), [], [])
+
+    @pytest.mark.parametrize("case", SINGLETONS, ids=str)
+    async def test_shutdown_before_processing_confirmation_consumes_nothing(
+        self, case: Case, platform: Platform, model: Model
+    ) -> None:
+        model.accepting = False
+        controls = ControlScript(recognized={CONTROL})
+        async with started_room(
+            case, platform=platform, model=model, controls=controls
+        ) as room:
+            await room.deliver(*platform.post(HEAD))
+            await room.quiesce()
+            pending = platform.hold(Call.processing(CONTROL))
+            await room.deliver(*platform.post(CONTROL))
+            await room.reached(pending)
+            await room.ctx.stop()
             pending.release()
             await room.quiesce()
 

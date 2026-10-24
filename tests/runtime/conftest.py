@@ -34,10 +34,11 @@ from band_rest import (
 )
 
 from band.core.types import PlatformConnection, PlatformMessage
+from band.runtime.execution import ExecutionContext
 from band.runtime.presence import RoomPresence
 from tests.activitysupport import install_activity_support
 from tests.conftest import make_participant_mock, mirror_settlement_results
-from tests.runtime.helpers import AGENT_ID, QUIET_SECONDS, WAIT_SECONDS
+from tests.runtime.helpers import AGENT_ID, WAIT_SECONDS
 
 
 @pytest.fixture(autouse=True)
@@ -72,9 +73,20 @@ class Waiting:
         await wait_for_condition(condition, timeout=WAIT_SECONDS)
 
     @staticmethod
-    async def quiesce() -> None:
-        """Let the room run until it has nothing left to do, on the virtual clock."""
-        await asyncio.sleep(QUIET_SECONDS)
+    async def suspended(ctx: ExecutionContext) -> None:
+        """Wait for the consumer to finish its pass and suspend or exit."""
+        await Waiting.until(
+            lambda: (
+                ctx.scheduler.current_pass is None
+                and (
+                    not ctx.is_running
+                    or (
+                        ctx.scheduler.queue_wait is not None
+                        and ctx.scheduler.queue.empty()
+                    )
+                )
+            )
+        )
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:

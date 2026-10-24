@@ -78,9 +78,6 @@ EPOCH = datetime(2024, 1, 1, tzinfo=UTC)
 # The longest a test waits for something that must happen, and for a stop.
 WAIT_SECONDS = 5.0
 STOP_SECONDS = 2.0
-# Longer than any step a room takes and shorter than its periodic wake: on the
-# virtual clock the loop only gets here once nothing is runnable.
-QUIET_SECONDS = 1.0
 
 
 class AgentHooks(TypedDict):

@@ -202,7 +202,7 @@ class TestCrashRecoverySync:
             await ctx.on_event(original)
             await ctx.start()
             await wait_for_condition(lambda: len(turns.ids) == 2)
-            await Waiting.quiesce()
+            await Waiting.suspended(ctx)
 
         assert sorted(turns.ids) == [("msg-sync",), ("participant_added",)]
         assert peer.without_reads() == [

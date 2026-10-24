@@ -38,11 +38,13 @@ class TestHeldRosterEvent:
             await session.quiesce()
             await session.deliver(make_participant_added_event(room_id=ROOM_ID))
             await session.quiesce()
+            ran_while_observer_held = list(session.turns.ids)
 
             observer_done.set()
             session.turns.release.set()
             await session.resync()
             await session.settled("m1")
 
+        assert ran_while_observer_held == [("m1",)]
         assert session.turns.ids.count(ROSTER_TURN) == 1
         assert [p["id"] for p in session.ctx.participants] == ["user-456"]

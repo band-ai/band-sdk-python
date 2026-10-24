@@ -21,6 +21,9 @@ from tests.runtime.helpers import (
     rest_client_over,
 )
 
+ORDINARY_EFFECT = "ordinary"
+CONTROL_EFFECT = "control"
+
 
 @dataclass(frozen=True)
 class HandoffObservation:
@@ -66,13 +69,13 @@ async def observe_handoff(
         delivered.append(event.payload.model_dump())
 
     async def execute(ctx: ExecutionContext, event: MessageEvent) -> None:
-        record("ordinary", event)
+        record(ORDINARY_EFFECT, event)
 
     async def batch(ctx: ExecutionContext, events: tuple[MessageEvent, ...]) -> None:
         await execute(ctx, events[0])
 
     async def handle(ctx: ExecutionContext, event: MessageEvent) -> bool:
-        record("control", event)
+        record(CONTROL_EFFECT, event)
         return True
 
     def recognizes(ctx: ExecutionContext, event: MessageEvent) -> bool:

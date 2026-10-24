@@ -460,6 +460,9 @@ class Room(Waiting):
         """Wait until the held request is at the platform, undelivered."""
         await self.until(hold.entered.is_set)
 
+    async def quiesce(self) -> None:
+        await self.suspended(self.ctx)
+
     async def quiet(self) -> None:
         """Wait for the room to finish the attempt it is in."""
         await self.until(lambda: not self.ctx.is_processing)

@@ -44,7 +44,7 @@ class TestFailingRecognizer:
             )
             await ctx.start()
             try:
-                await wait.quiesce()
+                await wait.suspended(ctx)
                 await ctx.on_event(peer.post("first"))
                 await ctx.on_event(peer.post("second"))
                 await wait.until(lambda: len(turns.ids) == 2)
