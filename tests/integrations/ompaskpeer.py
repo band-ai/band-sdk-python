@@ -7,21 +7,23 @@ from typing import cast
 
 from pydantic import JsonValue
 
+from band.integrations.ompwire import (
+    OmpCommandName,
+    OmpEventType,
+    OmpFrameType,
+    OmpUIMethod,
+)
 from tests.integrations.omppeer import Frame, Peer, send
 
 
 class AskPeer(Peer):
-    def __init__(self, scenario: str) -> None:
-        super().__init__(scenario)
-        self.dialog_enabled = False
-
     @staticmethod
     def ask(request_id: str = "ask-1") -> None:
         send(
             {
-                "type": "extension_ui_request",
+                "type": OmpFrameType.UI_REQUEST,
                 "id": request_id,
-                "method": "ask",
+                "method": OmpUIMethod.ASK,
                 "questions": [
                     {
                         "id": "storage",
@@ -53,7 +55,7 @@ class AskPeer(Peer):
         self.prompt_count += 1
         self.settled = False
         self.held = frame
-        send({"type": "agent_start"})
+        send({"type": OmpEventType.AGENT_START})
         if self.scenario in {"ask-on-abort", "tool-on-abort"}:
             self.respond(frame)
             self.held = None
@@ -65,7 +67,7 @@ class AskPeer(Peer):
         else:
             send(
                 {
-                    "type": "host_tool_call",
+                    "type": OmpFrameType.HOST_TOOL_CALL,
                     "id": "resumed-reply",
                     "toolCallId": "reply-2",
                     "toolName": "band_send_message",
@@ -77,45 +79,56 @@ class AskPeer(Peer):
             )
 
     def handle(self, frame: Frame) -> None:
-        if frame.type == "set_ask_dialog":
+        if frame.type in {
+            OmpCommandName.SET_ASK_DIALOG,
+            OmpFrameType.UI_RESPONSE,
+            OmpFrameType.HOST_TOOL_RESULT,
+        }:
             self.frames.append(
                 cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True))
             )
-            self.dialog_enabled = self.scenario != "refused-dialog"
-            self.respond(frame, {"enabled": self.dialog_enabled})
+        match frame.type:
+            case OmpCommandName.SET_ASK_DIALOG:
+                enabled = self.scenario != "refused-dialog"
+                self.respond(frame, {"enabled": enabled})
+                return
+            case OmpFrameType.UI_RESPONSE | OmpFrameType.HOST_TOOL_RESULT:
+                self._complete_prompt()
+                return
+            case OmpCommandName.ABORT:
+                self._send_shutdown_callback()
+        super().handle(frame)
+
+    def _complete_prompt(self) -> None:
+        if self.held is None:
             return
-        if frame.type in {"extension_ui_response", "host_tool_result"}:
-            self.frames.append(
-                cast(dict[str, JsonValue], frame.model_dump(exclude_unset=True))
-            )
-            if self.held is not None:
-                self.respond(self.held)
-                self.held = None
-                self.end("")
-                self.result(settled=True)
-                self.settle()
-            return
-        if frame.type == "abort":
-            if self.scenario == "ask-on-abort":
+        self.respond(self.held)
+        self.held = None
+        self.end("")
+        self.result(settled=True)
+        self.settle()
+
+    def _send_shutdown_callback(self) -> None:
+        match self.scenario:
+            case "ask-on-abort":
                 self.ask("late-ask")
-            if self.scenario == "tool-on-abort":
+            case "tool-on-abort":
                 send(
                     {
-                        "type": "host_tool_call",
+                        "type": OmpFrameType.HOST_TOOL_CALL,
                         "id": "late-tool",
                         "toolCallId": "call-late",
                         "toolName": "band_send_message",
                         "arguments": {"content": "Must never reach the room"},
                     }
                 )
-        super().handle(frame)
 
 
 def main() -> None:
     peer = AskPeer(sys.argv[1])
     send(
         {
-            "type": "ready",
+            "type": OmpFrameType.READY,
             "protocolVersion": 1,
             "supportedProtocolVersions": [1, 2],
             "maxFrameBytes": 1024 * 1024,

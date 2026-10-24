@@ -13,9 +13,10 @@ from pydantic import JsonValue
 from band.adapters.omp import OmpAdapter
 from band.core.exceptions import RoomExecutionStoppedError
 from band.core.protocols import TurnResultAlreadyReported
+from band.integrations.ompwire import OmpCommandName, OmpFrameType
 from band.runtime.tools import AgentTools
 from band.testing import MISSING_REPLY_FAILURE, FakeAgentTools, failure_reports
-from tests.adapters.omp.kit import ask_frames, ask_turn
+from tests.adapters.omp.askkit import ask_frames, ask_turn
 
 
 @pytest.mark.asyncio
@@ -42,12 +43,7 @@ class TestOmpRoomAsk:
                 assert text in posted["content"]
             assert tools.turn.replied
             assert not failure_reports(tools)
-            first_frames = await ask_frames(ask_adapter)
-            [response] = [
-                frame
-                for frame in first_frames
-                if frame["type"] == "extension_ui_response"
-            ]
+            [response] = await ask_frames(ask_adapter, OmpFrameType.UI_RESPONSE)
             assert response["id"] == "ask-1"
             assert "cancelled" not in response
             answers = cast(list[dict[str, JsonValue]], response["answers"])
@@ -71,11 +67,10 @@ class TestOmpRoomAsk:
                 == "The answer resumed this session."
             )
             assert resumed.turn.replied
-            frames = await ask_frames(ask_adapter)
-            assert len([frame for frame in frames if frame["type"] == "prompt"]) == 2
-            prompts = [frame for frame in frames if frame["type"] == "prompt"]
+            prompts = await ask_frames(ask_adapter, OmpCommandName.PROMPT)
+            assert len(prompts) == 2
             assert "Use SQLite for Dev." in str(prompts[-1]["message"])
-            [opt_in] = [frame for frame in frames if frame["type"] == "set_ask_dialog"]
+            [opt_in] = await ask_frames(ask_adapter, OmpCommandName.SET_ASK_DIALOG)
             assert opt_in["enabled"] is True
         finally:
             await ask_adapter.cleanup_all()
@@ -94,10 +89,7 @@ class TestOmpRoomAsk:
                 await ask_turn(ask_adapter, tools)
             assert not tools.turn.replied
             assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
-            frames = await ask_frames(ask_adapter)
-            [response] = [
-                frame for frame in frames if frame["type"] == "extension_ui_response"
-            ]
+            [response] = await ask_frames(ask_adapter, OmpFrameType.UI_RESPONSE)
             assert "cancelled" not in response
             answers = cast(list[dict[str, JsonValue]], response["answers"])
             assert [answer["id"] for answer in answers] == ["storage", "targets"]

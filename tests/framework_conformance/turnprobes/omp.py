@@ -51,7 +51,7 @@ class ScriptedOmpClient:
                     "a native session must advertise its host tools"
                 )
                 return {}
-            case "set_ask_dialog":
+            case OmpCommandName.SET_ASK_DIALOG:
                 assert parameters == {"enabled": True}
                 return {"enabled": True}
             case _:

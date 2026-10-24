@@ -25,3 +25,46 @@ class TestOmpRoomQuestions:
         assert "Pick a database" in rendered
         assert "SQLite" in rendered
         assert "recommended" not in rendered
+
+    @pytest.mark.parametrize(
+        ("questions", "expected"),
+        [
+            ([], ""),
+            ([OmpAskQuestion(id="q", question="  Where?  ", header="  ")], "Where?"),
+            (
+                [
+                    OmpAskQuestion(
+                        id="q",
+                        question=" Database? ",
+                        header=" Storage ",
+                        options=[
+                            OmpAskOption(label="SQLite", description=" Embedded "),
+                            OmpAskOption(label="Postgres", description="  "),
+                        ],
+                        recommended=0,
+                        multi=True,
+                    )
+                ],
+                (
+                    "**Storage:** Database?\n- SQLite: Embedded (recommended)"
+                    "\n- Postgres\nPick any that apply."
+                ),
+            ),
+            (
+                [
+                    OmpAskQuestion(
+                        id="q1",
+                        question="Database?",
+                        options=[OmpAskOption(label="SQLite")],
+                    ),
+                    OmpAskQuestion(id="q2", question="Deploy where?", multi=True),
+                ],
+                "1. Database?\n   - SQLite\n\n2. Deploy where?",
+            ),
+        ],
+        ids=["empty", "plain", "described-recommended-multi", "numbered"],
+    )
+    def test_rendered_layout(
+        self, questions: list[OmpAskQuestion], expected: str
+    ) -> None:
+        assert render_room_questions(questions) == expected

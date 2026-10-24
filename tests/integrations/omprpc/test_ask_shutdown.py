@@ -10,7 +10,9 @@ import pytest
 from band.integrations.omprpc import OmpRpcClient
 from band.integrations.ompwire import (
     OmpContent,
+    OmpContentKind,
     OmpEvent,
+    OmpEventType,
     OmpHostToolCall,
     OmpToolResult,
     OmpUIRequest,
@@ -31,12 +33,14 @@ class TestOmpAskShutdown:
         started: list[str] = []
 
         async def on_event(event: OmpEvent) -> None:
-            if event.type == "agent_end":
+            if event.type == OmpEventType.AGENT_END:
                 yielded.set()
 
         async def on_tool(call: OmpHostToolCall) -> OmpToolResult:
             started.append(call.id)
-            return OmpToolResult(content=[OmpContent(type="text", text="late")])
+            return OmpToolResult(
+                content=[OmpContent(type=OmpContentKind.TEXT, text="late")]
+            )
 
         async def on_ui(request: OmpUIRequest) -> OmpUIResponse:
             started.append(request.id)

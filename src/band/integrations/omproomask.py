@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from band.integrations.ompwire import OmpAskAnswer, OmpAskQuestion
+from band.integrations.ompwire import OmpAskAnswer, OmpAskOption, OmpAskQuestion
 
 DELIVERED_ANSWER = (
     "(Posted to the chat room, where the people in this conversation see it. "
@@ -33,26 +33,38 @@ ROOM_ASK_GUIDANCE = (
 def render_room_questions(questions: Sequence[OmpAskQuestion]) -> str:
     """Render every question, its options and its recommended choice together."""
     numbered = len(questions) > 1
-    blocks: list[str] = []
-    for number, question in enumerate(questions, 1):
-        heading = question.question.strip()
-        if question.header and question.header.strip():
-            heading = f"**{question.header.strip()}:** {heading}"
-        if numbered:
-            heading = f"{number}. {heading}"
-        indent = "   " if numbered else ""
-        lines = [heading]
-        for index, option in enumerate(question.options):
-            line = f"{indent}- {option.label}"
-            if option.description and option.description.strip():
-                line += f": {option.description.strip()}"
-            if index == question.recommended:
-                line += " (recommended)"
-            lines.append(line)
-        if question.multi and question.options:
-            lines.append(f"{indent}Pick any that apply.")
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
+    return "\n\n".join(
+        _render_question(question, number if numbered else None)
+        for number, question in enumerate(questions, 1)
+    )
+
+
+def _render_question(question: OmpAskQuestion, number: int | None) -> str:
+    heading = question.question.strip()
+    header = (question.header or "").strip()
+    if header:
+        heading = f"**{header}:** {heading}"
+    if number is not None:
+        heading = f"{number}. {heading}"
+    indent = "   " if number is not None else ""
+    lines = [heading]
+    lines.extend(
+        f"{indent}- {_render_option(option, recommended=index == question.recommended)}"
+        for index, option in enumerate(question.options)
+    )
+    if question.multi and question.options:
+        lines.append(f"{indent}Pick any that apply.")
+    return "\n".join(lines)
+
+
+def _render_option(option: OmpAskOption, *, recommended: bool) -> str:
+    text = option.label
+    description = (option.description or "").strip()
+    if description:
+        text += f": {description}"
+    if recommended:
+        text += " (recommended)"
+    return text
 
 
 def delivered_answers(questions: Sequence[OmpAskQuestion]) -> list[OmpAskAnswer]:

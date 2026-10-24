@@ -52,7 +52,7 @@ async def overlapping_selections(
 
 
 @pytest.fixture
-def ask_adapter(tmp_path: Path):
+def ask_adapter(tmp_path: Path) -> OmpAdapter:
     """An adapter whose native peer raises a structured ask dialog."""
     adapter = OmpAdapter(
         OmpAdapterConfig(
