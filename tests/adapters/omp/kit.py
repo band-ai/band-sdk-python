@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextvars import copy_context
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 import psutil
 import pytest
@@ -158,6 +159,7 @@ class RecordingRuntime(PendingRuntime):
         super().__init__(*_args, **_kwargs)
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.prompt_text = ""
+        self.models_at_prompt: tuple[tuple[str, str] | None, ...] = ()
         self.switch_error: OmpRpcError | None = None
         self.switch_cancelled = False
         self.new_session_cancelled = False
@@ -200,6 +202,7 @@ class RecordingRuntime(PendingRuntime):
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         self.prompt_text = _message
+        self.models_at_prompt += (self.model,)
         await super().prompt(_message, on_event=on_event, on_tool=on_tool, on_ui=on_ui)
 
 
@@ -931,7 +934,7 @@ class BandMcpReplyRuntime(PendingRuntime):
 
     async def prompt(self, _message, *, on_event, on_tool, on_ui):
         name = "mcp__band_sdk_band_send_message"
-        args = {"content": "done"}
+        args: dict[str, JsonValue] = {"content": "done"}
         await on_event(
             OmpEvent(
                 type=OmpEventType.TOOL_START, toolCallId="c1", toolName=name, args=args
@@ -954,7 +957,7 @@ class SignallingLock(asyncio.Lock):
         super().__init__()
         self.contended = asyncio.Event()
 
-    async def acquire(self) -> bool:
+    async def acquire(self) -> Literal[True]:
         if self.locked():
             self.contended.set()
         return await super().acquire()
@@ -1100,7 +1103,9 @@ class UncancellingResolver(SettlingResolver):
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            asyncio.current_task().uncancel()  # the request count is now consumed
+            task = asyncio.current_task()
+            assert task is not None
+            task.uncancel()
             self.cancellations += 1
             self.cancel_seen.set()
             try:

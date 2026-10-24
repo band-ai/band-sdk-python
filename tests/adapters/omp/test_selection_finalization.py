@@ -14,12 +14,11 @@ from band.testing import FakeAgentTools
 from tests.adapters.omp.kit import (
     Launches,
     RecordingRuntime,
-    SignallingLock,
     launches,
     retained_selection,
     run_turn,
 )
-from tests.adapters.omp.lifecyclekit import HeldCloseRuntime
+from tests.adapters.omp.lifecyclekit import HeldCloseRuntime, ObservedRoomGate
 from tests.adapters.omp.selectionkit import ACCEPTED_MODEL, MODEL_PROVIDER
 
 __all__ = ["launches"]
@@ -33,17 +32,18 @@ class TestSelectionFinalization:
         runtime = HeldCloseRuntime()
         launches.runtime_factory = lambda: runtime
         adapter = OmpAdapter(OmpAdapterConfig(cwd=str(tmp_path)), emit=())
-        gate = SignallingLock()
+        gate = ObservedRoomGate()
         adapter._locks["room-123"] = gate
         await run_turn(adapter, FakeAgentTools())
         cleanup = asyncio.create_task(adapter.on_cleanup("room-123"))
         await runtime.closing.arrived()
+        gate.attempted.clear()
         selection = ModelSelection(model=f"{MODEL_PROVIDER}/{ACCEPTED_MODEL}")
         selecting = asyncio.create_task(
             adapter.apply_model_selection(selection, room_id="room-123")
         )
         try:
-            await gate.contended.wait()
+            await gate.attempted.wait()
             runtime.closing.released.set()
             await selecting
             await cleanup
@@ -51,7 +51,9 @@ class TestSelectionFinalization:
             assert retained_selection(adapter, "room-123") == selection
             launches.runtime_factory = RecordingRuntime
             await run_turn(adapter, FakeAgentTools())
-            assert launches.runtimes[-1].model == (MODEL_PROVIDER, ACCEPTED_MODEL)
+            assert launches.runtimes[-1].models_at_prompt == (
+                (MODEL_PROVIDER, ACCEPTED_MODEL),
+            )
         finally:
             runtime.closing.released.set()
             await asyncio.gather(selecting, cleanup, return_exceptions=True)
@@ -73,7 +75,9 @@ class TestSelectionFinalization:
         try:
             tools = FakeAgentTools()
             await run_turn(adapter, tools)
-            assert launches.runtimes[0].model == (MODEL_PROVIDER, ACCEPTED_MODEL)
+            assert launches.runtimes[0].models_at_prompt == (
+                (MODEL_PROVIDER, ACCEPTED_MODEL),
+            )
             assert tools.turn.replied
         finally:
             await adapter.cleanup_all()

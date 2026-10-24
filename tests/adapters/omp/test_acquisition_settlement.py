@@ -56,7 +56,9 @@ class TestAcquisitionSettlement:
             monkeypatch.setattr("band.adapters.omp.OmpRpcClient", launches)
             tools = FakeAgentTools()
             await run_turn(adapter, tools)
-            assert launches.runtimes[0].model == (MODEL_PROVIDER, ACCEPTED_MODEL)
+            assert launches.runtimes[0].models_at_prompt == (
+                (MODEL_PROVIDER, ACCEPTED_MODEL),
+            )
             assert tools.turn.replied
         finally:
             spawn.release.set()

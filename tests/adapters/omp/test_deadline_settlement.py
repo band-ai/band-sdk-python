@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.omp.kit import (
     Launches,
@@ -47,7 +48,7 @@ class TestDeadlineSettlement:
             with pytest.raises(TimeoutError):
                 await first
             assert resolver.cancellations == 1
-            assert timeout_reports(tools) == [("omp", "timeout")]
+            assert timeout_reports(tools) == [("omp", FAILURE_CODE_TIMEOUT)]
             assert launches.runtimes == []
 
     @pytest.mark.asyncio
@@ -130,7 +131,7 @@ class TestDeadlineSettlement:
             await asyncio.wait_for(adapter.cleanup_all(), 1)
 
             assert resolver.cancellations == 1 and resolver.settled
-            assert timeout_reports(tools) == [("omp", "timeout")]
+            assert timeout_reports(tools) == [("omp", FAILURE_CODE_TIMEOUT)]
             assert launches.runtimes == []
 
     @pytest.mark.asyncio
@@ -155,7 +156,7 @@ class TestDeadlineSettlement:
             with pytest.raises(TimeoutError):
                 await first
             assert resolver.cancellations == 1
-            assert timeout_reports(tools) == [("omp", "timeout")]
+            assert timeout_reports(tools) == [("omp", FAILURE_CODE_TIMEOUT)]
             assert launches.runtimes == []
 
     @pytest.mark.asyncio
@@ -176,7 +177,7 @@ class TestDeadlineSettlement:
 
             assert resolver.cancellations == 1 and resolver.settled
             assert launches.runtimes == [] and launches.plugins == []
-            assert timeout_reports(tools) == [("omp", "timeout")]
+            assert timeout_reports(tools) == [("omp", FAILURE_CODE_TIMEOUT)]
             await run_turn(adapter, FakeAgentTools())  # explicit recovery
             assert len(launches.runtimes) == 1
             await adapter.cleanup_all()
