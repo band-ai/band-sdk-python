@@ -500,8 +500,6 @@ class DeliveryLifecycle:
         control: bool = False,
     ) -> None:
         intent = self._terminal_intent(scope, owner, timed_out=timed_out)
-        if intent is DeliveryStatus.PROCESSED and not scope.consumed:
-            intent = None
         if intent is DeliveryStatus.FAILED and control:
             self._charge_control_failure(scope)
         self.store_intent(scope, intent)
@@ -524,7 +522,9 @@ class DeliveryLifecycle:
         error = owner.task.exception()
         if isinstance(error, (InputNotAccepted, RoomExecutionStoppedError)):
             return None
-        return DeliveryStatus.FAILED if error is not None else DeliveryStatus.PROCESSED
+        if error is not None:
+            return DeliveryStatus.FAILED
+        return DeliveryStatus.PROCESSED if scope.consumed else None
 
     def store_intent(
         self,
