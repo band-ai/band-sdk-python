@@ -325,15 +325,15 @@ class Case:
 
 
 OFF = Case(name="off-singleton", batching=False)
-ON = Case(name="on-singleton", batching=False)
-BATCH = Case(name="on-batch", batching=False, size=3)
+ON = Case(name="on-singleton", batching=True)
+BATCH = Case(name="on-batch", batching=True, size=3)
 FIRST, MIDDLE, LAST = (
     replace(BATCH, name=f"batch-{where}", at=at)
     for at, where in enumerate(("first", "middle", "last"))
 )
-SHAPES = (OFF,)
-SINGLETONS = (OFF,)  # one original per turn, whatever the mode
-POSITIONS = (OFF,)
+SHAPES = (OFF, ON, BATCH)
+SINGLETONS = (OFF, ON)  # one original per turn, whatever the mode
+POSITIONS = (OFF, ON, FIRST, MIDDLE, LAST)
 
 # Two originals a recovery pass finds queued.
 QUEUED = ("m1", "m2")
@@ -352,7 +352,10 @@ class Drain:
         return str(self.case)
 
 
-DRAINS = (Drain(case=OFF, read=Call.next(), runs=[("m1",), ("m2",)]),)
+DRAINS = (
+    Drain(case=OFF, read=Call.next(), runs=[("m1",), ("m2",)]),
+    Drain(case=ON, read=Call.page(), runs=[("m1", "m2")]),
+)
 
 
 @dataclass(frozen=True)
@@ -598,7 +601,7 @@ def build_context(
         ROOM_ID,
         link,
         model.single,
-        config=SessionConfig(**settings),
+        config=SessionConfig(consume_all_queued=case.batching, **settings),
         agent_id=AGENT_ID,
         on_execute_batch=model.batch if case.batching else None,
         on_message_control=controls.handle if controls else None,

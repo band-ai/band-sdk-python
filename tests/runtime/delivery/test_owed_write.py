@@ -16,18 +16,19 @@ ENDINGS = pytest.mark.parametrize(
 )
 
 
+@pytest.mark.parametrize("batching", [False, True], ids=["singleton", "batch"])
 class TestOwedWrite:
     @ENDINGS
     async def test_the_next_input_waits_for_an_unconfirmed_terminal_write(
-        self, rest_peer: RestPeer, ending: Ending
+        self, rest_peer: RestPeer, ending: Ending, batching: bool
     ) -> None:
-        first, second = rest_peer.post("m1"), rest_peer.post("m2")
+        first = rest_peer.post("m1")
         async with started_session(
-            rest_peer, gate=True, fail_on=ending.fail_on
+            rest_peer, batching=batching, gate=True, fail_on=ending.fail_on
         ) as session:
             await session.deliver(first)
             await session.until(lambda: session.turns.ids == [("m1",)])
-            await session.deliver(second)
+            await session.deliver(rest_peer.post("m2"))
             rest_peer.terminal_error = UNAVAILABLE
             ending.end(session)
             await session.quiesce()
@@ -44,15 +45,15 @@ class TestOwedWrite:
 
     @ENDINGS
     async def test_a_confirmed_terminal_write_lets_the_next_input_run(
-        self, rest_peer: RestPeer, ending: Ending
+        self, rest_peer: RestPeer, ending: Ending, batching: bool
     ) -> None:
-        first, second = rest_peer.post("m1"), rest_peer.post("m2")
+        first = rest_peer.post("m1")
         async with started_session(
-            rest_peer, gate=True, fail_on=ending.fail_on
+            rest_peer, batching=batching, gate=True, fail_on=ending.fail_on
         ) as session:
             await session.deliver(first)
             await session.until(lambda: session.turns.ids == [("m1",)])
-            await session.deliver(second)
+            await session.deliver(rest_peer.post("m2"))
             ending.end(session)
             session.turns.release.set()
             await session.reached(ending.terminal, "m1")

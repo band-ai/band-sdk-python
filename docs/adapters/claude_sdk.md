@@ -129,9 +129,9 @@ Each room's session is owned through that room's residency
 (`band.core.retention`): its connect, close and recovery run independently,
 so a slow CLI in one room never holds up another.
 
-- **A turn owns the room until it settles.** The message's turn is enrolled
+- **A turn owns the room until it settles.** The turn is enrolled
   before it starts and keeps the room leased through its query, tool calls,
-  approval waits and outcome, including after `on_message` returns early for a
+  approval waits and outcome, including after `on_turn` returns early for a
   manual approval. Leaving the room, or `cleanup_all`, closes admission at
   once, gives that turn `turn_settle_timeout_s` (`TURN_SETTLE_GRACE_S` by
   default) to finish on its own, then cancels and joins it, and only then

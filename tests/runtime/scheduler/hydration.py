@@ -87,6 +87,7 @@ async def observe_handoff(
             link_over(rest),
             execute,
             config=SessionConfig(
+                consume_all_queued=batching,
                 enable_context_hydration=True,
                 enable_working_state=False,
                 idle_resync_seconds=60,

@@ -2,10 +2,11 @@
 
 Every message pushed to an agent @mentions it, so every turn owes the room an
 answer: a reply, or a deliberate decision not to reply.
-`SimpleAdapter.run_judged_turn`, which `on_event` and the Slack adapter's
-inbound path both call, judges each turn with one rule from `band-sdk-core`,
+`SimpleAdapter.judged_turn` judges each turn with one rule from `band-sdk-core`,
 shared with the TypeScript SDK, and tells the platform honestly whether the
-delivery succeeded.
+delivery succeeded. A singleton reaches it through `run_judged_turn`, which
+`on_event` and the Slack adapter's inbound path both call; a batch
+([consuming queued messages](consume-all-queued.md)) through `on_messages`.
 
 ## The rule
 
@@ -44,7 +45,8 @@ async def main() -> None:
     assert tools.turn.replied  # the model's final text is not relayed
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 A turn that ends without completing is reported, then raised as
@@ -112,7 +114,8 @@ async def main() -> None:
     ]
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 An adapter that can run one turn over several originals derives
@@ -179,10 +182,32 @@ binding. The preprocessor remains the sole owner of pending context.
 
 ## Declining with `band_no_reply`
 
-`band_no_reply` is in every adapter's tool set, and `BASE_INSTRUCTIONS` tells
-the model to call it when the latest message needs no answer: it was addressed
-to someone else, it is an FYI or an acknowledgement, or someone already answered
-it. The call is local only; its `reason` goes to the agent log.
+`band_no_reply` is in every adapter's tool set, and `BASE_INSTRUCTIONS` carries
+the tool's canonical description from band-sdk-core: the model considers every
+current input together and calls it only when the turn as a whole needs no
+answer — the inputs were addressed to someone else, are FYIs or
+acknowledgements, or someone already answered them. An FYI never cancels another
+input's outstanding request, a correction or cancellation is read in context,
+and one reply may answer several inputs. A decline ends the whole turn, never a
+single input. The call is local only; its `reason` goes to the agent log.
+
+One input is simply a turn of one, so the same text serves a singleton and a
+[batched turn](consume-all-queued.md). The prompt carries core's description
+verbatim, and `TURN_COMPLETION_GUIDANCE` speaks of the turn's inputs rather than
+"the message":
+
+```python
+import band_sdk_core
+
+from band.runtime.prompts import BASE_INSTRUCTIONS
+
+description = band_sdk_core.no_reply_tool()["description"]
+assert "every current input message together" in description
+assert description in BASE_INSTRUCTIONS
+```
+
+This is guidance, not a coverage check: the judge still sees only the effects
+above (a reply, a decline or real work), never whether each input was answered.
 
 Pydantic AI ends its native model loop after a successful current-run decline
 whose other tool results in that response also succeeded. Tool results, history
@@ -225,7 +250,8 @@ async def main() -> None:
     assert tools.turn.complete
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 `REPLY` declares a tool that delivers the answer itself, and `DECLINE` one
@@ -273,7 +299,8 @@ async def main() -> None:
     assert tools.turn.complete
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 `relay_reply(tools, text, mentions)` from `band.core.delivery` is the one gate
@@ -342,7 +369,7 @@ from band.testing.fake_tools import FakeAgentTools, reported_failures
 
 async def main() -> None:
     tools = FakeAgentTools()
-    tools.turn.judged = True  # set by SimpleAdapter.run_judged_turn
+    tools.turn.judged = True  # set by SimpleAdapter.judged_turn
     tools.turn.detach()  # released while waiting for an approval
 
     # ...later, on the turn's normal completion path (never a ``finally``):
@@ -351,7 +378,8 @@ async def main() -> None:
     assert len(reported_failures(tools)) == 1
 
 
-asyncio.run(main())
+with asyncio.Runner() as runner:
+    runner.run(main())
 ```
 
 ## Exempt adapters
@@ -383,12 +411,11 @@ its `finally` cleanup must release uncommitted claims. SDK delivery admission
 remains separate because it runs before the handler and owns the trigger's retry
 accounting.
 
-Once the handler completes, its delivery is `ACK_PENDING` until the platform
-accepts completion. A stopped refusal retains that marker and retries only the
-acknowledgement, without replaying handler effects or charging the acknowledgement
+Once the handler completes, its stored terminal intent (see below) is written
+until the platform accepts it. A stopped refusal retains the intent and retries
+only that write, without replaying handler effects or charging the acknowledgement
 retry budget. This protects the running process; it does not provide exactly-once
-side effects across process restarts. Ordinary acknowledgement failures retain
-the existing retry policy.
+side effects across process restarts.
 
 One-shot invocations also require accepted claims and completion. They raise on
 refusal instead of returning `DONE`; a drain records only accepted messages.
@@ -457,21 +484,21 @@ is on and the adapter has not already reported it. Once an intent is
 stored, a later STOP or refusal only defers its write: it never turns `processed`
 into `failed` and never reruns the model.
 
-With execution retries left, a FAILED attempt retains its charged count and a
-retry continuation alongside the write. The SDK retries only that write while its
-result is unknown. Confirmation restores the charge into the current execution's
-tracker and permits the next configured attempt; it does not mark the input
-completed. Exhaustion instead finishes the input. Context replacement preserves
-this continuation, including when ordinary retry history was evicted while the
-write was pending.
+For a singleton with execution retries left, a FAILED attempt retains its charged
+count and a retry continuation alongside the write. The SDK retries only that
+write while its result is unknown. Confirmation restores the charge into the
+current execution's tracker and permits the next configured attempt; it does not
+mark the input completed. Exhaustion or a failed batch instead finishes the
+input. Context replacement preserves this continuation, including when ordinary
+retry history was evicted while the write was pending.
 
 The write goes through `mark_processed_result` or `mark_failed_result` and is
-classified by [`SettlementResult`](rest-client.md#lifecycle-acceptance):
+classified by [`SettlementResult`](rest-client.md#terminal-write-results):
 
 | Result | Effect on the stored intent |
 | --- | --- |
-| `ACCEPTED` | Apply the stored continuation once: finish the input, or permit its next configured attempt with prior failures still charged. |
-| `UNCONFIRMED` | Retained and retried on the reconciliation cadence, at most once per interval. Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
+| `ACCEPTED` | Apply the stored continuation once: finish the input, or permit its next configured singleton attempt with prior failures still charged. |
+| `UNCONFIRMED` | Retained and retried on the reconciliation cadence, at most once per interval (see below). Exhausting the retry count only logs a warning; the intent is never dropped, because dropping it would replay the handler. |
 | `NOT_FOUND` with the room still readable | Retired as inferred missing: its intent is dropped locally and its original released. Nothing is written and nothing re-executes it. |
 | `NOT_FOUND` with the room unreadable, `REJECTED` | Parked: kept, but neither retried nor blocking other inputs. A reconnect, or a room start (including a re-join), unparks it for one more try. Nothing completes it and nothing re-executes it. |
 | HTTP 204 | `RoomExecutionStoppedError`: the intent is retained and retried later, uncharged. |
@@ -484,7 +511,9 @@ restored between them, the SDK can retire an original that still exists. Local
 retirement is neither proof of deletion nor successful terminal settlement.
 A failed read leaves the cause ambiguous, and the intent parks. A processing
 claim answered 404 follows the same rule: an inferred missing original leaves
-the retained line, and one in an unreadable room is retried later.
+the retained line, and one in an unreadable room is retried later. A
+bad first write does not starve its siblings: one pass attempts every original
+of the attempt.
 
 Every recovery entrance (the reconciliation pass, the control probe, `/next`
 backlog and a live duplicate delivery) retries through one helper that reads the
@@ -496,6 +525,20 @@ Each settlement request carries a local obligation token. A stale response canno
 clear a newer obligation, and a retired execution cannot restore retry state into
 its obsolete tracker. These are in-process ownership checks; the platform does
 not provide an exclusive processing lease or conditional terminal writes.
+
+The helper paces an unconfirmed write: it is attempted at most once per
+`idle_resync_seconds` (the reconciliation interval), however many inputs arrive,
+so an outage costs one write per pending original per interval. A scheduled
+reconciliation pass and a requested resync (reconnect, room start, PLAY) lift
+the pacing and retry every pending write once. The control probe and a live
+duplicate are not passes: each retries only once the interval has passed since
+the last attempt, otherwise the next pass settles the write.
+
+The registry belongs to the runtime, so a pending intent survives replacement of
+a room's execution; process exit loses it. Delivery stays at-least-once across
+restarts: an original left in `processing` by a crash runs again. In batch mode a
+durably `failed` original is not selected again (see
+[Consuming queued messages in one turn](consume-all-queued.md)).
 
 ### What a settled turn leaves for the scheduler
 

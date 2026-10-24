@@ -14,12 +14,23 @@ HEAD = "head"
 APPROVAL = "approve"
 ANSWER = "answer"
 DELIVERED_APPROVAL = "the delivered approval"
+FAILED_CONTROL_OUTCOMES = [
+    pytest.param(True, [], False, DeliveryStatus.FAILED, id="batching"),
+    pytest.param(False, [APPROVAL], True, DeliveryStatus.PROCESSED, id="singleton"),
+]
 
 
 class TestControlEligibility:
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize(
+        ("batching", "handled", "claimed", "status"), FAILED_CONTROL_OUTCOMES
+    )
     async def test_a_failed_rest_control_obeys_the_configured_replay_policy(
-        self, rest_peer: RestPeer, batching: bool
+        self,
+        rest_peer: RestPeer,
+        batching: bool,
+        handled: list[str],
+        claimed: bool,
+        status: DeliveryStatus,
     ) -> None:
         rest_peer.post(HEAD)
         async with started_session(
@@ -34,13 +45,20 @@ class TestControlEligibility:
             await session.resync()
             await session.quiesce()
 
-        assert session.controls.handled == [APPROVAL]
-        assert rest_peer.writes_of(DeliveryStatus.PROCESSING, APPROVAL)
-        assert rest_peer.status_of(APPROVAL) is DeliveryStatus.PROCESSED
+        assert session.controls.handled == handled
+        assert bool(rest_peer.writes_of(DeliveryStatus.PROCESSING, APPROVAL)) is claimed
+        assert rest_peer.status_of(APPROVAL) is status
 
-    @pytest.mark.parametrize("batching", [False])
+    @pytest.mark.parametrize(
+        ("batching", "handled", "claimed", "status"), FAILED_CONTROL_OUTCOMES
+    )
     async def test_a_failed_retained_control_obeys_the_configured_replay_policy(
-        self, rest_peer: RestPeer, batching: bool
+        self,
+        rest_peer: RestPeer,
+        batching: bool,
+        handled: list[str],
+        claimed: bool,
+        status: DeliveryStatus,
     ) -> None:
         rest_peer.post(HEAD)
         async with started_session(
@@ -55,9 +73,9 @@ class TestControlEligibility:
             await session.deliver(delayed_original)
             await session.quiesce()
 
-        assert session.controls.handled == [APPROVAL]
-        assert rest_peer.writes_of(DeliveryStatus.PROCESSING, APPROVAL)
-        assert rest_peer.status_of(APPROVAL) is DeliveryStatus.PROCESSED
+        assert session.controls.handled == handled
+        assert bool(rest_peer.writes_of(DeliveryStatus.PROCESSING, APPROVAL)) is claimed
+        assert rest_peer.status_of(APPROVAL) is status
 
     async def test_an_eligible_duplicate_keeps_its_delivered_payload(
         self, rest_peer: RestPeer

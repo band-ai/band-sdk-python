@@ -22,9 +22,11 @@ from band_sdk_core import ClaimRegistry
 
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload, MessageMetadata
 from band.platform.event import MessageEvent, PlatformEvent
+from band.platform.message_lifecycle import ACTIONABLE_PAGE_SIZE
 from band.runtime.cycle import TurnScope
-from band.runtime.execution import ExecutionContext, ExecutionHandler
+from band.runtime.execution import Execution, ExecutionContext, ExecutionHandler
 from band.runtime.messages import PlatformMessage
+from band.runtime.runtime import AgentRuntime
 from band.runtime.sessionconfig import SessionConfig
 from tests.conftest import make_message_event
 from tests.platform.settlement.kit import NOT_FOUND, Reply, link_over
@@ -40,6 +42,12 @@ from tests.runtime.helpers import (
 )
 
 PlatformStopHook = Callable[[ExecutionContext, TurnScope], Awaitable[None]]
+
+OTHER_AGENT_ID = "agent-2"
+# A full page of failed rows and half of the next, ahead of any new input.
+FAILED_ROWS = ACTIONABLE_PAGE_SIZE + ACTIONABLE_PAGE_SIZE // 2
+# The periodic wake the room falls back on when nothing else prompts it.
+IDLE_INTERVAL = SessionConfig().idle_resync_seconds
 
 _WRITE = re.compile(
     r"/messages/(?P<message_id>[^/]+)/(?P<action>processing|processed|failed)$"
@@ -80,6 +88,14 @@ def error_causes(
         for record in records
         if record.levelno >= logging.ERROR
     }
+
+
+def failed_row_id(index: int) -> str:
+    return f"failed-{index:03d}"
+
+
+LAST_ON_FIRST_PAGE = failed_row_id(ACTIONABLE_PAGE_SIZE - 1)
+EARLIER_ROW = failed_row_id(7)
 
 
 def delivery_entry(status: DeliveryStatus) -> dict[str, Any]:
@@ -197,6 +213,9 @@ class RestPeer:
         # Answers every terminal write verbatim, confirming none of them.
         self.terminal_error: Reply | None = None
         self.runaway_limit = runaway_limit
+        # The room swallows the guard's error, so a test reads it from here.
+        self.runaway = False
+        self._served: dict[int, asyncio.Event] = {}
 
     def post(
         self,
@@ -265,6 +284,11 @@ class RestPeer:
         self.rows[message_id].listed = False
         self.deleted.add(message_id)
 
+    def post_failed(self, count: int) -> None:
+        """Store ``count`` messages this agent has already failed."""
+        for index in range(count):
+            self.post(failed_row_id(index), status=DeliveryStatus.FAILED)
+
     def set_status(self, message_id: str, status: DeliveryStatus | None) -> None:
         """Change this agent's status as another runtime would, outside the room."""
         statuses = self.rows[message_id].statuses
@@ -297,6 +321,13 @@ class RestPeer:
         """Every read of the platform's outstanding work, list or /next."""
         return len(self.reads) + len(self.nexts)
 
+    async def page_served(self, count: int) -> None:
+        """Wait until the room has been served ``count`` list pages."""
+        await self._served_event(count).wait()
+
+    def _served_event(self, count: int) -> asyncio.Event:
+        return self._served.setdefault(count, asyncio.Event())
+
     def answer(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if request.method == "GET" and path.endswith("/messages"):
@@ -326,6 +357,7 @@ class RestPeer:
     def _guard_against_runaway(self) -> None:
         """Fail a room that polls without end, so it cannot hang the test."""
         if self.polls >= self.runaway_limit:
+            self.runaway = True
             raise RunawayRescan
 
     def _list(self, request: httpx.Request) -> httpx.Response:
@@ -340,6 +372,7 @@ class RestPeer:
         page, more = rows[:limit], rows[limit:]
         self.reads.append(Read(cursor, asyncio.get_running_loop().time()))
         self.journal.append(read(cursor))
+        self._served_event(len(self.reads)).set()
         return httpx.Response(
             200,
             json={
@@ -424,6 +457,7 @@ class JournaledControls(ControlScript):
 
 def session_config(*, batching: bool, retries: int = 1) -> SessionConfig:
     return SessionConfig(
+        consume_all_queued=batching,
         max_message_retries=retries,
         enable_context_hydration=False,
         enable_working_state=False,
@@ -568,3 +602,47 @@ async def room_over(
             yield ctx
         finally:
             await ctx.stop(timeout=STOP_SECONDS)
+
+
+@dataclass
+class RuntimeRoom(Observer):
+    """A room served by an agent runtime, whose execution can be replaced."""
+
+    runtime: AgentRuntime
+
+    @property
+    def ctx(self) -> Execution:
+        return self.runtime.executions[ROOM_ID]
+
+    async def quiesce(self) -> None:
+        ctx = self.ctx
+        assert isinstance(ctx, ExecutionContext)
+        await self.suspended(ctx)
+
+    async def replace(self) -> None:
+        """Retire the room's execution and admit a new one, as a rejoin does."""
+        await self.runtime.rooms.destroy(ROOM_ID)
+        await self.runtime.rooms.admit(ROOM_ID)
+
+
+@contextlib.asynccontextmanager
+async def runtime_room(
+    peer: RestPeer, *, fail_on: frozenset[str] = frozenset()
+) -> AsyncIterator[RuntimeRoom]:
+    """An agent runtime serving the room over the peer, admitted and running."""
+    turns = JournaledTurns(fail_on=set(fail_on), journal=peer.journal)
+    async with rest_client_over(peer.answer) as rest:
+        runtime = AgentRuntime(
+            link_over(rest),
+            AGENT_ID,
+            turns.single,
+            session_config=session_config(batching=True),
+            on_execute_batch=turns.batch,
+        )
+        runtime.rooms.accepting = True
+        await runtime.rooms.admit(ROOM_ID)
+        try:
+            yield RuntimeRoom(peer, turns, runtime)
+        finally:
+            turns.release.set()
+            await runtime.rooms.destroy(ROOM_ID, timeout=STOP_SECONDS)

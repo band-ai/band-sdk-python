@@ -22,6 +22,18 @@ DEADLINE_S = 5.0
 
 
 class TestProvisionedAgentRun:
+    async def test_the_agent_starts_under_the_requested_session_config(
+        self, started_with: list[SessionConfig | None]
+    ) -> None:
+        batching = SessionConfig(consume_all_queued=True)
+
+        async with running_provisioned_agent(
+            DecliningAdapter(), ProvisionedResources(), session_config=batching
+        ):
+            pass
+
+        assert started_with == [batching]
+
     async def test_the_turns_of_the_adapter_are_observed(
         self, started_with: list[SessionConfig | None]
     ) -> None:

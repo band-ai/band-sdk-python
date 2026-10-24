@@ -8,7 +8,7 @@ Human-in-the-loop via Copilot's ``ask_user`` tool, answered in the room.
 
 ``CopilotSDKAdapter(..., ask_user="room")`` routes the model's built-in
 ``ask_user`` tool to the people in the Band room: the question posts as
-a room message mentioning whoever triggered the turn, the turn ends, and
+a room message mentioning the turn's senders, the turn ends, and
 the answer arrives as the next room message — the same persisted Copilot
 session picks it up with the pending question still in its history.
 
