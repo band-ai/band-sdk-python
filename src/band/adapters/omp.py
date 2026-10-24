@@ -776,7 +776,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             if not bootstrap:
                 try:
                     raw = messages_before(
-                        await self._fetch_room_messages(tools, room_id), msg.id
+                        await self._fetch_room_messages(tools, room_id), {msg.id}
                     )
                     replay = build_replay_messages(
                         [item for item in raw if item.get("id") != msg.id]
