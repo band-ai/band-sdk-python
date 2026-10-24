@@ -103,6 +103,7 @@ class PromptRun:
 
     def record_snapshot(self, sequence: int, state: OmpState) -> None:
         self.snapshot = (sequence, state)
+        self.changed.set()
 
     def settled_proven(self) -> bool:
         if self.settled_sequence > self.last_activity_sequence:
@@ -131,12 +132,18 @@ class PromptRun:
         )
 
     def busy_proven(self) -> bool:
-        if self.awaiting_async:
-            return True
-        if self.snapshot is None or self.snapshot[0] <= self.last_activity_sequence:
-            return False
-        _, state = self.snapshot
-        return not idle_flags(state)
+        if self.snapshot is not None:
+            sequence, state = self.snapshot
+            if sequence > max(self.last_activity_sequence, self.settled_sequence):
+                if not idle_flags(state):
+                    return True
+                if state.isSettled:
+                    return False
+        # Settlement invalidates older busy claims. A fresh snapshot must still
+        # prove idle before the guard can arm its completion budget.
+        return (
+            self.awaiting_async and self.settled_sequence <= self.last_activity_sequence
+        )
 
 
 def idle_flags(state: OmpState) -> bool:

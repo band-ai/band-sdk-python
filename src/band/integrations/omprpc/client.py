@@ -474,6 +474,7 @@ class OmpRpcClient:
                 stale = (
                     turn.snapshot is None
                     or turn.snapshot[0] <= turn.last_activity_sequence
+                    or turn.snapshot[0] < turn.settled_sequence
                 )
                 if stale:
                     received = await self._request_frame(
