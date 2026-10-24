@@ -1061,7 +1061,7 @@ class OmpAdapter(SimpleAdapter[OmpSessionState]):
             ):
                 raise
             logger.warning(
-                "Room %s: OMP ask could not be posted: %s", room_id, error.cause
+                "OMP ask could not be posted (%s)", type(error.cause).__name__
             )
             return OmpUIResponse(
                 answers=omproomask.undelivered_answers(request.questions, error.cause)

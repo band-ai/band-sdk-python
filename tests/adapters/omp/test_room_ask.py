@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from functools import partial
 from pathlib import Path
 from textwrap import indent
@@ -33,7 +34,12 @@ from tests.adapters.omp.kit import (
 from tests.integrations.ompaskpeer import (
     ASK_QUESTION_IDS,
     ASK_REQUEST_ID,
+    DATABASE_DESCRIPTION,
+    DATABASE_HEADER,
+    DATABASE_OPTIONS,
     DATABASE_QUESTION,
+    DEPLOY_OPTIONS,
+    DEPLOY_QUESTION,
     PREVIEW_CHOICES,
     PREVIEW_ONLY,
     PREVIEW_QUESTION,
@@ -53,15 +59,13 @@ class TestOmpRoomAsk:
             [posted] = tools.messages_sent
             assert posted["mentions"] == [{"id": "peer-456", "name": "Test Peer"}]
             for text in (
-                "Storage",
+                DATABASE_HEADER,
                 DATABASE_QUESTION,
-                "SQLite",
-                "Embedded",
+                *DATABASE_OPTIONS,
+                DATABASE_DESCRIPTION,
                 "recommended",
-                "Postgres",
-                "Deploy where?",
-                "Dev",
-                "Prod",
+                DEPLOY_QUESTION,
+                *DEPLOY_OPTIONS,
             ):
                 assert text in posted["content"]
             assert tools.turn.replied
@@ -99,16 +103,35 @@ class TestOmpRoomAsk:
 
     @pytest.mark.parametrize(
         "error",
-        [RuntimeError("platform unavailable"), RoomExecutionStoppedError("other-room")],
+        [
+            RuntimeError("private delivery details: bearer-canary"),
+            RoomExecutionStoppedError("other-room"),
+        ],
     )
     async def test_failed_question_post_reports_error_without_cancelling_native_ask(
-        self, ask_adapter: OmpAdapter, error: Exception
+        self,
+        ask_adapter: OmpAdapter,
+        error: Exception,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         tools = FakeAgentTools()
         tools.send_message_error = error
         try:
-            with pytest.raises(TurnResultAlreadyReported):
+            with (
+                caplog.at_level(logging.WARNING, logger=OmpAdapter.__module__),
+                pytest.raises(TurnResultAlreadyReported),
+            ):
                 await ask_turn(ask_adapter, tools)
+            [warning] = [
+                record
+                for record in caplog.records
+                if record.name == OmpAdapter.__module__
+            ]
+            assert warning.levelno == logging.WARNING
+            diagnostic = warning.getMessage()
+            assert str(error) not in diagnostic
+            assert "room-123" not in diagnostic
+            assert type(error).__name__ in diagnostic
             assert not tools.turn.replied
             assert failure_reports(tools) == [MISSING_REPLY_FAILURE]
             [response] = await ask_frames(ask_adapter, OmpFrameType.UI_RESPONSE)

@@ -23,6 +23,11 @@ ASK_QUESTION_IDS = ("storage", "targets")
 RESUMED_REPLY = "The answer resumed this session."
 REFUSED_DIALOG = "refused-dialog"
 DATABASE_QUESTION = "Database?"
+DATABASE_HEADER = "Storage"
+DATABASE_OPTIONS = ("SQLite", "Postgres")
+DATABASE_DESCRIPTION = "Embedded"
+DEPLOY_QUESTION = "Deploy where?"
+DEPLOY_OPTIONS = ("Dev", "Prod")
 PREVIEW_ONLY = "preview-only"
 PREVIEW_QUESTION = "Which patch?"
 PREVIEW_CHOICES = (
@@ -37,21 +42,21 @@ class AskPeer(Peer):
             {
                 "id": ASK_QUESTION_IDS[0],
                 "question": DATABASE_QUESTION,
-                "header": "Storage",
+                "header": DATABASE_HEADER,
                 "options": [
                     {
-                        "label": "SQLite",
-                        "description": "Embedded",
+                        "label": DATABASE_OPTIONS[0],
+                        "description": DATABASE_DESCRIPTION,
                         "preview": "CREATE TABLE example (id INTEGER);",
                     },
-                    {"label": "Postgres"},
+                    {"label": DATABASE_OPTIONS[1]},
                 ],
                 "recommended": 0,
             },
             {
                 "id": ASK_QUESTION_IDS[1],
-                "question": "Deploy where?",
-                "options": [{"label": "Dev"}, {"label": "Prod"}],
+                "question": DEPLOY_QUESTION,
+                "options": [{"label": label} for label in DEPLOY_OPTIONS],
                 "multi": True,
             },
         ]
