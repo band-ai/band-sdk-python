@@ -2,11 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
+from band.adapters.codex import CodexAdapterConfig
 from band.integrations.codex import RpcEvent
 from band.integrations.codex.types import CodexItemType
-from tests.adapters.codexturns import FIRST_THREAD_ID, event_notification
+from band.testing.activity import ActivityRecorder
+from tests.adapters.codex.kit import (
+    CodexRoom,
+    ToolSchemaFakeTools,
+    parked_on_approval,
+    send_bootstrap,
+)
+from tests.adapters.codexturns import (
+    FIRST_THREAD_ID,
+    FakeCodexClient,
+    event_notification,
+    final_text,
+    make_codex_adapter,
+    turn_completed,
+)
 
 IN_PROGRESS = "inProgress"
 
@@ -49,3 +68,55 @@ def item_completed(item: dict[str, Any]) -> RpcEvent:
         "item/completed",
         {"threadId": FIRST_THREAD_ID, "completedAtMs": 2, "item": finished},
     )
+
+
+class HeldApprovalClient(FakeCodexClient):
+    """Hold the provider's approval answer at its transport boundary."""
+
+    def __init__(self, *, response_error: Exception | None = None) -> None:
+        self.response_error = response_error
+        super().__init__(
+            events=list(parked_on_approval(final_text("Done."), turn_completed()))
+        )
+        self.responding = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
+        self.responding.set()
+        await self.release.wait()
+        if self.response_error is not None:
+            raise self.response_error
+        await super().respond(request_id, result)
+
+
+@dataclass
+class ApprovalExchange:
+    room: CodexRoom
+    client: HeldApprovalClient
+
+    async def finish(self) -> None:
+        self.client.release.set()
+        await self.room.settled()
+
+
+@asynccontextmanager
+async def held_approval_answer(
+    recorder: ActivityRecorder, *, response_error: Exception | None = None
+) -> AsyncIterator[ApprovalExchange]:
+    client = HeldApprovalClient(response_error=response_error)
+    adapter = make_codex_adapter(
+        client,
+        config=CodexAdapterConfig(approval_mode="manual", turn_settle_timeout_s=0),
+    )
+    await adapter.on_started("Agent", "Agent")
+    room = CodexRoom(adapter, client)
+    tools = recorder.observing(ToolSchemaFakeTools())
+    try:
+        await send_bootstrap(adapter, tools=tools)
+        await tools.until_said("Approval requested")
+        await room.send("/approve")
+        await client.responding.wait()
+        yield ApprovalExchange(room, client)
+    finally:
+        client.release.set()
+        await adapter.cleanup_all()

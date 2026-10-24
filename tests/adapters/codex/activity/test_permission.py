@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+import pytest
+
 from band.adapters.codex import CodexCommand
+from band.core.protocols import TurnResultAlreadyReported
 from band.testing.activity import ActivityRecorder
+from tests.adapters.codex.activity.kit import held_approval_answer
 from tests.adapters.codex.kit import CodexApprovalRoom
 
 
@@ -28,3 +32,30 @@ class TestCodexPermissionActivity:
         await room.reply(CodexCommand.APPROVE, second_token)
         assert await second == "accept"
         assert not recorder.waiting
+
+    async def test_permission_lasts_until_the_provider_receives_its_answer(
+        self, recorder: ActivityRecorder
+    ) -> None:
+        async with held_approval_answer(recorder) as exchange:
+            assert recorder.waiting
+            await exchange.finish()
+            assert not recorder.waiting
+
+    async def test_cancelling_answer_delivery_clears_permission(
+        self, recorder: ActivityRecorder
+    ) -> None:
+        async with held_approval_answer(recorder) as exchange:
+            assert recorder.waiting
+            await exchange.room.adapter.cleanup_all()
+            assert not recorder.waiting
+
+    async def test_failed_answer_delivery_clears_permission(
+        self, recorder: ActivityRecorder
+    ) -> None:
+        async with held_approval_answer(
+            recorder, response_error=RuntimeError("response delivery failed")
+        ) as exchange:
+            assert recorder.waiting
+            with pytest.raises(TurnResultAlreadyReported):
+                await exchange.finish()
+            assert not recorder.waiting

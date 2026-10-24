@@ -8,7 +8,7 @@ import logging
 import time as _time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
@@ -110,6 +110,7 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.decisions import (
+    APPROVAL_NOT_PENDING_TEMPLATE,
     DecisionEntry,
     DecisionRegistry,
     Registration,
@@ -2676,36 +2677,43 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         room_session = self._session_approved.get(room_id)
         session_hit = bool(session_key and room_session and session_key in room_session)
 
-        if session_hit:
-            decision: ApprovalDecision = "acceptForSession"
-            decided_by = "session_policy"
-        elif self._room_closing(room_id):
-            decision = "decline"
-            decided_by = "room_cleanup"
-        elif self.config.approval_mode == "manual":
-            try:
-                decision = await self._resolve_manual_approval(
-                    tools=tools,
-                    msg=msg,
-                    room_id=room_id,
-                    event=event,
-                    summary=summary,
-                    params=params,
-                )
-                decided_by = msg.sender_name or msg.sender_type or "user"
-            except Exception:
-                # Ensure we still answer the server request even if the
-                # human-facing notification flow fails.
-                logger.exception("Manual approval flow failed; defaulting to decline")
+        async with AsyncExitStack() as answers:
+            if session_hit:
+                decision: ApprovalDecision = "acceptForSession"
+                decided_by = "session_policy"
+            elif self._room_closing(room_id):
                 decision = "decline"
-                decided_by = "system_fallback"
-        else:
-            decision = (
-                "accept" if self.config.approval_mode == "auto_accept" else "decline"
-            )
-            decided_by = f"policy:{self.config.approval_mode}"
+                decided_by = "room_cleanup"
+            elif self.config.approval_mode == "manual":
+                try:
+                    decision = await answers.enter_async_context(
+                        self._resolve_manual_approval(
+                            tools=tools,
+                            msg=msg,
+                            room_id=room_id,
+                            event=event,
+                            summary=summary,
+                            params=params,
+                        )
+                    )
+                    decided_by = msg.sender_name or msg.sender_type or "user"
+                except Exception:
+                    # Ensure we still answer the server request even if the
+                    # human-facing notification flow fails.
+                    logger.exception(
+                        "Manual approval flow failed; defaulting to decline"
+                    )
+                    decision = "decline"
+                    decided_by = "system_fallback"
+            else:
+                decision = (
+                    "accept"
+                    if self.config.approval_mode == "auto_accept"
+                    else "decline"
+                )
+                decided_by = f"policy:{self.config.approval_mode}"
 
-        await client.respond(event.id, _approval_response(decision))
+            await client.respond(event.id, _approval_response(decision))
 
         audit_entry = self._record_approval_audit(
             room_id=room_id,
@@ -3200,6 +3208,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
             case _:
                 return None
 
+    @asynccontextmanager
     async def _resolve_manual_approval(
         self,
         *,
@@ -3209,7 +3218,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         event: RpcEvent,
         summary: str,
         params: dict[str, Any],
-    ) -> ApprovalDecision:
+    ) -> AsyncIterator[ApprovalDecision]:
         mention = self._sender_mention(msg)
         if event.id is None:
             raise RuntimeError("approval request must have an id")
@@ -3234,7 +3243,8 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                 pending.native_key,
                 room_id,
             )
-            return "decline"
+            yield "decline"
+            return
         entry = registration.entry
         token = entry.token
         for removed in registration.removed:
@@ -3313,25 +3323,24 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
                     raise
 
             self._release_turn(room_id, tools)
-            decision = await registry.wait(
+            async with registry.answering(
                 entry, pending.future, timeout_s=self.config.approval_wait_timeout_s
-            )
-            if decision is not Timeout.TIMED_OUT:
-                return decision
-            timeout_decision = self.config.approval_timeout_decision
-            try:
-                await tools.send_notice(
-                    APPROVAL_TIMED_OUT_TEMPLATE.format(
-                        token=token, decision=timeout_decision
-                    ),
-                    mentions=mention,
-                )
-            except Exception:
-                logger.exception("Failed to send approval timeout notification")
-            return timeout_decision
+            ) as decision:
+                if decision is Timeout.TIMED_OUT:
+                    decision = self.config.approval_timeout_decision
+                    try:
+                        await tools.send_notice(
+                            APPROVAL_TIMED_OUT_TEMPLATE.format(
+                                token=token, decision=decision
+                            ),
+                            mentions=mention,
+                        )
+                    except Exception:
+                        logger.exception("Failed to send approval timeout notification")
+                yield decision
         finally:
             self._clear_pending_approval(room_id, entry)
-            await set_permission_wait(tools, self._open_approval_count(room_id) > 0)
+            await set_permission_wait(tools, bool(self._pending_approvals.get(room_id)))
 
     async def _forward_raw_task_event(
         self,
@@ -4065,7 +4074,7 @@ class CodexAdapter(ApprovalInterruptMixin, SimpleAdapter[CodexSessionState]):
         if pending.try_claim(token) is None:
             await deliver_notice(
                 tools,
-                f"Approval `{token}` is no longer pending.",
+                APPROVAL_NOT_PENDING_TEMPLATE.format(token=token),
                 mentions=mention,
             )
             return True

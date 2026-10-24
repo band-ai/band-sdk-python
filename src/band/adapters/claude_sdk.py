@@ -137,6 +137,7 @@ from band.runtime.custom_tools import (
     custom_tool_effects,
 )
 from band.runtime.decisions import (
+    APPROVAL_NOT_PENDING_TEMPLATE,
     DecisionEntry,
     DecisionRegistry,
     Timeout,
@@ -1911,24 +1912,23 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
                 tools.turn.detach()
             self._release_turn(room_id)
 
-            decision = await registry.wait(
+            async with registry.answering(
                 entry, pending.future, timeout_s=self._approvals.wait_timeout_s
-            )
+            ) as decision:
+                match decision:
+                    case Timeout.TIMED_OUT:
+                        return await self._apply_approval_timeout(
+                            tools, room_id, token, mention, tool_use_id
+                        )
+                    case ApprovalReply():
+                        return await self._apply_approval_reply(
+                            tools, room_id, token, decision, tool_use_id
+                        )
+                # Forced by eviction or room teardown: no notice names this call.
+                return PermissionResultDeny(message="User declined tool use")
         finally:
             self._clear_pending_approval(room_id, entry)
-            await set_permission_wait(tools, self._open_approval_count(room_id) > 0)
-
-        match decision:
-            case Timeout.TIMED_OUT:
-                return await self._apply_approval_timeout(
-                    tools, room_id, token, mention, tool_use_id
-                )
-            case ApprovalReply():
-                return await self._apply_approval_reply(
-                    tools, room_id, token, decision, tool_use_id
-                )
-        # Forced by eviction or room teardown: no notice names this call.
-        return PermissionResultDeny(message="User declined tool use")
+            await set_permission_wait(tools, bool(self._pending_approvals.get(room_id)))
 
     async def _apply_approval_reply(
         self,
@@ -2069,7 +2069,7 @@ class ClaudeSDKAdapter(ApprovalInterruptMixin, SimpleAdapter[ClaudeSDKSessionSta
 
         if pending.try_claim(token) is None:
             await tools.send_notice(
-                f"Approval `{token}` is no longer pending.", mentions=mention
+                APPROVAL_NOT_PENDING_TEMPLATE.format(token=token), mentions=mention
             )
             return
 

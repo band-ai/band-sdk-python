@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 from mcp.shared.memory import create_connected_server_and_client_session
-from pydantic import BaseModel
 
 from band.integrations.mcp.engine import (
     CustomToolSpec,
@@ -13,12 +12,7 @@ from band.integrations.mcp.engine import (
 )
 from band.testing.activity import ActivityRecorder, shown_tool
 from band.testing.fake_tools import FakeAgentTools
-
-
-class LookupInput(BaseModel):
-    """Look up a word."""
-
-    word: str
+from tests.integrations.activitykit import LookupInput
 
 
 class TestCustomToolActivity:
@@ -30,7 +24,7 @@ class TestCustomToolActivity:
         async def lookup(inp: LookupInput) -> str:
             entered.set()
             await release.wait()
-            return f"{inp.word}: a definition"
+            return f"{inp.note}: a definition"
 
         asked, other = ActivityRecorder(), ActivityRecorder()
         rooms = {
@@ -45,7 +39,7 @@ class TestCustomToolActivity:
 
         async with create_connected_server_and_client_session(server) as session:
             call = asyncio.create_task(
-                session.call_tool("lookup", {"word": "activity", "chat_id": "room-2"})
+                session.call_tool("lookup", {"note": "activity", "chat_id": "room-2"})
             )
             await entered.wait()
             assert asked.events == [shown_tool("lookup")]
