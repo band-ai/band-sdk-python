@@ -85,7 +85,8 @@ perform a local pass for reuse, clarity, and appropriate layering without
 changing behavior. This pass never uses a cycle.
 
 1. Select the applicable checks from AGENTS.md "Pre-Commit Checklist"
-   for the actual diff, then run them quietly: use
+   for the actual diff and the focused validation guidance in
+   `band-here-is-a-review` Phase 5, then run them quietly: use
    the tools' quiet flags (e.g. `pytest -q`), redirect output to a scratchpad
    file, and read only the failures and the summary line. Every gate run in
    this skill, including the fix rounds', is quiet. Revert any change that
@@ -169,8 +170,10 @@ authorization, asks only for a missing decision, and relays the answer.
      leave CONFIRMED and PARTIALLY RIGHT threads open and unfixed as the
      record. The report lists them.
 4. **Fix (its Phases 4–5).** Root-cause plans (items sharing a root cause
-   share one fix), implementation, and the applicable validation checks. The coordinator
-   reviews the result, commits, and pushes before closing any fixed thread.
+   share one fix), implementation, and the applicable validation checks. Keep
+   each fix round scoped to checks affected by that round; do not rerun a broad
+   suite just because another cycle began. The coordinator reviews the result,
+   commits, and pushes before closing any fixed thread.
    A failing-test proof must turn green; a repro must stop
    reproducing and gets a regression test when feasible. Its
    architectural-change gate applies.
